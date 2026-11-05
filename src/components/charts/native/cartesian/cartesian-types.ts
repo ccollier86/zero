@@ -1,4 +1,5 @@
 /** Native Cartesian data and configuration contracts. Pure presentation types; no transport or renderer authority. */
+import type { ChartAxisText, ChartTextMetrics } from '../shared/chart-text-layout';
 export type CartesianMark='line'|'area'|'bar'|'scatter';
 export type CartesianCurve='linear'|'smooth'|'step';
 export type CartesianStack='none'|'stacked'|'signed'|'percent';
@@ -25,4 +26,6 @@ export interface CartesianPoint {readonly datumId:string;readonly seriesId:strin
 export interface CartesianBar {readonly datumId:string;readonly seriesId:string;readonly x:number;readonly y:number;readonly width:number;readonly height:number;readonly cap:'top'|'bottom'|'left'|'right';readonly value:number;readonly from:number;readonly to:number}
 /** Area intervals retain absolute measurement bounds; isolated intervals remain readable as whiskers. */
 export interface CartesianSeriesGeometry {readonly seriesId:string;readonly line:string;readonly area:string;readonly interval:string;readonly intervalSingles:readonly string[];readonly points:readonly CartesianPoint[];readonly bars:readonly CartesianBar[]}
-export interface CartesianLayout {readonly width:number;readonly height:number;readonly left:number;readonly top:number;readonly plotWidth:number;readonly plotHeight:number;readonly scatterRadius:number;readonly maxBubbleRadius:number;readonly independentTicks:readonly {coordinate:number;label:string;position:number}[];readonly axes:readonly {axis:CartesianAxisModel;ticks:readonly {value:number;position:number}[]}[];readonly series:readonly CartesianSeriesGeometry[];readonly mapX:(value:number)=>number;readonly mapY:(value:number,axisId?:string)=>number}
+/** Optional pure measurement/formatting inputs keep SSR geometry deterministic and browser fonts accurate. */
+export interface CartesianLayoutOptions extends Partial<ChartTextMetrics> { readonly formatYTick?: (value:number,axis:CartesianAxisModel)=>string; readonly formatX?: (value:string|number)=>string }
+export interface CartesianLayout {readonly width:number;readonly height:number;readonly left:number;readonly top:number;readonly plotWidth:number;readonly plotHeight:number;readonly scatterRadius:number;readonly maxBubbleRadius:number;readonly independentCaption:ChartAxisText|null;readonly independentTicks:readonly {coordinate:number;label:string;position:number;textLayout:ChartAxisText}[];readonly axes:readonly {axis:CartesianAxisModel;caption:ChartAxisText|null;ticks:readonly {value:number;position:number;textLayout:ChartAxisText}[]}[];readonly series:readonly CartesianSeriesGeometry[];readonly mapX:(value:number)=>number;readonly mapY:(value:number,axisId?:string)=>number}

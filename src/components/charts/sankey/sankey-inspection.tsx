@@ -36,7 +36,8 @@ export function SankeyInspection({ open, content, point, upright, plotHeight, on
   // On narrow charts, anchor near the opposite end to keep both the finger and the traced journey clear.
   const side = upright ? point[1] > plotHeight / 2 ? 'bottom' : 'top' : 'bottom';
   const y = upright ? point[1] > plotHeight / 2 ? 4 : plotHeight - 4 : point[1];
-  return <Tooltip open={open && content !== null} onOpenChange={next => { if (!next && open) onDismiss(); }} delayDuration={0}
+  // The chart owns selection. Tooltip scroll/hover dismissal must not retire it.
+  return <Tooltip open={open && content !== null} delayDuration={0}
     motion="blur" arrow={false} disableHoverableContent>
     <TooltipTrigger asChild><span aria-hidden="true" tabIndex={-1} className="zero-sankey__inspection-anchor"
       style={{ left: point[0], top: y }} /></TooltipTrigger>

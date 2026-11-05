@@ -76,7 +76,7 @@ export function SlopeChart({ data: dataInput, label, startLabel, endLabel, forma
   const figure = useRef<HTMLElement>(null);
   const stage = useRef<HTMLDivElement>(null);
   useImperativeHandle(ref, () => figure.current as HTMLElement);
-  const { inView, reduced } = useArcChartEnvironment(figure, { motion: motionEnabled });
+  const { inView, reduced, visible: chartVisible } = useArcChartEnvironment(figure, { motion: motionEnabled });
   const empty = data.length === 0;
 
   const [width, setWidth] = useState(0);
@@ -190,7 +190,7 @@ export function SlopeChart({ data: dataInput, label, startLabel, endLabel, forma
           })}
         </div>
       </>}
-      <ArcDistributionInspector open={width>0&&!!activeRow} point={[(x0+x1)/2,HEAD+(activeRow?(activeRow.y0+activeRow.y1)/2:0)]} content={tooltipContent} className={styles.tooltip} plot={stage.current} onDismiss={()=>setActive(null)} />
+      <ArcDistributionInspector open={chartVisible&&width>0&&!!activeRow} point={[(x0+x1)/2,HEAD+(activeRow?(activeRow.y0+activeRow.y1)/2:0)]} content={tooltipContent} className={styles.tooltip} plot={stage.current} onDismiss={()=>setActive(null)} />
       {empty && <p className={styles.message}>{emptyLabel}</p>}
     </div>
     <p className={styles.srOnly} aria-live="polite" aria-atomic="true">{announce}</p>

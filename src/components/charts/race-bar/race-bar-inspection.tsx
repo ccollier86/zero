@@ -34,8 +34,8 @@ export function RaceBarItemTooltip(context: RaceBarItemTooltipContext) {
 export function RaceBarInspector({ open, point, content, onDismiss }: {
   open: boolean; point: readonly [number, number]; content: React.ReactNode; onDismiss: () => void;
 }) {
-  return <Tooltip open={open && content !== null} delayDuration={0} motion="blur" arrow={false} disableHoverableContent
-    onOpenChange={next => { if (!next && open) onDismiss(); }}>
+  // The chart owns selection; scrolling the overlay away is not a new selection.
+  return <Tooltip open={open && content !== null} delayDuration={0} motion="blur" arrow={false} disableHoverableContent>
     <TooltipTrigger asChild><span tabIndex={-1} aria-hidden="true" className="zero-race-bar__inspection-anchor" style={{ left: point[0], top: point[1] }} /></TooltipTrigger>
     <TooltipContent className="zero-race-bar__tooltip" side="top" sideOffset={6} align="center" collisionPadding={8} arrow={false}
       onEscapeKeyDown={event => { event.preventDefault(); onDismiss(); }}>{content}</TooltipContent>

@@ -642,6 +642,22 @@ aliases retain explicit overrides; measurement and paint use the same effective
 geometry. All platform font overrides use the same `--zero-chart-font-family`
 family role, and `data-motion="off"` settles CSS feedback as well as JS geometry.
 
+The November 2026 chart-polish pass retains those shared defaults. Cartesian
+caption/tick lanes now derive their space from the effective
+`--zero-chart-metadata-size` and `--zero-chart-font-family`; gutter measurement
+must use the displayed formatter output, not raw-number character counts.
+Statistical/category and Realtime labels use the same bounded-text policy.
+Shortened paint must retain full labels and exact values outside the shortened
+glyph string. This is typography/layout, never a change to measurement semantics.
+
+Two private Arc edge roles complete the bounded numeric-axis treatment:
+`--zero-arc-line-chart-tick-right` and `--zero-arc-bar-chart-tick-right`, both 2px
+by default. They complement the existing 10px left inset inside the inherited
+52px axis gutter; they do not introduce another public palette or theme. Line
+date labels share neighbor-midpoint cells, and Bar labels stay within their
+measured bar frame. Existing motion curves, palette order, inspector surfaces
+and legacy theme files remain unchanged.
+
 This extension is a working-source component/theme slice. It does not complete
 the global default-theme migration, introduce Pro code, replace Recharts or
 implement a new authorized server aggregate service.

@@ -37,6 +37,19 @@ async function mount(width = 1100, dark = false, reduced = false) {
 async function close(page: Page) { try { expect(errors.get(page)).toEqual([]); } finally { await page.close(); } }
 async function settled(page: Page) { await page.waitForFunction(() => document.querySelector('.zero-sankey__plot')?.getAttribute('data-settling') === 'false'); }
 
+browserTest('offscreen Sankey inspection hides its portal and restores the accepted trace', async () => {
+  const page = await mount(1100, false, true);
+  try {
+    await page.setViewportSize({width:1100,height:450}); await page.addStyleTag({content:'body{min-height:3000px}'});
+    await page.locator('.zero-sankey__plot').scrollIntoViewIfNeeded();
+    await page.evaluate(()=>window.__sankeyFixture.trace({kind:'node',id:'activated'}));
+    await page.getByRole('tooltip').waitFor(); await page.evaluate(()=>window.scrollTo(0,document.body.scrollHeight));
+    await page.getByRole('tooltip').waitFor({state:'hidden'});
+    expect(await page.evaluate(()=>window.__sankeyFixture.state().trace)).toEqual({kind:'node',id:'activated'});
+    await page.locator('.zero-sankey__plot').scrollIntoViewIfNeeded(); await page.getByRole('tooltip').filter({hasText:'6,950 people'}).waitFor();
+  } finally {await close(page);}
+},30000);
+
 browserTest('marker-only next palettes and font density retarget paint without retiring Sankey trace or nodes', async () => {
   const page = await mount(1100, false, true);
   try {

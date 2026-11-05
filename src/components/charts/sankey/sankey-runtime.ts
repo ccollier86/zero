@@ -17,6 +17,8 @@ export interface SankeyRuntimeOptions {
   traceColor?: 'source' | 'mix'; motion?: boolean; particles?: boolean; particleSpeed?: number;
   formatValue: (value: number) => string;
   onLayout?: (layout: SankeyLayout) => void;
+  /** Presentation visibility only; never retires the accepted trace. */
+  onVisibilityChange?: (visible: boolean) => void;
 }
 export interface SankeyRuntimeElements { figure: HTMLElement; plot: HTMLElement; back: SVGSVGElement; front: SVGSVGElement; canvas: HTMLCanvasElement; }
 /** Limit the optional split-origin paint layer; source traces remain available for dense aggregate graphs. */
@@ -83,6 +85,7 @@ export class SankeyPaintRuntime {
     this.intersection = new IntersectionObserver(entries => {
       if (this.destroyed) return;
       this.visible = entries[0]?.isIntersecting ?? false;
+      this.options.onVisibilityChange?.(this.visible && !this.document.hidden);
       if (this.visible && !this.started) { this.started = true; if (this.morphStart === Infinity) this.morphStart = this.now(); }
       if (!this.visible) this.stop(); else this.kick();
     }, { threshold: .15 });
@@ -99,7 +102,7 @@ export class SankeyPaintRuntime {
   }
   private now() { return this.view.performance.now() / 1000; }
   private reduced() { return this.reduce.matches || this.options.motion === false; }
-  private visibility = () => { if (this.document.hidden) this.stop(); else this.kick(); };
+  private visibility = () => { if (this.destroyed) return; this.options.onVisibilityChange?.(this.visible && !this.document.hidden); if (this.document.hidden) this.stop(); else this.kick(); };
   private motionChanged = () => { if (this.destroyed) return; if (this.reduced()) this.morphStart = -1e9; this.render(this.now()); this.kick(); };
   private repaintTheme = () => {
     if (this.destroyed) return;

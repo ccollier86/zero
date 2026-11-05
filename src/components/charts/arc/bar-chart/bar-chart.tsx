@@ -127,10 +127,11 @@ function Gridline({ value, scale, height,reduced }: { value: number; scale: Moti
 
 function TickLabel({ value, scale, height, avoid, format,reduced }: { value: number; scale: MotionValue<number>; height: number; avoid: MotionValue<number> | null; format: (value: number) => string;reduced:boolean }) {
   const y = useRowY(value, scale, height);
+  const label = format(value);
   // A tick label makes way where the average label sits beside it.
   const opacity = useTransform(() => avoid ? clamp((Math.abs(y.get() - avoid.get()) - 10) / 6, 0, 1) : 1);
   return <motion.span className={styles.tick} style={{ y }} initial={reduced?false:{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, transition: reduced?{duration:0}:fadeFast }} transition={reduced?{duration:0}:{ duration: duration.standard, ease: [...ease.standard] }}>
-    <motion.span className={styles.tickText} style={{ opacity }}>{format(value)}</motion.span>
+    <motion.span className={styles.tickText} style={{ opacity }} title={label}>{label}</motion.span>
   </motion.span>;
 }
 
@@ -138,7 +139,7 @@ function AxisLabel({ text, size, shift, place, frame, reduced }: { text: string;
   const slot = usePlace(place, reduced);
   // Centred under its bar and carried by the zoom. A label at either end keeps the nudge that holds it inside the settled plot.
   const x = useTransform(() => centerOf(frame, slot.get()) - size / 2 + shift);
-  return <motion.span className={styles.axisLabel} style={{ x }} initial={reduced?false:{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, transition: reduced?{duration:0}:fadeFast }} transition={reduced?{duration:0}:{ duration: duration.standard, ease: [...ease.standard] }}>{text}</motion.span>;
+  return <motion.span className={styles.axisLabel} title={text} style={{ x,maxWidth:frame.width }} initial={reduced?false:{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, transition: reduced?{duration:0}:fadeFast }} transition={reduced?{duration:0}:{ duration: duration.standard, ease: [...ease.standard] }}>{text}</motion.span>;
 }
 
 /** Axis labels that fit once the range has settled: every label, else every second, third, and so on, counted back from the latest so the newest date always shows and spacing stays even. */

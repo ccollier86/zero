@@ -55,3 +55,7 @@
 .zero-arc-bar-chart__plot:focus-visible, .zero-arc-bar-chart__scrubber:focus-visible, .zero-arc-bar-chart__window:focus-visible, .zero-arc-bar-chart__handle:focus-visible {
  outline: var(--zero-chart-focus-width,2px) solid var(--zero-arc-focus-outline,var(--zero-chart-focus-color,var(--foreground))); outline-offset: var(--zero-chart-focus-offset,2px);
 }
+
+/* Formatted axis values and measured categories must stay inside their cells. */
+.zero-arc-bar-chart__tick,.zero-arc-bar-chart__meanLabel { right:var(--zero-arc-bar-chart-tick-right,2px); }
+.zero-arc-bar-chart__tickText,.zero-arc-bar-chart__axisLabel { overflow:hidden;text-overflow:ellipsis; }

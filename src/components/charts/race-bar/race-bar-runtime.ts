@@ -261,7 +261,7 @@ export class RaceBarPaintRuntime {
     for (const mark of this.elements.figure.querySelectorAll<HTMLElement>('.zero-race-bar__mark')) mark.classList.toggle('ahead', Number(mark.dataset.frame) > snapshot.position + .01);
     this.settling = moving; this.elements.plot.dataset.settling = String(moving); this.elements.plot.dataset.position = String(snapshot.position);
     this.elements.plot.dataset.playing = String(this.active); this.elements.plot.dataset.requestedPlaying = String(this.wanted);
-    this.options.onPaint(snapshot, layout, anchor, this.active); return moving;
+    this.options.onPaint(snapshot, layout, this.onScreen && !this.document.hidden ? anchor : null, this.active); return moving;
   }
 
   private rollPeriod(period: string, index: number) {

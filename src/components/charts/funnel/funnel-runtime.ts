@@ -228,7 +228,7 @@ export class FunnelPaintRuntime {
     const anchor = active && hasData && layout.width > 0 ? layout.vertical ? [layout.cross / 2, this.column.position.x + layout.stepSize] as const : [this.column.position.x + layout.stepSize, layout.headerHeight + layout.cross / 2] as const : null;
     this.elements.plot.dataset.settling = String(moving); this.elements.plot.dataset.flow = String(this.options.flow && !this.instant && this.started && hasData);
     this.elements.plot.dataset.particles = String(this.dots.length); this.elements.plot.dataset.growth = String(this.grow.x);
-    this.options.onPaint(layout, anchor, conversion);
+    this.options.onPaint(layout, this.onScreen && !this.document.hidden ? anchor : null, conversion);
     return moving;
   }
 

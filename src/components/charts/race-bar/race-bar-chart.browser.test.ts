@@ -36,6 +36,19 @@ async function close(page: Page) { try { expect(errors.get(page)).toEqual([]); }
 async function settled(page: Page) { await page.waitForFunction(() => document.querySelector('.zero-race-bar__plot')?.getAttribute('data-settling') === 'false'); }
 async function seek(page: Page, position: number) { await page.evaluate(value => window.__raceBarFixture.action('seek', value), position); await settled(page); }
 
+browserTest('offscreen Race Bar inspection hides its portal without clearing accepted item selection', async () => {
+  const page = await mount(1100, false, true);
+  try {
+    await page.setViewportSize({width:1100,height:450}); await page.addStyleTag({content:'body{min-height:3000px}'});
+    const plot=page.locator('.zero-race-bar__plot'); await plot.scrollIntoViewIfNeeded(); await plot.focus(); await plot.press('ArrowDown');
+    const accepted=await page.evaluate(()=>window.__raceBarFixture.state().selection); expect(accepted).not.toBeNull();
+    await page.getByRole('tooltip').waitFor(); await page.evaluate(()=>window.scrollTo(0,document.body.scrollHeight));
+    await page.getByRole('tooltip').waitFor({state:'hidden'});
+    expect(await page.evaluate(()=>window.__raceBarFixture.state().selection)).toBe(accepted);
+    await plot.scrollIntoViewIfNeeded(); await page.getByRole('tooltip').waitFor();
+  } finally {await close(page);}
+},30000);
+
 browserTest('marker-only density and late fonts remeasure Race Bar while period selection and idle teardown stay intact', async () => {
   const page = await mount(1100, false, true);
   try {
@@ -125,7 +138,10 @@ browserTest('pointer hover follows the cursor, touch pin toggles and selected va
     const second = Number((await anchor.getAttribute('style'))?.match(/left: ([\d.]+)/)?.[1]); expect(second).not.toBe(first);
     await page.mouse.move(2, 2); await page.getByRole('tooltip').waitFor({ state: 'hidden' });
     await page.locator('[data-item-id="throw"]').dispatchEvent('pointerup', { pointerType: 'touch' }); await page.getByRole('tooltip').filter({ hasText: '$52K' }).waitFor();
-    await page.evaluate(() => window.__raceBarFixture.action('play')); await page.getByRole('tooltip').filter({ hasText: '$53K' }).waitFor();
+    await page.evaluate(() => window.__raceBarFixture.action('play'));
+    // A particular rounded dollar value can last less than the browser's poll
+    // interval. Assert sustained live advancement rather than catching "$53K".
+    await page.waitForFunction(() => Number(document.querySelector('.zero-race-bar__tooltip .zero-race-bar__inspection-value')?.textContent?.replace(/[^\d.]/g,'')) > 52);
     await page.evaluate(() => window.__raceBarFixture.action('pause')); await settled(page);
     await page.locator('[data-item-id="throw"]').dispatchEvent('pointerup', { pointerType: 'touch' }); await page.getByRole('tooltip').waitFor({ state: 'hidden' });
   } finally { await close(page); }

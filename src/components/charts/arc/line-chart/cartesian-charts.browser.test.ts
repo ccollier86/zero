@@ -31,3 +31,9 @@ browserTest('brush controlled window rejects and accepts keyboard range requests
 browserTest('empty data retires geometry and accessibility rather than fabricating zero points',async()=>{const page=await mount();try{
  await page.evaluate(()=>window.__arcCartesian.patch({empty:true}));await page.getByText('No data for this range',{exact:true}).waitFor();expect(await page.locator('.zero-arc-line-chart__line').evaluateAll(elements=>elements.every(element=>element.getAttribute('d')===''))).toBe(true);expect(await page.locator('.zero-arc-sparkline__line').getAttribute('points')).toBe('');expect(await page.locator('.zero-arc-sparkline__plot').getAttribute('role')).toBeNull();expect(await page.getByRole('slider',{name:'Sessions, explore by day'}).getAttribute('tabindex')).toBe('-1');
 }finally{await page.close();}},30000);
+browserTest('offscreen Arc inspection retires the portal and restores the accepted selection on return',async()=>{const page=await mount(390);try{
+ await page.setViewportSize({width:390,height:450});const plot=page.getByRole('slider',{name:'Acquisition trend, explore by date'});await plot.scrollIntoViewIfNeeded();
+ await page.evaluate(()=>window.__arcCartesian.patch({controlled:true,reject:true,motion:false,active:'4'}));await page.getByRole('tooltip').waitFor();
+ await page.evaluate(()=>window.scrollTo(0,document.documentElement.scrollHeight));await page.getByRole('tooltip').waitFor({state:'hidden'});expect(await page.evaluate(()=>window.__arcCartesian.state().active)).toBe('4');
+ await plot.scrollIntoViewIfNeeded();await page.getByRole('tooltip').waitFor();expect(await page.getByRole('tooltip').textContent()).toContain('Day 5');
+}finally{await page.close();}},30000);

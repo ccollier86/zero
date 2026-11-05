@@ -332,7 +332,7 @@ function BrushChartRenderer({ motion:motionEnabled, data, label, unit = "", form
           <span className={styles.eventDot} />
           <span className={styles.eventLabel}>{event.label}</span>
         </button>; })}
-        <CartesianInspector open={tipOn} x={tipX} y={tipY} plot={plot.current} className={styles.tooltip} onDismiss={()=>{setActive(null);setHoverEvent(null);}} content={<>
+        <CartesianInspector open={tipOn&&environment.visible} x={tipX} y={tipY} plot={plot.current} className={styles.tooltip} onDismiss={()=>{setActive(null);setHoverEvent(null);}} content={<>
           {shownEvent ? <>
             <p className={styles.tipTitle}>{formatDate(new Date(shownEvent.t))}</p>
             <p className={styles.tipValue}>{shownEvent.label}</p>

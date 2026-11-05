@@ -28,8 +28,8 @@ export function FunnelStageTooltip({ stage, view, rows, total, keptFromPrevious,
 export function FunnelInspector({ open, content, point, vertical, stepSize, plot, onDismiss }: {
   open: boolean; content: React.ReactNode; point: readonly [number, number]; vertical: boolean; stepSize: number; plot?: HTMLElement | null; onDismiss: () => void;
 }) {
-  return <Tooltip open={open && content !== null} delayDuration={0} motion="blur" arrow={false} disableHoverableContent
-    onOpenChange={next => { if (!next && open) onDismiss(); }}>
+  // The chart owns selection; tooltip scroll dismissal cannot clear a stage.
+  return <Tooltip open={open && content !== null} delayDuration={0} motion="blur" arrow={false} disableHoverableContent>
     {/* The complete stage span gives Zero's collision flip the opposite stage edge, not an overlapping trailing-edge point. */}
     <TooltipTrigger asChild><span tabIndex={-1} aria-hidden="true" className="zero-funnel__inspection-anchor" style={vertical
       ? { left: point[0], top: point[1] - stepSize, width: 1, height: stepSize }

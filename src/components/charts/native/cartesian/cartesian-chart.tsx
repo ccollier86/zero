@@ -7,6 +7,8 @@ import{formatNativeChartNumber}from'../shared/native-format';
 import{admitCartesianHidden,buildCartesianModel,fitCartesianWindow}from'./cartesian-model';
 import{computeCartesianLayout,cartesianBubbleRadius,cartesianBubbleMaximum}from'./cartesian-layout';
 import{cartesianKeyboardTarget}from'./cartesian-interaction';
+import{CartesianAxes}from'./cartesian-axes';
+import{useChartTextMetrics}from'../shared/use-chart-text-metrics';
 import{record,text,number,flag,list,choice,domain}from'./cartesian-admission';
 import type{CartesianDatum,CartesianSeries,CartesianOptions,CartesianActive,CartesianModelDatum,CartesianModelSeries,CartesianAxisModel,CartesianModel}from'./cartesian-types';
 export type{CartesianDatum,CartesianSeries,CartesianActive}from'./cartesian-types';
@@ -22,7 +24,6 @@ export interface CartesianChartProps extends Omit<CartesianOptions,'hiddenSeries
  readonly window?:readonly[number,number];readonly defaultWindow?:readonly[number,number];readonly onWindowChange?:(window:[number,number])=>void;
  readonly renderTooltip?:(context:CartesianTooltipContext)=>ReactNode;
 }
-const compact=new Intl.NumberFormat('en-US',{notation:'compact',maximumFractionDigits:1});
 const encode=(active:CartesianActive|null|undefined):string|null|undefined=>active===undefined?undefined:active===null?null:JSON.stringify([active.datumId,active.seriesId??null]);
 const decode=(value:string|null):CartesianActive|null=>{if(value===null)return null;const[id,series]=JSON.parse(value)as[string,string|null];return{datumId:id,...(series===null?{}:{seriesId:series})};};
 function admitActive(value:CartesianActive|null|undefined,path:string):CartesianActive|null|undefined{if(value===undefined||value===null)return value;const active=record(value,path,['datumId','seriesId']);return{datumId:text(active.datumId,path,true),...(active.seriesId===undefined?{}:{seriesId:text(active.seriesId,path,true)})};}
@@ -41,7 +42,8 @@ export function CartesianChart(props:CartesianChartProps){
  const model=useMemo(()=>buildCartesianModel(props.data,props.series,{xAxis:props.xAxis,yAxes:props.yAxes,layout:props.layout,stack:props.stack,missing:props.missing,hiddenSeriesIds:hidden,window:externalWindow??localWindow,references:props.references,bands:props.bands}),[props.data,props.series,props.xAxis,props.yAxes,props.layout,props.stack,props.missing,JSON.stringify(hidden),externalWindow?.[0],externalWindow?.[1],localWindow?.[0],localWindow?.[1],props.references,props.bands]);
  // Drop retired visibility state, so an unrelated later series with a reused ID does not inherit stale intent.
  useEffect(()=>{if(props.hiddenSeriesIds===undefined&&localHidden.some(id=>!model.series.some(series=>series.id===id)))setLocalHidden(localHidden.filter(id=>model.series.some(series=>series.id===id)));},[model.series,props.hiddenSeriesIds,localHidden]);
- const geometry=useMemo(()=>computeCartesianLayout(model,width,height),[model,width,height]);const horizontal=model.layout==='horizontal';
+ const textMetrics=useChartTextMetrics(plot,'.zero-native-chart__axis');
+ const geometry=useMemo(()=>computeCartesianLayout(model,width,height,{...textMetrics,formatX:props.formatX,formatYTick:props.formatYTick}),[model,width,height,textMetrics,props.formatX,props.formatYTick]);const horizontal=model.layout==='horizontal';
  const dataInWindow=model.data.filter(datum=>datum.coordinate>=model.window[0]&&datum.coordinate<=model.window[1]);
  const acceptedIds=dataInWindow.flatMap(datum=>model.visibleSeries.length?[JSON.stringify([datum.id,null]),...model.visibleSeries.filter(series=>datum.cells[series.id]!.value!==null).map(series=>JSON.stringify([datum.id,series.id]))]:[]);
  const external=admitActive(props.active,'active'),initial=admitActive(props.defaultActive,'defaultActive');
@@ -67,7 +69,7 @@ export function CartesianChart(props:CartesianChartProps){
  const id=`native-cartesian-${useId().replace(/[^a-zA-Z0-9_-]/g,'')}`;const transition=reduced?{duration:0}:NATIVE_CHART_MOTION.morph;
  const revealed=environment.inView||reduced;const maxBubble=cartesianBubbleMaximum(model);
  const tableShape=model.series.map(series=>({series,interval:model.data.some(datum=>datum.cells[series.id]!.low!==null),size:model.data.some(datum=>datum.cells[series.id]!.size!==null)}));
- const completeColumns=['Observation',model.xLabel||'X',...tableShape.flatMap(({series,interval,size})=>[series.label,...(interval?[`${series.label} low`,`${series.label} high`]:[]),...(size?[`${series.label} size`]:[])])];
+ const completeColumns=['Observation',model.xLabel||'X',...tableShape.flatMap(({series,interval,size})=>{const unit=model.axes.find(axis=>axis.id===series.axisId)?.label,name=unit?`${series.label} (${unit})`:series.label;return[name,...(interval?[`${name} low`,`${name} high`]:[]),...(size?[`${series.label} size`]:[])];})];
  const completeRows=model.data.map(datum=>[datum.label,String(datum.x),...tableShape.flatMap(({series,interval,size})=>{const cell=datum.cells[series.id]!;return[cell.value===null?'—':String(cell.value),...(interval?[cell.low===null?'—':String(cell.low),cell.high===null?'—':String(cell.high)]:[]),...(size?[cell.size===null?'—':String(cell.size)]:[])];})]);
  const gridAxis=geometry.axes[0]!;const empty=!dataInWindow.length||!model.visibleSeries.length||geometry.series.every(shape=>!shape.points.length);const SeriesPresence=reduced?StaticGeometry:AnimatePresence;
  return<NativeChartFrame ref={figure} label={label} title={props.title} subtitle={props.subtitle} className={['zero-native-cartesian',props.className].filter(Boolean).join(' ')} motion={!reduced} summary={datum?`${datum.label}. ${model.visibleSeries.map(series=>`${series.label} ${datum.cells[series.id]!.value===null?'missing':format(datum.cells[series.id]!.value!,series)}`).join(', ')}`:undefined}>
@@ -89,12 +91,11 @@ export function CartesianChart(props:CartesianChartProps){
       {model.references.map(reference=>{const coordinate=reference.axis==='x'?geometry.mapX(reference.value):geometry.mapY(reference.value,reference.axisId),vertical=horizontal?reference.axis==='y':reference.axis==='x';return<g key={reference.id} style={{color:reference.color??'var(--zero-chart-foreground,var(--foreground))'}}>{vertical?<line className="zero-native-cartesian__reference" x1={coordinate} x2={coordinate} y1={0} y2={geometry.plotHeight}/>:<line className="zero-native-cartesian__reference" x1={0} x2={geometry.plotWidth} y1={coordinate} y2={coordinate}/>} {reference.label&&<text className="zero-native-chart__axis" x={vertical?coordinate+4:4} y={vertical?12:coordinate-4}>{reference.label}</text>}</g>;})}
       {datum&&(horizontal?<line className="zero-native-cartesian__cursor" x1={0} x2={geometry.plotWidth} y1={independent} y2={independent}/>:<line className="zero-native-cartesian__cursor" x1={independent} x2={independent} y1={0} y2={geometry.plotHeight}/>)}
      </g>
-     {geometry.axes.map(({axis,ticks})=><g key={axis.id}>{ticks.map(tick=><text key={tick.value} className="zero-native-chart__axis" x={horizontal?tick.position:axis.side==='right'?geometry.plotWidth+8:-8} y={horizontal?axis.side==='right'?-10:geometry.plotHeight+20:tick.position+4} textAnchor={horizontal?'middle':axis.side==='right'?'start':'end'}>{props.formatYTick?.(tick.value,axis)??(model.stack==='percent'?`${Math.round(tick.value*100)}%`:compact.format(tick.value))}</text>)}{axis.label&&<text className="zero-native-chart__axis" x={horizontal?geometry.plotWidth/2:axis.side==='right'?geometry.plotWidth+8:-8} y={horizontal?axis.side==='right'?-21:geometry.plotHeight+31:0} textAnchor={horizontal?'middle':axis.side==='right'?'start':'end'}>{axis.label}</text>}</g>)}
-     {geometry.independentTicks.map(tick=><text key={tick.coordinate} className="zero-native-chart__axis" x={horizontal?-8:tick.position} y={horizontal?tick.position+4:geometry.plotHeight+20} textAnchor={horizontal?'end':tick.position<16?'start':tick.position>geometry.plotWidth-16?'end':'middle'}>{(props.formatX?.(model.xType==='category'?model.data.find(datum=>datum.coordinate===tick.coordinate)?.x??tick.label:tick.coordinate)??tick.label).slice(0,horizontal?18:48)}</text>)}
+     <CartesianAxes geometry={geometry}/>
     </g>
    </svg>
    {empty&&<div className="zero-native-cartesian__empty">{props.emptyLabel??(!model.data.length?'No measurements yet':!model.visibleSeries.length?'Choose a visible series':'No measurements in this window')}</div>}
-   <NativeChartInspector open={datum!==null&&!empty} content={inspector} point={point} onDismiss={()=>request(null)}/>
+   <NativeChartInspector open={datum!==null&&!empty&&environment.visible} content={inspector} point={point} onDismiss={()=>request(null)}/>
   </div>
   {props.brush&&model.xDomain[0]<model.xDomain[1]&&<div className="zero-native-cartesian__window"><label>From<input type="range" aria-label={`${label} window start`} min={model.xDomain[0]} max={model.xDomain[1]} step={model.xType==='category'?1:'any'} value={model.window[0]} onChange={event=>setWindow([Math.min(event.currentTarget.valueAsNumber,model.window[1]),model.window[1]])}/></label><label>To<input type="range" aria-label={`${label} window end`} min={model.xDomain[0]} max={model.xDomain[1]} step={model.xType==='category'?1:'any'} value={model.window[1]} onChange={event=>setWindow([model.window[0],Math.max(model.window[0],event.currentTarget.valueAsNumber)])}/></label><button type="button" onClick={()=>setWindow(model.xDomain)}>Reset</button></div>}
   <NativeChartDataTable label={label} columns={completeColumns} rows={completeRows}/>

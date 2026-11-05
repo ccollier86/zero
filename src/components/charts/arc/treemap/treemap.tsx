@@ -67,7 +67,7 @@ export function Treemap({ data, label, formatValue = value => grouped.format(val
   const stage = useRef<HTMLDivElement>(null);
   const tiles = useRef(new Map<string, HTMLDivElement>());
   useImperativeHandle(ref, () => figure.current as HTMLElement);
-  const { inView, reduced } = useArcChartEnvironment(figure, { motion: motionEnabled });
+  const { inView, reduced, visible: chartVisible } = useArcChartEnvironment(figure, { motion: motionEnabled });
 
   const flat = useMemo(() => buildTreemapModel(data), [data]);
   const root = normalizeTreemapFocus(flat,undefined);
@@ -246,7 +246,7 @@ export function Treemap({ data, label, formatValue = value => grouped.format(val
         <span className={styles.tileValue}>{formatValue(node.value)}</span>
       </div>; })}
       {empty && <p className={styles.message}>{emptyLabel}</p>}
-      <ArcDistributionInspector open={width>0&&!!activeNode} point={[pointer?.x??(activeNode?(target.get(activeNode.id)?.x??0)+(target.get(activeNode.id)?.w??0)/2:0),pointer?.y??(activeNode?(target.get(activeNode.id)?.y??0)+Math.min((target.get(activeNode.id)?.h??0)/2,28):0)]} content={tooltipContent} className={styles.tooltip} plot={stage.current} side="right" onDismiss={()=>setActive(null)} />
+      <ArcDistributionInspector open={chartVisible&&width>0&&!!activeNode} point={[pointer?.x??(activeNode?(target.get(activeNode.id)?.x??0)+(target.get(activeNode.id)?.w??0)/2:0),pointer?.y??(activeNode?(target.get(activeNode.id)?.y??0)+Math.min((target.get(activeNode.id)?.h??0)/2,28):0)]} content={tooltipContent} className={styles.tooltip} plot={stage.current} side="right" onDismiss={()=>setActive(null)} />
     </div>
     {colored && <div className={styles.scale} aria-hidden="true">
       <span className={styles.scaleLabel}>{colorLabel}</span>

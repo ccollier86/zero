@@ -96,7 +96,7 @@ export function Streamgraph({ data: dataInput, series: seriesInput, label, unit 
   const paths = useRef(new Map<string, SVGPathElement>());
   const labels = useRef(new Map<string, SVGTextElement>());
   useImperativeHandle(ref, () => figure.current as HTMLElement);
-  const { inView, reduced } = useArcChartEnvironment(figure, { motion: motionEnabled });
+  const { inView, reduced, visible: chartVisible } = useArcChartEnvironment(figure, { motion: motionEnabled });
   const last = data.length - 1;
   const empty = data.length === 0;
 
@@ -323,7 +323,7 @@ export function Streamgraph({ data: dataInput, series: seriesInput, label, unit 
           <motion.line className={styles.crosshair} x1={0} x2={0} y1={0} y2={height} style={{ x: reduced ? cursor : cursorSpring }} />
           {directLabels && series.map(line => <text key={line.id} ref={node => { if (node) labels.current.set(line.id, node); else labels.current.delete(line.id); }} className={styles.label} data-active={activeKey === line.id || undefined} data-custom={line.color ? true : undefined} data-hidden={hidden.includes(line.id) || undefined} data-dim={(activeKey !== null && activeKey !== line.id) || undefined} textAnchor="middle" dominantBaseline="central">{line.label}</text>)}
         </svg>
-        <ArcDistributionInspector open={plotWidth>0&&index!==null&&visible.length>0} point={[index===null?0:last>0?index/last*plotWidth:plotWidth/2,hover?.y??height/2]} content={tooltipContent} className={styles.tooltip} plot={plot.current} side="right" onDismiss={()=>setHover(null)} />
+        <ArcDistributionInspector open={chartVisible&&plotWidth>0&&index!==null&&visible.length>0} point={[index===null?0:last>0?index/last*plotWidth:plotWidth/2,hover?.y??height/2]} content={tooltipContent} className={styles.tooltip} plot={plot.current} side="right" onDismiss={()=>setHover(null)} />
         {(empty || visible.length === 0) && <p className={styles.message}>{empty ? emptyLabel : "Choose a layer to show"}</p>}
       </div>
       <div className={styles.axis} aria-hidden="true">

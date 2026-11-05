@@ -34,6 +34,19 @@ async function mount(width = 1100, dark = false, reduced = true) {
 async function close(page: Page) { try { expect(errors.get(page)).toEqual([]); } finally { await page.close(); } }
 async function settled(page: Page) { await page.waitForFunction(() => document.querySelector('.zero-funnel__plot')?.getAttribute('data-settling') === 'false'); }
 
+browserTest('offscreen Funnel inspection hides its portal and restores the accepted stage', async () => {
+  const page = await mount();
+  try {
+    await page.setViewportSize({width:1100,height:450}); await page.addStyleTag({content:'body{min-height:3000px}'});
+    const plot=page.locator('.zero-funnel__plot'); await plot.scrollIntoViewIfNeeded(); await plot.focus(); await plot.press('Home');
+    const accepted=await page.evaluate(()=>window.__funnelFixture.state().active); expect(accepted).not.toBeNull();
+    await page.getByRole('tooltip').waitFor(); await page.evaluate(()=>window.scrollTo(0,document.body.scrollHeight));
+    await page.getByRole('tooltip').waitFor({state:'hidden'});
+    expect(await page.evaluate(()=>window.__funnelFixture.state().active)).toBe(accepted);
+    await plot.scrollIntoViewIfNeeded(); await page.getByRole('tooltip').waitFor();
+  } finally {await close(page);}
+},30000);
+
 browserTest('next mode density and public marker changes repaint Funnel cached bands without retiring active stages', async () => {
   const page = await mount();
   try {

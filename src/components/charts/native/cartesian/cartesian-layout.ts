@@ -2,7 +2,9 @@
 import{cartesianScale,cartesianTicks}from'./cartesian-scales';
 import{list,number,flag,choice}from'./cartesian-admission';
 import{assertAdmittedCartesianModel}from'./cartesian-model';
-import type{CartesianModel,CartesianModelSeries,CartesianLayout,CartesianCurve,CartesianPoint,CartesianBar,CartesianSeriesGeometry}from'./cartesian-types';
+import{cartesianAxisPresentation}from'./cartesian-axis-layout';
+import{chartAxisText,horizontalChartAxisText,sampleChartTicks,chartTextWidth}from'../shared/chart-text-layout';
+import type{CartesianModel,CartesianModelSeries,CartesianLayout,CartesianLayoutOptions,CartesianCurve,CartesianPoint,CartesianBar,CartesianSeriesGeometry}from'./cartesian-types';
 type Point=readonly[number,number];
 const rounded=(value:number)=>Number(value.toFixed(3));
 const pair=(point:Point)=>`${rounded(point[0])},${rounded(point[1])}`;
@@ -40,10 +42,10 @@ export function cartesianBubbleMaximum(model:CartesianModel):number{
  assertAdmittedCartesianModel(model);const series=model.visibleSeries.filter(line=>line.mark==='scatter'&&line.bubble);let maximum=0;for(const datum of model.data)for(const line of series)maximum=Math.max(maximum,datum.cells[line.id]!.size??0);return maximum;
 }
 /** Convert only a detached buildCartesianModel result into a clipped plot; serialized/forged records cannot grant geometry authority. */
-export function computeCartesianLayout(model:CartesianModel,width=640,height=300):CartesianLayout{
+export function computeCartesianLayout(model:CartesianModel,width=640,height=300,options:CartesianLayoutOptions={}):CartesianLayout{
  assertAdmittedCartesianModel(model);
  if(!Number.isFinite(width)||width<120||width>16384||!Number.isFinite(height)||height<120||height>4096)throw new RangeError('Cartesian geometry needs finite 120–16384px width and 120–4096px height');
- const horizontal=model.layout==='horizontal',left=horizontal?Math.min(116,width*.28):52,right=horizontal?18:model.axes.length>1?52:18,top=horizontal&&model.axes.length>1?30:12,bottom=32;
+ const horizontal=model.layout==='horizontal',presentation=cartesianAxisPresentation(model,width,height,options),{left,right,top,bottom,metrics}=presentation;
  const plotWidth=Math.max(1,width-left-right),plotHeight=Math.max(1,height-top-bottom),independentExtent=horizontal?plotHeight:plotWidth,numericExtent=horizontal?plotWidth:plotHeight;
  const hasBars=model.visibleSeries.some(series=>series.mark==='bar');const[windowLow,windowHigh]=model.window,windowSpan=windowHigh-windowLow;
  const categorySpan=windowSpan+1;
@@ -88,7 +90,14 @@ export function computeCartesianLayout(model:CartesianModel,width=640,height=300
  const tickRoom=Math.max(2,Math.floor(independentRange/80));let independentTicks:Array<{coordinate:number;label:string;position:number}>;
  if(model.xType==='category'){const count=Math.min(visibleData.length,tickRoom),indices=new Set(Array.from({length:count},(_,index)=>count===1?0:Math.round(index*(visibleData.length-1)/(count-1))));independentTicks=visibleData.filter((_,index)=>indices.has(index)).map(datum=>({coordinate:datum.coordinate,label:datum.label,position:mapX(datum.coordinate)}));}
  else{const actual=windowLow===windowHigh?[Math.max(-8.64e15,windowLow-1),Math.min(8.64e15,windowHigh+1)] as [number,number]:model.window;independentTicks=cartesianTicks(actual,'linear',tickRoom).map(coordinate=>({coordinate,label:model.xType==='time'?new Intl.DateTimeFormat('en-US',{timeZone:'UTC',month:'short',day:'numeric'}).format(coordinate):new Intl.NumberFormat('en-US',{notation:'compact',maximumFractionDigits:1}).format(coordinate),position:mapX(coordinate)}));}
- return Object.freeze({width,height,left,top,plotWidth,plotHeight,scatterRadius,maxBubbleRadius,independentTicks:Object.freeze(independentTicks),axes:Object.freeze(model.axes.map(axis=>Object.freeze({axis,ticks:Object.freeze(axis.ticks.map(value=>Object.freeze({value,position:mapY(value,axis.id)})))}))),series:Object.freeze(geometries),mapX,mapY});
+ const independentLabels=independentTicks.map(tick=>({...tick,label:presentation.formatX?.(model.xType==='category'?model.data.find(datum=>datum.coordinate===tick.coordinate)?.x??tick.label:tick.coordinate)??tick.label}));
+ const independentText=horizontal?sampleChartTicks(independentLabels,Math.floor(plotHeight/(presentation.lineHeight+6))+1).map(tick=>({...tick,textLayout:chartAxisText(tick.label,-8,tick.position+metrics.fontSize*.35,'end',left-12,metrics)})):horizontalChartAxisText(independentLabels,plotWidth,plotHeight+metrics.fontSize+8,metrics);
+ const axes=model.axes.map(axis=>{const labels=presentation.numeric.get(axis.id)!,maximum=Math.max(1,...labels.map(tick=>chartTextWidth(tick.label,metrics))),count=Math.floor(numericExtent/(horizontal?Math.min(maximum+12,Math.max(1,plotWidth/3)):presentation.lineHeight+6))+1;
+  const ticks=sampleChartTicks(labels,count).map(tick=>({...tick,position:mapY(tick.value,axis.id)}));
+  const laidOut=horizontal?horizontalChartAxisText(ticks,plotWidth,axis.side==='right'?-8:plotHeight+metrics.fontSize+8,metrics):ticks.map(tick=>({...tick,textLayout:chartAxisText(tick.label,axis.side==='right'?plotWidth+8:-8,tick.position+metrics.fontSize*.35,axis.side==='right'?'start':'end',(axis.side==='right'?right:left)-12,metrics)}));
+  return Object.freeze({axis,caption:presentation.caption(axis,plotWidth,plotHeight),ticks:Object.freeze(laidOut.map(tick=>Object.freeze(tick)))});
+ });
+ return Object.freeze({width,height,left,top,plotWidth,plotHeight,scatterRadius,maxBubbleRadius,independentCaption:presentation.independentCaption(plotWidth,plotHeight),independentTicks:Object.freeze(independentText.map(tick=>Object.freeze(tick))),axes:Object.freeze(axes),series:Object.freeze(geometries),mapX,mapY});
 }
 /** Bubble area is proportional to its nonnegative size; zero size draws no pretend population. */
 export function cartesianBubbleRadius(size:number|null,maxSize:number,minRadius=3,maxRadius=16):number{number(maxSize,'bubble maximum');number(minRadius,'bubble minimum radius',4096);number(maxRadius,'bubble maximum radius',4096);if(maxSize<0||minRadius<0||maxRadius<minRadius)throw new RangeError('Bubble sizes and ordered radii must be nonnegative');if(size===null)return minRadius;number(size,'bubble size');if(size<0||size>maxSize)throw new RangeError('Bubble size must lie within its nonnegative size domain');if(size===0)return 0;return Math.sqrt(size/maxSize)*maxRadius;}

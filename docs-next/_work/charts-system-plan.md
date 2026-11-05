@@ -8,14 +8,14 @@ visibility: internal
 system: frontend-components
 feature: zero-charts
 maturity: planned
-applies_to: ["2.6.0 working source"]
+applies_to: ["2.10.1 + chart-polish working source"]
 modes: [browser, SSR, light, dark]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.6.0"
-  commit: "335b27372b0b8ef57a1e92cf93cec378923fe50b"
+  version: "2.10.1"
+  commit: "7b151069835f841aca1542b2c8f02e7c3a66a6da"
   snapshot: dirty
-  date: "2026-10-09"
+  date: "2026-11-04"
   evidence_level: source-observed
 ---
 
@@ -573,6 +573,83 @@ The corrected four-bar endpoint capture is
 Light/dark/mobile family captures are refreshed by the full browser run. These
 are synthetic working-source checks, not a live-app, published-package or
 provider qualification claim.
+
+## Axis Caption and Family Review: November 2026
+
+This is a chart-only repair on `fix/chart-component-polish`, based on Zero 2.10.1
+commit `7b151069835f841aca1542b2c8f02e7c3a66a6da`. It is not a selected release
+archive. Stupify's database-free public `ComposedChart` reproduction confirmed
+that the vertical numeric caption and highest tick occupied the same baseline
+band. Fixed gutters also assumed a left axis and compact/default formatting.
+This is framework presentation ownership, not an error in application cash-flow
+math. No consuming application, database, deployment or provider was changed.
+
+The repair reserves real top/bottom caption lanes and side-aware text gutters.
+It renders the independent-axis caption too, including horizontal layouts.
+Formatter output and actual font metrics determine text budgets. Headless math
+has an additive fourth presentation-options argument and a deterministic SSR
+fallback; it remains React/DOM/transport-free. Browser measurement follows token,
+container and webfont changes and initially empty charts receiving new data.
+Long display strings fit by grapheme, dense ticks are sampled, and full labels,
+units and raw values remain in native titles/exact data companions. No data
+domain is expanded merely to make a label fit.
+
+| Reviewed surface | Result / responsibility |
+| --- | --- |
+| Generic Cartesian composer and eight presets | Reserved captions, measured formatting, left/right/dual axes and both orientations; no numeric-domain or selection-contract rewrite. |
+| Five statistical organisms | Bounded numeric/category labels, measured row/column names and cell values; exact observations and hit targets are retained. |
+| Realtime | Bounded formatted endpoint/value labels; observed timestamps, gaps, held windows and rolling-path identity stay unchanged. |
+| Four native polar organisms | Existing exact tables, semantic ranges, keyboard/controlled inspection and motion/lifecycle regressions retained. No speculative geometry rewrite. |
+| Twelve Arc organisms | Long Line/Bar text stays within its inherited cells/gutter; affected analytical portals now honor chart visibility. Default palette, tokens, motion and contracts remain intact. |
+| Sankey, Race Bar and Funnel | Existing font/theme/runtime controls rechecked; offscreen/hidden-document inspector suspension follows their existing runtime observers. |
+| Zero facade, reactive projector and source-copy entries | No new fetch/subscription service or underlying chart engine. Public aliases, exact companions and authorization-retirement behavior remain the existing contracts. |
+
+An inspector is a view of the chart's accepted selection, not another selection
+owner. Tooltip-internal scroll dismissal must not erase a pinned/keyboard
+inspection. Offscreen portals hide and return with a still-valid selection;
+Escape, blur, pointer/touch clearing, explicit owner changes and retired IDs keep
+their own existing rules. This uses the existing Zero Tooltip rather than a
+second overlay implementation.
+
+The actual Chromium matrix covers **48 axis cases at each of 390px and 1100px,
+in light and dark**: left/right/dual, vertical/horizontal, mixed/positive/negative/
+zero data, short/long captions, formatted ticks, Latin/Japanese strings and
+11.5px/18px typography. It asserts actual text-box nonintersection and SVG bounds,
+full accessible units and unchanged exact values. A separate case checks empty
+data becoming populated and a live 18px-to-22px font/family change. Eight
+additional long-label family fixtures check horizontal overflow.
+
+The focused chart run passes all **49 files**; subsequent changes are rechecked
+in their owning browser suites rather than restarting unrelated framework tests.
+Actual source-copy consumer builds, public-entry browser/SSR graphs, chart manual
+examples/routes/catalogs, reactive projectors and source-only Doctor checks are
+included in the supplemental qualification. Measurements, screenshots and logs
+are retained under
+`/Volumes/code-bank/artifacts/zero-platform/diagnostics/chart-axis-polish/`.
+The new axis test writes these artifacts only when
+`ZERO_CHART_REVIEW_ARTIFACTS` is explicitly configured; normal runs use owned
+temporary build directories and clean them afterward.
+
+Final focused qualification reconciles **60 distinct chart-related files, all
+passing**, using the completed family run plus owning-suite rechecks. The final
+expanded axis browser file passes five tests with 602 assertions. Repository
+TypeScript checking passes, and the documentation structural gate reports 879
+unique, reachable pages with no problems. `git diff --check` is clean. No full
+unrelated framework sweep or Linux deployment/release-archive qualification is
+claimed for this presentation-only repair.
+
+The in-app browser transport failed before navigation (`sandboxPolicy` metadata
+error), so browser qualification uses the repository's real Chromium harness,
+not a simulated DOM or a live application. One extra, unrelated native-auth
+documentation check could not resolve the absent `@zero/chrome-auth` SDK source;
+that failure is retained separately and is not relabeled as passing chart
+documentation. No native-auth source was changed to hide it.
+
+Limitations remain explicit: finite containers may shorten/sample display text;
+very large typography needs adequate height; arbitrary annotation/reference
+placement is not a general collision-avoidance engine. This is working-source
+chart qualification, not a claim that an archive was published, a consuming app
+was tested, or every possible font/configuration is collision-free.
 
 ## Later Chart Data Services
 

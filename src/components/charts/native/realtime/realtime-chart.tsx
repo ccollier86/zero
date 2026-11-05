@@ -7,6 +7,9 @@ import { EMPTY_REALTIME_PATH_STATE, reconcileRealtimePaths } from './realtime-pa
 import { chartText, numberValue } from '../shared/admission';
 import { formatNativeChartNumber } from '../shared/native-format';
 import { NativeChartFrame, NativeChartInspector, NativeChartDataTable, useNativeChartEnvironment, useNativeChartSelection, NATIVE_CHART_MOTION, nativeColor } from '../shared/native-chart';
+import { useChartTextMetrics } from '../shared/use-chart-text-metrics';
+import { chartAxisText, horizontalChartAxisText, sampleChartTicks } from '../shared/chart-text-layout';
+import { ChartAxisLabel } from '../shared/chart-axis-text';
 export interface RealtimeTooltipContext { readonly sample: RealtimeSample; readonly formatValue: (value: number) => string; readonly formatTime: (time: number) => string }
 export interface RealtimeChartProps {
   readonly data: readonly RealtimeSample[]; readonly label: string; readonly title?: string; readonly subtitle?: string;
@@ -24,6 +27,7 @@ export function RealtimeChart({ data, label, title, subtitle, windowMs = 60_000,
   const model = React.useMemo(() => buildRealtimeModel(data), [data]);
   const ref = React.useRef<HTMLElement>(null), plot = React.useRef<HTMLDivElement>(null);
   const environment = useNativeChartEnvironment(ref, { motion: motionEnabled });
+  const textMetrics = useChartTextMetrics(plot, '.zero-native-chart__axis');
   const [localPause, setLocalPause] = React.useState(defaultPaused);
   const isPaused = paused ?? localPause;
   const [heldEnd, setHeldEnd] = React.useState<number | undefined>((paused ?? defaultPaused) ? model.latestTime ?? undefined : undefined);
@@ -65,12 +69,12 @@ export function RealtimeChart({ data, label, title, subtitle, windowMs = 60_000,
       onPointerLeave={() => { if (document.activeElement !== plot.current) clear(); }} onPointerDown={event => { if (event.pointerType !== 'touch' || !keys.length) return; const sample = nearest(event.clientX, event.currentTarget); if (sample.id === active) clear(); else inspect(sample.id); }}
       onBlur={clear} onKeyDown={event => { const at = keys.findIndex(sample => sample.id === active); let next: number | undefined; if (event.key === 'ArrowRight') next = Math.min(keys.length - 1, at + 1); else if (event.key === 'ArrowLeft') next = Math.max(0, at - 1); else if (event.key === 'Home') next = 0; else if (event.key === 'End') next = keys.length - 1; else if (event.key === 'Escape') { event.preventDefault(); clear(); } else if (event.key === ' ') { event.preventDefault(); pauseRequest(!isPaused); } if (next !== undefined && keys[next]) { event.preventDefault(); inspect(keys[next]!.id); } }}>
       <svg viewBox={`0 0 ${geometryWidth} ${height}`} style={{ height }} preserveAspectRatio="none" aria-hidden="true">
-        {view.ticks.map((tick, index) => <g key={index}><line className="zero-native-chart__grid" x1={52} x2={geometryWidth - 12} y1={y(tick)} y2={y(tick)} /><text className="zero-native-chart__axis" x={44} y={y(tick) + 4} textAnchor="end">{formatValue(tick)}</text></g>)}
+        {sampleChartTicks(view.ticks, Math.floor((height-40)/(textMetrics.fontSize*1.35+6))+1).map((tick, index) => <g key={index}><line className="zero-native-chart__grid" x1={52} x2={geometryWidth - 12} y1={y(tick)} y2={y(tick)} /><ChartAxisLabel value={chartAxisText(formatValue(tick),44,y(tick)+textMetrics.fontSize*.35,'end',40,textMetrics)}/></g>)}
         {environment.reduced ? <g key="static">{renderedPaths.paths.map(path => <path key={path.key} d={path.d} fill="none" stroke={nativeColor(0)} strokeWidth={1.8} />)}</g> : <g key="animated">{renderedPaths.paths.map(path => <motion.path key={path.key} d={path.d} initial={{ pathLength: path.entering ? 0 : 1 }} animate={{ d: path.d, opacity: 1, pathLength: environment.inView ? 1 : 0 }} transition={{ d: NATIVE_CHART_MOTION.morph, pathLength: { duration: NATIVE_CHART_MOTION.reveal, ease: [.65, 0, .35, 1] } }} fill="none" stroke={nativeColor(0)} strokeWidth={1.8} />)}</g>}
         {paths.filter(path => !path.d.includes('L')).map(path => { const sample = view.data.find(sample => sample.id === path.id)!; return <circle key={path.id} cx={x(sample.time)} cy={y(sample.value!)} r={2.5} fill={nativeColor(0)} />; })}
         {view.data.filter(sample => sample.anomaly && sample.value !== null).map(sample => <motion.circle key={sample.id} initial={false} animate={{ cx: x(sample.time), cy: y(sample.value!), r: active === sample.id ? 4 : 2.5 }} transition={environment.reduced ? { duration: 0 } : NATIVE_CHART_MOTION.morph} fill={sample.anomaly!.severity === 'danger' ? 'var(--destructive)' : sample.anomaly!.severity === 'warning' ? 'var(--zero-chart-amber)' : nativeColor(0)} />)}
         {point && point.value !== null && <g><line className="zero-native-chart__grid" x1={x(point.time)} x2={x(point.time)} y1={12} y2={height - 28} /><circle cx={x(point.time)} cy={y(point.value)} r={3.5} fill={nativeColor(0)} stroke="var(--card)" strokeWidth={2} /></g>}
-        <text className="zero-native-chart__axis" x={52} y={height - 6}>{formatTimeTick(view.start)}</text><text className="zero-native-chart__axis" x={geometryWidth - 12} y={height - 6} textAnchor="end">{formatTimeTick(view.end)}</text>
+        <g transform="translate(52,0)">{horizontalChartAxisText([{position:0,label:formatTimeTick(view.start)},{position:Math.max(0,geometryWidth-64),label:formatTimeTick(view.end)}],Math.max(0,geometryWidth-64),height-6,textMetrics).map((tick,index)=><ChartAxisLabel key={index} value={tick.textLayout}/>)}</g>
         {!keys.length && <text className="zero-native-chart__label" x={geometryWidth / 2} y={height / 2} textAnchor="middle">No observed samples in this window</text>}
       </svg>
       <NativeChartInspector open={!!point && environment.visible} content={content} point={[point ? x(point.time) / geometryWidth * plotWidth : 0, point?.value === null || !point ? 0 : y(point.value)]} onDismiss={clear} />

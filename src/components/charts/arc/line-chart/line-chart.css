@@ -81,3 +81,9 @@
 
 .zero-arc-line-chart__tipRow { font-size:var(--zero-arc-inspector-row-size,var(--zero-chart-label-size,12.5px));line-height:var(--zero-chart-inspector-line-height,1.45); }
 .zero-arc-line-chart__dot { r:var(--zero-arc-line-chart-dot-radius,4px); }
+
+/* Intrinsic text constraints keep long labels in their measured axis/legend cells. */
+.zero-arc-line-chart__tick { right:var(--zero-arc-line-chart-tick-right,2px); }
+.zero-arc-line-chart__tickText,.zero-arc-line-chart__axisLabel,.zero-arc-line-chart__toggleLabel { overflow:hidden;text-overflow:ellipsis; }
+.zero-arc-line-chart__toggle { min-width:0;max-width:100%; }
+.zero-arc-line-chart__toggleLabel { min-width:0; }

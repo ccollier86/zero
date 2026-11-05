@@ -61,6 +61,7 @@ export function SankeyChart({ data, label, columns, height = 340, orientation = 
   if (!Number.isFinite(particleSpeed) || particleSpeed < 0 || particleSpeed > 10) throw new RangeError('Sankey particleSpeed must be finite and between 0 and 10.');
   const [localTrace, setLocalTrace] = React.useState(defaultTrace), [localParticles, setLocalParticles] = React.useState(defaultParticles);
   const [inspection, setInspection] = React.useState<{ point: readonly [number, number]; open: boolean }>({ point: [0, 0], open: false });
+  const [viewportVisible, setViewportVisible] = React.useState(false);
   const [layout, setLayout] = React.useState<Pick<SankeyLayout, 'upright' | 'H' | 'W'>>({ upright: orientation === 'vertical', H: height, W: 600 });
   const figure = React.useRef<HTMLElement | null>(null), plot = React.useRef<HTMLDivElement | null>(null), back = React.useRef<SVGSVGElement | null>(null),
     front = React.useRef<SVGSVGElement | null>(null), canvas = React.useRef<HTMLCanvasElement | null>(null), runtime = React.useRef<SankeyPaintRuntime | null>(null);
@@ -70,7 +71,7 @@ export function SankeyChart({ data, label, columns, height = 340, orientation = 
   const enabled = particles ?? localParticles, reduced = useMediaQuery('(prefers-reduced-motion: reduce)');
   const onLayout = React.useCallback((next: SankeyLayout) => setLayout(old => old.upright === next.upright && old.H === next.H && old.W === next.W
     ? old : { upright: next.upright, H: next.H, W: next.W }), []);
-  const options = React.useMemo(() => ({ columns, height, orientation, traceColor, motion, particles: enabled, particleSpeed, formatValue, onLayout }),
+  const options = React.useMemo(() => ({ columns, height, orientation, traceColor, motion, particles: enabled, particleSpeed, formatValue, onLayout, onVisibilityChange: setViewportVisible }),
     [columns, height, orientation, traceColor, motion, enabled, particleSpeed, formatValue, onLayout]);
   const latestOptions = React.useRef(options); latestOptions.current = options;
   React.useLayoutEffect(() => {
@@ -152,7 +153,7 @@ export function SankeyChart({ data, label, columns, height = 340, orientation = 
       <svg ref={back} className="zero-sankey__back" aria-hidden="true" /><canvas ref={canvas} className="zero-sankey__canvas" aria-hidden="true" />
       <svg ref={front} className="zero-sankey__front" aria-hidden="true" />
       {model.links.length === 0 && <div className="zero-sankey__empty">{emptyLabel}</div>}
-      <SankeyInspection open={inspection.open && !!current} content={content} point={layout.upright ? [layout.W / 2, inspection.point[1]] : inspection.point}
+      <SankeyInspection open={viewportVisible && inspection.open && !!current} content={content} point={layout.upright ? [layout.W / 2, inspection.point[1]] : inspection.point}
         upright={layout.upright} plotHeight={layout.H} onDismiss={() => clear()} />
     </div>
     <div className="zero-sankey__footer"><span className="zero-sankey__hint" aria-hidden="true">{layout.upright ? 'Tap a node or flow to trace it' : 'Hover a node or flow to trace it'}</span>

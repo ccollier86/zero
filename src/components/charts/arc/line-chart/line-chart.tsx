@@ -97,8 +97,9 @@ function Gridline({ value, scale, height, reduced }: { value: number; scale: Sca
 
 function TickLabel({ value, scale, height, format, reduced }: { value: number; scale: Scale; height: number; format: (value: number) => string;reduced:boolean }) {
   const y = useRowY(value, scale, height);
+  const label = format(value);
   return <motion.span className={styles.tick} style={{ y }} initial={reduced?false:{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, transition: reduced?{duration:0}:fadeFast }} transition={reduced?{duration:0}:{ duration: duration.standard, ease: [...ease.standard] }}>
-    <span className={styles.tickText}>{format(value)}</span>
+    <span className={styles.tickText} title={label}>{label}</span>
   </motion.span>;
 }
 
@@ -332,7 +333,7 @@ function LineChartRenderer({ motion:motionEnabled, data, series, label, unit = "
           </g>
           {series.map((line, at) => <circle key={line.id} ref={node => { if (node) dots.current.set(line.id, node); else dots.current.delete(line.id); }} className={styles.dot} r={4} data-hidden={hidden.includes(line.id) || undefined} style={{ "--zero-arc-series": colorOf(line, at) } as CSSProperties} />)}
         </svg>
-        <CartesianInspector open={scrubbing&&!allHidden} content={customInspector===undefined?defaultInspector:customInspector} x={anchorX} y={anchorY} plot={plot.current} className={styles.tooltip} contentRef={tip} onDismiss={()=>setActive(null)}/>
+        <CartesianInspector open={scrubbing&&!allHidden&&environment.visible} content={customInspector===undefined?defaultInspector:customInspector} x={anchorX} y={anchorY} plot={plot.current} className={styles.tooltip} contentRef={tip} onDismiss={()=>setActive(null)}/>
         <AnimatePresence initial={false}>
           {(empty || allHidden) && !loading && <motion.p key={empty ? "empty" : "hidden"} className={styles.message} initial={reduced?false:{ opacity: 0 }} animate={{ opacity: 1 }} transition={reduced?{duration:0}:fadeFast} exit={{ opacity: 0, transition: reduced?{duration:0}:fadeFast }}>{empty ? emptyLabel : "Choose a series to show"}</motion.p>}
           {loading && empty && <motion.span key="skeleton" className={styles.skeleton} initial={reduced?false:{ opacity: 0 }} animate={{ opacity: 1 }} transition={reduced?{duration:0}:fadeFast} exit={{ opacity: 0, transition: reduced?{duration:0}:fadeFast }} aria-hidden="true" />}
@@ -343,7 +344,7 @@ function LineChartRenderer({ motion:motionEnabled, data, series, label, unit = "
       </div>
       <div className={styles.axis} aria-hidden="true">
         <AnimatePresence initial={false}>
-          {picks.map(at => { const share = last > 0 ? at / last : .5; return <motion.span key={`${data[at]!.id}:${data[at]!.axisLabel}`} className={styles.axisLabel} style={{ left: `${share * 100}%`, translateX: `${-share * 100}%` }} initial={reduced?false:{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, transition: reduced?{duration:0}:fadeFast }} transition={reduced?{duration:0}:{ duration: duration.standard, ease: [...ease.standard] }}>{data[at]!.axisLabel}</motion.span>; })}
+          {picks.map((at,pick) => { const share = last > 0 ? at / last : .5,position=share*plotWidth,left=pick?((picks[pick-1]!/Math.max(1,last))*plotWidth+position)/2+5:0,right=pick+1<picks.length?(position+(picks[pick+1]!/Math.max(1,last))*plotWidth)/2-5:plotWidth,budget=Math.max(0,Math.min(share>0?(position-left)/share:plotWidth,share<1?(right-position)/(1-share):plotWidth)); return <motion.span key={`${data[at]!.id}:${data[at]!.axisLabel}`} className={styles.axisLabel} title={data[at]!.axisLabel} style={{ left: `${share * 100}%`, translateX: `${-share * 100}%`,maxWidth:budget }} initial={reduced?false:{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, transition: reduced?{duration:0}:fadeFast }} transition={reduced?{duration:0}:{ duration: duration.standard, ease: [...ease.standard] }}>{data[at]!.axisLabel}</motion.span>; })}
         </AnimatePresence>
       </div>
     </div>

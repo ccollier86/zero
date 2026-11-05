@@ -8,14 +8,14 @@ visibility: internal
 system: frontend-components
 feature: zero-charts
 maturity: supported
-applies_to: ["2.6.0 working source"]
+applies_to: ["2.10.1 + chart-polish working source"]
 modes: [browser, SSR, light, dark]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.6.0"
-  commit: "335b27372b0b8ef57a1e92cf93cec378923fe50b"
+  version: "2.10.1"
+  commit: "7b151069835f841aca1542b2c8f02e7c3a66a6da"
   snapshot: dirty
-  date: "2026-10-10"
+  date: "2026-11-04"
   evidence_level: source-observed
 ---
 
@@ -168,6 +168,17 @@ Every organism accepts `className` and `motion={false}`. Motion does not change
 measurements. Reduced-motion preferences are honored; revealed charts settle and
 stop their geometry work offscreen or in a hidden document. Accessible exact-data
 companions render on the server without requiring a browser or provider.
+Offscreen analytical inspector portals are hidden while a still-valid accepted
+selection is preserved for the chart's return to view.
+
+Line and Bar keep their token-defined axis gutter rather than expanding the
+entire card for a verbose formatter. Long value/date labels fit within that
+gutter or their neighboring label cells with ellipsis and a complete native
+title; the exact data companion and analytical inspector are unaffected. Long
+Line legend names remain shrinkable too. Prefer compact axis formatting, or
+increase the inherited `--zero-arc-axis-gutter` / `--zero-chart-axis-gutter`
+when a longer formatted value must be visible. Custom gutter geometry is read
+from the same effective CSS layout used for paint and pointer interaction.
 
 | Component | Principal settings and defaults |
 | --- | --- |

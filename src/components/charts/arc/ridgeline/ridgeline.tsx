@@ -74,7 +74,7 @@ export function Ridgeline({ series: seriesInput, label, unit = "", formatValue, 
   const tickRefs = useRef(new Map<number, HTMLDivElement>());
   const cross = useRef<HTMLDivElement>(null);
   useImperativeHandle(ref, () => figure.current as HTMLElement);
-  const { inView, reduced } = useArcChartEnvironment(figure, { motion: motionEnabled });
+  const { inView, reduced, visible: chartVisible } = useArcChartEnvironment(figure, { motion: motionEnabled });
   // A true minus sign keeps negative values tight and lined up with the tabular digits.
   const format = (value: number|null) => value===null?'—':formatValue ? formatValue(value) : `${grouped.format(value).replace("-", "\u2212")}${unit}`;
 
@@ -268,7 +268,7 @@ export function Ridgeline({ series: seriesInput, label, unit = "", formatValue, 
         {series.map((entry, index) => <span key={entry.id} className={styles.rowLabel} data-active={current === entry.id || undefined} style={{ top: baselineOf(index) - 18, width: gutter - 10 }}>{entry.label}</span>)}
       </div>
       {empty && <p className={styles.message}>{emptyLabel}</p>}
-      <ArcDistributionInspector open={width>0&&!!current&&!!activeStats?.n} point={[current?xOf(reading?.value??activeStats?.median??0):0,cursor?.pointerY??(current?baselineOf(model.shapes.get(current)?.row??0)-rowHeight-LIFT:0)]} content={tooltipContent} className={styles.tooltip} plot={plot.current} onDismiss={()=>{setCurrent(null);setCursor(null);}} />
+      <ArcDistributionInspector open={chartVisible&&width>0&&!!current&&!!activeStats?.n} point={[current?xOf(reading?.value??activeStats?.median??0):0,cursor?.pointerY??(current?baselineOf(model.shapes.get(current)?.row??0)-rowHeight-LIFT:0)]} content={tooltipContent} className={styles.tooltip} plot={plot.current} onDismiss={()=>{setCurrent(null);setCursor(null);}} />
     </div>
     {tint && !empty && <div className={styles.scale} aria-hidden="true">
       <span className={styles.scaleLabel}>Median</span>

@@ -8,14 +8,14 @@ visibility: internal
 system: frontend-components
 feature: zero-charts
 maturity: supported
-applies_to: ["2.6.0 working source"]
+applies_to: ["2.10.1 + chart-polish working source"]
 modes: [browser, SSR, light, dark]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.6.0"
-  commit: "335b27372b0b8ef57a1e92cf93cec378923fe50b"
+  version: "2.10.1"
+  commit: "7b151069835f841aca1542b2c8f02e7c3a66a6da"
   snapshot: dirty
-  date: "2026-10-10"
+  date: "2026-11-04"
   evidence_level: source-observed
 ---
 
@@ -153,6 +153,36 @@ Use `missing="zero"` only when absence genuinely means zero; the default is a ga
 | Visibility | `hiddenSeriesIds` / `defaultHiddenSeriesIds` / `onHiddenSeriesChange`. |
 | Window | `window` / `defaultWindow` / `onWindowChange`; category indexes or real numeric/time X coordinates, not offsets in a changing dataset. |
 
+### Axis Captions and Text Budgets
+
+Give units to `yAxes[].label` and an independent-axis caption to `xAxis.label`.
+Do not remove captions or add application CSS offsets to avoid tick collisions.
+The Cartesian renderer reserves separate caption and tick lanes, including a
+single right axis and both axes in horizontal layouts. Left/right become the
+bottom/top numeric axes when the chart is horizontal.
+
+Gutters account for the displayed `formatYTick` output and the actual metadata
+font. `formatX` is applied before independent-axis text is laid out. Font-token,
+webfont and container changes remeasure the chart; new measurements arriving in
+an initially empty chart do not require remounting it. Use
+`--zero-chart-metadata-size` and `--zero-chart-font-family`, not a transform that
+makes text larger without changing its layout budget.
+
+Long captions and tick labels are shortened within reserved cells, and dense
+ticks are sampled. The complete caption/label remains in its native title or
+exact accessible companion; numeric model values, domains, hit targets and
+inspection are not rounded, sampled or rewritten. Axis-unit labels also appear
+in the Cartesian companion's series headers. Supply a compact tick formatter
+when long units would otherwise consume most of a narrow chart. Large type and
+many labels need an appropriate chart height; shortening cannot create room for
+unbounded text in a fixed-size chart.
+
+The pure `computeCartesianLayout(model, width, height, options?)` accepts optional
+`fontSize`, `measureText`, `formatX` and `formatYTick` presentation inputs. Browser
+organisms provide actual font measurements automatically. Headless/SSR callers
+get deterministic conservative estimates unless they supply a measurer; those
+estimates are not a guarantee about an arbitrary font's real glyph bounds.
+
 Log axes require positive measured domains and quantities; a zero baseline cannot
 be silently plotted on a logarithmic scale. Percent stacks reject negative input
 and normalize by the relevant axis/stack group. A zero total remains zero, not an
@@ -205,6 +235,10 @@ and changing series skips unavailable cells at that observation.
 The five statistical charts share `label`, optional title/subtitle, `height=300`,
 class/motion/formatting, and `activeId` / `defaultActiveId` / `onActiveChange`.
 They always provide their exact server-rendered data companion.
+
+Statistical numeric/category labels and Realtime endpoint labels use bounded
+text cells too. Fitting or sampling a displayed label never removes the full
+observations, row/column names or timestamps from the exact companion.
 
 | Organism | Additional settings and mathematical policy |
 | --- | --- |
@@ -378,6 +412,8 @@ not a second spring library/theme. `motion={false}`, reduced-motion preferences,
 hidden documents and offscreen containers suspend decorative work. Unmounts
 retire observers, animation controls and inspector portals. Animation never
 changes exact measurements, confirms ingestion or proves query completeness.
+An offscreen inspector is hidden without discarding an otherwise valid accepted
+selection; returning the chart to view restores inspection of that same identity.
 
 Working-source qualification covers model extremes, exact SSR tables, actual
 public entries and source-copy builds, reactive inserts/updates/deletes and
@@ -386,6 +422,7 @@ inspectors, interrupted motion, and synthetic light/dark/narrow layouts. This is
 not a published-package or live-provider guarantee. The missing original Realtime
 Stream HTML is not claimed as a pixel-identical reference.
 
-See the [execution evidence](../../_work/charts-system-plan.md#handmade-chart-coverage-extension)
-and [token inventory](../../_work/design-token-theme-evolution-plan.md#handmade-chart-coverage-extension)
+See the [execution evidence](../../_work/charts-system-plan.md#handmade-chart-coverage-extension),
+[token inventory](../../_work/design-token-theme-evolution-plan.md#handmade-chart-coverage-extension),
+and [axis/family review](../../_work/charts-system-plan.md#axis-caption-and-family-review-november-2026).
 for shared roles, local exceptions and the wider theme/server-service boundary.
