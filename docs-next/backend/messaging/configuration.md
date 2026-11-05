@@ -94,6 +94,12 @@ and owner; changing either requires resetting the cursor.
 
 ## Ordinary And Configured Groups
 
+Database-backed administrative group/settings editing and a single native
+management view are [planned](../../_work/messaging-administration-plan.md), not
+part of the current facade. The proposed administration UI preserves these
+ordinary/configured group contracts; existing groups are not silently adopted
+or made editable by enabling an unrelated screen.
+
 Users create ordinary groups with `client.messaging.conversations.create` and
 `kind: 'group'`. Their owner can add/remove participants, rename/archive, and
 call `transferOwnership(id, expectedRevision, userId, mutationOptions)`. The old

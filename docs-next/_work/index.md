@@ -35,6 +35,15 @@ publication, search, and production agent bundles.
 - [Configurable messaging correction](./messaging-configuration-correction.md):
   directory/contact modes, manual/property-managed groups and independent internal
   assistants using existing Guardian, Fabric, AI, typing, Storage and presence.
+- [Messaging management design](./messaging-administration-plan.md): planned
+  single AppShell management organism, delegated database-backed settings,
+  manual/Guardian-managed groups, safe previews and atomic membership changes.
+  - [Management experience](./messaging-administration-experience.md): one
+    adaptive table/detail/settings workspace, creation and rule-editing flows,
+    native components, drafts, live updates and empty/error states.
+  - [Implementation and qualification](./messaging-administration-qualification.md):
+    staged backend/UI work, three design reviews, retained-state upgrades,
+    security/concurrency/browser acceptance and normal updater release gates.
 - [Native messaging workspace review](./messaging-workspace-review.md): real
   provider/SDK workspace integration, exact intents, per-lane drafts, read policy,
   bounded live history, native file/browser checks and remaining release gates.
