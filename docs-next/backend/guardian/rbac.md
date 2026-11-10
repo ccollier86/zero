@@ -64,7 +64,7 @@ application role. In multi/simple mode, a membership holds one simple role
 key. Do not submit a multi-role advanced assignment to a simple profile and
 expect the server to arbitrarily choose one.
 
-## First Permission Bindings On An Existing Single/Simple Installation
+## First Permission Bindings On An Existing Single Simple Installation
 
 Since Zero 2.10.3, an existing single/simple application can explicitly bind its
 current global roles to their first custom permissions. A role declaration alone
