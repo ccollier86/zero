@@ -17,6 +17,7 @@ import type {
   AuthAuthorizationConfig,
   AuthAuthorizationMode,
   AuthAuthorizationOwnerAdoptionConfig,
+  AuthAuthorizationInitialRoleAdoptionConfig,
   AuthPermissionConfig,
   AuthPermissionScope,
   AuthRoleTemplateConfig,
@@ -78,6 +79,7 @@ export function normalizeAuthAuthorization(
         'registryVersion',
         'permissions',
         'roles',
+        'initialRoleAdoption',
         'ownerAdoption',
         'legacySimpleRoleAdoption',
       ],
@@ -123,6 +125,13 @@ export function normalizeAuthAuthorization(
     ),
     permissions,
   );
+  const initialRoleAdoption = normalizeInitialRoleAdoption(
+    typeof config === 'string' ? undefined : config?.initialRoleAdoption,
+    tenancyMode,
+    mode,
+    registryVersion,
+    roles,
+  );
 
   // The adoption selector is an upgrade-only input, so omit it entirely when
   // it is not configured instead of publishing a new `null` field everywhere.
@@ -131,11 +140,55 @@ export function normalizeAuthAuthorization(
     registryVersion,
     permissions,
     roles,
+    ...(initialRoleAdoption ? { initialRoleAdoption } : {}),
     ...(ownerAdoption ? { ownerAdoption } : {}),
     ...(legacySimpleRoleAdoption ? { legacySimpleRoleAdoption: true as const } : {}),
   });
   validateAuthorizationRegistry(resolved);
   return resolved;
+}
+
+function normalizeInitialRoleAdoption(
+  input: AuthAuthorizationInitialRoleAdoptionConfig | undefined,
+  tenancy: AuthTenancyMode,
+  mode: AuthAuthorizationMode,
+  registryVersion: number,
+  roles: Readonly<Record<string, ResolvedAuthRoleTemplateConfig>>,
+): Readonly<AuthAuthorizationInitialRoleAdoptionConfig> | undefined {
+  if (input === undefined) return undefined;
+  assertPlainRecord(input, 'Authorization initialRoleAdoption');
+  assertOnlyKeys(
+    input,
+    ['fromRegistryVersion', 'toRegistryVersion', 'roles'],
+    'Authorization initialRoleAdoption',
+  );
+  if (tenancy !== 'single' || mode !== 'simple') {
+    throw new Error('[auth] Authorization initialRoleAdoption requires single/simple mode.');
+  }
+  if (input.fromRegistryVersion !== 1
+    || input.toRegistryVersion !== registryVersion
+    || registryVersion <= 1) {
+    throw new Error('[auth] Authorization initialRoleAdoption must bind version 1 to the configured newer registryVersion.');
+  }
+  if (!Array.isArray(input.roles)
+    || input.roles.length === 0
+    || input.roles.length > MAX_ROLE_COUNT
+    || input.roles.some(key => typeof key !== 'string')
+    || new Set(input.roles).size !== input.roles.length) {
+    throw new Error('[auth] Authorization initialRoleAdoption roles must be a bounded, nonempty, unique role-key list.');
+  }
+  for (const key of input.roles) {
+    validateRoleKey(key);
+    const role = roles[key];
+    if (!role || role.system || role.allPermissions || role.permissions.length === 0) {
+      throw new Error(`[auth] Authorization initialRoleAdoption role "${key}" must declare explicit bounded permissions and be non-system.`);
+    }
+  }
+  return Object.freeze({
+    fromRegistryVersion: 1,
+    toRegistryVersion: registryVersion,
+    roles: Object.freeze([...input.roles].sort(compareAuthConfigKeys)),
+  });
 }
 
 export function validateVerifiedDomainRoles(

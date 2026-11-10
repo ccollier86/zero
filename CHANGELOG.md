@@ -4,6 +4,27 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+## 2.10.3 - 2026-11-10
+
+Explicit first-time permission bindings for existing single/simple accounts.
+
+- Add `auth.authorization.initialRoleAdoption` for an intentional upgrade from
+  the installed empty version-1 single/simple registry to an exact newer
+  registry version. List only the existing role keys receiving their first
+  explicit, bounded permission templates.
+- Keep the default retained-role reactivation guard, reused/older-version
+  rejection, live permission checks and all other authorization profiles intact.
+  This is not a general retired-role revival or ownership-adoption switch.
+- Commit the manifest and per-role adoption audit evidence atomically, without
+  rewriting account IDs, password hashes, roles or web/native credential families.
+  Exact restarts are idempotent; remove the acknowledgement before a later
+  semantic registry upgrade.
+- Qualify the populated transition, member denial, rollback and retained web/native
+  refresh state through managed file-backed restarts with synthetic identities.
+
+No database migration, application deployment or provider change is introduced.
+Bun 1.4.4 remains required. See the Guardian RBAC upgrade instructions.
+
 ## 2.10.2 - 2026-11-04
 
 Native chart-axis layout and consistent analytical inspection. This patch

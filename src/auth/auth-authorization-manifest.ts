@@ -5,6 +5,7 @@ import type { ReactiveDB } from '../sync/reactive-db';
 import type { AuthAuditService } from './auth-audit-service';
 import type {
   AuthTenancyMode,
+  AuthAuthorizationInitialRoleAdoptionConfig,
   ResolvedAuthAuthorizationConfig,
 } from './types';
 import { AuthError } from './types';
@@ -61,6 +62,8 @@ export function reconcileAuthorizationManifest(input: {
   authorization: ResolvedAuthAuthorizationConfig;
   tenancy: AuthTenancyMode;
   audit?: AuthAuditService;
+  /** Startup-only acknowledgement, kept outside the pure kernel's permission semantics. */
+  initialRoleAdoption?: Readonly<AuthAuthorizationInitialRoleAdoptionConfig>;
   /**
    * The surrounding installed-profile transition acknowledges only a change to
    * the manifest's tenancy/mode axes. Registry semantics still require their
@@ -103,12 +106,39 @@ export function reconcileAuthorizationManifest(input: {
     }
   }
 
+  const adopted = initialRoleAdoption(
+    input.db,
+    previous,
+    requested,
+    input.initialRoleAdoption ?? input.authorization.initialRoleAdoption,
+  );
   if (previous) {
-    assertNoImplicitRoleReactivation(input.db, previous, requested);
+    assertNoImplicitRoleReactivation(
+      input.db,
+      previous,
+      requested,
+      new Set(adopted.map(item => item.role)),
+    );
   }
 
   persistAuthorizationManifest(input.db, previous, requested);
   appendManifestAudit(input.audit, previous, requested);
+  for (const item of adopted) {
+    input.audit?.append({
+      action: 'application.initial-role-binding-adopted',
+      outcome: 'succeeded',
+      scope: { kind: 'application' },
+      actor: { provenance: 'system' },
+      target: { type: 'role', id: item.role },
+      metadata: {
+        'from-version': previous!.registryVersion,
+        'to-version': requested.registryVersion,
+        'from-fingerprint': previous!.fingerprint,
+        'to-fingerprint': requested.fingerprint,
+        'retained-count': item.count,
+      },
+    });
+  }
   return Object.freeze({
     kind: previous ? 'updated' as const : 'initialized' as const,
     previous,
@@ -153,6 +183,7 @@ function assertNoImplicitRoleReactivation(
   db: ReactiveDB,
   previous: InstalledAuthorizationManifest,
   requested: InstalledAuthorizationManifest,
+  adopted: ReadonlySet<string> = new Set(),
 ): void {
   if (previous.fingerprint === requested.fingerprint) return;
   const oldManifest = parseManifest(previous.manifestJson);
@@ -160,7 +191,7 @@ function assertNoImplicitRoleReactivation(
   const previousRoles = new Set(oldManifest.roles.map((role) => role.key));
   const introduced = nextManifest.roles
     .map((role) => role.key)
-    .filter((role) => !previousRoles.has(role));
+    .filter((role) => !previousRoles.has(role) && !adopted.has(role));
   if (introduced.length === 0) return;
 
   const retained = retainedRoleCountsAcrossProfiles(
@@ -180,6 +211,57 @@ function assertNoImplicitRoleReactivation(
     'AUTHORIZATION_ROLE_REACTIVATION_BLOCKED',
     503,
   );
+}
+
+/**
+ * The empty v1 registry is the proof of a first binding: a genuinely retired
+ * declared role necessarily passed through a later version or nonempty registry.
+ * No new DB/history table and no rewrite of users or credential families.
+ */
+function initialRoleAdoption(
+  db: ReactiveDB,
+  previous: InstalledAuthorizationManifest | null,
+  requested: InstalledAuthorizationManifest,
+  adoption?: Readonly<AuthAuthorizationInitialRoleAdoptionConfig>,
+): Array<{ role: string; count: number }> {
+  if (!adoption) return [];
+  const next = parseManifest(requested.manifestJson);
+  const old = previous ? parseManifest(previous.manifestJson) : null;
+  const reject = () => new AuthError(
+    'Initial role adoption requires the installed empty version-1 single/simple registry and the exact configured target version. '
+      + 'It cannot reactivate retired roles or adopt another profile. Remove the acknowledgement after this upgrade.',
+    'AUTHORIZATION_INITIAL_ROLE_ADOPTION_REJECTED', 503,
+  );
+  if (next.tenancy !== 'single'
+    || next.mode !== 'simple'
+    || adoption.fromRegistryVersion !== 1
+    || adoption.toRegistryVersion !== requested.registryVersion
+    || requested.registryVersion <= 1
+    || !Array.isArray(adoption.roles)
+    || adoption.roles.length === 0
+    || adoption.roles.length > 128
+    || new Set(adoption.roles).size !== adoption.roles.length) throw reject();
+  for (const key of adoption.roles) {
+    const role = next.roles.find(item => item.key === key);
+    if (!role || role.system || role.allPermissions || role.permissions.length === 0) throw reject();
+  }
+  if (!previous) {
+    // A pristine installation can use the same config; an unmarked populated
+    // source has no admitted history and must not borrow this narrow exception.
+    const row = db.prepare(
+      "SELECT COUNT(*) AS count FROM users WHERE status <> 'deleted'",
+    ).get() as { count: number };
+    if (Number(row.count) !== 0) throw reject();
+    return [];
+  }
+  if (previous.registryVersion !== 1 || !old
+    || old.tenancy !== 'single' || old.mode !== 'simple'
+    || old.roles.length !== 0 || old.permissions.length !== 0) throw reject();
+  const counts = new Map(
+    retainedRoleCounts(db, 'single', 'simple', adoption.roles)
+      .map(item => [item.role, item.count]),
+  );
+  return adoption.roles.map(role => ({ role, count: counts.get(role) ?? 0 }));
 }
 
 interface ParsedManifest {

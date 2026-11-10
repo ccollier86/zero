@@ -64,6 +64,72 @@ application role. In multi/simple mode, a membership holds one simple role
 key. Do not submit a multi-role advanced assignment to a simple profile and
 expect the server to arbitrarily choose one.
 
+## First Permission Bindings On An Existing Single/Simple Installation
+
+Since Zero 2.10.3, an existing single/simple application can explicitly bind its
+current global roles to their first custom permissions. A role declaration alone
+is deliberately insufficient: retained role names might otherwise silently gain
+authority when a formerly retired template is reintroduced.
+
+For an installed **empty version-1 single/simple registry** (the original
+`authorization: 'simple'` default), declare the complete intended registry and
+acknowledge only the initial bindings you actually intend:
+
+```ts
+authorization: {
+  mode: 'simple',
+  registryVersion: 2,
+  initialRoleAdoption: {
+    fromRegistryVersion: 1,
+    toRegistryVersion: 2,
+    roles: ['admin'],
+  },
+  permissions: {
+    'support:knowledge-search': { scope: 'application' },
+    'support:knowledge-ingest': { scope: 'application' },
+  },
+  roles: {
+    admin: {
+      permissions: ['support:knowledge-search', 'support:knowledge-ingest'],
+    },
+  },
+},
+```
+
+This belongs inside trusted server `auth` configuration. It is not a browser
+request, data migration, general permission bypass or instruction to recreate
+accounts. Other existing configuration, route permission requirements and
+account registration policies remain unchanged. The example grants these two
+permissions to current `admin` accounts only; ordinary `user` accounts receive
+neither. The same config may initialize a genuinely empty installation.
+
+Before deployment, rehearse against an owned isolated copy using the normal
+application upgrade path. Verify both an administrator's allowed operation and
+an ordinary member's denial, plus retained web/native sessions through restart.
+No private SQL updates, administrator demotion or credential resets are needed.
+
+Guardian verifies the prior registry, exact target version and bounded role
+templates in its startup transaction. It commits
+`application.initial-role-binding-adopted` audit evidence once per acknowledged
+role alongside the manifest, including versions, fingerprints and retained
+assignment count—not account secrets or profile contents. Rollback commits
+neither. Exact repeated startups create no duplicate adoption evidence and do
+not rotate credential families.
+
+After acceptance, you may remove `initialRoleAdoption` without changing registry
+semantics or its version. Remove it **before a later semantic registry upgrade**;
+the acknowledgement is deliberately tied to this one target version. Leave the
+declared permissions/roles in place and continue incrementing `registryVersion`
+for subsequent authority changes.
+
+This exception rejects nonempty or later prior registries, unmarked populated
+databases, advanced/multi profiles, system roles, wildcard templates, undeclared
+roles and an incorrect version pair. A genuinely retired role remains blocked
+by `AUTHORIZATION_ROLE_REACTIVATION_BLOCKED`; an inapplicable acknowledgement
+fails with `AUTHORIZATION_INITIAL_ROLE_ADOPTION_REJECTED`. The existing
+`AUTHORIZATION_REGISTRY_VERSION_REQUIRED` fence still rejects reused semantics
+and rollbacks. Do not edit the installed manifest to force acceptance.
+
 ## Built-In Roles
 
 Single advanced mode supplies protected `owner` and `access-manager`

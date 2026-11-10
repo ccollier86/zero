@@ -18,6 +18,10 @@ against code, public exports, runtime composition and actual checks.
 
 ## Evidence And Progress
 
+- [Initial single/simple permission bindings](./initial-role-adoption-qualification.md):
+  explicit version-bound adoption, retained-role safety, populated managed
+  restart/refresh regression and exact package qualification.
+
 - [Blog UI and command-palette qualification](./blog-ui-qualification.md): UI-only
   defaults, shared component ownership, token/motion/browser checks and frozen
   public-package imports; publishing and automatic blog SEO remain planned.

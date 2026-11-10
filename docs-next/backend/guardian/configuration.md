@@ -119,6 +119,9 @@ See [access requirements](./authorization.md), [RBAC](./rbac.md) and
 | roles[key].permissions | Unique array of declared permission keys; empty. | Unknown/duplicate keys reject. |
 | roles[key].allPermissions | Boolean; false. | Cannot combine true with a nonempty explicit permission array. |
 | roles[key].system | Boolean; false for app declarations. | Protected role template, not a normal grantable role. Framework owner semantics cannot be overridden. |
+| initialRoleAdoption.fromRegistryVersion | Exactly `1`; omitted by default. | Opt-in first binding from the installed empty version-1 single/simple registry; available since 2.10.3. |
+| initialRoleAdoption.toRegistryVersion | Exact configured `registryVersion`, greater than 1. | Version-bound startup acknowledgement, not a runtime permission override. |
+| initialRoleAdoption.roles | Nonempty unique list of at most 128 declared role keys. | Each must be non-system with explicit, nonempty permissions and no `allPermissions`. Only these initial bindings bypass the retained-assignment guard. |
 | ownerAdoption.userId | Exact existing internal user ID, or use email instead. | Exactly one selector; single/advanced only. |
 | ownerAdoption.email | Valid canonical email, or use userId instead. | Deliberate owner adoption, not a runtime user request. |
 | legacySimpleRoleAdoption | Only true when supplied. | Explicit multi/advanced legacy adoption; not available in other profiles. |
@@ -126,6 +129,12 @@ See [access requirements](./authorization.md), [RBAC](./rbac.md) and
 Tenant-only app roles are assignable inside both customer and Administration
 organizations. Roles containing application permissions are Administration-only.
 Declarations do not themselves attach a rule to a route or table.
+
+For populated single/simple applications adding their first permission bindings,
+follow [the explicit initial-adoption procedure](./rbac.md#first-permission-bindings-on-an-existing-single-simple-installation).
+The optional acknowledgement cannot restore genuinely retired roles, adopt an
+unmarked populated database, or change tenancy/authorization mode. Exact restarts
+are idempotent; remove it before a later semantic registry version change.
 
 ## Bootstrap, Registration And Account
 

@@ -454,6 +454,13 @@ export interface AuthAuthorizationOwnerAdoptionConfig {
   email?: string;
 }
 
+/** Explicit initial permission bindings for an installed, empty single/simple v1 registry. */
+export interface AuthAuthorizationInitialRoleAdoptionConfig {
+  fromRegistryVersion: 1;
+  toRegistryVersion: number;
+  roles: readonly string[];
+}
+
 /** Developer-authored authorization capability selection. */
 export interface AuthAuthorizationOptions {
   /** Authorization capability mode. Default: 'simple'. */
@@ -467,6 +474,8 @@ export interface AuthAuthorizationOptions {
   permissions?: Record<PermissionKey, AuthPermissionConfig>;
   /** Static application role templates. */
   roles?: Record<string, AuthRoleTemplateConfig>;
+  /** Startup-only acknowledgement; does not change accounts, sessions or role assignments. */
+  initialRoleAdoption?: AuthAuthorizationInitialRoleAdoptionConfig;
   /**
    * Explicitly adopt one existing identity as protected application owner when
    * upgrading an installed single-tenant app to advanced authorization.
@@ -491,6 +500,7 @@ export interface ResolvedAuthAuthorizationConfig {
   readonly registryVersion: number;
   readonly permissions: Readonly<Record<PermissionKey, ResolvedAuthPermissionConfig>>;
   readonly roles: Readonly<Record<string, ResolvedAuthRoleTemplateConfig>>;
+  readonly initialRoleAdoption?: Readonly<AuthAuthorizationInitialRoleAdoptionConfig>;
   readonly ownerAdoption?: Readonly<AuthAuthorizationOwnerAdoptionConfig> | null;
   readonly legacySimpleRoleAdoption?: true;
 }

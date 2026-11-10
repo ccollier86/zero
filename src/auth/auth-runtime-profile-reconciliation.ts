@@ -83,6 +83,7 @@ export function reconcileAuthRuntimeProfile(
           authorization: input.authorizationKernel.authorization,
           tenancy: input.authorizationKernel.tenancy.mode,
           audit: input.auditService,
+          initialRoleAdoption: input.authConfig.authorization?.initialRoleAdoption,
           allowProfileAxisChange: plan.kind !== 'unchanged'
             && plan.kind !== 'initialized',
         });

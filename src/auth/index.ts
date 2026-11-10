@@ -471,6 +471,7 @@ export type {
   AuthAuthorizationConfig,
   AuthAuthorizationMode,
   AuthAuthorizationOwnerAdoptionConfig,
+  AuthAuthorizationInitialRoleAdoptionConfig,
   AuthAuthorizationOptions,
   AuthPermissionConfig,
   AuthPermissionScope,
