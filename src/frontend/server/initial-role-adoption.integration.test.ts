@@ -37,6 +37,10 @@ test('managed populated upgrade preserves web/native families and grants only th
     async function start(authorization: 'simple' | AuthAuthorizationOptions) {
       const app = await createApp({
         app: { name: 'Synthetic Role Upgrade', publicUrl: url }, tables: {},
+        // This API-only fixture has no page assets. Admit the same prepared
+        // manifest shape used by a bundled app instead of rebuilding CSS.
+        themeFoundation: 'legacy',
+        frontendBuild: { version: 1, frontend: { themeFoundation: 'legacy', plugins: {} }, pluginIdentities: {} },
         db: { mode: 'file', path: join(root, 'application/app.db') },
         systemDb: { mode: 'file', path: join(root, 'system/system.db') },
         auth: { tenancy: 'single', authorization, bootstrap: 'public', registration: { mode: 'public' },
