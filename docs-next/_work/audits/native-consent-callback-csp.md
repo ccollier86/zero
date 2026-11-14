@@ -58,6 +58,9 @@ Browser diagnostics retain only static flags/codes, not callback URLs, request
 IDs, PKCE values, tokens or credentials. Fixtures stop owned apps/contexts and
 verify their synthetic marker/root identity before cleanup; no real runtime
 database or Android application state is accessed.
+The native browser fixture also awaits the shared browser's final retirement,
+so Chromium finishes deleting its profile/artifacts before the test exits.
+Existing non-blocking lease release and other active leases remain supported.
 
 Source and exact package evidence live under
 `artifacts/zero-platform/diagnostics/native-consent-csp` on the external volume.

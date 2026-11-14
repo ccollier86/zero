@@ -25,6 +25,8 @@ export const playwrightTestBrowserAvailable = existsSync(chromium.executablePath
 export interface PlaywrightTestBrowserLease {
   readonly browser: Browser;
   release(): void;
+  /** Await final idle-browser retirement when this lease owns the last use. */
+  releaseAndWait(): Promise<void>;
 }
 
 export async function acquirePlaywrightTestBrowser(): Promise<PlaywrightTestBrowserLease> {
@@ -39,14 +41,19 @@ export async function acquirePlaywrightTestBrowser(): Promise<PlaywrightTestBrow
     if (closePromise) await closePromise;
     const browser = await connectedBrowser();
     let released = false;
-    return {
-      browser,
-      release() {
-        if (released) return;
-        released = true;
-        releaseBrowserLease();
-      },
+    const release = () => {
+      if (released) return;
+      released = true;
+      releaseBrowserLease();
     };
+    return { browser, release, async releaseAndWait() {
+      release();
+      if (activeLeases === 0) {
+        cancelIdleClose();
+        await closeIdleBrowser();
+        if (browser.isConnected()) throw new Error('Owned Chromium did not retire; preserve its diagnostic state.');
+      }
+    } };
   } catch (cause) {
     releaseBrowserLease();
     throw cause;
@@ -94,21 +101,26 @@ function scheduleIdleClose(): void {
   if (activeLeases > 0 || idleCloseTimer) return;
   idleCloseTimer = setTimeout(() => {
     idleCloseTimer = undefined;
-    if (activeLeases > 0 || closePromise) return;
-
-    const browser = activeBrowser;
-    activeBrowser = undefined;
-    if (!browser?.isConnected()) return;
-
-    const pendingClose = browser.close().catch(() => {
-      // A disconnected browser is already closed from the test process's
-      // perspective. The next lease will launch a clean replacement.
-    });
-    closePromise = pendingClose;
-    void pendingClose.finally(() => {
-      if (closePromise === pendingClose) closePromise = undefined;
-    });
+    void closeIdleBrowser();
   }, IDLE_CLOSE_MS);
+}
+
+/** Share the same close boundary between idle reuse and explicitly awaited teardown. */
+function closeIdleBrowser(): Promise<void> | undefined {
+  if (activeLeases > 0 || closePromise) return closePromise;
+  const browser = activeBrowser;
+  activeBrowser = undefined;
+  if (!browser?.isConnected()) return;
+
+  const pendingClose = browser.close().catch(() => {
+    // A disconnected browser is already closed from the test process's
+    // perspective. The next lease will launch a clean replacement.
+  });
+  closePromise = pendingClose;
+  void pendingClose.finally(() => {
+    if (closePromise === pendingClose) closePromise = undefined;
+  });
+  return pendingClose;
 }
 
 function cancelIdleClose(): void {

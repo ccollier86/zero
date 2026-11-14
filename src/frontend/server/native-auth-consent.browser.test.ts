@@ -90,8 +90,10 @@ beforeAll(async () => {
 }, 30_000);
 
 afterAll(async () => {
-  lease?.release();
-  await app?.stop(true);
+  // Wait for Chromium's profile/artifact cleanup rather than exiting while its
+  // idle-close promise is still pending. Other active leases remain untouched.
+  try { await lease?.releaseAndWait(); }
+  finally { await app?.stop(true); }
   if (root) {
     const current = await lstat(root);
     if (current.isSymbolicLink() || current.dev !== fixtureIdentity.dev || current.ino !== fixtureIdentity.ino
