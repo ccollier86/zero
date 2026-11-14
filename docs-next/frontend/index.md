@@ -70,6 +70,8 @@ manuals and distinguish working-source additions from older installed packages.
 - [Notifications](./notifications/index.md) covers receipt hooks, optional toast
   provider and reusable inbox/badge controls.
 - [Rooms](./rooms/index.md) covers scoped membership hooks and room/topic presence.
+- [Calendar UI](./calendar/index.md) covers the experimental tokenized schedule,
+  editors, pickers, list and self-scheduling preview; backend integration is pending.
 - [Messaging foundation](./messaging/index.md) covers experimental conversation
   parts and real session-scoped typing; the durable chat backend is still in development.
 - [Email Inbox](./email/index.md) covers optional folder/message workspaces, safe HTML, rich composition, scoped drafts and live mail.

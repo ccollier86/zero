@@ -1,0 +1,53 @@
+/* Scoped semantic aliases for later mapping onto native Zero design tokens. */
+.calendar-workspace { --appointment-attention-mix: var(--calendar-attention-mix); --appointment-motion: var(--calendar-duration-popover); }
+.schedule-event-shell { position: absolute; z-index: 2; }
+.schedule-event-shell:hover, .schedule-event-shell:focus-within { z-index: 4; }
+.schedule-event-shell > .schedule-event { inset: 0; width: 100%; height: 100%; }
+.schedule-event-shell .schedule-event-title { padding-right: var(--calendar-size-18); }
+.schedule-event.has-attention { background: color-mix(in srgb, var(--event-color) var(--appointment-attention-mix), var(--calendar-surface)); border-top-color: color-mix(in srgb, var(--event-color) 35%, transparent); }
+.schedule-event-signal { display: flex; align-items: center; gap: var(--calendar-size-4); margin-top: auto; min-height: var(--calendar-size-16); font-size: var(--calendar-size-9); font-weight: var(--calendar-weight-medium); color: var(--calendar-color-gray-7); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; padding-right: var(--calendar-size-16); }
+.appointment-status-trigger { position: absolute; right: var(--calendar-size-4); top: var(--calendar-size-3); z-index: 5; display: grid; place-items: center; width: var(--calendar-size-19); height: var(--calendar-size-19); border: 0; border-radius: var(--calendar-size-5); background: color-mix(in srgb, var(--calendar-surface) 58%, transparent); color: var(--event-color); cursor: pointer; transition: background var(--appointment-motion); }
+.appointment-status-trigger:hover, .appointment-status-trigger[aria-expanded=true] { background: var(--calendar-surface); }
+.appointment-status-trigger:focus-visible, .appointment-appearance-trigger:focus-visible { outline: var(--calendar-size-2) solid var(--calendar-color-blue-5); outline-offset: var(--calendar-size-2); }
+.appointment-status-trigger.has-attention { color: var(--calendar-color-gray-8); }
+.appointment-signal-popup { --appointment-motion: var(--calendar-duration-popover); padding: 0; border-radius: var(--calendar-size-12); border: var(--calendar-size-1) solid var(--calendar-color-gray-2); box-shadow: 0 var(--calendar-size-3) var(--calendar-size-7) var(--calendar-shadow-ink-0-0-0-04), 0 var(--calendar-size-14) var(--calendar-size-40) calc(-1 * var(--calendar-size-10)) var(--calendar-shadow-ink-0-0-0-18); max-width: calc(100vw - var(--calendar-size-24)); max-height: min(var(--calendar-size-580), calc(100dvh - var(--calendar-size-40))); overflow-y: auto; scrollbar-width: thin; }
+.appointment-signal-head { padding: var(--calendar-size-12) var(--calendar-size-13) var(--calendar-size-9); display: flex; flex-direction: column; gap: var(--calendar-size-3); }
+.appointment-signal-head b { font-size: var(--calendar-size-12); font-weight: var(--calendar-weight-heading); overflow-wrap: anywhere; }
+.appointment-signal-head small, .appointment-signal-foot, .appointment-signal-caption { font-size: var(--calendar-size-10-5); color: var(--calendar-muted); }
+.appointment-signal-caption { padding: var(--calendar-size-3) var(--calendar-size-13) var(--calendar-size-5); }
+.appointment-signal-foot { display: flex; align-items: center; justify-content: space-between; gap: var(--calendar-size-8); padding: var(--calendar-size-9) var(--calendar-size-13); border-top: var(--calendar-size-1) solid var(--calendar-color-gray-2); line-height: var(--calendar-leading-1-5); }
+.appointment-signal-body { padding: 0 var(--calendar-size-13) var(--calendar-size-12); }
+.appointment-workflow-fields { display: flex; flex-direction: column; gap: var(--calendar-size-9); }
+.appointment-workflow-inputs { display: grid; grid-template-columns: repeat(auto-fit, minmax(var(--calendar-size-115), 1fr)); gap: var(--calendar-size-8); }
+.appointment-workflow-fields label { font-size: var(--calendar-size-10-5); font-weight: var(--calendar-weight-medium); margin-bottom: var(--calendar-size-3); color: var(--calendar-color-gray-6); }
+.appointment-workflow-fields input { font-size: var(--calendar-size-11); border-color: var(--calendar-color-gray-3); border-radius: var(--calendar-size-7); }
+.appointment-workflow-fields [role=option] { font-size: var(--calendar-size-11-5); border-radius: var(--calendar-size-6); }
+.appointment-progress-steps { display: flex; gap: 0; padding: var(--calendar-size-2) 0 var(--calendar-size-4); }
+.appointment-progress-steps > span { position: relative; flex: 1; text-align: center; display: flex; align-items: center; flex-direction: column; gap: var(--calendar-size-4); color: var(--calendar-color-gray-5); }
+.appointment-progress-steps > span::before { content: ''; position: absolute; top: var(--calendar-size-3); left: -50%; width: 100%; height: var(--calendar-size-1); background: var(--calendar-color-gray-2); }
+.appointment-progress-steps > span:first-child::before { display: none; }
+.appointment-progress-steps i { width: var(--calendar-size-7); height: var(--calendar-size-7); border-radius: 50%; background: var(--calendar-color-gray-3); position: relative; z-index: 1; box-shadow: 0 0 0 var(--calendar-size-3) var(--calendar-surface); }
+.appointment-progress-steps small { font-size: var(--calendar-size-8); white-space: nowrap; }
+.appointment-progress-steps .is-reached { color: var(--calendar-color-blue-7); }
+.appointment-progress-steps .is-reached i, .appointment-progress-steps .is-reached::before { background: var(--calendar-color-blue-5); }
+.appointment-appearance-trigger { display: flex; align-items: center; gap: var(--calendar-size-6); border: 0; background: transparent; border-radius: var(--calendar-size-6); padding: var(--calendar-size-4) 0; color: var(--calendar-color-gray-7); font: inherit; font-size: var(--calendar-size-11); cursor: pointer; text-align: left; flex-wrap: wrap; }
+.appointment-appearance-trigger > i { width: var(--calendar-size-9); height: var(--calendar-size-9); border-radius: var(--calendar-size-3); }
+.appointment-appearance-trigger > small { font-size: var(--calendar-size-9-5); color: var(--calendar-muted); margin-left: auto; }
+.appointment-color-swatches { display: flex; gap: var(--calendar-size-9); padding: var(--calendar-size-7) var(--calendar-size-13) var(--calendar-size-15); }
+.appointment-color-swatches button { width: var(--calendar-size-23); height: var(--calendar-size-23); background: var(--swatch-color); color: var(--calendar-on-accent); border: var(--calendar-size-2) solid var(--calendar-surface); outline: var(--calendar-size-1) solid transparent; border-radius: 50%; display: grid; place-items: center; cursor: pointer; }
+.appointment-color-swatches button[aria-pressed=true], .appointment-color-swatches button:focus-visible { outline-color: var(--swatch-color); }
+.appointment-color-swatches .is-automatic { background: conic-gradient(var(--calendar-color-blue-5), var(--calendar-color-violet-5), var(--calendar-color-teal-5), var(--calendar-color-blue-5)); }
+.appointment-attention-list { position: relative; padding: var(--calendar-size-3) var(--calendar-size-6) var(--calendar-size-6); max-height: var(--calendar-size-245); overflow-y: auto; }
+.appointment-attention-list > button { border: 0; background: transparent; width: 100%; display: flex; align-items: center; gap: var(--calendar-size-8); text-align: left; padding: var(--calendar-size-8) var(--calendar-size-7); position: relative; z-index: 1; color: var(--calendar-text); font: inherit; border-radius: var(--calendar-size-7); cursor: pointer; }
+.appointment-attention-list > button > span:nth-child(2) { flex: 1; display: flex; flex-direction: column; gap: var(--calendar-size-2); }
+.appointment-attention-list b { font-size: var(--calendar-size-11); font-weight: var(--calendar-weight-medium); }
+.appointment-attention-list small { font-size: var(--calendar-size-10); color: var(--calendar-muted); line-height: var(--calendar-leading-1-4); }
+.appointment-attention-list button:focus-visible { outline: var(--calendar-size-2) solid var(--calendar-color-blue-5); outline-offset: calc(-1 * var(--calendar-size-2)); }
+.appointment-attention-note { display: flex; gap: var(--calendar-size-6); align-items: center; padding: var(--calendar-size-7) var(--calendar-size-10); margin: 0 var(--calendar-size-13) var(--calendar-size-10); border-radius: var(--calendar-size-7); background: var(--calendar-color-orange-0); color: var(--calendar-color-orange-8); font-size: var(--calendar-size-11); }
+.appointment-editor-workflow { border: var(--calendar-size-1) solid var(--calendar-color-gray-2); border-radius: var(--calendar-size-9); padding: var(--calendar-size-10); background: var(--calendar-surface); }
+.calendar-month-event.has-attention { background: color-mix(in srgb, var(--month-event-color) var(--appointment-attention-mix), var(--calendar-surface)); }
+.calendar-event-legend { display: flex; align-items: center; gap: var(--calendar-size-13); flex-wrap: wrap; font-size: var(--calendar-size-10); color: var(--calendar-muted); padding: var(--calendar-size-1) 0 var(--calendar-size-7); }
+.calendar-event-legend span { display: inline-flex; gap: var(--calendar-size-4); align-items: center; }
+.calendar-event-legend i { width: var(--calendar-size-10); height: var(--calendar-size-10); border-radius: var(--calendar-size-3); border-left: var(--calendar-size-2) solid var(--calendar-color-blue-6); background: var(--calendar-color-blue-0); }
+.calendar-event-legend .is-attention { background: color-mix(in srgb, var(--calendar-color-blue-6) var(--appointment-attention-mix), var(--calendar-on-accent)); }
+@media (prefers-reduced-motion: reduce) { .appointment-status-trigger, .appointment-signal-popup { transition: none; animation: none; } }

@@ -1,0 +1,51 @@
+.appointment-repeat-trigger { display: flex; align-items: center; gap: var(--calendar-size-8); max-width: 100%; min-width: 0; min-height: var(--calendar-size-22); padding: 0; border: 0; background: transparent; color: var(--calendar-muted); font: inherit; font-size: var(--calendar-size-12); text-align: left; cursor: pointer; }
+.appointment-repeat-trigger > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.appointment-repeat-trigger > svg { flex-shrink: 0; transition: transform var(--calendar-duration-140) var(--calendar-ease-standard); }
+.appointment-repeat-trigger[aria-expanded=true] > svg { transform: rotate(var(--calendar-measure-180-deg)); }
+.appointment-repeat-trigger.has-repeat { color: var(--calendar-color-blue-7); }
+.appointment-repeat-trigger:disabled { opacity: var(--calendar-opacity-50); cursor: default; }
+.appointment-repeat-popup { padding: var(--calendar-size-5); transition: width var(--calendar-duration-140) var(--calendar-ease-magnetic); }
+.appointment-repeat-head { display: flex; align-items: center; gap: var(--calendar-size-8); padding: var(--calendar-size-7) var(--calendar-size-7) var(--calendar-size-9); border-bottom: var(--calendar-size-1) solid var(--calendar-color-gray-2); }
+.appointment-repeat-head > div { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: var(--calendar-size-2); }
+.appointment-repeat-head b { font-size: var(--calendar-size-12); font-weight: var(--calendar-weight-medium); }
+.appointment-repeat-head small { color: var(--calendar-muted); font-size: var(--calendar-size-9); }
+.appointment-repeat-head-icon, .appointment-repeat-head > button { display: grid; place-items: center; width: var(--calendar-size-25); height: var(--calendar-size-25); padding: 0; border: 0; border-radius: var(--calendar-size-6); background: var(--calendar-color-blue-0); color: var(--calendar-color-blue-7); flex-shrink: 0; }
+.appointment-repeat-head > button { color: var(--calendar-muted); background: transparent; cursor: pointer; }
+.appointment-repeat-body { max-height: min(var(--calendar-size-420), calc(100dvh - var(--calendar-size-160))); padding: var(--calendar-size-4) 0; }
+.appointment-repeat-option { display: flex; align-items: center; position: relative; z-index: 1; gap: var(--calendar-size-8); width: 100%; min-height: var(--calendar-size-30); padding: var(--calendar-size-6) var(--calendar-size-8); border: 0; border-radius: var(--calendar-size-5); background: transparent; color: var(--calendar-text); font: inherit; font-size: var(--calendar-size-11); text-align: left; cursor: pointer; }
+.appointment-repeat-option > span { flex: 1; }
+.appointment-repeat-option[aria-selected=true] { color: var(--calendar-color-blue-7); }
+.appointment-repeat-option.is-custom-choice { border-top: var(--calendar-size-1) solid var(--calendar-color-gray-2); border-radius: 0 0 var(--calendar-size-5) var(--calendar-size-5); margin-top: var(--calendar-size-3); padding-top: var(--calendar-size-9); color: var(--calendar-color-blue-7); }
+.appointment-repeat-custom { padding: var(--calendar-size-8) var(--calendar-size-7) var(--calendar-size-3); }
+.appointment-repeat-every { display: flex; align-items: center; gap: var(--calendar-size-8); margin-bottom: var(--calendar-size-13); }
+.appointment-repeat-every > label { margin-right: var(--calendar-size-3); font-size: var(--calendar-size-11); color: var(--calendar-color-gray-7); }
+.appointment-repeat-custom input[type=number] { width: var(--calendar-size-47); min-height: var(--calendar-size-27); padding: var(--calendar-size-3) var(--calendar-size-5); border: var(--calendar-size-1) solid var(--calendar-color-gray-3); border-radius: var(--calendar-size-5); color: var(--calendar-text); background: var(--calendar-surface); font: inherit; font-size: var(--calendar-size-11); text-align: center; }
+.appointment-repeat-label { display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--calendar-size-7); font-size: var(--calendar-size-10); color: var(--calendar-color-gray-7); }
+.appointment-repeat-label > button { padding: 0; border: 0; background: transparent; color: var(--calendar-color-blue-7); font: inherit; font-size: var(--calendar-size-9); cursor: pointer; }
+.appointment-repeat-days { display: flex; justify-content: space-between; gap: var(--calendar-size-5); margin-bottom: var(--calendar-size-13); }
+.appointment-repeat-days > button { display: grid; place-items: center; width: var(--calendar-size-31); height: var(--calendar-size-29); padding: 0; border: var(--calendar-size-1) solid var(--calendar-color-gray-2); border-radius: var(--calendar-size-7); color: var(--calendar-muted); background: transparent; font: inherit; font-size: var(--calendar-size-11); cursor: pointer; transition: background var(--calendar-duration-120) var(--calendar-ease-standard), border-color var(--calendar-duration-120) var(--calendar-ease-standard), color var(--calendar-duration-120) var(--calendar-ease-standard); }
+.appointment-repeat-days > button:hover { background: var(--calendar-color-gray-0); }
+.appointment-repeat-days > button[aria-pressed=true] { color: var(--calendar-color-blue-7); border-color: var(--calendar-color-blue-2); background: var(--calendar-color-blue-0); font-weight: var(--calendar-weight-heading); }
+.appointment-repeat-custom fieldset { margin: 0 0 var(--calendar-size-10); padding: 0; border: 0; min-width: 0; }
+.appointment-repeat-custom legend { margin-bottom: var(--calendar-size-6); padding: 0; color: var(--calendar-color-gray-7); font-size: var(--calendar-size-10); }
+.appointment-repeat-choice { display: flex; align-items: center; gap: var(--calendar-size-7); min-height: var(--calendar-size-32); font-size: var(--calendar-size-10); color: var(--calendar-muted); }
+.appointment-repeat-choice > label { display: flex; align-items: center; gap: var(--calendar-size-6); min-width: var(--calendar-size-62); color: var(--calendar-color-gray-7); cursor: pointer; }
+.appointment-repeat-choice input[type=radio] { width: var(--calendar-size-12); height: var(--calendar-size-12); margin: 0; accent-color: var(--calendar-color-blue-6); }
+.appointment-repeat-choice input[type=date] { width: var(--calendar-size-130); min-height: var(--calendar-size-27); padding: var(--calendar-size-3) var(--calendar-size-5); border: var(--calendar-size-1) solid var(--calendar-color-gray-3); border-radius: var(--calendar-size-5); background: var(--calendar-surface); color: var(--calendar-color-gray-7); font: inherit; font-size: var(--calendar-size-11); }
+.appointment-repeat-preview { padding: var(--calendar-size-9); margin: var(--calendar-size-5) 0 var(--calendar-size-7); border: var(--calendar-size-1) solid var(--calendar-color-blue-1); border-radius: var(--calendar-size-7); background: color-mix(in srgb, var(--calendar-color-blue-0) 60%, var(--calendar-surface)); }
+.appointment-repeat-preview > div:first-child { display: flex; align-items: flex-start; gap: var(--calendar-size-6); color: var(--calendar-color-blue-8); }
+.appointment-repeat-preview > div:first-child svg { flex-shrink: 0; margin-top: var(--calendar-size-1); }
+.appointment-repeat-preview b { font-size: var(--calendar-size-10); line-height: var(--calendar-leading-1-5); font-weight: var(--calendar-weight-medium); }
+.appointment-repeat-preview > small { display: block; margin: var(--calendar-size-7) 0 var(--calendar-size-4); color: var(--calendar-muted); font-size: var(--calendar-size-9); }
+.appointment-repeat-date-chips { display: flex; flex-wrap: wrap; gap: var(--calendar-size-4); }
+.appointment-repeat-date-chips > span { display: inline-flex; align-items: center; gap: var(--calendar-size-4); padding: var(--calendar-size-3) var(--calendar-size-5); border: var(--calendar-size-1) solid var(--calendar-color-blue-1); border-radius: var(--calendar-size-4); background: var(--calendar-surface); font-size: var(--calendar-size-9); color: var(--calendar-color-blue-9); }
+.appointment-repeat-date-chips i { width: var(--calendar-size-4); height: var(--calendar-size-4); border-radius: 50%; background: var(--calendar-color-blue-5); }
+.appointment-repeat-help { margin: var(--calendar-size-5) 0 0; color: var(--calendar-muted); font-size: var(--calendar-size-9); line-height: var(--calendar-leading-1-5); }
+.appointment-repeat-error { padding: var(--calendar-size-6) 0; margin: 0; color: var(--calendar-color-red-7); font-size: var(--calendar-size-10); }
+.appointment-repeat-foot { display: flex; justify-content: space-between; gap: var(--calendar-size-8); padding: var(--calendar-size-7) var(--calendar-size-7) var(--calendar-size-3); border-top: var(--calendar-size-1) solid var(--calendar-color-gray-2); }
+.appointment-repeat-foot > button { padding: var(--calendar-size-5) var(--calendar-size-9); border: 0; border-radius: var(--calendar-size-5); background: var(--calendar-color-blue-0); color: var(--calendar-color-blue-7); font: inherit; font-size: var(--calendar-size-10); font-weight: var(--calendar-weight-medium); cursor: pointer; }
+.appointment-repeat-foot > button.is-quiet { color: var(--calendar-muted); background: transparent; }
+.appointment-repeat-foot > button:disabled { opacity: var(--calendar-opacity-45); cursor: default; }
+.appointment-repeat-trigger:focus-visible, .appointment-repeat-popup button:focus-visible, .appointment-repeat-popup input:focus-visible { outline: var(--calendar-size-2) solid var(--calendar-color-blue-5); outline-offset: var(--calendar-size-1); border-radius: var(--calendar-size-4); }
+@media (pointer: coarse) { .appointment-repeat-option { min-height: var(--calendar-size-36); } .appointment-repeat-days > button { height: var(--calendar-size-33); } .appointment-repeat-choice { min-height: var(--calendar-size-36); } .appointment-repeat-foot > button { min-height: var(--calendar-size-30); } }
+@media (prefers-reduced-motion: reduce) { .appointment-repeat-trigger > svg, .appointment-repeat-popup, .appointment-repeat-days > button { transition: none; } }

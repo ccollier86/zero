@@ -1,0 +1,48 @@
+/* Compact anatomy retained from the approved calendar. Behavior comes from native Zero controls. */
+.calendar-badge { display: inline-flex; align-items: center; padding: var(--calendar-size-1) var(--calendar-size-6); font-size: var(--calendar-size-9); font-weight: var(--calendar-weight-strong); line-height: var(--calendar-leading-body); text-transform: uppercase; letter-spacing: var(--calendar-tracking-label); white-space: nowrap; }
+.calendar-button { height: var(--calendar-control-height); min-height: 0; padding: 0 var(--calendar-size-12); border-radius: var(--calendar-radius-sm); gap: var(--calendar-size-6); font-size: var(--calendar-font-size-xs); line-height: var(--calendar-leading-body); font-weight: var(--calendar-weight-heading); box-shadow: none; }
+.calendar-button.is-filled { background: var(--calendar-button-color); color: var(--calendar-on-accent); border-color: transparent; }
+.calendar-button.is-default { background: var(--calendar-surface); color: var(--calendar-text); border-color: var(--calendar-color-gray-4); }
+.calendar-button.is-subtle { background: transparent; color: var(--calendar-button-color); border: 0; }
+.calendar-button.is-light { background: var(--calendar-button-tint); color: var(--calendar-button-color); border: 0; }
+.calendar-button.is-compact { height: var(--calendar-control-compact-height); padding: 0 var(--calendar-size-7); font-size: var(--calendar-size-10); }
+.calendar-action-icon { display: inline-flex; flex: none; align-items: center; justify-content: center; padding: 0; }
+.calendar-button-group { display: inline-flex; flex-wrap: nowrap; }
+.calendar-button-group > button { border-radius: 0; }
+.calendar-button-group > button + button { margin-left: calc(-1 * var(--calendar-border-width)); }
+.calendar-button-group > button:first-child { border-radius: var(--calendar-radius-sm) 0 0 var(--calendar-radius-sm); }
+.calendar-button-group > button:last-child { border-radius: 0 var(--calendar-radius-sm) var(--calendar-radius-sm) 0; }
+.calendar-field { min-width: 0; }
+:where(.calendar-unstyled-button) { border: 0; padding: 0; background: transparent; color: inherit; font: inherit; text-align: inherit; cursor: pointer; }
+.calendar-field > label { display: block; font-size: var(--calendar-font-size-xs); font-weight: var(--calendar-weight-medium); margin-bottom: var(--calendar-size-3); }
+.calendar-field > small { display: block; color: var(--calendar-muted); font-size: var(--calendar-size-10); }
+.calendar-input-row { position: relative; }
+.calendar-input-row > [data-slot=input-wrapper] { padding: 0; border-radius: var(--calendar-radius-sm); }
+.calendar-input-row .calendar-native-input { min-height: var(--calendar-control-height); height: var(--calendar-control-height); padding: 0 var(--calendar-size-10); font: inherit; font-size: var(--calendar-font-size-xs); border-radius: var(--calendar-radius-sm); box-shadow: none; background: var(--calendar-surface); color: var(--calendar-text); border: var(--calendar-border-width) solid var(--calendar-color-gray-4); }
+.calendar-input-row.is-unstyled > [data-slot=input-wrapper], .calendar-input-row.is-unstyled .calendar-native-input, .calendar-native-textarea.is-unstyled { background: transparent; border: 0; box-shadow: none; }
+.calendar-input-row.is-unstyled > [data-slot=input-wrapper] { background: transparent !important; }
+.calendar-input-row.is-unstyled .calendar-native-input:focus-visible { outline: var(--calendar-size-1) solid var(--calendar-ring); outline-offset: var(--calendar-size-2); }
+.calendar-input-row.is-unstyled .calendar-native-input { padding: 0; min-height: var(--calendar-size-20); height: var(--calendar-size-24); }
+.calendar-input-row .has-leading { padding-left: var(--calendar-size-28) !important; }
+.calendar-input-row .has-trailing { padding-right: var(--calendar-size-28) !important; }
+.calendar-input-leading, .calendar-input-trailing { position: absolute; top: 0; bottom: 0; display: flex; align-items: center; justify-content: center; width: var(--calendar-size-28); color: var(--calendar-muted); }
+.calendar-input-leading { left: 0; pointer-events: none; }
+.calendar-input-trailing { right: 0; }
+.calendar-native-textarea { min-height: var(--calendar-size-40); padding: var(--calendar-size-8); font-family: var(--calendar-font); font-size: var(--calendar-font-size-xs); line-height: var(--calendar-leading-body); color: var(--calendar-text); background: var(--calendar-surface); border: var(--calendar-border-width) solid var(--calendar-color-gray-4); border-radius: var(--calendar-radius-sm); }
+.calendar-native-textarea.is-unstyled { padding: 0; min-height: var(--calendar-size-20); resize: none; }
+.calendar-boolean-field { display: inline-flex; align-items: center; gap: var(--calendar-size-6); font-size: var(--calendar-font-size-xs); color: var(--calendar-text); cursor: pointer; }
+.calendar-boolean-field > [role=checkbox] { width: var(--calendar-size-14); height: var(--calendar-size-14); border-radius: var(--calendar-size-3); }
+.calendar-switch > [role=switch] { width: var(--calendar-switch-width); height: var(--calendar-switch-height); padding: var(--calendar-size-2); }
+.calendar-switch [data-slot=switch-thumb] { width: var(--calendar-switch-thumb); height: var(--calendar-switch-thumb); }
+.calendar-switch [data-slot=switch-thumb][data-state=checked] { transform: translateX(var(--calendar-switch-travel)); }
+.calendar-switch [data-slot=switch-thumb][data-state=unchecked] { transform: translateX(0); }
+.calendar-avatar-indicator { position: relative; display: inline-flex; }
+.calendar-avatar-indicator > i { position: absolute; border-radius: 50%; box-shadow: 0 0 0 var(--calendar-size-1) var(--calendar-surface); }
+.calendar-segmented { display: inline-flex; flex: none; background: var(--calendar-color-gray-1); border-radius: var(--calendar-radius-sm); padding: var(--calendar-size-3); gap: var(--calendar-size-1); }
+.calendar-segmented > label { position: relative; border-radius: var(--calendar-radius-sm); color: var(--calendar-color-gray-7); font-size: var(--calendar-font-size-xs); cursor: pointer; }
+.calendar-segmented > label.is-selected { background: var(--calendar-surface); box-shadow: var(--calendar-shadow-segment); color: var(--calendar-text); }
+.calendar-segmented > label > span { display: block; padding: var(--calendar-size-2) var(--calendar-size-6); }
+.calendar-segmented input { position: absolute; opacity: 0; inset: 0; cursor: pointer; }
+.calendar-segmented label:focus-within { outline: var(--calendar-focus-width) solid var(--calendar-ring); }
+.calendar-collapse { display: grid; transition: grid-template-rows var(--calendar-duration-170) var(--calendar-ease-standard); }
+.calendar-collapse > div { min-height: 0; overflow: hidden; }

@@ -1,0 +1,10 @@
+.calendar-managed-dialog { --zero-modal-radius: var(--calendar-radius-md); --zero-modal-pad: var(--calendar-space-md); --zero-modal-font-family: var(--calendar-font); --zero-modal-title-size: var(--calendar-font-size-sm); --zero-modal-title-weight: var(--calendar-weight-medium); --zero-modal-title-tracking: normal; }
+.calendar-managed-dialog .zero-modal__top { border-bottom-color: var(--calendar-line); }
+.calendar-managed-dialog .zero-modal__head { padding: var(--calendar-space-sm) var(--calendar-space-md); align-items: center; }
+.calendar-managed-dialog .zero-modal__title { color: var(--calendar-muted); }
+.calendar-managed-dialog .zero-modal__body { padding: 0; }
+.calendar-managed-radius-lg { --zero-modal-radius: var(--calendar-radius-lg); }
+.calendar-managed-radius-md { --zero-modal-radius: var(--calendar-radius-md); }
+.calendar-dismiss { display: contents; }
+.calendar-popover { background: var(--calendar-surface); color: var(--calendar-text); border: var(--calendar-border-width) solid var(--calendar-line); border-radius: var(--calendar-radius-md); font-family: var(--calendar-font); }
+.calendar-sidebar-drawer-body { height: calc(100dvh - var(--calendar-column-header-height)); min-height: 0; padding: var(--calendar-space-sm); }

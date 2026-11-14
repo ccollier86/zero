@@ -245,6 +245,16 @@
       "types": "./src/seo/index.ts",
       "import": "./src/seo/index.ts"
     },
+    "./calendar": {
+      "types": "./src/components/calendar/index.ts",
+      "import": "./src/components/calendar/index.ts"
+    },
+    "./components/calendar": {
+      "types": "./src/components/calendar/index.ts",
+      "import": "./src/components/calendar/index.ts"
+    },
+    "./calendar/tokens.css": "./src/components/calendar/styles/calendar-tokens.css",
+    "./calendar/theme.css": "./src/components/calendar/styles/calendar-theme.css",
     "./blog": {
       "types": "./src/components/blog/index.ts",
       "import": "./src/components/blog/index.ts"

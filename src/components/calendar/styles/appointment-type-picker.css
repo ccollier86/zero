@@ -1,0 +1,38 @@
+.appointment-type-trigger { display: flex; align-items: center; gap: var(--calendar-size-8); min-height: var(--calendar-size-22); width: 100%; min-width: 0; padding: 0; border: 0; background: transparent; color: var(--calendar-text); font: inherit; font-size: var(--calendar-size-12); text-align: left; cursor: pointer; }
+.appointment-type-trigger > span { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.appointment-type-trigger > svg { margin-right: var(--calendar-size-7); color: var(--calendar-color-gray-5); transition: transform var(--calendar-duration-140) var(--calendar-ease-standard); flex-shrink: 0; }
+.appointment-type-trigger[aria-expanded=true] > svg { transform: rotate(var(--calendar-measure-180-deg)); }
+.appointment-type-trigger > small { color: var(--calendar-muted); font-size: var(--calendar-size-9); }
+.appointment-type-popup { padding: var(--calendar-size-5); }
+.appointment-type-head { display: flex; align-items: center; gap: var(--calendar-size-7); padding: var(--calendar-size-6); }
+.appointment-type-head > b { flex: 1; font-size: var(--calendar-size-11); font-weight: var(--calendar-weight-medium); }
+.appointment-type-head > small { color: var(--calendar-muted); font-size: var(--calendar-size-9); }
+.appointment-type-head > button { display: grid; place-items: center; width: var(--calendar-size-23); height: var(--calendar-size-23); padding: 0; border: 0; background: transparent; border-radius: var(--calendar-size-4); color: var(--calendar-muted); cursor: pointer; }
+.appointment-type-search { display: flex; align-items: center; gap: var(--calendar-size-6); padding: var(--calendar-size-3) var(--calendar-size-6) var(--calendar-size-7); margin-bottom: var(--calendar-size-3); border-bottom: var(--calendar-size-1) solid var(--calendar-color-gray-2); color: var(--calendar-color-gray-5); }
+.appointment-type-search input { flex: 1; min-width: 0; height: var(--calendar-size-23); padding: 0; outline: none; border: 0; background: transparent; color: var(--calendar-text); font: inherit; font-size: var(--calendar-size-11); }
+.appointment-type-results { max-height: min(var(--calendar-size-200), 32dvh); }
+.appointment-type-option { display: flex; align-items: center; gap: var(--calendar-size-9); position: relative; z-index: 1; width: 100%; min-height: var(--calendar-size-38); padding: var(--calendar-size-5) var(--calendar-size-7); border: 0; border-radius: var(--calendar-size-5); color: var(--calendar-text); background: transparent; font: inherit; text-align: left; cursor: pointer; }
+.appointment-type-option > i { width: var(--calendar-size-6); height: var(--calendar-size-22); border-radius: var(--calendar-size-3); background: color-mix(in srgb, var(--type-color) 25%, var(--calendar-surface)); box-shadow: inset calc(-1 * var(--calendar-size-2)) 0 var(--type-color); flex-shrink: 0; }
+.appointment-type-option > span { flex: 1; display: flex; flex-direction: column; gap: var(--calendar-size-2); min-width: 0; }
+.appointment-type-option b { font-size: var(--calendar-size-11); line-height: var(--calendar-size-15); font-weight: var(--calendar-weight-medium); }
+.appointment-type-option small { color: var(--calendar-muted); font-size: var(--calendar-size-9); line-height: var(--calendar-size-12); }
+.appointment-type-option > svg { color: var(--calendar-color-blue-6); }
+.appointment-type-add-other { display: flex; align-items: center; gap: var(--calendar-size-7); width: 100%; min-height: var(--calendar-size-30); padding: var(--calendar-size-7); margin-top: var(--calendar-size-3); border: 0; border-top: var(--calendar-size-1) solid var(--calendar-color-gray-2); background: transparent; color: var(--calendar-color-blue-7); font: inherit; font-size: var(--calendar-size-11); cursor: pointer; }
+.appointment-type-add-other > svg:last-child:not(:first-child) { margin-left: auto; }
+.appointment-type-add-other:hover { background: var(--calendar-color-blue-0); }
+.appointment-type-other { padding: var(--calendar-size-6); }
+.appointment-type-other label { display: block; color: var(--calendar-color-gray-7); font-size: var(--calendar-size-10); }
+.appointment-type-other input { width: 100%; height: var(--calendar-size-29); padding: var(--calendar-size-4) var(--calendar-size-7); margin-top: var(--calendar-size-5); border: var(--calendar-size-1) solid var(--calendar-color-gray-3); border-radius: var(--calendar-size-5); color: var(--calendar-text); background: var(--calendar-surface); font: inherit; font-size: var(--calendar-size-11); }
+.appointment-type-other p { color: var(--calendar-muted); font-size: var(--calendar-size-9); margin: var(--calendar-size-7) 0 var(--calendar-size-2); }
+.appointment-type-foot { display: flex; align-items: center; justify-content: space-between; padding: var(--calendar-size-6); margin-top: var(--calendar-size-3); border-top: var(--calendar-size-1) solid var(--calendar-color-gray-2); }
+.appointment-type-foot > button { border: 0; border-radius: var(--calendar-size-4); padding: var(--calendar-size-5) var(--calendar-size-9); color: var(--calendar-color-blue-7); background: var(--calendar-color-blue-0); font: inherit; font-size: var(--calendar-size-10); cursor: pointer; }
+.appointment-type-foot > button.is-quiet { background: transparent; color: var(--calendar-muted); }
+.appointment-type-foot > button:disabled { opacity: var(--calendar-opacity-50); cursor: default; }
+.appointment-type-empty { padding: var(--calendar-size-14) var(--calendar-size-8); text-align: center; color: var(--calendar-muted); font-size: var(--calendar-size-11); }
+.appointment-type-empty small { display: block; font-size: var(--calendar-size-9); margin-top: var(--calendar-size-3); }
+.appointment-title-helper { display: flex; align-items: center; gap: var(--calendar-size-4); min-height: var(--calendar-size-14); margin: calc(-1 * var(--calendar-size-5)) 0 var(--calendar-size-7); font-size: var(--calendar-size-9); color: var(--calendar-muted); }
+.appointment-title-helper.is-auto { color: var(--calendar-color-blue-7); }
+.appointment-title-helper button { padding: 0; border: 0; color: var(--calendar-color-blue-7); background: transparent; font: inherit; font-size: var(--calendar-size-9); cursor: pointer; }
+.appointment-type-trigger:focus-visible, .appointment-type-popup button:focus-visible, .appointment-type-popup input:focus-visible, .appointment-title-helper button:focus-visible { outline: var(--calendar-size-2) solid var(--calendar-color-blue-5); outline-offset: var(--calendar-size-1); border-radius: var(--calendar-size-4); }
+@media (pointer: coarse) { .appointment-type-option { min-height: var(--calendar-size-44); } .appointment-type-trigger, .appointment-type-foot > button, .appointment-type-add-other { min-height: var(--calendar-size-30); } }
+@media (prefers-reduced-motion: reduce) { .appointment-type-trigger > svg { transition: none; } }
