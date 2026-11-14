@@ -42,7 +42,8 @@ export function isFrameworkInstalledConsumer(file: string): boolean {
 
 /** Preserve exact performance/deadline assertions under their own synthetic load, without unrelated cold-install I/O. */
 export const EXCLUSIVE_TEST_FILES = ['packages/payments/src/package.test.ts', 'src/frontend/server/auth-hot-admission.integration.test.ts', 'src/frontend/server/auth-hot-mutations.integration.test.ts',
-  'src/frontend/server/vector-visualization-app.integration.test.ts', 'src/vector/zvec-adapter-lexical-native.test.ts', 'src/build/build-app.test.ts',
+  'src/frontend/server/vector-visualization-app.integration.test.ts', 'src/vector/zvec-adapter-lexical-native.test.ts',
+  'src/vector/zvec-adapter-query-native.test.ts', 'src/build/build-app.test.ts',
   'src/frontend/client/session-audit-recovery.browser.test.ts', 'packages/docs/package-installed.integration.test.ts',
   'src/frontend/server/password-recovery.browser.test.ts',
   'src/components/json-editor/document-editor.package.test.ts', 'src/presence/presence-fabric.integration.test.ts',

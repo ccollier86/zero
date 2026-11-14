@@ -412,29 +412,32 @@ export class ZvecAdapter implements VectorIndexStore {
     const zvec = this.module;
     if (!zvec || this.config.indexType === 'flat') return undefined;
     const query = { ...this.config.query, ...(override ?? {}) };
+    // The native parser distinguishes an absent option from a present undefined
+    // value. Do not invent defaults or discard explicit false/zero settings.
+    const common = {
+      ...(query.linear !== undefined ? { isLinear: query.linear } : {}),
+      ...(query.radius !== undefined ? { radius: query.radius } : {}),
+    };
 
     switch (this.config.indexType) {
       case 'ivf':
         return {
           indexType: zvec.ZVecIndexType.IVF,
-          nprobe: query.nprobe,
-          isLinear: query.linear,
-          radius: query.radius,
+          ...common,
+          ...(query.nprobe !== undefined ? { nprobe: query.nprobe } : {}),
         };
       case 'diskann':
         return {
           indexType: zvec.ZVecIndexType.DISKANN,
-          listSize: query.listSize,
-          isLinear: query.linear,
-          radius: query.radius,
+          ...common,
+          ...(query.listSize !== undefined ? { listSize: query.listSize } : {}),
         };
       case 'hnsw':
       default:
         return {
           indexType: zvec.ZVecIndexType.HNSW,
-          ef: query.ef,
-          isLinear: query.linear,
-          radius: query.radius,
+          ...common,
+          ...(query.ef !== undefined ? { ef: query.ef } : {}),
         };
     }
   }

@@ -4,8 +4,43 @@ import { describe, expect, it } from 'bun:test';
 
 import { resolveVectorConfig } from './vector-config';
 import { ZvecAdapter } from './zvec-adapter';
+import type { VectorQueryTuningConfig } from './vector-types';
 
 describe('ZvecAdapter', () => {
+  for (const [family, nativeType, knob] of [
+    ['hnsw', 1, 'ef'], ['ivf', 2, 'nprobe'], ['diskann', 5, 'listSize'],
+  ] as const) {
+    it(`${family} omits absent/undefined native options and preserves explicit false/zero overrides`, async () => {
+      const config = resolveVectorConfig({ indexes: { default: {
+        dimensions: 3, indexType: family, path: 'zvec-test-index',
+      } } }, {});
+      if (!config) throw new Error('Expected vector config.');
+      const collection = new FakeCollection();
+      const adapter = new ZvecAdapter({ config: config.indexes.default!, loader: async () => fakeZvecModule(collection) });
+      try {
+        await adapter.query({ vector: [1, 2, 3] });
+        expect(collection.lastQuery.params).toEqual({ indexType: nativeType });
+        await adapter.query({ vector: [1, 2, 3], query: {
+          ef: undefined, nprobe: undefined, listSize: undefined, linear: undefined, radius: undefined,
+        } });
+        expect(collection.lastQuery.params).toEqual({ indexType: nativeType });
+
+        config.indexes.default!.query = { [knob]: 64, linear: true, radius: 0.5 };
+        await adapter.query({ vector: [1, 2, 3] });
+        expect(collection.lastQuery.params).toEqual({ indexType: nativeType, [knob]: 64, isLinear: true, radius: 0.5 });
+        await adapter.query({ vector: [1, 2, 3], query: { linear: false, radius: 0 } });
+        expect(collection.lastQuery.params).toEqual({ indexType: nativeType, [knob]: 64, isLinear: false, radius: 0 });
+        await adapter.query({ vector: [1, 2, 3], query: { [knob]: 0, linear: false, radius: 0 } as VectorQueryTuningConfig });
+        expect(collection.lastQuery.params).toEqual({ indexType: nativeType, [knob]: 0, isLinear: false, radius: 0 });
+
+        // Only undefined is omitted. Invalid supplied values must still reach
+        // the existing native error boundary, not silently become defaults.
+        await adapter.query({ vector: [1, 2, 3], query: { radius: null } as unknown as VectorQueryTuningConfig });
+        expect(collection.lastQuery.params.radius).toBeNull();
+      } finally { await adapter.dispose(); }
+    });
+  }
+
   it('maps Zero vector records and filters to zvec documents and queries', async () => {
     const config = resolveVectorConfig({
       dataDir: '.',
