@@ -8,14 +8,14 @@ visibility: internal
 system: guardian
 feature: native-and-extension-oidc-public-clients
 maturity: supported
-applies_to: ["2.6.0 source with unreleased OAuth form and browser Origin corrections"]
+applies_to: ["2.6.0 native foundation", "2.10.4 consent callback correction"]
 modes: [single-simple, single-advanced, multi-simple, multi-advanced]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.6.0"
-  commit: "581dbd89095c0dd52e5c0aa929a6efa0018dbf1a"
+  version: "2.10.4"
+  commit: "ebad01dc8e351c26ae9ec23547169fffd430f3a7"
   snapshot: dirty
-  date: "2026-10-17"
+  date: "2026-11-13"
   evidence_level: source-observed
 ---
 
@@ -136,9 +136,10 @@ See the documented [effect of referrer policy on Origin](https://developer.mozil
 
 The HTML override belongs in `nativeHtml()`, after its shared security headers.
 `nativeRedirect()` still sends `Referrer-Policy: no-referrer`, including on
-code-bearing callbacks and denial/login redirects. Cache prevention, CSP
-(`form-action 'self'`, frame restrictions and disabled scripts), cookie/owner
-binding, PKCE, state/nonce and redirect validation are unchanged.
+code-bearing callbacks and denial/login redirects. Cache prevention, frame
+restrictions, disabled scripts, cookie/owner binding, PKCE, state/nonce and
+redirect validation remain enforced. Consent's callback-specific form policy
+is described below.
 
 The POST handler still requires exact equality with the configured issuer's
 origin. Missing Origin, literal `null` and hostile origins remain rejected;
@@ -146,6 +147,47 @@ none is an allowed fallback for a phone, embedded browser or TV handoff. Do not
 weaken that check, infer authority from Referer, or spoof Origin in the app as
 a workaround. API tests that explicitly send a valid Origin cannot establish
 that a browser-generated form works.
+
+## Consent Callback Content Security Policy
+
+Zero 2.10.4 corrects a separate browser-only failure: approval can succeed on the
+server while Chromium blocks its 302 custom-scheme or cross-origin callback
+because the originating form policy permits only `'self'`. The request is
+already consumed, so revisiting it then reports expiry/already-used rather
+than delivering a usable callback. Longer request/code TTLs do not repair this.
+
+For consent only, Zero derives one additional `form-action` source from the
+server-owned request whose callback was validated against the client's registered
+URIs. A private callback such as `com.example.mobile:/oauth/callback` adds only
+`com.example.mobile:`. HTTPS and literal-loopback callbacks add their exact
+scheme/host/port origin. It never adds every client's redirects, arbitrary
+request query URLs, wildcard hosts or global `https:`/`http:` sources.
+
+All other native HTML, including errors, retains the self-only policy. The form
+still posts to the issuer's native endpoint. Redirects remain `no-referrer` and
+`no-store`; scripts, framing and base URLs stay blocked.
+
+CSP is defense in depth, not the callback registration check. Its source
+granularity is a private scheme or network origin; paths/query values are not
+interpolated into the header. CSP also ignores source path constraints after a
+redirect. Zero's existing protocol validation still checks the exact registered
+path/query (and the documented literal-loopback port exception), plus PKCE,
+state/nonce, client, session/account ownership and single-use proof. See the
+[CSP form-action directive](https://www.w3.org/TR/CSP3/#directive-form-action) and
+[paths and redirects](https://www.w3.org/TR/CSP3/#security-paths).
+
+No new setting or SDK change is needed. Update Zero normally, verify the exact
+release commit/archive SHA, rebuild the application's server bundle and begin
+a **fresh** native authorization attempt. Do not replay an already-consumed
+request, reset accounts/device sessions, spoof Origin or disable CSP.
+
+Qualification must include real browser clicks for both Continue and Cancel,
+observing the callback attempt without a policy violation. A direct HTTP 302
+or successful token-endpoint test does not establish browser delivery. Synthetic
+Chromium tests are not physical Android/iOS deep-link-handler acceptance: the
+application must also verify return-to-app, code exchange and retained sign-in
+on its supported devices. Never collect code-bearing callback URLs, request IDs,
+PKCE values or credentials in troubleshooting logs.
 
 ## Complete The Same Human Ceremonies
 

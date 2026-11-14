@@ -4,6 +4,28 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+## 2.10.4 - 2026-11-13
+
+Browser-compatible native consent callbacks without relaxing redirect admission.
+
+- Give native consent HTML a request-specific `form-action` source for its
+  already registered callback. Permit only that private scheme or exact network
+  origin alongside `'self'`, not every configured callback or a wildcard.
+- Keep error pages self-only, disable scripts/frames as before and retain
+  same-origin form Origin checks plus no-referrer/no-store callback redirects.
+  Redirect registration, PKCE, state/nonce, account ownership, single-use codes
+  and live authorization remain unchanged.
+- Exclude callback paths and query values from policy serialization so URL
+  delimiters cannot become policy directives. Protocol validation still owns
+  exact registered callback matching.
+- Add actual Chromium approval/cancellation, custom-scheme and cross-origin
+  HTTPS callback observations, successful code exchanges and a synthetic
+  self-only negative control. Do not log code-bearing URLs or browser errors.
+
+No database migration, session reset, SDK configuration change or new dependency
+is introduced. Rebuild the server and start a fresh authorization attempt after
+updating; a request already consumed by the old browser failure stays single-use.
+
 ## 2.10.3 - 2026-11-10
 
 Explicit first-time permission bindings for existing single/simple accounts.

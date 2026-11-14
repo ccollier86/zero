@@ -18,6 +18,10 @@ against code, public exports, runtime composition and actual checks.
 
 ## Evidence And Progress
 
+- [Native consent callback policy](./native-consent-callback-csp.md): selected
+  callback CSP, actual Chromium approve/deny regressions, negative control and
+  archive qualification without production or Android application changes.
+
 - [Initial single/simple permission bindings](./initial-role-adoption-qualification.md):
   explicit version-bound adoption, retained-role safety, populated managed
   restart/refresh regression and exact package qualification.

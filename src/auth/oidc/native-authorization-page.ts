@@ -7,6 +7,8 @@ export function nativeAuthorizationPage(input: {
   rawRequestId: string;
   scopes: string[];
   userEmail: string;
+  /** Persisted callback from the registered request, not an arbitrary query URL. */
+  redirectUri?: string;
 }): Response {
   const client = escapeHtml(input.clientName);
   const requestId = escapeHtml(input.rawRequestId);
@@ -22,7 +24,7 @@ export function nativeAuthorizationPage(input: {
       <input type="hidden" name="request_id" value="${requestId}">
       <button name="decision" value="approve" type="submit">Continue</button>
       <button class="secondary" name="decision" value="deny" type="submit">Cancel</button>
-    </form></section></main>`);
+    </form></section></main>`, 200, input.redirectUri);
 }
 
 function scopeDisclosures(scopes: string[]): string[] {

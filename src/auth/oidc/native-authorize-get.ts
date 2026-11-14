@@ -63,6 +63,7 @@ export async function authorizeNativeGet(
       rawRequestId,
       scopes: pending.scope.split(' '),
       userEmail: auth.email,
+      redirectUri: pending.redirectUri,
     });
   } catch (error) {
     emitUnexpectedNativeRequestFailure(config, 'authorize.get', error);
