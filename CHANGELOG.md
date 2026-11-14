@@ -4,6 +4,28 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+## 2.10.5 - 2026-11-14
+
+Native vector-query optional-parameter compatibility.
+
+- Omit undefined optional native parameters for HNSW, IVF and DiskANN instead
+  of passing present-but-undefined properties to `@zvec/zvec`. This fixes ordinary
+  HNSW searches failing with `VECTOR_OPERATION_FAILED` when no radius was set.
+- Preserve explicit `linear: false`, `radius: 0`, configured tuning, per-query
+  overrides and the selected family's candidate/probe option. Do not invent
+  application defaults or weaken the existing sanitized native-error boundary.
+- Apply the same correction to the dense leg of native hybrid retrieval;
+  structured filters, scope checks and output projection remain unchanged.
+- Add real installed-engine HNSW regressions with 1,024-dimensional synthetic
+  vectors, filtered/hybrid searches, explicit false/zero, invalid input and reopen,
+  plus exact parameter-shape checks for all three families.
+
+No database migration, vector reindex, new dependency or application source
+change is required. Existing all-supplied query tuning remains valid. Qualification
+for this patch uses the explicitly approved focused release path, not a new
+complete framework sweep; see the exact archive's qualification receipt for
+platform coverage and the retained earlier diagnostic failures.
+
 ## 2.10.4 - 2026-11-13
 
 Browser-compatible native consent callbacks without relaxing redirect admission.

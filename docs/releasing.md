@@ -594,7 +594,7 @@ git diff --check
    qualification does not claim the full backlog drains within the former
    deadline or establish a production ingestion-throughput SLA. Preserve failed
    earlier runs, including structurally rejected dense batches, as failures.
-   The two real native-vector integration files use the same window so their
+   The real native-vector integration files use the same window so their
    unchanged native/managed-operation deadlines are not dominated by unrelated
    package I/O. Fake vector adapters and source-only tests remain ordinary files.
    The declared-build deployment file also owns a window: its compiled executable
