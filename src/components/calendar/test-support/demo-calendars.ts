@@ -1,5 +1,5 @@
 /** Synthetic preview calendars only. These are not users or persisted provider records. */
-import { mockCalendarUsers } from '../recovered/calendar/data/mock-users';
+import { mockCalendarUsers } from './mock-users';
 import type { CalendarResource } from '../types';
 const colors = ['violet', 'blue', 'teal', 'orange', 'pink'];
 export const demoCalendars: CalendarResource[] = Array.from({ length: 15 }, (_, i) => mockCalendarUsers[i] ?? {

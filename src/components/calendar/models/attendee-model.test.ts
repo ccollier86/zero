@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { attendeeKey, filterAttendees, manualAttendee, sameAttendees } from './attendee-model';
 import { eventDraft, newDraft, sameDraft, validateDraft } from './calendar-model';
-import { mockCalendarUsers as resources } from '../recovered/calendar/data/mock-users';
+import { mockCalendarUsers as resources } from '../test-support/mock-users';
 
 import { attendeeDirectory } from '../test-support/attendee-directory';
 const directory = attendeeDirectory(resources);

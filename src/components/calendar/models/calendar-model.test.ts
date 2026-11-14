@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { conflictingEvents, dateKey, formatDay, inputTime, isDay, minuteFromInput, monthDates, newDraft, parseDay, sameDraft, shiftCalendarDate, validateDraft, weekDates } from './calendar-model';
 import { seedEvents } from '../test-support/seed-events';
 import { eventLanes } from './overlap-layout';
-import { mockCalendarUsers as resources } from '../recovered/calendar/data/mock-users';
+import { mockCalendarUsers as resources } from '../test-support/mock-users';
 import type { ScheduleEvent } from '../types';
 import { defaultRepeat } from './recurrence-model';
 

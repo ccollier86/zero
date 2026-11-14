@@ -4,7 +4,7 @@ import { parseTimeEntry } from './time-model';
 import { eventDraft, newDraft, sameDraft, validateDraft } from './calendar-model';
 import { updateAppointmentDraft } from './appointment-draft';
 import { appointmentTypes, suggestedTitle } from './appointment-types';
-import { mockCalendarUsers as resources } from '../recovered/calendar/data/mock-users';
+import { mockCalendarUsers as resources } from '../test-support/mock-users';
 import type { AppointmentAttendee } from './attendee-model';
 const start = '2026-11-10';
 const draft = () => newDraft({ resourceId: 'user-2', date: start, minute: 495 }, 'appointment');

@@ -1,5 +1,5 @@
-import { mockDayEvents } from '../recovered/calendar/data/mock-day-events';
-import { mockWeekEvents } from '../recovered/calendar/data/mock-week-events';
+import { mockDayEvents } from './mock-day-events';
+import { mockWeekEvents } from './mock-week-events';
 import { dateKey, newDraft, weekDates } from '../models/calendar-model';
 import type { CalendarResource, ScheduleEvent } from '../types';
 /** Fixed synthetic people, anchored to the current displayed week rather than every date forever. */
