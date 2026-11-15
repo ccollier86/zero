@@ -12,10 +12,14 @@ import { normalizeLoggingSourceLimits, LOGGING_SOURCE_HARD_EVENTS, LOGGING_SOURC
 import type { LoggingResourcePolicies } from './logging-activity-contracts';
 import { normalizeLoggingResourcePolicies } from './logging-resource-policy';
 import { captureLoggingRecordChange } from './logging-record-change';
+import { registerDatabaseCommandSourceAudit, type DatabaseCommandSourceAuditEvent } from '../databases/database-command-source-audit';
+import type { LoggingEventInput } from './logging-contracts';
 
 export const LOGGING_ACTOR_SOURCE_OPERATION = 'database.logging.source';
 export interface LoggingActorSourceBinding {
   readonly records: boolean;
+  /** Explicit command-source workflow events are independent of generic record capture. */
+  readonly workflow?: boolean;
   readonly policyVersion: string;
   readonly scope: LoggingScope;
   readonly sourceQueue?: LoggingSourceLimits;
@@ -30,14 +34,14 @@ export interface LoggingActorSourcePage {
 
 /** Internal bind policy is detached before IPC and cannot select a physical path or a sink. */
 export function normalizeLoggingActorSourceBinding(input: unknown): LoggingActorSourceBinding {
-  const value = loggingRecord(input, ['records', 'policyVersion', 'scope', 'sourceQueue', 'resources']);
-  if (typeof value.records !== 'boolean') throw new LoggingError('LOGGING_CONFIG_INVALID', 'Actor logging policy is invalid.');
+  const value = loggingRecord(input, ['records', 'workflow', 'policyVersion', 'scope', 'sourceQueue', 'resources']);
+  if (typeof value.records !== 'boolean' || value.workflow !== undefined && typeof value.workflow !== 'boolean') throw new LoggingError('LOGGING_CONFIG_INVALID', 'Actor logging policy is invalid.');
   const policyVersion = loggingId(value.policyVersion)!;
   const scope = loggingRecord(value.scope, ['kind', 'tenantId']);
   if (scope.kind !== 'application' && scope.kind !== 'tenant' || scope.kind === 'application' && scope.tenantId !== null) {
     throw new LoggingError('LOGGING_CONFIG_INVALID', 'Actor audit scope is invalid.');
   }
-  return Object.freeze({ records: value.records, policyVersion, sourceQueue: normalizeLoggingSourceLimits(value.sourceQueue), resources: normalizeLoggingResourcePolicies(value.resources),
+  return Object.freeze({ records: value.records, workflow: value.workflow ?? false, policyVersion, sourceQueue: normalizeLoggingSourceLimits(value.sourceQueue), resources: normalizeLoggingResourcePolicies(value.resources),
     scope: scope.kind === 'application' ? Object.freeze({ kind: 'application', tenantId: null })
       : Object.freeze({ kind: 'tenant', tenantId: loggingId(scope.tenantId)! }) });
 }
@@ -70,16 +74,16 @@ export function normalizeLoggingActorSourcePage(input: unknown, scope: LoggingSc
 export class LoggingActorSource {
   private readonly outbox: LoggingSourceOutbox;
   private readonly remove: () => void;
+  private readonly removeCommandAudit: () => void;
   private current: LoggingContext | null = null;
   constructor(db: ReactiveDB, readonly policy: LoggingActorSourceBinding) {
     this.outbox = new LoggingSourceOutbox(db, policy.sourceQueue);
+    this.removeCommandAudit = registerDatabaseCommandSourceAudit(db, event => this.appendCommand(event));
     this.remove = registerReactiveDBMutationContribution(db, ({ change }) => {
       if (!policy.records || change.table.startsWith('_')) return;
       const detail = captureLoggingRecordChange(change, policy.resources);
       if (!detail) return;
-      const context: LoggingContext = { ...(this.current ?? { origin: 'system', scope: policy.scope,
-        actor: { kind: 'system', id: 'zero.database', sessionId: null, initiatorId: null }, requestId: null, correlationId: null }),
-        sourceId: this.outbox.sourceId, policyVersion: policy.policyVersion };
+      const context = this.context();
       try { this.outbox.enqueue(captureLoggingEvent(context, { id: crypto.randomUUID(), family: 'records',
         action: 'record.' + ({ INSERT: 'created', UPDATE: 'updated', DELETE: 'deleted' }[change.op]),
         outcome: 'succeeded', evidence: 'server-confirmed', occurredAt: change.ts,
@@ -91,6 +95,23 @@ export class LoggingActorSource {
         throw error;
       }
     });
+  }
+  private context(): LoggingContext {
+    return { ...(this.current ?? { origin: 'system', scope: this.policy.scope,
+      actor: { kind: 'system', id: 'zero.database', sessionId: null, initiatorId: null }, requestId: null, correlationId: null }),
+      sourceId: this.outbox.sourceId, policyVersion: this.policy.policyVersion };
+  }
+  private appendCommand(input: DatabaseCommandSourceAuditEvent): void {
+    const value = loggingRecord(input, ['id', 'family', 'action', 'outcome', 'occurredAt', 'target', 'metadata']);
+    if (value.family !== 'workflow') throw new LoggingError('LOGGING_EVENT_INVALID', 'Command audit family is unavailable.');
+    if (!this.policy.workflow) return;
+    const metadata = loggingRecord(value.metadata ?? {});
+    try {
+      this.outbox.enqueue(captureLoggingEvent(this.context(), { ...value, evidence: 'server-confirmed' } as LoggingEventInput, Object.keys(metadata)));
+    } catch (error) {
+      if (error instanceof LoggingError && error.code === 'LOGGING_AUDIT_UNAVAILABLE') throw new DatabaseError('DATABASE_BACKPRESSURE', 'Required source audit admission is unavailable.', { retryable: true, outcome: 'not-committed' });
+      throw error;
+    }
   }
   /** The trusted parent supplies attribution only for the duration of one synchronous actor command. */
   run<T>(input: LoggingContext | undefined, operation: () => T): T {
@@ -111,5 +132,5 @@ export class LoggingActorSource {
     if (ids.length) this.outbox.acknowledge(ids);
     return Object.freeze({ sourceId: this.outbox.sourceId, ...this.outbox.counts(), rows: this.outbox.page() });
   }
-  close(): void { this.remove(); this.current = null; }
+  close(): void { this.removeCommandAudit(); this.remove(); this.current = null; }
 }

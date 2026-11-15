@@ -5,6 +5,7 @@ import { jobAdmissionId, jobOccurrenceId, type JobOccurrenceRow, type JobSchedul
 import { assertJobOwner, decodeJobAdmission, eq, jobBudget, JOB_LIMITS, jobRevision, jobScope, nextJobInteger, oneOf, readJobAdmission } from './realm-model';
 import { selectDueOccurrences } from './schedule-time';
 import { jobInteger, jobJson, jobKey, jobRecord, jobText, jobTime } from './validation';
+import { appendJobSemanticAudit } from './semantic-audit';
 
 export function materializeJobOccurrences(context: DatabaseWriteCommandContext, input: unknown) {
   return jobCommand(() => {
@@ -101,8 +102,9 @@ export function receiveJobDispatch(context: DatabaseWriteCommandContext, input: 
       return { dispatched: true, instanceId: normalized.instanceId };
     }
     assertClaim(row, r.nonce, r.leaseGeneration, now);
-    context.db.update('_jobs_occurrences', row.id, { state: 'dispatched', workflow_id: normalized.instanceId, receipt_json: json,
+    const change = context.db.update('_jobs_occurrences', row.id, { state: 'dispatched', workflow_id: normalized.instanceId, receipt_json: json,
       lease_nonce: null, lease_until: null, error_code: null, updated_at: now });
+    appendJobSemanticAudit(context, 'jobs.occurrence.handed-off', change, { scheduleId: row.schedule_id, generation: row.generation, workflowId: normalized.instanceId });
     return { dispatched: true, instanceId: normalized.instanceId };
   });
 }
@@ -114,10 +116,12 @@ export function blockJobOccurrence(context: DatabaseWriteCommandContext, input: 
     assertJobOwner(context, scope);
     const row = occurrence(context, scope, r.id); assertClaim(row, r.nonce, r.leaseGeneration, now);
     const code = jobText(r.code, 64);
-    if (!['JOBS_AUTHORITY_RETIRED', 'JOBS_DEFINITION_UNAVAILABLE', 'JOBS_CAPACITY', 'JOBS_NOT_DISPATCHED'].includes(code)) throw new JobsError('JOBS_INPUT_INVALID');
-    context.db.update('_jobs_occurrences', row.id, { state: 'blocked', error_code: code, lease_nonce: null, lease_until: null, updated_at: now });
+    if (code !== 'JOBS_AUTHORITY_RETIRED' && code !== 'JOBS_DEFINITION_UNAVAILABLE' && code !== 'JOBS_CAPACITY' && code !== 'JOBS_NOT_DISPATCHED') throw new JobsError('JOBS_INPUT_INVALID');
+    const change = context.db.update('_jobs_occurrences', row.id, { state: 'blocked', error_code: code, lease_nonce: null, lease_until: null, updated_at: now });
     const parent = schedule(context, scope, row.schedule_id);
     if (parent.generation === row.generation && code !== 'JOBS_NOT_DISPATCHED') context.db.update('_jobs_cursors', parent.id, { blocked_code: code });
+    appendJobSemanticAudit(context, 'jobs.occurrence.blocked', change,
+      { scheduleId: row.schedule_id, generation: row.generation, blockedCode: code }, 'denied');
     return { blocked: true };
   });
 }
@@ -126,10 +130,14 @@ export function completeJobOccurrence(context: DatabaseWriteCommandContext, inpu
     const r = jobRecord(input, ['scopeId', 'id', 'instanceId', 'status', 'now']), scope = jobScope(r.scopeId), now = jobTime(r.now);
     assertJobOwner(context, scope);
     const row = occurrence(context, scope, r.id), id = jobText(r.instanceId, 128);
-    if (!['completed', 'failed', 'cancelled'].includes(r.status as string)) throw new JobsError('JOBS_INPUT_INVALID');
+    if (r.status !== 'completed' && r.status !== 'failed' && r.status !== 'cancelled') throw new JobsError('JOBS_INPUT_INVALID');
     if (row.workflow_id !== id || row.receipt_json === null || !['dispatched', 'terminal'].includes(row.state)) throw new JobsError('JOBS_STAGE_CONFLICT');
     if (row.state === 'terminal' && row.terminal_status !== r.status) throw new JobsError('JOBS_INTENT_CONFLICT');
-    if (row.state !== 'terminal') context.db.update('_jobs_occurrences', row.id, { state: 'terminal', terminal_status: r.status, updated_at: now });
+    if (row.state !== 'terminal') {
+      const change = context.db.update('_jobs_occurrences', row.id, { state: 'terminal', terminal_status: r.status, updated_at: now });
+      appendJobSemanticAudit(context, 'jobs.occurrence.terminal-observed', change,
+        { scheduleId: row.schedule_id, generation: row.generation, workflowId: id, workflowStatus: r.status }, r.status === 'failed' ? 'failed' : 'succeeded');
+    }
     return { completed: true };
   });
 }
@@ -139,9 +147,12 @@ export function blockJobCursor(context: DatabaseWriteCommandContext, input: unkn
     const r = jobRecord(input, ['scopeId', 'id', 'expectedRevision', 'code']), scope = jobScope(r.scopeId); assertJobOwner(context, scope);
     const row = schedule(context, scope, r.id); jobRevision(row, r.expectedRevision);
     const code = jobText(r.code, 64);
-    if (!['JOBS_CAPACITY', 'JOBS_AUTHORITY_RETIRED', 'JOBS_DEFINITION_UNAVAILABLE'].includes(code)) throw new JobsError('JOBS_INPUT_INVALID');
+    if (code !== 'JOBS_CAPACITY' && code !== 'JOBS_AUTHORITY_RETIRED' && code !== 'JOBS_DEFINITION_UNAVAILABLE') throw new JobsError('JOBS_INPUT_INVALID');
     const cursor = context.db.get('_jobs_cursors', row.id); if (!cursor) throw new JobsError('JOBS_STATE_INVALID');
-    if (cursor.blocked_code !== code) context.db.update('_jobs_cursors', row.id, { blocked_code: code });
+    if (cursor.blocked_code !== code) {
+      const change = context.db.update('_jobs_cursors', row.id, { blocked_code: code });
+      appendJobSemanticAudit(context, 'jobs.schedule.blocked', change, { revision: row.revision, generation: row.generation, blockedCode: code }, 'denied');
+    }
     return { blocked: true };
   });
 }

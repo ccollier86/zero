@@ -11,6 +11,7 @@ import type { DatabaseFindInput, DatabaseFindRows } from './database-operations'
 import { databaseOperationRecord } from './database-operation-payload';
 import { validateDatabaseFindOperation } from './database-find-validation';
 import { runDatabaseFind } from './database-find';
+import { bindDatabaseCommandSourceAudit } from './database-command-source-audit';
 
 /**
  * Tracked application-data surface available to one registered command.
@@ -284,10 +285,12 @@ export function createDatabaseWriteCommandSession(
     configurable: false,
     writable: false,
   });
+  const removeAudit = bindDatabaseCommandSourceAudit(context, database, assertActive);
   return Object.freeze({
     context: Object.freeze(context),
     close(): void {
       active = false;
+      removeAudit();
     },
   });
 }

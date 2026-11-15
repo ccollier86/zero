@@ -19,8 +19,10 @@ modes: [managed-bun, trusted-standalone]
 [Expansion plan](../../_work/durable-jobs-and-workers-plan.md)
 
 This branch adds shared execution pools, isolated Bun task processes and a managed
-`zero.workers.run()` facade. It does **not** yet supply the proposed durable
-`zero.jobs`/schedule API. Existing cron and Torrent APIs remain compatible.
+`zero.workers.run()` facade. The optional [durable jobs/schedule facade](../scheduler/durable-jobs.md)
+is now implemented in this source branch and undergoing qualification. Existing
+cron and Torrent APIs remain compatible. See [cross-service composition](./service-integration.md)
+for the real boundaries between admission, provider work and authorized results.
 An installed package must contain the exact feature commit; archive qualification
 and normal updater publication are still pending.
 
@@ -34,7 +36,7 @@ and normal updater publication are still pending.
 | Durable user-owned workflow handoff | Branch API `zero.workflows.enqueueOnce(name, input, { idempotencyKey, version? })`. |
 | Short database-automation handoff | Existing source-bound `zero.torrent.enqueue(...)`. |
 | Local maintenance timer | Existing `zero.scheduler`. |
-| Durable one-off/recurring schedules | Shared jobs module planned as part of this framework foundation; see the implementation plan. |
+| Durable one-off/recurring schedules | Optional source-branch `zero.jobs`, private Fabric files and exact pinned Torrent handoffs; not yet a selected release. |
 
 A Promise pool is not CPU isolation or persistence. A subprocess is not an OS
 sandbox: registered code retains the application's OS privileges. Never execute
@@ -243,8 +245,10 @@ The deliberately unresponsive fixture has its own ten-second exit fuse; it
 cannot spin forever if the creating test runner is forcibly killed. Normal
 tests still require the parent to terminate that generation much earlier.
 
-The plan tracks remaining compiled Linux/supervisor qualification,
-installed exports/archive/updater, durable scheduling and its control-plane UI.
+The plan tracks remaining final compiled Linux/supervisor qualification and
+installed exports/archive/updater acceptance. Durable scheduling and its native
+control-plane UI are implemented in source; their final deployment qualification
+is not implied by that implementation.
 Source tests are not proof that a released archive or deployed app is qualified.
 
 Maintainer checks (run the required storage preflight first):

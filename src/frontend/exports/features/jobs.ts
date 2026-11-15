@@ -6,4 +6,7 @@ export { JobsMutationError } from '../../client/jobs-mutation';
 export type { JobOperationOutcome, JobsErrorCode } from '../../../jobs/failure-contract';
 export type { JobControlOptions, JobEnqueueOptions, JobOccurrenceView, JobPageOptions, JobRequestOptions, JobScheduleDetail, JobSchedulePage, JobScheduleView, JobWatchOptions } from '../../../jobs/contracts';
 export type { JobDefinitionView, JobDefinitionPage, JobBlockedCode, JobActionUnavailableReason, JobActionAvailability, JobScheduleActions, JobScheduleSummary } from '../../../jobs/contracts';
+export type { JobWatchUpdate } from '../../../jobs/contracts';
 export type { ScheduleTiming, MisfirePolicy } from '../../../jobs/schedule-time';
+export { JobsWorkspace } from '../../../components/jobs/jobs-workspace';
+export type { JobsWorkspaceProps } from '../../../components/jobs/jobs-workspace';

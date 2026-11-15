@@ -9,6 +9,7 @@ import type { LoggingResourcePolicies } from '../logging/logging-activity-contra
 interface Owner {
   admitting: boolean;
   readonly records: boolean;
+  readonly workflow?: boolean;
   readonly policyVersion: string;
   readonly sourceQueue: LoggingSourceLimits;
   readonly resources?: LoggingResourcePolicies;
@@ -31,7 +32,7 @@ export function sealDatabaseLoggingBinding(coordinator: object): void { const ow
 /** Scope comes only from the manager's named/tenant routing, not from a database operation body. */
 export function prepareDatabaseLoggingBinding(coordinator: object, id: string, scope: LoggingScope): void {
   const owner = owners.get(coordinator); if (!owner) return;
-  const key = normalizeDatabaseId(id), binding = normalizeLoggingActorSourceBinding({ records: owner.records, policyVersion: owner.policyVersion, sourceQueue: owner.sourceQueue, resources: owner.resources, scope });
+  const key = normalizeDatabaseId(id), binding = normalizeLoggingActorSourceBinding({ records: owner.records, workflow: owner.workflow ?? false, policyVersion: owner.policyVersion, sourceQueue: owner.sourceQueue, resources: owner.resources, scope });
   const prior = owner.sources.get(key);
   if (!prior && !owner.admitting) throw new DatabaseError('DATABASE_CLOSED', 'Database audit source admission is closed.', { outcome: 'not-started' });
   if (prior && (prior.scope.kind !== scope.kind || prior.scope.tenantId !== scope.tenantId)) {

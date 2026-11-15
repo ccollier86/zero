@@ -19,11 +19,8 @@ export interface JobsLoggingSource {
 export function installJobsLogging(logging: LoggingRuntime, coordinator: DatabaseCoordinator, authority: AuthorityCommitCoordinator): JobsLoggingSource {
   const registrations = new Map<string, DeliverySourceRegistration>();
   let closing = false, closeTask: Promise<void> | null = null;
-  const remove = installDatabaseLoggingBinding(coordinator, { records: logging.config.policy.capture.records, policyVersion: logging.config.policyVersion,
-    sourceQueue: logging.config.sourceQueue, context: () => currentLoggingAttribution(logging), resources: { job_schedules: { label: 'Scheduled jobs', fields: {
-      control: { values: ['active', 'paused', 'cancelled'] }, run_as: { values: ['actor', 'service'] },
-      principal: 'omit', scope_id: 'omit', actor_id: 'omit', updated_by: 'omit',
-    } } } });
+  const remove = installDatabaseLoggingBinding(coordinator, { records: false, workflow: logging.config.policy.capture.workflow, policyVersion: logging.config.policyVersion,
+    sourceQueue: logging.config.sourceQueue, context: () => currentLoggingAttribution(logging) });
   return {
     prepare(id, scope, established) {
       if (closing) throw new JobsError('JOBS_NOT_READY');

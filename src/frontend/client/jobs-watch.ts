@@ -1,7 +1,7 @@
 /** Reconnecting read-only projection transport. Never retries a job/control mutation or publishes across a retired scope. */
-import type { JobSchedulePage, JobWatchOptions } from '../../jobs/contracts';
+import type { JobSchedulePage, JobWatchOptions, JobWatchUpdate } from '../../jobs/contracts';
 export function watchJobsPage(open: (path: string, init: RequestInit) => Promise<Response>, path: string, boundary: AbortSignal,
-  listener: (page: JobSchedulePage) => void, parse: (value: unknown) => JobSchedulePage, options: JobWatchOptions): () => void {
+  listener: (page: JobSchedulePage, update?: JobWatchUpdate) => void, parse: (value: unknown) => JobSchedulePage, options: JobWatchOptions): () => void {
   const owner = new AbortController(), signal = AbortSignal.any([owner.signal, boundary, ...(options.signal ? [options.signal] : [])]);
   let retry: ReturnType<typeof setTimeout> | undefined;
   const consume = async () => {
@@ -27,8 +27,15 @@ export function watchJobsPage(open: (path: string, init: RequestInit) => Promise
           const data = packet.split('\n').filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n');
           if (!data) continue;
           const value = JSON.parse(data);
-          if (value?.version !== 1 || value.error) { denied = true; throw new Error('The jobs subscription must be reauthorized.'); }
-          const page = parse(value.value); if (!signal.aborted) listener(page);
+          if (!value || typeof value !== 'object' || Array.isArray(value) || value.version !== 1 || value.error
+            || Object.keys(value).some(key => !['version', 'value', 'invalidated'].includes(key))
+            || Object.hasOwn(value, 'invalidated') && typeof value.invalidated !== 'boolean') {
+            denied = true; throw new Error('The jobs subscription must be reauthorized.');
+          }
+          // Older servers omit this field. Never expose the wire envelope or
+          // arbitrary metadata to callers, including malformed denied frames.
+          const update: JobWatchUpdate = Object.freeze({ invalidated: value.invalidated === true });
+          const page = parse(value.value); if (!signal.aborted) listener(page, update);
         }
       }
     } catch (error) { failed = true; if (!signal.aborted) try { options.onError?.(error); } catch { /* Observer only. */ } }

@@ -196,9 +196,11 @@ export class JobsRuntime {
     const check = () => { if (this.state === 'closed') throw new JobsError('JOBS_NOT_READY'); guard(); };
     check(); const commitAuthority = createDatabaseCommitAuthority(this.options.authority.coordinator, id, () => { check(); return undefined; });
     const lease = await this.owner.acquire(id, { commitAuthority });
+    let commandAttempted = false;
     try {
       check(); signal?.throwIfAborted();
       const data = createAsyncDatabaseClient({ executor: lease as AsyncDatabaseOperationExecutor, assertReadAuthority: () => { check(); return undefined; } });
+      if (kind === 'command') commandAttempted = true;
       const result = kind === 'query' ? await data.query(name, input as DatabaseSerializableValue, { consistency: { mode: 'strong' }, ...(signal ? { signal } : {}) })
         : await data.command(name, input as DatabaseSerializableValue, { idempotencyKey: requestId!, ...(signal ? { signal } : {}) });
       try { check(); } catch (error) { if (kind === 'command') throw new JobsError('JOBS_OUTCOME_UNKNOWN'); throw error; }
@@ -210,16 +212,21 @@ export class JobsRuntime {
       if (kind === 'command' && !('replayed' in result && result.replayed) && envelope.hint !== undefined) {
         // Malformed advisory metadata must not rewrite an acknowledged mutation's accepted outcome.
         try { this.queueHint(createDatabaseRef(id), readJobCommitHint(envelope.hint)); } catch { /* Retained reads still reauthorize; no guessed row events. */ }
-        if (name === 'jobs.schedule.create' || name === 'jobs.schedule.change') {
-          try { this.source?.wake(id); } catch { /* Durable source recovery, not a notification, owns delivery. */ }
-        }
       }
       return envelope.value as T;
     } catch (error) {
       const rejected = readJobRejection(error); if (rejected) throw rejected;
       if (kind === 'command' && error instanceof DatabaseError && error.outcome === 'unknown') throw new JobsError('JOBS_OUTCOME_UNKNOWN');
       throw error;
-    } finally { lease.release(); }
+    } finally {
+      lease.release();
+      if (commandAttempted && ['jobs.schedule.create', 'jobs.schedule.change', 'jobs.dispatch', 'jobs.block', 'jobs.complete', 'jobs.cursor.block'].includes(name)) {
+        // A missing reply or retired caller does not prove rollback. Wake only
+        // this fixed source after releasing the lease; delivery reads durable
+        // facts and grants no acceptance, replay or retained request authority.
+        try { this.source?.wake(id); } catch { /* Preserve the original command outcome; retained source recovery still owns delivery. */ }
+      }
+    }
   }
   private queueHint(ref: string, hint: JobCommitHint): void {
     if (this.state !== 'ready' || !this.listeners.has(ref)) return;

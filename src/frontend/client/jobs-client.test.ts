@@ -105,6 +105,45 @@ test('live SDK pages stop readers on account replacement and definitive denial d
   finally { close(); denied.clear(); }
 });
 
+test('live frames expose only a closed invalidation bit and accept older frames without it', async () => {
+  let controller!: ReadableStreamDefaultController<Uint8Array>;
+  const updates: unknown[] = [];
+  const body = new ReadableStream<Uint8Array>({ start(value) { controller = value; } });
+  const client = createJobsClient(async <T>() => accepted as T,
+    async () => new Response(body, { headers: { 'Content-Type': 'text/event-stream' } }));
+  const stop = client.schedules.watch((_page, update) => { updates.push(update); });
+  try {
+    for (const extra of [{}, { invalidated: true }, { invalidated: false }]) controller.enqueue(new TextEncoder().encode(
+      'data: ' + JSON.stringify({ version: 1, value: { items: [summary], total: 1 }, ...extra }) + '\n\n'));
+    const deadline = Date.now() + 1000;
+    while (updates.length < 3) { if (Date.now() > deadline) throw new Error('Synthetic jobs invalidation did not deliver.'); await Bun.sleep(1); }
+    expect(updates).toEqual([{ invalidated: false }, { invalidated: true }, { invalidated: false }]);
+    expect(updates.every(Object.isFrozen)).toBe(true);
+  } finally { stop(); client.clear(); }
+});
+
+test('malformed or private live invalidation metadata cannot publish and retires the connection', async () => {
+  for (const extra of [{ invalidated: 'PRIVATE_DETAIL' }, { invalidated: null }, { invalidated: { input: 'PRIVATE_INPUT' } },
+    { invalidated: true, privateInput: 'PRIVATE_INPUT' }]) {
+    let opened = 0, delivered = 0;
+    const errors: unknown[] = [];
+    const client = createJobsClient(async <T>() => accepted as T, async () => {
+      opened++;
+      return new Response(new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(new TextEncoder().encode(
+        'data: ' + JSON.stringify({ version: 1, value: { items: [summary], total: 1 }, ...extra }) + '\n\n')); } }),
+      { headers: { 'Content-Type': 'text/event-stream' } });
+    });
+    const stop = client.schedules.watch(() => { delivered++; }, { onError(error) { errors.push(error); } });
+    try {
+      const deadline = Date.now() + 1000;
+      while (!errors.length) { if (Date.now() > deadline) throw new Error('Synthetic malformed jobs frame did not retire.'); await Bun.sleep(1); }
+      await Bun.sleep(5);
+      expect(delivered).toBe(0); expect(opened).toBe(1); expect(errors).toHaveLength(1);
+      expect(String(errors[0])).not.toContain('PRIVATE_');
+    } finally { stop(); client.clear(); }
+  }
+});
+
 test('operator definition discovery and list/detail summaries use the native wire contract without changing receipt acknowledgments', async () => {
   const definition = { name: 'synthetic.job', version: '1', default: true, ownership: { actor: true, service: false } } as const;
   const client = createJobsClient(async <T>(path: string) => (path === '/jobs/definitions' ? { items: [definition] }

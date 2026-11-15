@@ -1,5 +1,5 @@
 /** Browser-safe jobs facade. Mutations retain caller request identities; scope retirement discards late acknowledgments. */
-import type { JobControlOptions, JobEnqueueOptions, JobPageOptions, JobRequestOptions, JobScheduleInput, JobSchedulePage, JobScheduleView, JobWatchOptions, ScopedJobs } from '../../jobs/contracts';
+import type { JobControlOptions, JobEnqueueOptions, JobPageOptions, JobRequestOptions, JobScheduleInput, JobSchedulePage, JobScheduleView, JobWatchOptions, JobWatchUpdate, ScopedJobs } from '../../jobs/contracts';
 import type { FetchInit } from './sdk';
 import { watchJobsPage } from './jobs-watch';
 import { jobMutationFailure } from './jobs-mutation';
@@ -75,7 +75,7 @@ export function createJobsClient(fetch: <T = unknown>(path: string, init?: Fetch
       async list(options?: JobPageOptions) {
         return schedulePage(await call('/schedules' + query(options, true)));
       },
-      watch(listener: (page: JobSchedulePage) => void, options: JobWatchOptions = {}) {
+      watch(listener: (page: JobSchedulePage, update?: JobWatchUpdate) => void, options: JobWatchOptions = {}) {
         if (!open || typeof listener !== 'function') throw invalid();
         const r = record(options, ['query', 'signal', 'onError']);
         if (r.signal !== undefined && !(r.signal instanceof AbortSignal) || r.onError !== undefined && typeof r.onError !== 'function') throw invalid();

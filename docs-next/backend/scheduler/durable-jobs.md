@@ -24,7 +24,8 @@ reviewed_against:
 
 This documents the **unreleased feature branch**, not the selected Zero updater.
 Managed configuration, Guardian admission, private Fabric storage, pinned Torrent
-handoffs, HTTP and SDK contracts are implemented in source. Operator UI,
+handoffs, HTTP and SDK contracts are implemented in source. The native
+[operator workspace](../../frontend/jobs-workspace.md) is being qualified;
 remaining service/deployment qualification and the final archive are unfinished.
 Do not use this page to claim the complete foundation is ready to deploy.
 Calendar components and the calendar backend remain outside this work.
@@ -257,14 +258,43 @@ hook's visible page. A bounded SSE lifetime forces fresh HTTP admission; it does
 not bypass audit delivery or credential checks. Streams contain public views,
 not job payloads. The live boundary's source/browser qualification is ongoing.
 
-Canonical accepted schedule-row changes now join the existing private actor
-logging outbox transaction and supervised delivery worker. These are record
-change events, with safe control/ownership enum differences. Payloads, seals
-and raw input are excluded; replay, idle reads, timer wakes and claim leases do
-not append audit rows. This is **not** a promise of complete semantic job/run
-audit presentation: workflow/outcome integration and operator labels remain
-part of the unfinished foundation review. Do not infer provider delivery from
-an accepted schedule or a completed database write.
+Watch listeners may accept a second `JobWatchUpdate` argument. Its closed
+`invalidated` boolean reports an actual admitted source-change hint, not an
+INSERT count or evidence of a particular semantic effect. Such a hint can
+revalidate selected detail/history even when the visible list page is equal.
+Periodic authority rechecks remain quiet when the projection is unchanged.
+`useJobSchedules().invalidationRevision` carries these notifications within its
+current client/selection boundary; it is not a persistent database sequence.
+No caller receives raw commit hints or another scope's source metadata.
+
+Canonical accepted schedule controls and observed handoff/terminal transitions
+join the existing private actor logging outbox **in the source transaction**.
+The optional logging preset's `capture.workflow` governs these semantic facts,
+independently of generic record capture. Jobs suppress their redundant generic
+row-change events; generic capture for other Fabric realms is unchanged.
+
+Events are `jobs.schedule.created`, `.paused`, `.cancelled`, `.readmitted`,
+`.blocked`, and `jobs.occurrence.handed-off`, `.blocked`, `.terminal-observed`.
+They retain safe schedule/occurrence/workflow identities and closed status,
+revision and generation values. Actual source-change sequence identities make
+replay duplicate-safe without recycling receipts or adding another audit ledger.
+Source rollback/backpressure rolls back the corresponding control or observation
+as well; an already accepted external workflow is reconciled, not replayed.
+
+Native HTTP controls establish the actual initiating user attribution in every
+enabled capture preset. Background timer/runner observations truthfully identify
+the bound system source, not a still-active user session; their `scheduleId`
+links back to the initiating control evidence. They do not currently claim a
+separate preserved human `initiatorId`. App-owned background services must own
+their attribution explicitly, rather than inheriting a retired HTTP lifetime.
+
+Payloads, seals, prompts and raw provider results are excluded. Replays, no-op
+controls, idle reads, timer wakes, cursor materialization and claim leases do
+not append audit rows. Supervised delivery is awakened for actual semantic
+commands; no handler waits on a remote sink while holding its SQL transaction.
+An accepted handoff is not a completed workflow, and a completed workflow is
+not proof of provider delivery. Final managed/deployed acceptance remains part
+of the foundation qualification, not implied by an audit-row append.
 
 Shutdown retires job intake, stops its exact registered timer, drains shared
 admission/dispatch, then closes logging sources and Fabric before Torrent and

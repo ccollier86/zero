@@ -79,6 +79,8 @@ manuals and distinguish working-source additions from older installed packages.
   and safe diagnostics without bypassing backend ingest authority.
 - [Torrent interfaces](./torrent/index.md) covers workflow hooks and realtime run
   visualization without replacing the server executor's authority.
+- [Jobs workspace](./jobs-workspace.md) covers the unreleased current-scope schedule,
+  execution-history and receipt-safe operator view over the native jobs facade.
 - [Schema](../backend/schema/index.md) supplies shared field validation, codecs,
   logical/stored types and form/table presentation metadata.
 - [Runtime composition](../backend/runtime/index.md) explains how server plugins,

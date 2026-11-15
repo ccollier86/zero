@@ -41,6 +41,8 @@ export interface JobScheduleDetail extends JobScheduleSummary {
 }
 export interface JobPageOptions { readonly limit?: number; readonly offset?: number; readonly control?: 'active' | 'paused' | 'cancelled' }
 export interface JobSchedulePage { readonly items: readonly JobScheduleSummary[]; readonly total: number }
+/** Content-free committed-change invalidation, not evidence of an insertion or a changed visible row. */
+export interface JobWatchUpdate { readonly invalidated: boolean }
 export interface JobWatchOptions { readonly query?: JobPageOptions; readonly signal?: AbortSignal; readonly onError?: (error: unknown) => void }
 export interface JobOccurrenceView {
   readonly id: string; readonly generation: number; readonly scheduledAt: number; readonly state: 'pending' | 'claimed' | 'dispatched' | 'terminal' | 'blocked' | 'cancelled';
@@ -56,7 +58,7 @@ export interface ScopedJobs {
     get(id: string): Promise<JobScheduleDetail>;
     list(options?: JobPageOptions): Promise<JobSchedulePage>;
     /** Actual committed changes coalesce into a fresh current-authority page. Denial ends the subscription. */
-    watch(listener: (page: JobSchedulePage) => void, options?: JobWatchOptions): () => void;
+    watch(listener: (page: JobSchedulePage, update?: JobWatchUpdate) => void, options?: JobWatchOptions): () => void;
     occurrences(id: string, options?: Pick<JobPageOptions, 'limit' | 'offset'>): Promise<{ readonly items: readonly JobOccurrenceView[]; readonly total: number }>;
     update(id: string, input: Partial<JobScheduleInput>, options: JobControlOptions): Promise<JobScheduleView>;
     resume(id: string, options: JobControlOptions): Promise<JobScheduleView>;

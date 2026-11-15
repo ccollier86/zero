@@ -80,7 +80,7 @@ export class JobsService {
           return { ...detail, actions: this.operatorPolicy(request, context).actions(context.actor, detail) };
         },
         list: async (options?: JobPageOptions) => { const context = await admit(); return this.readSchedules(request, context, page(options, true)); },
-        watch: (listener: (page: JobSchedulePage) => void, options: JobWatchOptions = {}) => {
+        watch: (listener: Parameters<ScopedJobs['schedules']['watch']>[0], options: JobWatchOptions = {}) => {
           const r = jobRecord(options, ['query', 'signal', 'onError']), query = page(r.query, true);
           if (typeof listener !== 'function' || r.onError !== undefined && typeof r.onError !== 'function'
             || r.signal !== undefined && !(r.signal instanceof AbortSignal)) throw new JobsError('JOBS_INPUT_INVALID');

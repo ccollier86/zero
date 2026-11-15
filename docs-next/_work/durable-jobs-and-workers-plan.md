@@ -81,10 +81,10 @@ requirement to publish an intermediate worker-only release before scheduling.
 | Area | Present now | Still required |
 | --- | --- | --- |
 | Shared workers | Bounded fair async pool; fixed typed task catalogs; isolated processes; managed scoped facade; messaging compatibility; coordinated native concurrency proof. | Finish deployment qualification, including Linux startup/containment. |
-| Torrent handoffs | Actor-preserving commit-acknowledged enqueue, native HTTP/SDK/hooks and scope retirement. | Reuse these receipts in durable scheduling; do not introduce a second execution/retry engine. |
-| Cron | Existing lightweight in-memory scheduler remains compatible. | Durable occurrence ownership, restart/misfire handling, overlap policies and admitted control APIs. |
-| Time selection | Private, tested timezone/DST/misfire prototype. | Integrate with persisted cursors and atomic occurrence creation; it is not currently an enabled scheduler. |
-| Durable jobs | Private validated admissions/realm, indexed wake catalog, scoped Fabric lifecycle; Guardian/Torrent bridge, bounded dispatch loop, opt-in managed config, facade/HTTP/SDK, source outbox and live hooks implemented. | Finish live/security/recovery review, broader service adapters, operator view and exact deployment/package qualification. |
+| Torrent handoffs | Actor-preserving commit-acknowledged enqueue, native HTTP/SDK/hooks and scope retirement; exact sealed job handoffs use these existing receipts. | Native cross-service adoption qualification; do not introduce a second execution/retry engine. |
+| Cron | Lightweight scheduler remains compatible; optional durable jobs own nominal occurrences, restart/misfire, overlap and admitted control APIs in source. | Finish deployed/package qualification and operator/service acceptance, not another cron engine. |
+| Time selection | Tested timezone/DST/misfire selection is integrated with persisted cursors and atomic occurrence creation in opt-in jobs. | Final native/deployed acceptance; calendar recurrence remains a distinct postponed domain. |
+| Durable jobs | Private validated admissions/realm, indexed wake catalog, scoped Fabric lifecycle; Guardian/Torrent bridge, fair bounded dispatch, opt-in managed config, facade/HTTP/SDK, source outbox, live summaries and operator UI in source. | Finish semantic-audit/cross-service qualification, UI browser review and exact deployment/package qualification. |
 | Documentation/release | Working guides and this plan. | Supported/planned consistency, adoption instructions, exact final package/updater qualification. No new release has been selected. |
 
 The [private storage checkpoint](./durable-jobs-storage-checkpoint.md) records
@@ -790,3 +790,90 @@ Temporary run children under
 empty and no task-worker children remained after the focused run. Existing
 pinned calendar preview/source worktrees and shared dependencies are preserved.
 Changed documentation link checks passed (214 local links, none missing).
+
+## Native operator and semantic-audit follow-up — November 15
+
+This entry supersedes the earlier prototype/next-pass descriptions above; those
+are retained as historical evidence, not current claims of missing source APIs.
+Calendar backend/UI and the backup-service implementation remain paused.
+
+Implemented in the current source candidate:
+
+- `JobsWorkspace` in `src/components/jobs/`, exported through the frontend jobs
+  feature barrel. It reuses native DataTable offset paging/default twenty rows,
+  rolling totals, scoped live queries, Select, ScrollArea, list/detail layout,
+  Zero icons and ControlledModal. Application-owned creation/edit/run/owner
+  adapters are explicit; no fake generic parser schema or borrowed credential
+  client is introduced. See the [workspace manual](../frontend/jobs-workspace.md).
+- Original action/revision/idempotency identity survives confirmation and
+  uncertainty. `runNow` correctly accepts its independent one-off schedule ID;
+  ordinary controls remain bound to the original schedule. Unknown outcomes
+  only read the original receipt, never send another command. Rapid clicks,
+  client/scope replacement, late responses and unmount retire safely.
+- Definitive live read failure withdraws rows, details and actions. The native
+  creation extension is disabled too. Read retry does not temporarily resurrect
+  denied inspector content; fresh selected details are independently authorized.
+- Actual committed-change invalidation reaches the selected inspector even when
+  its job is off-page or the latest/active summary is unchanged. A separate closed
+  invalidation bit is coalesced through native watch/SSE/SDK/hooks; periodic
+  unchanged authority checks stay quiet. Table pages use their actual snapshot,
+  not fabricated INSERT/UPDATE events or a second HTTP read for each live frame.
+- Canonical job controls, handoff/blocking and observed terminal transitions
+  append payload-free semantic workflow evidence atomically into the existing
+  source outbox. Jobs suppress redundant generic record events only for their
+  own source. Claims, no-ops, materialization, polling, replay and idle reads do
+  not create audit activity. Capture remains optional and policy-controlled.
+- Native activity/detailed HTTP controls own true user attribution; background
+  observations identify the fixed system source and link the schedule, without
+  impersonating an expired session or claiming an explicit preserved initiator.
+  Fixed-source delivery wakes after its lease is released even if a committed
+  command's final reply becomes unknown. That wake grants no replay/acceptance.
+- A native managed file-backed jobs/Torrent/AI-decision regression holds one
+  actual service callback while another job and an application-file write
+  progress. It proves exact activity pinning, logout/revocation late-output
+  fencing and cancellation preserving physical pool occupancy until settlement.
+  Provider bytes are mocked at the configured service transport; no real provider
+  call, model-quality result or universal latency claim is implied.
+
+Qualification at this point: a fresh frozen dependency installation passes
+**89 tests / eighteen files / 956 expectations**, including real managed HTTP,
+native scheduler/Torrent, Fabric/source delivery/investigator, SDK retirement,
+and Chromium with both motion preferences. Earlier isolated browser probes
+caught an ambiguous test locator after a legitimate run-now duplicate label;
+the selector was scoped to the actual heading, not papered over with `.first()`.
+The first semantic-audit probe rejected a test's undeclared claim-only field;
+the fixture was corrected without relaxing the closed production command.
+
+The expanded strict type phase then found two readonly-array assertion-type
+errors in the new native-service test. Expected arrays were explicitly copied;
+the original type run remains failed. A fresh narrow test/type follow-up is
+now complete: **one native-service test / 64 expectations passed**, followed by
+the expanded strict direct-Bun TypeScript group covering workers, jobs,
+semantic logging, watch/SDK/hooks, the complete workspace/Chromium fixture and
+preview script. The follow-up used another independently installed frozen tree;
+it is not a relabeled rerun of all 89 tests and the overlapping totals are not
+summed. No production implementation changed for the two assertion-type fixes.
+
+Current documentation structural gate: **894 pages/unique IDs, all reachable,
+zero problems**. The [service-composition guide](../backend/workers/service-integration.md)
+states actual AI/automation/notification/email/Storage boundaries, including the
+absence of a universal durable SMTP-send or generic private jobs-artifact adapter.
+Do not claim every app/provider is exactly-once merely because Torrent and jobs
+have permanent receipts.
+
+This is still an unreleased feature checkpoint. Final exact installed archive,
+Linux/bundled jobs/UI integration, exports and normal-updater qualification remain
+separate gates. Existing diagnostic emulated-worker evidence is not relabeled as
+a full native/default-timeout deployment pass. No main merge, archive selection,
+production change, calendar implementation or backup service is implied.
+
+Phase cleanup: both independent installations and all owned preview servers,
+Chromium leases, actor/database handles, generated CSS/screenshots and synthetic
+roots were retired by their creating finally/EXIT handlers. The worker fixture
+parent is empty and no dependency tree/link remains in this worktree. The
+dedicated Colima profile remains stopped; this pass did not start Docker or
+touch a production context. Source, conversation history, shared warm caches
+and the separately pinned calendar preview remain preserved. Storage checks
+still report the approved external-only exception: approximately 229 GiB free
+externally, with the separate internal-drive warning around 74 GiB, not repaired
+or bypassed by this work.
