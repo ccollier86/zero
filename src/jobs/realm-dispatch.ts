@@ -133,6 +133,18 @@ export function completeJobOccurrence(context: DatabaseWriteCommandContext, inpu
     return { completed: true };
   });
 }
+/** Operational capacity/authority stop, separate from a human pause and not a fabricated execution failure. */
+export function blockJobCursor(context: DatabaseWriteCommandContext, input: unknown) {
+  return jobCommand(() => {
+    const r = jobRecord(input, ['scopeId', 'id', 'expectedRevision', 'code']), scope = jobScope(r.scopeId); assertJobOwner(context, scope);
+    const row = schedule(context, scope, r.id); jobRevision(row, r.expectedRevision);
+    const code = jobText(r.code, 64);
+    if (!['JOBS_CAPACITY', 'JOBS_AUTHORITY_RETIRED', 'JOBS_DEFINITION_UNAVAILABLE'].includes(code)) throw new JobsError('JOBS_INPUT_INVALID');
+    const cursor = context.db.get('_jobs_cursors', row.id); if (!cursor) throw new JobsError('JOBS_STATE_INVALID');
+    if (cursor.blocked_code !== code) context.db.update('_jobs_cursors', row.id, { blocked_code: code });
+    return { blocked: true };
+  });
+}
 function schedule(context: DatabaseWriteCommandContext, scope: string, id: unknown): JobScheduleRow {
   const row = context.db.get('job_schedules', jobText(id, 96)) as JobScheduleRow | null;
   if (!row || row.scope_id !== scope) throw new JobsError('JOBS_NOT_FOUND'); return row;

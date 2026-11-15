@@ -55,6 +55,7 @@ import { createPresencePlugin } from '../../presence/presence.plugin';
 import { composeManagedUserAvatars } from './app-user-avatars';
 import { mountManagedBlog } from './app-blog';
 import { mountManagedMessaging } from './app-messaging';
+import { mountManagedJobs } from './app-jobs';
 import { ZERO_MESSAGING_JOBS } from '../../messaging/jobs';
 import { registerMessagingJobWorkflow } from '../../messaging/jobs-workflow';
 import { trustedSystemServiceDataScope } from '../../auth/service-data-scope';
@@ -311,6 +312,7 @@ export async function mountPlatformServices({
   if (workflowLifecycle.stop) runtime.addCleanup(async () => { await workflowLifecycle.stop?.(); });
   await Promise.all(workflowInitializers.map(initialize => initialize()));
   runtime.get(ZERO_MESSAGING_JOBS)?.start(runtime.require(ZERO_WORKFLOW_SERVICE));
+  await mountManagedJobs(app, runtime, config, scheduler);
 }
 
 interface WorkflowMountInput {

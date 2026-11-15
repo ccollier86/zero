@@ -33,8 +33,9 @@ process restart recreates code-defined jobs; it does not replay missed work.
 
 The approved [shared scheduling/jobs expansion](../../_work/durable-jobs-and-workers-plan.md)
 is being implemented on a feature branch. Its [worker foundation](../workers/index.md)
-is additive; the proposed durable `zero.jobs`/schedule API is not part of the
-current cron service or released archive.
+is additive. The [durable jobs source contract](./durable-jobs.md) now includes
+managed admission, Fabric/Torrent handoff and native HTTP/SDK integration on
+that branch, but is not part of the released archive or this local cron API.
 
 This source-backed guide also describes the feature branch's app-bound
 observability and cooperative, bounded `close()` additions. They are not yet
@@ -62,6 +63,8 @@ tenants' or platform maintenance jobs.
   plugin prefix/dependencies, startup and app-local binding.
 - [Jobs](./jobs.md): exact declaration fields, cron/timezone, pause/manual runs,
   captured options, overlap and caught-versus-rethrown failure policy.
+- [Durable jobs](./durable-jobs.md): unreleased managed configuration, ownership,
+  permanent receipts, pinned handoff, live reads and remaining qualification.
 - [Status](./status.md): list/get/existence, busy versus scheduled state and
   timestamp meaning.
 - [Lifecycle](./lifecycle.md): removal, stop, registration ownership and shutdown.

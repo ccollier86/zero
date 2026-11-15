@@ -4,8 +4,8 @@ import { quoteSqlIdentifier } from '../sync/identity';
 import { JobsError } from './error';
 import { JOB_TABLES } from './realm-schema';
 import { bindJobOwner, changeJobSchedule, createJobSchedule } from './realm-control';
-import { blockJobOccurrence, claimJobOccurrence, completeJobOccurrence, materializeJobOccurrences, receiveJobDispatch } from './realm-dispatch';
-import { dueJobSchedules, listJobOccurrences, listJobSchedules, pendingJobOccurrences, readJobDispatchContext, readJobIntent, readJobSchedule } from './realm-queries';
+import { blockJobOccurrence, claimJobOccurrence, completeJobOccurrence, materializeJobOccurrences, receiveJobDispatch, blockJobCursor } from './realm-dispatch';
+import { dueJobSchedules, listJobOccurrences, listJobSchedules, pendingJobOccurrences, readJobDispatchContext, readJobIntent, readJobSchedule, readJobScheduleContext, dispatchedJobOccurrences, readJobWake } from './realm-queries';
 import { withJobCommitHints } from './commit-hints';
 
 function query(handler: (context: Parameters<DatabaseReadQueryHandler>[0], input: unknown) => unknown): DatabaseReadQueryHandler {
@@ -72,7 +72,8 @@ export const jobsRealm = defineDatabaseRealm({
   } }],
   commands: withJobCommitHints({ 'jobs.owner.bind': bindJobOwner, 'jobs.schedule.create': createJobSchedule, 'jobs.schedule.change': changeJobSchedule,
     'jobs.materialize': materializeJobOccurrences, 'jobs.claim': claimJobOccurrence, 'jobs.dispatch': receiveJobDispatch,
-    'jobs.block': blockJobOccurrence, 'jobs.complete': completeJobOccurrence }),
+    'jobs.block': blockJobOccurrence, 'jobs.complete': completeJobOccurrence, 'jobs.cursor.block': blockJobCursor }),
   queries: { 'jobs.schedule': query(readJobSchedule), 'jobs.schedules': query(listJobSchedules), 'jobs.receipt': query(readJobIntent), 'jobs.occurrences': query(listJobOccurrences),
-    'jobs.due': query(dueJobSchedules), 'jobs.pending': query(pendingJobOccurrences), 'jobs.context': query(readJobDispatchContext) },
+    'jobs.due': query(dueJobSchedules), 'jobs.pending': query(pendingJobOccurrences), 'jobs.context': query(readJobDispatchContext),
+    'jobs.schedule.context': query(readJobScheduleContext), 'jobs.dispatched': query(dispatchedJobOccurrences), 'jobs.wake': query(readJobWake) },
 });

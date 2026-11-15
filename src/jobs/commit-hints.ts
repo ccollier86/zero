@@ -17,7 +17,7 @@ export function readJobCommitHint(input: unknown): JobCommitHint {
 function capture({ db }: DatabaseWriteCommandContext, name: string, input: unknown) {
   const r = input as Record<string, unknown>;
   let id = name === 'jobs.schedule.create' ? (r.admission as Record<string, unknown>)?.id : r.id;
-  const occurrence = !['jobs.schedule.create', 'jobs.schedule.change', 'jobs.materialize'].includes(name) && typeof id === 'string' ? db.get('_jobs_occurrences', id) : null;
+  const occurrence = !['jobs.schedule.create', 'jobs.schedule.change', 'jobs.materialize', 'jobs.cursor.block'].includes(name) && typeof id === 'string' ? db.get('_jobs_occurrences', id) : null;
   if (occurrence) id = occurrence.schedule_id;
   if (typeof id !== 'string') return null;
   const row = db.get('job_schedules', id), cursor = db.get('_jobs_cursors', id);

@@ -22,6 +22,8 @@ try {
   const tests = focus.length ? focus : [
     'src/workers', 'src/jobs', 'src/scheduler', 'src/messaging/work-pool.test.ts', 'src/doctor/source-only-background-checks.test.ts',
     'src/workflows/workflow-runtime-ownership.test.ts',
+    'src/workflows/workflow-deferred-start-bridge.test.ts', 'src/workflows/workflow-enqueue.test.ts',
+    'src/workflows/workflow-system-start.test.ts', 'src/frontend/client/jobs-client.test.ts',
     'src/frontend/server/app-workflow-execution-services.integration.test.ts',
     'src/frontend/server/workflow-execution-capability-topology.integration.test.ts',
     'src/workflows/workflow-execution-authority.integration.test.ts',
@@ -34,6 +36,8 @@ try {
     'src/workers/index.ts', 'src/workers/types.test.ts', 'src/workers/torrent-managed.test.ts',
     'src/workers/managed.test.ts', 'src/jobs/runtime.ts', 'src/jobs/definition.ts', 'src/jobs/definition.test.ts',
     'src/jobs/realm.integration.test.ts', 'src/jobs/runtime.integration.test.ts', 'src/jobs/persistence-config.test.ts',
+    'src/jobs/config.test.ts', 'src/jobs/managed.integration.test.ts', 'src/jobs/logging.integration.test.ts',
+    'src/jobs/service.ts', 'src/jobs/stream.ts', 'src/jobs/watch.test.ts', 'src/frontend/client/jobs-client.test.ts', 'src/frontend/client/jobs-hooks.ts',
     'src/scheduler/index.ts', 'src/scheduler/scheduler-lifecycle.test.ts', 'src/doctor/source-only-background-checks.ts'], 600_000);
 } finally {
   const current = await lstat(dependencies);

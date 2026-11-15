@@ -102,3 +102,20 @@ test('live hints are scope/owner specific and idle reads, no-op controls and req
     remove(); await f.stop(); expect(notices).toBe(2);
   } finally { remove(); removePeer(); await f.close(); }
 }, 120_000);
+
+test('indexed wake discovery sleeps future/idle scopes and preserves due discovery across restart', async () => {
+  const f = await fixture(), scope = applicationServiceDataScope();
+  try {
+    await f.runtime.write(scope, 'jobs.schedule.create', create(scope), 'future-create', () => {});
+    expect(f.runtime.dueScopes(clock, 2)).toEqual([]);
+    expect(f.runtime.dueScopes(clock + 60_000, 2).map(serviceDataScopeKey)).toEqual(['application']);
+    await f.restart(false);
+    expect(f.runtime.dueScopes(clock, 2)).toEqual([]);
+    expect(f.runtime.dueScopes(clock + 60_000, 2).map(serviceDataScopeKey)).toEqual(['application']);
+    await f.runtime.write(scope, 'jobs.schedule.change', { actor: actor(scope), id: 'schedule-one', requestId: 'pause-idle', expectedRevision: 1, action: 'pause', now: clock }, 'pause-idle', () => {});
+    expect(f.system.prepare('SELECT wake_at FROM _jobs_owners').get()).toEqual({ wake_at: null });
+    await f.runtime.read(scope, 'jobs.schedules', { actor: actor(scope) }, () => {});
+    expect(f.runtime.dueScopes(clock + 60_000, 2)).toEqual([]);
+    expect(f.system.prepare('SELECT wake_at FROM _jobs_owners').get()).toEqual({ wake_at: null });
+  } finally { await f.close(); }
+}, 120_000);

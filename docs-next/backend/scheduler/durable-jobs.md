@@ -1,0 +1,216 @@
+---
+id: zero.scheduler.durable-jobs
+type: reference
+audience: [developer, agent, operator]
+owner: scheduler
+status: draft
+visibility: internal
+system: scheduler
+feature: durable-jobs
+maturity: planned
+applies_to: ["Unreleased feature/core-worker-runtime-upgrades source; not a qualified archive"]
+reviewed_against:
+  package: "@zero/framework"
+  version: "2.10.5"
+  commit: "58c9324b79bfbb81605114a394ec1856d3195e6b"
+  snapshot: dirty
+  date: "2026-11-14"
+  evidence_level: source-observed
+---
+
+# Durable jobs and schedules — implementation boundary
+
+[Scheduler](./index.md) · [Foundation plan](../../_work/durable-jobs-and-workers-plan.md)
+
+This documents the **unreleased feature branch**, not the selected Zero updater.
+Managed configuration, Guardian admission, private Fabric storage, pinned Torrent
+handoffs, HTTP and SDK contracts are implemented in source. Operator UI,
+remaining service/deployment qualification and the final archive are unfinished.
+Do not use this page to claim the complete foundation is ready to deploy.
+Calendar components and the calendar backend remain outside this work.
+
+## Responsibilities
+
+`zero.scheduler` remains the trusted app-local timer registry. `zero.jobs`
+accepts durable schedules and one-off jobs. Fabric orders transactions within
+each private scope database; independent files can progress concurrently.
+Torrent executes the exact admitted workflow version and owns activity retries,
+waits, cancellation, recovery and terminal execution state. A jobs handoff does
+not wait for an AI/provider call, and a work pool is not a second durable queue.
+
+One managed Bun app and its supervised children is the current topology. This
+is not a multi-host leader election or distributed-consensus implementation.
+
+## Configure explicitly
+
+```ts
+import { defineZeroConfig, defineJob } from '@zero/framework/server';
+
+const report = defineJob({
+  name: 'reports.daily',
+  version: '1',
+  workflow: { name: 'reports.daily', version: 1 },
+  access: 'admin',
+  parseInput(value) {
+    // Validate and return canonical JSON using the application's schema.
+    return value;
+  },
+});
+
+export default defineZeroConfig({
+  db: { mode: 'file', path: './data/application.sqlite' },
+  auth: true,
+  tables: {},
+  workflows: {
+    register(registry) {
+      // Register the corresponding versioned Torrent graph/activities here.
+      // Legacy step-array workflows cannot be used as pinned job definitions.
+    },
+  },
+  jobs: { definitions: [report], concurrency: 'max' },
+});
+```
+
+Omitted/false jobs configuration is inert: no jobs owner schema, private file,
+actor, timer or jobs routes are installed. Enabling jobs requires Guardian and
+Torrent; explicitly disabled dependencies are not silently overridden. An
+omitted auth setting is enabled when jobs is enabled, consistent with other
+managed Guardian features. Enabling against retained file-backed SYSTEM state
+requires the normal explicit migration preparation; do not manually write its
+owner catalog.
+
+The default private root is `data/zero.jobs` under the configuration project
+root. Each application/tenant scope gets a separately owned Fabric file. Job
+roots cannot overlap application/control files, asset/build output, Storage,
+logging, blog or messaging roots. Canonical startup checks also reject aliases.
+Jobs actors use the fixed actor entry, not the application entry, and default
+to an empty child environment. Bundled/compiled deployment still needs final
+package qualification; do not assume source execution proves that deployment.
+
+## Definitions, ownership and authority
+
+- A definition is an exact code-registered object or a registered name. Multiple
+  explicit definition versions may coexist, with one default per name. Clients
+  send names, never executable parsers or a caller-selected workflow pin.
+- Inputs are detached, bounded canonical JSON (32 KiB). Version parser/policy
+  changes explicitly. Definition fingerprints describe metadata, not executable
+  code integrity or proof of equivalent semantics.
+- Actor-owned work retains its exact sealed authority. Logout/revocation does
+  not silently turn it into SYSTEM work. New handoff requires current actor
+  authority, current source eligibility, and the same admitted graph pin.
+- Service ownership is a separate optional code policy (`service.principal`,
+  allowed scope kinds and synchronous `isEligible`). It must be explicitly
+  selected at admission. Eligibility is checked again before a new handoff.
+- HTTP/SDK jobs currently support authenticated sessions, not API-key or
+  anonymous admission. Native facades take scope from live Guardian, never a
+  request body or a user-selected tenant. Unsupported machine/SYSTEM projections
+  remain unavailable rather than receiving a raw service escape.
+- Owners can inspect/control their own schedules. Native scope administrators
+  can inspect/control schedules in their scope; an optional `jobs.manage`
+  Guardian requirement can replace that management policy. Administrators may
+  stop another actor's work but cannot readmit it as that actor.
+
+Raw inputs, authority seals, claim nonces and actor handles never appear in
+public schedule/run views. Trusted setup receives the lifecycle owner; ordinary
+handlers receive only the admitted `zero.jobs` facade.
+
+## Commands and receipts
+
+```ts
+// Within an admitted native endpoint, using its request-scoped zero facade:
+const accepted = await zero.jobs!.enqueue('reports.daily', { reportId }, {
+  idempotencyKey: requestId,
+});
+const original = await zero.jobs!.receipts.get(requestId);
+
+const scheduled = await zero.jobs!.schedules.create({
+  definition: 'reports.daily',
+  input: { reportId },
+  timing: {
+    kind: 'cron', pattern: '0 0 8 * * *', timezone: 'America/New_York',
+    misfire: 'latest', maxLatenessMs: 60_000,
+  },
+  overlap: 'queue-one',
+}, { idempotencyKey: anotherRequestId });
+
+await zero.jobs!.schedules.pause(scheduled.id, {
+  expectedRevision: scheduled.revision, idempotencyKey: pauseRequestId,
+});
+```
+
+Every mutation requires the caller's stable idempotency key. Retrying the same
+semantic command returns its original accepted receipt, not a second schedule
+and not an updated projection. Reusing a key for a different command conflicts.
+Read the current schedule separately. Controls require the accepted revision.
+Unknown outcomes require reconciliation using the **same** request identity;
+neither server nor SDK invents a replacement key or automatically replays an
+uncertain external effect.
+
+`enqueue` and schedule creation return an accepted schedule identity, not AI
+output or a completed workflow. Native HTTP uses `/jobs/enqueue`,
+`/jobs/receipts/:key`, `/jobs/schedules` and per-schedule inspection/control
+routes. Enqueue/create acknowledge with 202. `pause`, `cancel`, `resume`,
+`update` and `runNow` are separate controls. Resume/update deliberately readmit
+with fresh current authority and a new generation. A cancelled identity cannot
+be revived. Resuming an elapsed one-off time is invalid; select a new future
+time or explicitly create a new immediate run.
+
+In this source contract, `runNow` creates an independently admitted one-off job
+from the inspected schedule under the current initiating authority. It does not
+rewrite the original nominal occurrence or impersonate its creator. Pausing or
+cancelling scheduling does not claim that already handed-off Torrent work or an
+external delivery has been undone. Inspect/control that actual run separately.
+
+## Timing, overlap, capacity and recovery
+
+- Once timing requires a canonical UTC instant. Cron requires an explicit IANA
+  timezone and supports `skip`, `latest` and bounded `catch-up` misfire policy.
+  These are job timings, **not appointment recurrence/RFC 5545 series**.
+- `skip` suppresses overlap, `allow` admits independent runs, and `queue-one`
+  retains the latest unstarted occurrence while prior work is active. Older
+  generations' active work still counts for overlap.
+- Due cursors and occurrence intents commit atomically. Claims are fenced by
+  nonce/generation/expiry. Stale claims reconcile their exact permanent Torrent
+  key first, including after pause/cancel/revocation, before any new dispatch.
+- Private receipt reconciliation after revocation is read-only. Public receipt
+  reads and fresh execution retain current authorization checks. The actual
+  workflow's exact graph identity/fingerprint is verified on reconciliation.
+- Indexed SYSTEM wake metadata discovers due scope files. Future/idle scopes
+  do not require opening every private actor every second. Dirty-before-write
+  publication and generation-fenced wake refresh preserve recovery. Active
+  claims/runs still require bounded status reconciliation.
+- `concurrency: 'max'` means a finite admission ceiling of 100, not unlimited
+  providers/processes or a promise every task starts instantly. Per-schedule
+  controls/handoff are ordered; unrelated schedules use shared fair capacity.
+  SQL/authority leases are not held while waiting on provider work.
+- Per-file retained budgets currently stop admission at 10,000 schedules,
+  1,000 schedules per owner, 100,000 permanent logical receipts, or 100,000
+  occurrences. Capacity exhaustion is visible and does not recycle identities
+  or delete receipts. This is not an indefinite high-frequency retention plan.
+- Missing established files, changed roots and inconsistent retained ownership
+  require explicit recovery, never empty replacement.
+
+## Live reads, logging and remaining qualification
+
+The SDK's `client.jobs` uses the same native routes. Account/scope replacement
+retires pending acknowledgments. `schedules.watch()` and `useJobSchedules()`
+are backed by coalesced private commit hints plus reauthorized bounded pages,
+not fabricated Sync row events. Denial retires the subscription and clears the
+hook's visible page. A bounded SSE lifetime forces fresh HTTP admission; it does
+not bypass audit delivery or credential checks. Streams contain public views,
+not job payloads. The live boundary's source/browser qualification is ongoing.
+
+Canonical accepted schedule-row changes now join the existing private actor
+logging outbox transaction and supervised delivery worker. These are record
+change events, with safe control/ownership enum differences. Payloads, seals
+and raw input are excluded; replay, idle reads, timer wakes and claim leases do
+not append audit rows. This is **not** a promise of complete semantic job/run
+audit presentation: workflow/outcome integration and operator labels remain
+part of the unfinished foundation review. Do not infer provider delivery from
+an accepted schedule or a completed database write.
+
+Shutdown retires job intake, stops its exact registered timer, drains shared
+admission/dispatch, then closes logging sources and Fabric before Torrent and
+the underlying providers. Scripts own cleanup of their synthetic files and
+temporary dependencies on success/failure. Source checks are not a substitute
+for the final frozen archive, real browser UI, Linux lifecycle and updater gates.

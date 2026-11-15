@@ -147,6 +147,7 @@ import { createBlogClient } from './blog-client';
 import type { BlogClient } from '../../blog/client-contracts';
 import { createMessagingClient } from './messaging-client';
 import { createWorkflowClient, type WorkflowClient } from './workflow-client';
+import { createJobsClient, type JobsClient } from './jobs-client';
 import type { MessagingClient } from '../../messaging/client-contracts';
 import type { LoggingClient } from '../../logging/logging-api-contracts';
 
@@ -770,6 +771,7 @@ export interface Client extends AuthAdminSdkSurface {
   readonly messaging: MessagingClient;
   /** Commit-acknowledged, actor-owned workflow starts and receipt reconciliation. */
   readonly workflows: WorkflowClient;
+  readonly jobs: JobsClient;
 
   // ─── Data ────────────────────────────────────────────────────────
 
@@ -967,6 +969,7 @@ export function createClient(config: ClientConfig): Client {
   let blog!: BlogClient;
   let messaging!: MessagingClient;
   let workflows!: WorkflowClient;
+  let jobs!: JobsClient;
   let syncStarted = autoConnect;
   const authorizationDataBoundary = new AuthorizationDataBoundaryController();
 
@@ -1243,6 +1246,7 @@ export function createClient(config: ClientConfig): Client {
   blog = createBlogClient(clientFetch, (path, init) => authClient ? authClient.fetchWithAuth(`${url}${path}`, init) : fetch(`${url}${path}`, init));
   messaging = createMessagingClient(clientFetch, (path, init) => authClient ? authClient.fetchWithAuth(`${url}${path}`, init) : fetch(`${url}${path}`, init));
   workflows = createWorkflowClient(clientFetch);
+  jobs = createJobsClient(clientFetch, (path, init) => authClient ? authClient.fetchWithAuth(`${url}${path}`, init) : fetch(`${url}${path}`, init));
   const presenceClient = createSdkPresence(presenceEnabled, url, authClient, authorizationDataBoundary, syncClient, ephemeralClient);
 
   let previousAuthToken = currentAuthToken();
@@ -1270,6 +1274,7 @@ export function createClient(config: ClientConfig): Client {
       blog.clear();
       messaging.clear();
       workflows.clear();
+      jobs.clear();
       syncClient.beginAuthorizationScopeTransition();
       stateClient?.beginAuthorizationScopeTransition();
       ephemeralClient.beginAuthorizationScopeTransition();
@@ -1409,6 +1414,7 @@ export function createClient(config: ClientConfig): Client {
     get blog() { return blog; },
     get messaging() { return messaging; },
     get workflows() { return workflows; },
+    get jobs() { return jobs; },
     get presence() { return presenceClient; },
     vectorVisualization,
     vectorVisualizationFor,
@@ -1659,6 +1665,7 @@ export function createClient(config: ClientConfig): Client {
       blog.clear();
       messaging.clear();
       workflows.clear();
+      jobs.clear();
       _instance = null;
     },
   };

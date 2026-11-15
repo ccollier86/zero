@@ -45,6 +45,16 @@ export class WorkflowGraphStartCoordinator {
     private readonly observability: WorkflowObservability,
   ) {}
 
+  /** @internal Resolve admission without creating a run; shares the actual start's schema/access rules. */
+  resolveStart(definition: CompiledWorkflowDefinition | string, input: unknown, authority: WorkflowPersistedExecutionAuthority,
+    principal: WorkflowAccessPrincipal, options: StartWorkflowGraphOptions): ResolvedWorkflowDefinitionVersion {
+    const resolved = typeof definition === 'string'
+      ? this.definitions.resolvePersisted(definition, input, options, workflowDefinitionScopeFromTenantId(authority.identity.tenantId))
+      : this.definitions.resolveRegistered(definition, input, options);
+    this.assertDefinitionStartAccess(resolved, principal);
+    return resolved;
+  }
+
   async startRegistered(
     definition: CompiledWorkflowDefinition,
     input: unknown,
@@ -69,8 +79,7 @@ export class WorkflowGraphStartCoordinator {
     options: StartWorkflowGraphOptions = {},
     assertCurrentAuthority?: () => void,
   ): string {
-    const resolved = this.definitions.resolveRegistered(definition, input, options);
-    this.assertDefinitionStartAccess(resolved, principal);
+    const resolved = this.resolveStart(definition, input, authority, principal, options);
     return this.createWithAuthority(
       resolved,
       input,
@@ -107,13 +116,7 @@ export class WorkflowGraphStartCoordinator {
     options: StartWorkflowGraphOptions = {},
     assertCurrentAuthority?: () => void,
   ): string {
-    const resolved = this.definitions.resolvePersisted(
-      name,
-      input,
-      options,
-      workflowDefinitionScopeFromTenantId(authority.identity.tenantId),
-    );
-    this.assertDefinitionStartAccess(resolved, principal);
+    const resolved = this.resolveStart(name, input, authority, principal, options);
     return this.createWithAuthority(
       resolved,
       input,

@@ -2,7 +2,7 @@
 import type { DatabaseReadQueryContext } from '../databases/database-realm';
 import { JobsError } from './error';
 import type { JobAdmissionRow, JobOccurrenceRow, JobScheduleRow } from './model';
-import { jobAdmissionId } from './model';
+import { digest, jobAdmissionId } from './model';
 import { decodeJobAdmission, jobActor, jobScope, scheduleView, type JobActor } from './realm-model';
 import { jobHash, jobInteger, jobKey, jobRecord, jobText, jobTime } from './validation';
 
@@ -36,11 +36,37 @@ export function listJobSchedules(context: DatabaseReadQueryContext, input: unkno
   return { items: rows.map(scheduleView), total };
 }
 export function readJobIntent(context: DatabaseReadQueryContext, input: unknown) {
-  const r = jobRecord(input, ['actor', 'requestId']), actor = jobActor(r.actor); owner(context, actor.scopeId);
+  const r = jobRecord(input, ['actor', 'requestId', 'intentDigest']), actor = jobActor(r.actor); owner(context, actor.scopeId);
   const id = jobHash([actor.scopeId, actor.principal, jobKey(r.requestId)]);
-  const row = context.database.query<{ result_json: string }>('SELECT result_json FROM _jobs_intents WHERE id=? AND scope_id=? AND principal=?').get(id, actor.scopeId, actor.principal);
+  const row = context.database.query<{ result_json: string; digest: string }>('SELECT result_json,digest FROM _jobs_intents WHERE id=? AND scope_id=? AND principal=?').get(id, actor.scopeId, actor.principal);
   if (!row) return null;
-  try { return JSON.parse(row.result_json); } catch { throw new JobsError('JOBS_STATE_INVALID'); }
+  if (r.intentDigest !== undefined && row.digest !== digest(r.intentDigest)) throw new JobsError('JOBS_INTENT_CONFLICT');
+  let value: { id?: unknown }; try { value = JSON.parse(row.result_json); } catch { throw new JobsError('JOBS_STATE_INVALID'); }
+  readSchedule(context, actor, value.id); return value;
+}
+/** Broker-only current admission needed for resume/edit/run-now; never public row data. */
+export function readJobScheduleContext(context: DatabaseReadQueryContext, input: unknown) {
+  const r = jobRecord(input, ['actor', 'id']), actor = jobActor(r.actor), row = readSchedule(context, actor, r.id);
+  const admission = context.database.query<JobAdmissionRow>('SELECT * FROM _jobs_admissions WHERE id=? AND scope_id=?').get(jobAdmissionId(row.id, row.generation), actor.scopeId);
+  if (!admission) throw new JobsError('JOBS_STATE_INVALID');
+  return { schedule: row, admission: decodeJobAdmission(admission) };
+}
+export function dispatchedJobOccurrences(context: DatabaseReadQueryContext, input: unknown) {
+  const r = jobRecord(input, ['scopeId', 'limit', 'after']), scope = jobScope(r.scopeId), limit = jobInteger(r.limit ?? 32, 1, 100); owner(context, scope);
+  const after = r.after === undefined ? '' : jobText(r.after, 128);
+  return context.database.query<{ id: string; schedule_id: string }>("SELECT id,schedule_id FROM _jobs_occurrences WHERE scope_id=? AND state='dispatched' AND id>? ORDER BY id LIMIT ?").all(scope, after, limit);
+}
+/** Conservative earliest wake; NULL means no future timer/pending/claim/run needs polling in this scope. */
+export function readJobWake(context: DatabaseReadQueryContext, input: unknown) {
+  const r = jobRecord(input, ['scopeId', 'now']), scope = jobScope(r.scopeId), now = jobTime(r.now); owner(context, scope);
+  const due = context.database.query<{ at: number | null }>(`SELECT min(c.next_due_at) AS at FROM _jobs_cursors c JOIN job_schedules s ON s.id=c.id AND s.scope_id=c.scope_id
+    WHERE c.scope_id=? AND c.blocked_code IS NULL AND s.control='active'`).get(scope)?.at ?? null;
+  const claim = context.database.query<{ at: number | null }>("SELECT min(lease_until) AS at FROM _jobs_occurrences WHERE scope_id=? AND state='claimed'").get(scope)?.at ?? null;
+  const dispatched = context.database.query<{ id: string }>("SELECT id FROM _jobs_occurrences WHERE scope_id=? AND state='dispatched' LIMIT 1").get(scope);
+  const pending = context.database.query<{ id: string }>(`SELECT o.id FROM _jobs_occurrences o JOIN job_schedules s ON s.id=o.schedule_id AND s.scope_id=o.scope_id
+    WHERE o.scope_id=? AND o.state='pending' AND s.control='active' AND o.generation=s.generation LIMIT 1`).get(scope);
+  const candidates = [due, claim, dispatched || pending ? now + 1000 : null].filter((at): at is number => at !== null);
+  return candidates.length ? Math.min(...candidates) : null;
 }
 export function listJobOccurrences(context: DatabaseReadQueryContext, input: unknown) {
   const r = jobRecord(input, ['actor', 'id', 'limit', 'offset']), actor = jobActor(r.actor), row = readSchedule(context, actor, r.id);

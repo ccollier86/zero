@@ -8,6 +8,8 @@
 import type { ReactiveDB } from '../sync/reactive-db';
 import type { CompiledWorkflowDefinition } from './workflow-compiler';
 import type { WorkflowAccessPrincipal } from './workflow-access';
+import { workflowAccessPrincipalFromExecutionIdentity } from './workflow-access';
+import type { WorkflowPinnedStart } from './workflow-deferred-start-contract';
 import { WorkflowError } from './workflow-error';
 import type { WorkflowPersistedExecutionAuthority } from './workflow-execution-authority';
 import type { StartWorkflowGraphOptions } from './workflow-graph-definition-resolver';
@@ -57,7 +59,7 @@ export class WorkflowGraphRuntime {
 
   constructor(
     db: ReactiveDB,
-    registry: WorkflowRegistry,
+    private readonly registry: WorkflowRegistry,
     options: WorkflowGraphRuntimeOptions,
   ) {
     const composition = createWorkflowGraphRuntimeComposition(db, registry, options, {
@@ -143,6 +145,18 @@ export class WorkflowGraphRuntime {
     authority: WorkflowPersistedExecutionAuthority,
   ): boolean {
     return this.starts.hasPersistedDefinition(name, authority);
+  }
+
+  /** @internal Exact immutable selection for adjacent durable admissions, never an implicit latest-version start. */
+  pinStart(name: string, input: unknown, authority: WorkflowPersistedExecutionAuthority, version: number): WorkflowPinnedStart {
+    this.assertAvailable();
+    if (!Number.isSafeInteger(version) || version < 1) throw new WorkflowError('A durable start requires an explicit graph version', 'WORKFLOW_REQUEST_INVALID', 422);
+    const compiled = this.registry.getCompiledWorkflow(name);
+    if (compiled?.format === 'legacy' && !this.hasPersistedDefinition(name, authority)) throw new WorkflowError('Legacy workflows cannot be durably version pinned', 'WORKFLOW_VERSION_CONFLICT', 409);
+    const target = this.hasPersistedDefinition(name, authority) || !compiled ? name : compiled;
+    const resolved = this.starts.resolveStart(target, input, authority, workflowAccessPrincipalFromExecutionIdentity(authority.identity), { version });
+    return Object.freeze({ name: resolved.catalog.name, version: resolved.version.version_number, definitionId: resolved.catalog.definition_id,
+      versionId: resolved.version.version_id, fingerprint: resolved.version.fingerprint });
   }
 
   /** Final tenant-namespace fence for registered legacy-code starts. */

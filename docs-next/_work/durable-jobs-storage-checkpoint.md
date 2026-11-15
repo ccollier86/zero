@@ -18,6 +18,11 @@ applies_to: ["feature/core-worker-runtime-upgrades; private implementation, not 
 
 Calendar backend work remains paused. This is an implementation/review record,
 not a configuration recipe for a consuming app or a claim of updater readiness.
+This page preserves the earlier storage-only checkpoint. Subsequent managed
+admission, dispatch, HTTP/SDK, live reads and source logging are recorded in the
+[current source contract](../backend/scheduler/durable-jobs.md) and
+[foundation evidence](./durable-jobs-and-workers-plan.md). Statements below about
+the then-missing adapter describe that earlier checkpoint, not current completion.
 
 ## Implemented Boundaries
 

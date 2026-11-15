@@ -1,7 +1,7 @@
 /** Short, synchronous control commands. Actor transactions own rollback; no provider or queue is awaited here. */
 import type { DatabaseWriteCommandContext } from '../databases/database-realm';
 import { JobsError, jobCommand } from './error';
-import { normalizeJobAdmission, type JobScheduleRow } from './model';
+import { digest, normalizeJobAdmission, type JobScheduleRow } from './model';
 import { initialScheduleDue } from './schedule-time';
 import { assertJobOwner, insertJobAdmission, jobActor, jobBudget, jobIntent, JOB_LIMITS, jobRevision, jobScope, nextJobInteger, normalizeJobSeal, ownedJob, scheduleView } from './realm-model';
 import { jobHash, jobRecord, jobText, jobTime } from './validation';
@@ -17,11 +17,11 @@ export function bindJobOwner(context: DatabaseWriteCommandContext, input: unknow
 }
 export function createJobSchedule(context: DatabaseWriteCommandContext, input: unknown) {
   return jobCommand(() => {
-    const r = jobRecord(input, ['actor', 'requestId', 'admission', 'seal', 'now']), actor = jobActor(r.actor), now = jobTime(r.now);
+    const r = jobRecord(input, ['actor', 'requestId', 'admission', 'seal', 'intentHash', 'now']), actor = jobActor(r.actor), now = jobTime(r.now);
     assertJobOwner(context, actor.scopeId);
     const admission = normalizeJobAdmission(r.admission), seal = normalizeJobSeal(r.seal);
     if (admission.scopeId !== actor.scopeId || admission.actorId !== actor.userId || admission.principal !== actor.principal) throw new JobsError('JOBS_FORBIDDEN');
-    return jobIntent(context, actor, r.requestId, ['create', admission], now, () => {
+    return jobIntent(context, actor, r.requestId, ['create', r.intentHash === undefined ? admission : digest(r.intentHash)], now, () => {
       if (context.db.get('job_schedules', admission.id)) throw new JobsError('JOBS_INTENT_CONFLICT');
       const next = initialScheduleDue(admission.timing, now);
       if (next === null || next < now) throw new JobsError('JOBS_INPUT_INVALID');
@@ -39,13 +39,13 @@ export function createJobSchedule(context: DatabaseWriteCommandContext, input: u
 }
 export function changeJobSchedule(context: DatabaseWriteCommandContext, input: unknown) {
   return jobCommand(() => {
-    const r = jobRecord(input, ['actor', 'requestId', 'id', 'expectedRevision', 'action', 'admission', 'seal', 'now']);
+    const r = jobRecord(input, ['actor', 'requestId', 'id', 'expectedRevision', 'action', 'admission', 'seal', 'intentHash', 'now']);
     const actor = jobActor(r.actor), row = ownedJob(context, actor, r.id), now = jobTime(r.now);
     if (!['pause', 'cancel', 'readmit'].includes(r.action as string)) throw new JobsError('JOBS_INPUT_INVALID');
     if (r.action !== 'readmit' && (r.admission !== undefined || r.seal !== undefined)) throw new JobsError('JOBS_INPUT_INVALID');
     const admission = r.action === 'readmit' ? normalizeJobAdmission(r.admission) : null;
     const seal = r.action === 'readmit' ? normalizeJobSeal(r.seal) : null;
-    return jobIntent(context, actor, r.requestId, ['change', row.id, r.expectedRevision, r.action, admission], now, () => {
+    return jobIntent(context, actor, r.requestId, ['change', row.id, r.expectedRevision, r.action, r.intentHash === undefined ? admission : digest(r.intentHash)], now, () => {
       jobRevision(row, r.expectedRevision);
       if (row.control === 'cancelled') throw new JobsError('JOBS_STAGE_CONFLICT');
       const control = r.action === 'pause' ? 'paused' : r.action === 'cancel' ? 'cancelled' : 'active';

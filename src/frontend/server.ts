@@ -14,6 +14,9 @@
 
 // ─── App Factory ────────────────────────────────────────────────────────
 export { createApp } from './server/app-factory';
+export { defineJob, JobsError } from '../jobs';
+export type { JobsConfig, JobDefinition, JobDefinitionInput, JobDefinitionValue, JobServicePolicy, JobControlOptions, JobEnqueueOptions, JobOccurrenceView, JobPageOptions, JobRequestOptions, JobScheduleDetail, JobScheduleInput, JobScheduleView, ScopedJobs, ScheduleTiming, MisfirePolicy } from '../jobs';
+export type { JobSchedulePage, JobWatchOptions } from '../jobs';
 export { defineWorkerTask, runWorkerIfRequested, WorkerError } from '../workers';
 export type { WorkersConfig, ScopedWorkers, ScopedWorkerRunOptions, WorkerTask, WorkerTaskDefinition, WorkerValue } from '../workers';
 export type { ManagedLoggingConfig, ResolvedManagedLoggingConfig } from '../logging/logging-managed-config';

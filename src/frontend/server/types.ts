@@ -20,6 +20,8 @@ import { assertBlogContentDirectoryIsolation } from '../../blog/content-isolatio
 import type { BlogConfig, ResolvedBlogConfig } from '../../blog/types';
 import { resolveMessagingConfig, type MessagingConfig, type ResolvedMessagingConfig } from '../../messaging/config';
 import { resolveWorkersConfig, type WorkersConfig, type ResolvedWorkersConfig } from '../../workers/config';
+import { resolveJobsConfig, type JobsConfig, type ResolvedJobsConfig } from '../../jobs/config';
+import { assertJobsDirectoryIsolation } from '../../jobs/isolation';
 import { assertMessagingDirectoryIsolation } from '../../messaging/isolation';
 import { resolveSeoConfig } from '../../seo/runtime';
 import type { EphemeralTopicPolicy } from '../../sync/ephemeral-policy';
@@ -278,6 +280,8 @@ export interface AppWorkflowsConfig {
  * building a full-stack app with the platform.
  */
 export interface AppConfig {
+  /** Optional durable schedules and actor-preserving Torrent jobs in private Fabric storage. */
+  jobs?: boolean | JobsConfig;
   /** Optional registered Bun task processes. Disabled unless configured; never inherits provider environment. */
   workers?: false | WorkersConfig;
   /** Optional current-Guardian messaging with separate private Fabric ownership. */
@@ -604,6 +608,7 @@ export function defineZeroConfig<const TConfig extends AppConfig>(config: TConfi
 
 /** Resolved config with defaults filled in. */
 export interface ResolvedConfig {
+  readonly jobs: ResolvedJobsConfig | false;
   readonly workers: ResolvedWorkersConfig | false;
   readonly messaging: ResolvedMessagingConfig | false;
   blog: ResolvedBlogConfig;
@@ -684,7 +689,7 @@ export function resolveConfig(
   const themeFoundation = resolveAppThemeFoundation(config.themeFoundation);
   const projectRoot = resolveAppProjectRoot(config);
   const logging = resolveManagedLoggingConfig(config.logging, projectRoot);
-  const inputAuth = config.auth === undefined && (blogEnabled(config.blog) || config.messaging !== undefined && config.messaging !== false || config.workers !== undefined && config.workers !== false) ? true : config.auth;
+  const inputAuth = config.auth === undefined && (blogEnabled(config.blog) || config.messaging !== undefined && config.messaging !== false || config.workers !== undefined && config.workers !== false || config.jobs !== undefined && config.jobs !== false) ? true : config.auth;
   const originalAuth = inputAuth === true
     ? {}
     : inputAuth === false || inputAuth === undefined
@@ -704,6 +709,7 @@ export function resolveConfig(
   const workflows = config.workflows === false || auth === false
     ? false
     : config.workflows ?? {};
+  const jobs = resolveJobsConfig(config.jobs, projectRoot, authBehavior, workflows !== false);
   const email = config.email === true
     ? {}
     : config.email === false || config.email === undefined
@@ -815,6 +821,11 @@ export function resolveConfig(
   const outDir = resolveAppOwnedPath(projectRoot, config.outDir ?? './.build');
   const generatedDir = resolveAppOwnedPath(projectRoot, config.generatedDir ?? './.zero/generated');
   const appDir = resolveAppOwnedPath(projectRoot, config.appDir ?? './app');
+  if (jobs) assertJobsDirectoryIsolation({ rootDirectory: jobs.rootDirectory, outDir, storageDir, generatedDir, appDir,
+    controlDatabasePaths: [...resolveControlDatabasePaths(config.db), ...resolveSystemDatabaseOwnedPaths(systemDb)],
+    featureRoots: [logging && logging.rootDirectory, blogContent && blogContent.rootDirectory, messaging && messaging.rootDirectory].filter((root): root is string => typeof root === 'string'),
+    ...(databaseTopology.mode === 'multiple' ? { applicationFabricRoot: databaseTopology.rootDirectory } : {}),
+  });
   if (messaging) assertMessagingDirectoryIsolation({ rootDirectory: messaging.rootDirectory, outDir, storageDir, generatedDir, appDir,
     controlDatabasePaths: [...resolveControlDatabasePaths(config.db), ...resolveSystemDatabaseOwnedPaths(systemDb)],
     ...(logging ? { loggingRoot: logging.rootDirectory } : {}), ...(blogContent ? { blogRoot: blogContent.rootDirectory } : {}),
@@ -887,6 +898,7 @@ export function resolveConfig(
     blogContent,
     messaging,
     workers,
+    jobs,
     tables: normalized,
     ...(databaseAutomations === undefined ? {} : { databaseAutomations }),
     mutationValidators,

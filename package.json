@@ -415,6 +415,14 @@
       "types": "./src/resources/index.ts",
       "import": "./src/resources/index.ts"
     },
+    "./jobs": {
+      "types": "./src/jobs/index.ts",
+      "import": "./src/jobs/index.ts"
+    },
+    "./jobs/server": {
+      "types": "./src/jobs/index.ts",
+      "import": "./src/jobs/index.ts"
+    },
     "./scheduler": {
       "types": "./src/scheduler/index.ts",
       "import": "./src/scheduler/index.ts"

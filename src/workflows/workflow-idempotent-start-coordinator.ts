@@ -1,5 +1,7 @@
 /** Atomic actor/SYSTEM start orchestration; exact sealed authority and durable receipts precede application execution. */
 import type { ReactiveDB } from '../sync/reactive-db';
+import { isDeepStrictEqual } from 'node:util';
+import { serializeWorkflowExecutionAuthority } from './workflow-execution-authority-codec';
 import { OBS_CODES } from '../observability/codes';
 import { canAccessWorkflowDefinition, workflowAccessPrincipalFromExecutionIdentity } from './workflow-access';
 import { createSystemAuthority } from './workflow-execution-authority';
@@ -66,6 +68,33 @@ export class WorkflowIdempotentStartCoordinator {
     });
   }
 
+  /** @internal Read-only recovery under the exact retained sealed identity; never current-actor admission or execution. */
+  reconcileSealed(name: string, input: unknown, authority: WorkflowPersistedExecutionAuthority, key: string,
+    options: WorkflowStartOptions, bindingJson: string, mutation: WorkflowSystemStartMutation): WorkflowSystemStartResult | null {
+    this.hooks.beginOperation();
+    if (this.db.getRawDatabase().inTransaction) throw new WorkflowError('Workflow receipt reconciliation requires an independent transaction', 'WORKFLOW_REQUEST_INVALID', 422);
+    const scope = scopeFromIdentity(authority.identity); this.scopes.assertCompatible(scope);
+    const command = prepareWorkflowSystemStart(name, input, options);
+    const fingerprint = startFingerprint(name, command.inputJson, command.optionsJson, authority, bindingJson);
+    return this.repository.transaction(() => {
+      assertWorkflowSynchronousAuthority(mutation.assertCurrentAuthority);
+      const store = authority.kind === 'actor' ? this.actorReceipts : this.receipts;
+      const result = store.lookup({ ...scope, principal: authority.kind === 'actor' ? workflowActorStartPrincipal(authority) : authority.identity.principal,
+        idempotencyKey: requireWorkflowSystemStartKey(key) }, fingerprint, original => {
+        if (!isDeepStrictEqual(JSON.parse(serializeWorkflowExecutionAuthority(original)), JSON.parse(serializeWorkflowExecutionAuthority(authority)))) {
+          throw new WorkflowError('Workflow receipt authority does not match its retained admission', 'WORKFLOW_STATE_INVALID', 500);
+        }
+      });
+      assertWorkflowSynchronousAuthority(mutation.assertCurrentAuthority); return result;
+    });
+  }
+
+  /** @internal Only the adjacent sealed-admission bridge calls this; ordinary public actor starts still capture live Guardian authority. */
+  enqueueSealed(name: string, input: unknown, authority: WorkflowPersistedExecutionAuthority, key: string,
+    options: WorkflowStartOptions, bindingJson: string, mutation: WorkflowSystemStartMutation): Promise<WorkflowSystemStartResult> {
+    return this.startAuthorized(name, input, authority, requireWorkflowSystemStartKey(key), options, mutation, bindingJson, true);
+  }
+
   private async startAuthorized(name: string, input: unknown, authority: WorkflowPersistedExecutionAuthority, key: string,
     options: WorkflowStartOptions, mutation: WorkflowSystemStartMutation, bindingJson: string | null = null, deferred = false): Promise<WorkflowSystemStartResult> {
     // This async API cannot acknowledge an unrelated caller's unfinished root
@@ -80,9 +109,7 @@ export class WorkflowIdempotentStartCoordinator {
     const command = prepareWorkflowSystemStart(name, input, options);
     const identity = Object.freeze({ scopeKind: scope.scopeKind, scopeId: scope.scopeId, tenantId: scope.tenantId,
       principal: authority.kind === 'system' ? authority.identity.principal : workflowActorStartPrincipal(authority), idempotencyKey: key });
-    const requestFingerprint = workflowSystemStartHash(authority.kind === 'system'
-      ? [1, name, command.inputJson, command.optionsJson, authority.identity]
-      : [1, name, command.inputJson, command.optionsJson, authority.identity, bindingJson]);
+    const requestFingerprint = startFingerprint(name, command.inputJson, command.optionsJson, authority, bindingJson);
     const receipts = authority.kind === 'system' ? this.receipts : this.actorReceipts;
     const codes = authority.kind === 'system'
       ? { created: OBS_CODES.WORKFLOW_SYSTEM_START_CREATED, replayed: OBS_CODES.WORKFLOW_SYSTEM_START_REPLAYED, conflict: OBS_CODES.WORKFLOW_SYSTEM_START_CONFLICT, failed: OBS_CODES.WORKFLOW_SYSTEM_START_FAILED }
@@ -165,4 +192,12 @@ export class WorkflowIdempotentStartCoordinator {
     this.receipts.validateRecovery();
     this.actorReceipts.validateRecovery();
   }
+}
+
+function startFingerprint(name: string, inputJson: string | null, optionsJson: string, authority: WorkflowPersistedExecutionAuthority, bindingJson: string | null): string {
+  // Keep historical SYSTEM/actor fingerprints byte-compatible. Only the new,
+  // explicitly bound SYSTEM bridge uses a disjoint versioned command shape.
+  return workflowSystemStartHash(authority.kind === 'system'
+    ? bindingJson === null ? [1, name, inputJson, optionsJson, authority.identity] : [2, name, inputJson, optionsJson, authority.identity, bindingJson]
+    : [1, name, inputJson, optionsJson, authority.identity, bindingJson]);
 }

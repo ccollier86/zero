@@ -43,6 +43,7 @@ import {
 } from './workflow-event-coordinator';
 import { WorkflowSystemEventDeliveryCoordinator } from './workflow-system-event-delivery-coordinator';
 import { WorkflowIdempotentStartCoordinator } from './workflow-idempotent-start-coordinator';
+import { bindWorkflowDeferredStarts } from './workflow-deferred-start-bridge';
 import type { WorkflowSystemStartOptions, WorkflowSystemStartResult, WorkflowSystemStartMutation } from './workflow-system-start-contract';
 import type { WorkflowActorStartOptions, WorkflowActorStartResult } from './workflow-actor-start-contract';
 import { serializeWorkflowRuntimeJson } from './workflow-runtime-json';
@@ -289,6 +290,9 @@ export class WorkflowService {
       );
       this.idempotentStarts = new WorkflowIdempotentStartCoordinator(db, registry, this.graph, instanceFactory,
         this.repository, this.authority, this.scopes, hooks, this.observability);
+      bindWorkflowDeferredStarts(this, { graph: this.graph, authority: this.authority, starts: this.idempotentStarts,
+        repository: this.repository, scopes: this.scopes, assertRuntimeCurrent: () => this.assertAvailable(),
+        captureActor: context => this.captureActorAuthorityFence(context) });
       this.events = new WorkflowEventCoordinator(
         this.repository,
         this.runtime,

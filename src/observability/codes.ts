@@ -357,6 +357,7 @@ export const OBS_CODES = {
   SCHEDULER_STARTED: code('scheduler', 'started', 'info', 'Scheduler started.'),
   SCHEDULER_STOPPED: code('scheduler', 'stopped', 'info', 'Scheduler stopped.'),
   SCHEDULER_DRAIN_FAILED: code('scheduler', 'drain.failed', 'error', 'Scheduler callbacks did not settle during shutdown.'),
+  JOBS_PROCESSING_FAILED: code('jobs', 'processing.failed', 'error', 'Durable job processing requires attention.'),
   SCHEDULER_ALL_STOPPED: code('scheduler', 'all_stopped', 'info', 'All scheduler jobs stopped.'),
   SCHEDULER_JOB_REGISTERED: code('scheduler', 'job.registered', 'info', 'Scheduler job registered.'),
   SCHEDULER_JOB_UNREGISTERED: code('scheduler', 'job.unregistered', 'info', 'Scheduler job unregistered.'),

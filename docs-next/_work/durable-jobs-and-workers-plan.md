@@ -36,15 +36,19 @@ Four original scheduling drafts (`src/jobs/error.ts`, `model.ts`,
 `realm-schema.ts`, `validation.ts`) remain independently preserved on
 `feature/parked-scheduling-drafts`, commit `2cc8bd5`. Reviewed/corrected versions
 are now in the active foundation branch, with a private Fabric realm/lifecycle
-and code-owned definition contracts. None is wired into managed AppConfig,
-native routes or the updater yet. Their existence is not evidence that a
-supported durable scheduling service has shipped.
+and code-owned definition contracts. Managed AppConfig, guarded native routes,
+the request facade and SDK are now wired in source. The updater has not been
+selected, and this is not evidence that a qualified durable service has shipped.
 
 Core checkpoint gap-close checklist:
 
 Active gap-close implementation is now on `feature/core-worker-runtime-upgrades`.
 The older scheduling branch/worktree name is historical. Calendar application
 work is paused; shared durable scheduling belongs to this foundation.
+The same source worktree now lives at
+`/Volumes/code-bank/tmp/scratch/zero-platform/core-worker-runtime-upgrades/source`;
+it was moved with Git after checks settled, not duplicated. The preserved
+calendar preview and its pin were not moved or changed.
 
 - [x] Source checks: per-scope waiting limits and usable spare capacity under a saturated key,
   preserving the existing messaging adapter's queue behavior.
@@ -72,12 +76,12 @@ requirement to publish an intermediate worker-only release before scheduling.
 | Torrent handoffs | Actor-preserving commit-acknowledged enqueue, native HTTP/SDK/hooks and scope retirement. | Reuse these receipts in durable scheduling; do not introduce a second execution/retry engine. |
 | Cron | Existing lightweight in-memory scheduler remains compatible. | Durable occurrence ownership, restart/misfire handling, overlap policies and admitted control APIs. |
 | Time selection | Private, tested timezone/DST/misfire prototype. | Integrate with persisted cursors and atomic occurrence creation; it is not currently an enabled scheduler. |
-| Durable jobs | Private validated admissions/realm, owner catalog, scoped Fabric lifecycle, real subprocess tests and content-free change hints; pure code-owned definition contracts. | Managed optional config, Guardian/Torrent bridge and dispatch loop, native facade/HTTP/SDK/hooks, service adapters and operator view. |
+| Durable jobs | Private validated admissions/realm, indexed wake catalog, scoped Fabric lifecycle; Guardian/Torrent bridge, bounded dispatch loop, opt-in managed config, facade/HTTP/SDK, source outbox and live hooks implemented. | Finish live/security/recovery review, broader service adapters, operator view and exact deployment/package qualification. |
 | Documentation/release | Working guides and this plan. | Supported/planned consistency, adoption instructions, exact final package/updater qualification. No new release has been selected. |
 
 The [private storage checkpoint](./durable-jobs-storage-checkpoint.md) records
-the implemented model/definition/Fabric boundary, its tests and the missing
-managed admission/dispatch integration. Do not mistake it for a public jobs API.
+the earlier storage-only stage. The [durable source contract](../backend/scheduler/durable-jobs.md)
+records the subsequent managed integration, without claiming a qualified release.
 
 ### 1. Close the existing execution foundation
 
@@ -253,6 +257,53 @@ The reusable external-backed Colima profile/image/package cache is intentionally
 retained, not production state. Calendar source/preview pins remain untouched.
 
 ## Outcome and boundaries
+
+### Managed integration working evidence — not final release qualification
+
+The next source pass connects `AppConfig.jobs`, Guardian-bound `zero.jobs`,
+private Fabric state, exact Torrent pins/receipts, bounded dispatch, the native
+HTTP/SDK facade and coalesced live pages. The same worktree was moved with Git
+to `core-worker-runtime-upgrades/source` after its processes/dependency link
+settled. No calendar component or calendar backend implementation was changed.
+
+- Real Guardian/Torrent bridge and existing enqueue/system-start checks:
+  **25 passing / four files / 159 expectations**. A prior fixture incorrectly
+  expected an activity to have entered immediately after commit acknowledgment;
+  it now observes actual entry before testing revocation. Enqueue still does
+  not await the activity.
+- Private jobs plus managed facade/live routes and SDK checks: **41 passing /
+  12 files / 323 expectations**. Includes real Fabric subprocesses, owned files,
+  restart, indexed future/idle wakes, slow/independent work, cancellation,
+  revocation, immutable pins, source/outbox/investigator evidence and live pages.
+- Subsequent native multi-tenant check: **one passing / 11 expectations**;
+  identical logical keys are scoped independently and cross-tenant read/control
+  fails closed. Subsequent watcher/SDK checks: **six passing / 26 expectations**,
+  including stopped readers, retired late results and definitive-denial cleanup.
+  These groups overlap earlier tests and must not be summed into a full-suite run.
+- The first native HTTP group caught Elysia stripping an unexpected scope field
+  before broker validation. Job mutation routes now preserve raw JSON for the
+  admitted service's closed validation; a later successful group includes it.
+  Intermediate logging-fixture setup/query errors were corrected, not treated
+  as successful runs.
+- Strict direct-Bun TypeScript checks pass for managed jobs, configuration,
+  logging, native fixtures, SDK, stream/watch and hook modules. These source
+  diagnostics used an EXIT-cleaned dependency link, **not** a final independent
+  frozen package installation. Documentation checks: **890 IDs/pages reachable,
+  zero problems** at this pass.
+
+The actor source records accepted schedule controls once at their canonical
+write. Payloads/seals, replay, idle reads and claim leases are not audit events.
+Full semantic run/outcome presentation, remaining native service adapters,
+operator UI/Doctor review and final independent package/browser/Linux/updater
+qualification remain required. The earlier unsuccessful Linux evidence remains
+applicable and has not been relabeled passing. There is no selected new archive,
+main merge, release publication or production change from this checkpoint.
+
+All runs here used the approved external-only storage exception. Owned synthetic
+state and temporary dependency links are cleaned by their creating finally/EXIT
+handlers. Existing warm caches, the stopped Colima profile and preserved calendar
+preview pins are retained; source/history are not cleanup targets. The internal
+free-space warning persists even though external free space is about 230 GiB.
 
 Give Zero one coherent, opt-in background-job foundation that simple apps can
 use without assembling process launch, cron, Fabric and Torrent themselves.

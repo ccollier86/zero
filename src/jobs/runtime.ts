@@ -14,16 +14,18 @@ import type { ReactiveDB } from '../sync/reactive-db';
 import { withReactiveDBCommitAdmission } from '../sync/reactive-db-commit-admission';
 import type { ResolvedJobsPersistenceConfig } from './persistence-config';
 import { jobsRealm } from './realm';
-import { jobHash, jobText } from './validation';
+import { jobHash, jobInteger, jobText, jobTime } from './validation';
 import { jobScope } from './realm-model';
 import { installJobsOwnerSchema } from './owner-schema';
 import { JobsError, JOBS_REJECTIONS, readJobRejection } from './error';
 import { readJobCommitHint, type JobCommitHint } from './commit-hints';
+import type { JobsLoggingSource } from './logging';
 
-export interface JobsOwnerRecord { id: string; scope_id: string; owner_id: string; root_hash: string; realm_fingerprint: string; established: number }
+export interface JobsOwnerRecord { id: string; scope_id: string; owner_id: string; root_hash: string; realm_fingerprint: string; established: number; wake_at: number | null; wake_generation: number }
 export interface JobsRuntimeOptions {
   config: ResolvedJobsPersistenceConfig; system: ReactiveDB; installAllowed: boolean;
   authority: { coordinator: AuthorityCommitCoordinator; actorContext: DatabaseActorAuthorityContext | null };
+  source?: (coordinator: DatabaseCoordinator) => JobsLoggingSource;
 }
 export interface JobsSubscription { readonly ownerId?: string; readonly scheduleId?: string }
 export class JobsRuntime {
@@ -32,10 +34,12 @@ export class JobsRuntime {
   private readonly initializers = new Map<string, Promise<void>>();
   private readonly bound = new Set<string>();
   private readonly active = new Set<Promise<unknown>>();
+  private readonly scopeWrites = new Map<string, number>();
   private readonly listeners = new Map<string, Set<{ listener(): void; filter: JobsSubscription }>>();
   private readonly pendingHints = new Map<string, Map<string, JobCommitHint>>();
   private hintQueued = false;
   private readonly rootHash: string;
+  private source: JobsLoggingSource | null = null;
   private constructor(private readonly options: JobsRuntimeOptions, private readonly owner: DatabaseCoordinator) {
     this.rootHash = jobHash(canonicalDatabaseRootIdentity(options.config.rootDirectory));
   }
@@ -52,7 +56,8 @@ export class JobsRuntime {
       ...(options.authority.actorContext ? { actorAuthorityContext: options.authority.actorContext } : {}) });
     const runtime = new JobsRuntime(options, owner);
     try {
-      for (const record of runtime.records()) runtime.assertRetained(record);
+      runtime.source = options.source?.(owner) ?? null;
+      for (const record of runtime.records()) { runtime.assertRetained(record); runtime.prepareSource(record); }
       owner.start(); return runtime;
     } catch (error) { try { await runtime.close(); } catch (cleanup) { throw new AggregateError([error, cleanup], 'Jobs startup and cleanup failed.'); } throw error; }
   }
@@ -62,7 +67,55 @@ export class JobsRuntime {
   }
   write<T>(scope: ServiceDataScope, name: string, input: unknown, requestId: string, assertCurrent: () => void, signal?: AbortSignal): Promise<T> {
     const guard = synchronousGuard(assertCurrent);
-    return this.track(async () => { guard(); const id = await this.ensure(scope, guard); return this.execute(id, 'command', name, input, requestId, guard, signal); });
+    return this.track(async () => {
+      guard(); const id = await this.ensure(scope, guard);
+      this.scopeWrites.set(id, (this.scopeWrites.get(id) ?? 0) + 1);
+      let accepted = false;
+      try {
+        // Dirty-before-write survives parent death between private commit and
+        // SYSTEM wake publication. No SQL lease survives this short admission.
+        await withReactiveDBCommitAdmission(this.options.system, () => this.options.system.transaction(() => {
+          guard(); const row = this.options.system.prepare('SELECT wake_generation FROM _jobs_owners WHERE id=?').get(id) as { wake_generation: number } | null;
+          if (!row || row.wake_generation >= Number.MAX_SAFE_INTEGER) throw new JobsError('JOBS_STATE_INVALID');
+          this.options.system.prepare('UPDATE _jobs_owners SET wake_at=0,wake_generation=wake_generation+1 WHERE id=?').run(id);
+        }));
+        const result = await this.execute<T>(id, 'command', name, input, requestId, guard, signal); accepted = true; return result;
+      } finally {
+        const count = (this.scopeWrites.get(id) ?? 1) - 1; if (count) this.scopeWrites.set(id, count); else this.scopeWrites.delete(id);
+        if (!count) try { await this.refreshWake(scope, Date.now(), guard); } catch { /* Durable dirty marker remains due; never rewrite a committed command's outcome. */ }
+        if (accepted) try { guard(); } catch { throw new JobsError('JOBS_OUTCOME_UNKNOWN'); }
+      }
+    });
+  }
+  dueScopes(now: number, limit: number): readonly ServiceDataScope[] {
+    this.assertReady(); jobTime(now); jobInteger(limit, 1, 100);
+    const records = this.options.system.prepare('SELECT * FROM _jobs_owners WHERE established=1 AND wake_at<=? ORDER BY wake_at,id LIMIT ?').all(now, limit) as JobsOwnerRecord[];
+    return records.map(record => { this.assertRetained(record); return scopeOf(record); });
+  }
+  /** Refresh only after every in-process scope write settled. CAS fences a concurrent new dirty generation. */
+  refreshWake(scope: ServiceDataScope, now: number, assertCurrent: () => void): Promise<void> {
+    return this.track(() => this.refreshScopeWake(scope, now, assertCurrent));
+  }
+  private async refreshScopeWake(scope: ServiceDataScope, now: number, assertCurrent: () => void): Promise<void> {
+    const guard = synchronousGuard(assertCurrent), id = databaseId(scope); guard(); jobTime(now);
+    if (this.scopeWrites.has(id)) return;
+    const record = this.options.system.prepare('SELECT wake_generation FROM _jobs_owners WHERE id=? AND established=1').get(id) as { wake_generation: number } | null;
+    if (!record) return;
+    const next = await this.execute<number | null>(id, 'query', 'jobs.wake', { scopeId: serviceDataScopeKey(scope), now }, undefined, guard);
+    if (next !== null) jobTime(next);
+    await withReactiveDBCommitAdmission(this.options.system, () => this.options.system.transaction(() => {
+      guard(); if (this.scopeWrites.has(id)) return;
+      this.options.system.prepare('UPDATE _jobs_owners SET wake_at=? WHERE id=? AND wake_generation=? AND established=1').run(next, id, record.wake_generation);
+    }));
+  }
+  deferWake(scope: ServiceDataScope, at: number, assertCurrent: () => void): Promise<void> {
+    return this.track(async () => {
+    const guard = synchronousGuard(assertCurrent), id = databaseId(scope); jobTime(at);
+    await withReactiveDBCommitAdmission(this.options.system, () => this.options.system.transaction(() => {
+      guard(); if (this.scopeWrites.has(id)) return;
+      this.options.system.prepare('UPDATE _jobs_owners SET wake_at=? WHERE id=? AND established=1').run(at, id);
+    }));
+    });
   }
   /** Advisory only. The outer adapter must reauthorize/requery; no row data or private input is broadcast. */
   subscribe(scope: ServiceDataScope, listener: () => void, filter: JobsSubscription): () => void {
@@ -77,14 +130,13 @@ export class JobsRuntime {
   diagnostics() { return { state: this.state, filesBound: this.bound.size, activeOperations: this.active.size, fabric: this.owner.diagnostics() }; }
   retainedScopes(): readonly ServiceDataScope[] {
     this.assertReady(); return this.records().filter(record => record.established === 1).map(record => {
-      this.assertRetained(record); return record.scope_id === 'application' ? trustedSystemServiceDataScope({ scopeKind: 'application' })
-        : trustedSystemServiceDataScope({ scopeKind: 'tenant', tenantId: record.scope_id.slice(7) });
+      this.assertRetained(record); return scopeOf(record);
     });
   }
   close(): Promise<void> {
     if (this.closeTask) return this.closeTask;
     this.state = 'closing'; this.listeners.clear(); this.pendingHints.clear();
-    this.closeTask = (async () => { await Promise.allSettled([...this.active]); await this.owner.close(); this.state = 'closed'; })();
+    this.closeTask = (async () => { await Promise.allSettled([...this.active]); try { await this.source?.close(); } finally { await this.owner.close(); this.state = 'closed'; } })();
     return this.closeTask;
   }
   private records(): JobsOwnerRecord[] {
@@ -107,9 +159,10 @@ export class JobsRuntime {
       if (prior) { this.assertRetained(prior); if (prior.scope_id !== scopeId) throw new JobsError('JOBS_STATE_INVALID'); record = prior; return; }
       if (existsSync(resolveDatabaseFile(this.options.config.rootDirectory, id).path)) throw new JobsError('JOBS_STATE_INVALID');
       if (this.records().length >= this.options.config.maxDatabaseFiles) throw new JobsError('JOBS_CAPACITY');
-      record = { id, scope_id: scopeId, owner_id: 'job_' + crypto.randomUUID(), root_hash: this.rootHash, realm_fingerprint: jobsRealm.fingerprint, established: 0 };
-      this.options.system.prepare('INSERT INTO _jobs_owners(id,scope_id,owner_id,root_hash,realm_fingerprint,established) VALUES(?,?,?,?,?,0)').run(id, scopeId, record.owner_id, this.rootHash, jobsRealm.fingerprint);
+      record = { id, scope_id: scopeId, owner_id: 'job_' + crypto.randomUUID(), root_hash: this.rootHash, realm_fingerprint: jobsRealm.fingerprint, established: 0, wake_at: 0, wake_generation: 0 };
+      this.options.system.prepare('INSERT INTO _jobs_owners(id,scope_id,owner_id,root_hash,realm_fingerprint,established,wake_at,wake_generation) VALUES(?,?,?,?,?,0,0,0)').run(id, scopeId, record.owner_id, this.rootHash, jobsRealm.fingerprint);
     }));
+    this.prepareSource(record);
     await this.execute(id, 'command', 'jobs.owner.bind', { ownerId: record.owner_id, scopeId }, 'jobs-owner:' + record.owner_id + ':' + jobsRealm.fingerprint, guard);
     await withReactiveDBCommitAdmission(this.options.system, () => this.options.system.transaction(() => {
       guard(); this.options.system.prepare('UPDATE _jobs_owners SET established=1,realm_fingerprint=? WHERE id=? AND owner_id=?').run(jobsRealm.fingerprint, id, record.owner_id);
@@ -120,8 +173,15 @@ export class JobsRuntime {
     try { jobScope(record.scope_id); } catch { throw new JobsError('JOBS_STATE_INVALID'); }
     if (record.id !== 'jobs:' + jobHash(record.scope_id) || !/^job_[a-f0-9-]{36}$/.test(record.owner_id)
       || ![0, 1].includes(record.established) || !/^sha256:[a-f0-9]{64}$/.test(record.realm_fingerprint)
+      || !Number.isSafeInteger(record.wake_generation) || record.wake_generation < 0 || record.wake_at !== null && (!Number.isSafeInteger(record.wake_at) || record.wake_at < 0)
       || record.root_hash !== this.rootHash || record.established === 1 && !existsSync(resolveDatabaseFile(this.options.config.rootDirectory, record.id).path)) throw new JobsError('JOBS_STATE_INVALID');
     if (!this.options.installAllowed && record.realm_fingerprint !== jobsRealm.fingerprint) throw new JobsError('JOBS_NOT_READY');
+  }
+  private prepareSource(record: JobsOwnerRecord): void {
+    this.source?.prepare(record.id, scopeOf(record), () => {
+      const current = this.options.system.prepare('SELECT established FROM _jobs_owners WHERE id=? AND owner_id=?').get(record.id, record.owner_id) as { established: number } | null;
+      if (!current) throw new JobsError('JOBS_STATE_INVALID'); return current.established === 1;
+    });
   }
   private async execute<T>(id: string, kind: 'query' | 'command', name: string, input: unknown, requestId: string | undefined, guard: () => void, signal?: AbortSignal): Promise<T> {
     const check = () => { if (this.state === 'closed') throw new JobsError('JOBS_NOT_READY'); guard(); };
@@ -141,6 +201,9 @@ export class JobsRuntime {
       if (kind === 'command' && !('replayed' in result && result.replayed) && envelope.hint !== undefined) {
         // Malformed advisory metadata must not rewrite an acknowledged mutation's accepted outcome.
         try { this.queueHint(createDatabaseRef(id), readJobCommitHint(envelope.hint)); } catch { /* Retained reads still reauthorize; no guessed row events. */ }
+        if (name === 'jobs.schedule.create' || name === 'jobs.schedule.change') {
+          try { this.source?.wake(id); } catch { /* Durable source recovery, not a notification, owns delivery. */ }
+        }
       }
       return envelope.value as T;
     } catch (error) {
@@ -169,6 +232,7 @@ export class JobsRuntime {
   }
 }
 function databaseId(scope: ServiceDataScope): string { return 'jobs:' + jobHash(serviceDataScopeKey(scope)); }
+function scopeOf(record: JobsOwnerRecord): ServiceDataScope { return record.scope_id === 'application' ? trustedSystemServiceDataScope({ scopeKind: 'application' }) : trustedSystemServiceDataScope({ scopeKind: 'tenant', tenantId: record.scope_id.slice(7) }); }
 function synchronousGuard(callback: () => void): () => void {
   return () => { invokeSynchronousAuthCallback(callback, { component: 'jobs', invariant: 'current-authority-is-synchronous',
     message: 'Job authority checks must not yield.', createError: () => new JobsError('JOBS_CONFIG_INVALID') }); };

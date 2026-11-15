@@ -39,6 +39,7 @@ export * from './exports/features/email';
 export * from './exports/features/messaging';
 export * from './exports/features/logging';
 export * from './exports/hooks/workflows';
+export * from './exports/features/jobs';
 export * from './exports/hooks/storage';
 export * from './exports/features/administration';
 export * from './exports/hooks/presentation';
