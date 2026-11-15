@@ -8,14 +8,14 @@ visibility: internal
 system: scheduler
 feature: errors-observability-testing-and-upgrades
 maturity: supported
-applies_to: ["Existing local scheduler; feature/core-worker-runtime-upgrades additions are unreleased"]
+applies_to: ["2.11.0 local source candidate; not a selected updater or deployment qualification"]
 modes: ["managed Bun server", "standalone Elysia plugin/service"]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.10.5"
-  commit: "4691a89c3847e2e2b4d4d2a93603430ca7c728d5"
+  version: "2.11.0"
+  commit: "c401dbd68b29efbc185e55273d37e71aac3bd536"
   snapshot: dirty
-  date: "2026-11-14"
+  date: "2026-11-15"
   evidence_level: source-observed
 ---
 
@@ -26,17 +26,20 @@ reviewed_against:
 Scheduler setup, callback execution and durable-consumer recovery are separate
 outcomes. A synchronous accepted trigger does not prove the callback succeeded,
 and an in-process status list is not a durable job ledger.
+The 2.11.0 local source candidate implements the contracts below. Final exact
+installed-archive/Linux qualification and normal updater selection remain
+pending; this guide does not certify a published release or app deployment.
 
 ## Errors And Events
 
 SchedulerError exposes a stable code and message. Setup/control codes are
 SCHEDULER_JOB_ALREADY_REGISTERED, SCHEDULER_JOB_INVALID, SCHEDULER_JOB_BUSY and
-SCHEDULER_STOPPED. The feature branch adds SCHEDULER_DRAIN_TIMEOUT for callbacks
+SCHEDULER_STOPPED. SCHEDULER_DRAIN_TIMEOUT identifies callbacks
 which have not settled within cooperative close. Missing controls preserve boolean/null results;
 the HTTP adapter preserves NOT_FOUND / 404 and maps protected busy to 409.
 
 Platform codes cover scheduler.started, stopped, all_stopped, job.registered,
-job.unregistered, job.failed and job.unhandled_failed; the feature branch also
+job.unregistered, job.failed and job.unhandled_failed; the service also
 reports `scheduler.drain.failed` when failed construction cannot complete drain.
 Managed lifecycle/job events use that application's observability runtime.
 Registration metadata

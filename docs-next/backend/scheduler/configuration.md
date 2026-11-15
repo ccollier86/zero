@@ -8,14 +8,14 @@ visibility: internal
 system: scheduler
 feature: configuration
 maturity: supported
-applies_to: ["Existing local scheduler; feature/core-worker-runtime-upgrades additions are unreleased"]
+applies_to: ["2.11.0 local source candidate; not a selected updater or deployment qualification"]
 modes: ["managed Bun server", "standalone Elysia plugin/service"]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.10.5"
-  commit: "4691a89c3847e2e2b4d4d2a93603430ca7c728d5"
+  version: "2.11.0"
+  commit: "c401dbd68b29efbc185e55273d37e71aac3bd536"
   snapshot: dirty
-  date: "2026-11-14"
+  date: "2026-11-15"
   evidence_level: source-observed
 ---
 
@@ -27,6 +27,10 @@ Managed Zero creates one app-local SchedulerService and mounts its plugin
 before notification/Torrent consumers. No public scheduler enable/disable
 object, persisted job settings table or scheduler-specific environment binding
 exists. Job behavior is declared when trusted server code registers the job.
+This describes the implemented 2.11.0 local source candidate; final exact
+installed-archive/Linux qualification and normal updater selection are pending.
+The optional [durable jobs configuration](./durable-jobs.md) is separate from
+this always-present local timer registry.
 
 ## Managed App
 
@@ -90,20 +94,25 @@ registry merely to access its service.
 
 ## Public Packages
 
-The feature branch adds `SchedulerServiceOptions` on the canonical scheduler
-entry: `observability` selects an explicit app-local observability runtime, and
+`SchedulerServiceOptions` is exported on the canonical scheduler entry:
+`observability` selects an explicit app-local observability runtime, and
 `shutdownGraceMs` configures cooperative close (default 5000 ms; 0–30000).
 Managed construction supplies its own observability runtime automatically.
 Standalone callers omitting it retain ambient compatibility. Two managed apps
 must not publish each other's job events through whichever sink was configured
-last. These additions still need final installed-archive qualification.
+last. Final exact installed-archive qualification remains a separate gate.
 
 @zero/framework/scheduler exports SchedulerService, createSchedulerPlugin,
-getScheduler, SchedulerError and JobDefinition/JobStatus/plugin/error types;
-the feature branch also exports `SchedulerRunContext` and `SchedulerServiceOptions`.
+getScheduler, SchedulerError and JobDefinition/JobStatus/plugin/error types,
+plus `SchedulerRunContext` and `SchedulerServiceOptions`.
 @zero/framework/server re-exports the plugin/getter, types and working setup
 error surface, but not SchedulerService itself. Use the canonical subpath for
 the class instead of an internal file import.
+
+The root server `JobDefinition` remains this local timer declaration. Durable
+definitions use `DurableJobDefinition` at `@zero/framework/server`, or
+`JobDefinition` at `@zero/framework/jobs`; use the matching type when adopting
+the optional durable service.
 
 A tenant request's unsafe scheduler access is a deliberate application-global
 capability. Do not expose it through a tenant selector or pass the entire

@@ -47,7 +47,9 @@ export async function buildZeroApp(options: ZeroBuildOptions): Promise<ZeroBuild
     define: { 'process.env.NODE_ENV': JSON.stringify('production') },
     ...(options.compile ? { compile: { outfile: join(outDir, serverName) } } : {}),
     plugins: [createBuildConfigAdapter(configPath, prepared, assets, Object.keys(module), privateAssets), createAppDependencyAliasPlugin(prepared.config.appDir),
-      await createCoreMigrationsBuildPlugin(), await createLoggingRealmBuildPlugin(), await createBlogRealmBuildPlugin(), await createMessagingRealmBuildPlugin(), await createJobsRealmBuildPlugin(), createSharpNativeBuildPlugin(outDir, options.compile === true), createCssTreeBuildPlugin()],
+      await createCoreMigrationsBuildPlugin(), await createLoggingRealmBuildPlugin(), await createBlogRealmBuildPlugin(), await createMessagingRealmBuildPlugin(),
+      ...(prepared.config.jobs ? [await createJobsRealmBuildPlugin()] : []),
+      createSharpNativeBuildPlugin(outDir, options.compile === true), createCssTreeBuildPlugin()],
   });
   if (!result.success) throw new Error(`Zero server build failed: ${result.logs.map((log) => log.message).join('\n')}`);
   const entry = result.outputs.find((output) => output.kind === 'entry-point');

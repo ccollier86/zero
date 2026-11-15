@@ -4,13 +4,20 @@ type: reference
 audience: [developer, agent, operator]
 owner: platform-runtime
 status: draft
-implementation_state: in-progress
+implementation_state: implemented
 visibility: internal
 system: workers
 feature: task-execution
 maturity: preview
-applies_to: ["feature/core-worker-runtime-upgrades; not in the published 2.10.5 archive"]
+applies_to: ["2.11.0 local source candidate; not a selected updater or deployment qualification"]
 modes: [managed-bun, trusted-standalone]
+reviewed_against:
+  package: "@zero/framework"
+  version: "2.11.0"
+  commit: "c401dbd68b29efbc185e55273d37e71aac3bd536"
+  snapshot: dirty
+  date: "2026-11-15"
+  evidence_level: source-observed
 ---
 
 # Workers and concurrent execution
@@ -18,13 +25,14 @@ modes: [managed-bun, trusted-standalone]
 [Backend](../index.md) · [Request services](../runtime/server-services.md) ·
 [Expansion plan](../../_work/durable-jobs-and-workers-plan.md)
 
-This branch adds shared execution pools, isolated Bun task processes and a managed
-`zero.workers.run()` facade. The optional [durable jobs/schedule facade](../scheduler/durable-jobs.md)
-is now implemented in this source branch and undergoing qualification. Existing
+The 2.11.0 local source candidate implements shared execution pools, isolated Bun
+task processes and the managed `zero.workers.run()` facade, together with the
+optional [durable jobs/schedule facade](../scheduler/durable-jobs.md). Existing
 cron and Torrent APIs remain compatible. See [cross-service composition](./service-integration.md)
-for the real boundaries between admission, provider work and authorized results.
-An installed package must contain the exact feature commit; archive qualification
-and normal updater publication are still pending.
+for the boundaries between admission, provider work and authorized results.
+Source implementation is complete; final exact installed-archive/Linux
+qualification and normal updater selection remain pending. A local version or
+passing source check is not a published release or deployment approval.
 
 ## Choose the layer
 
@@ -33,10 +41,10 @@ and normal updater publication are still pending.
 | Concurrent asynchronous I/O | Trusted `WorkPool` from `@zero/framework/workers`. |
 | Computation off the HTTP event loop | Admitted `zero.workers.run(task, input, options?)` (typed reference), or the compatible name form. |
 | Process lifecycle in trusted composition | `ProcessWorkPool` / `WorkerService`, never raw request capabilities. |
-| Durable user-owned workflow handoff | Branch API `zero.workflows.enqueueOnce(name, input, { idempotencyKey, version? })`. |
+| Durable user-owned workflow handoff | `zero.workflows.enqueueOnce(name, input, { idempotencyKey, version? })`. |
 | Short database-automation handoff | Existing source-bound `zero.torrent.enqueue(...)`. |
 | Local maintenance timer | Existing `zero.scheduler`. |
-| Durable one-off/recurring schedules | Optional source-branch `zero.jobs`, private Fabric files and exact pinned Torrent handoffs; not yet a selected release. |
+| Durable one-off/recurring schedules | Optional `zero.jobs`, private Fabric files and exact pinned Torrent handoffs. |
 
 A Promise pool is not CPU isolation or persistence. A subprocess is not an OS
 sandbox: registered code retains the application's OS privileges. Never execute
@@ -125,8 +133,9 @@ const total: number = await zero.workers.run(totalTask, [12, 25, 8]);
 
 Import `totalTask` from the same side-effect-free catalog registered in `workers.tasks`.
 The reference form infers input and output; `WorkerTaskInput`/`WorkerTaskOutput`
-are also exported types. A same-name/version task from another catalog is not a
-substitute: Zero checks the exact registered reference before running its
+are exported from `@zero/framework/workers` and `@zero/framework/workers/tasks`.
+A same-name/version task from another catalog is not a substitute: Zero checks
+the exact registered reference before running its
 parsers. Passing a string remains compatible but returns `unknown` and still
 uses the registered validators and access requirement. Do not import the child
 entry into parent request code; it is an executable bootstrap, not a catalog.
@@ -140,9 +149,12 @@ workflows need an explicit reviewed adapter, not impersonated user authority.
 
 ## Pools, deadlines and outcomes
 
-`WorkPool` defaults `concurrency` to `max` within `maxConcurrency` (100). It
-supports `maxQueued` (100), `maxQueuedPerKey` (defaults to `maxQueued`), optional `maxConcurrentPerKey`, queue/execution
-deadlines and `shutdownGraceMs` (10,000). Queued keys rotate fairly. `maxQueued:0`
+`WorkPool` defaults `concurrency` to `max` within `maxConcurrency` (100 by
+default; configurable 1–10,000). An explicit concurrency accepts 1 through that
+ceiling. It supports `maxQueued` (100; configurable 0–100,000),
+`maxQueuedPerKey` (defaults to `maxQueued`), `maxConcurrentPerKey` (defaults to
+pool capacity), queue/execution deadlines (neither enabled by default) and
+`shutdownGraceMs` (10,000). Queued keys rotate fairly. `maxQueued:0`
 admits only immediately runnable work. A fairness key is not a tenant capability.
 The total waiting budget is global. Set `maxQueuedPerKey` below that budget to
 prevent one key from occupying all waiting slots. Round-robin ordering and this
@@ -154,8 +166,9 @@ default preserves existing messaging behavior, including 100 waiting calls.
 configurable 1–64. CPU process count is separate from the I/O concurrency default.
 Options include `maxQueued` (100), `maxQueuedPerKey` (min(25, `maxQueued`)),
 `maxConcurrentPerKey` (process capacity), `queueTimeoutMs`, `executionTimeoutMs` (30,000),
-`startupTimeoutMs` (5,000) and `shutdownGraceMs`. One process executes one task;
-independent processes overlap. Quarantined processes still occupy capacity.
+`startupTimeoutMs` (5,000) and `shutdownGraceMs` (10,000). Queue waiting has no
+default timeout. One process executes one task; independent processes overlap.
+Quarantined processes still occupy capacity.
 Managed keys are current-scope keys derived by Zero, not caller-supplied tenant
 IDs or per-user quotas. One scope can use every free process by default.
 
@@ -239,18 +252,19 @@ Raw app-global AI remains deliberately unavailable in the sealed workflow
 service bag; this fixture uses an explicit trusted fixed-model adapter with
 authority checks, not a new unscoped AI escape hatch.
 
-The branch also exercises the queued actor HTTP/SDK path, current-scope retirement,
-result revocation, Doctor and minified bundle catalog parity. Owned synthetic
+The source fixtures also exercise the queued actor HTTP/SDK path, current-scope
+retirement, result revocation, Doctor and minified bundle catalog parity. Owned synthetic
 fixture allocation registers exact markers and cleans state in `finally` after
 all owned handles close. No provider traffic is used.
 The deliberately unresponsive fixture has its own ten-second exit fuse; it
 cannot spin forever if the creating test runner is forcibly killed. Normal
 tests still require the parent to terminate that generation much earlier.
 
-The plan tracks remaining final compiled Linux/supervisor qualification and
-installed exports/archive/updater acceptance. Durable scheduling and its native
-control-plane UI are implemented in source; their final deployment qualification
-is not implied by that implementation.
+The plan records completed source implementation and prior diagnostic evidence
+separately from ongoing final compiled Linux/supervisor and exact
+installed-archive/export qualification. Durable scheduling and its native
+control-plane UI are implemented; their final deployment qualification and normal
+updater selection are not implied by that implementation.
 Source tests are not proof that a released archive or deployed app is qualified.
 
 Maintainer checks (run the required storage preflight first):

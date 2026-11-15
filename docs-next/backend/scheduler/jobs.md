@@ -8,14 +8,14 @@ visibility: internal
 system: scheduler
 feature: job-registration-and-control
 maturity: supported
-applies_to: ["Existing local scheduler; feature/core-worker-runtime-upgrades additions are unreleased"]
+applies_to: ["2.11.0 local source candidate; not a selected updater or deployment qualification"]
 modes: ["managed Bun server", "standalone Elysia plugin/service"]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.10.5"
-  commit: "4691a89c3847e2e2b4d4d2a93603430ca7c728d5"
+  version: "2.11.0"
+  commit: "c401dbd68b29efbc185e55273d37e71aac3bd536"
   snapshot: dirty
-  date: "2026-11-14"
+  date: "2026-11-15"
   evidence_level: source-observed
 ---
 
@@ -27,6 +27,9 @@ Register a named callback with a code-defined cron pattern. Scheduler copies
 the admitted declaration, so later caller mutation cannot rename its status,
 replace its handler, change its failure policy or misreport the scheduled
 pattern. Update a job by deliberately removing and recreating it.
+These are implemented local Scheduler APIs in the 2.11.0 source candidate,
+not [durable job definitions](./durable-jobs.md). Final exact installed-archive/
+Linux qualification and normal updater selection remain pending.
 
 ## Complete Service Helper
 
@@ -52,7 +55,7 @@ export function installMaintenance(
 }
 ```
 
-The feature branch passes a `{ signal: AbortSignal }` callback context. Existing
+Scheduler passes a `{ signal: AbortSignal }` callback context. Existing
 no-argument functions such as `cleanup` remain compatible. Capture services explicitly,
 and establish live authority within the maintenance operation before accessing
 scoped data. A cron name is not a tenant ID or authorization scope.
@@ -72,7 +75,7 @@ scoped data. A cron name is not a tenant ID or authorization scope.
 create is the register alias. Registration is synchronous and returns void,
 not a persisted definition ID or first-run completion. Invalid schedules/options
 raise SCHEDULER_JOB_INVALID, and duplicates SCHEDULER_JOB_ALREADY_REGISTERED.
-The feature branch also rejects malformed names/handlers, unknown declaration
+Scheduler rejects malformed names/handlers, unknown declaration
 fields, accessors, proxies and non-boolean controls before constructing Croner.
 Names are trimmed nonempty strings up to 200 characters without control bytes;
 patterns are nonempty strings up to 256 characters. Error messages do not echo
@@ -100,7 +103,7 @@ Pause does not abort a callback already executing. Explicit trigger/run remains
 available while a schedule is paused; this is useful for controlled maintenance.
 
 Do not present pause as cancellation of an external operation. App callbacks
-must own their transactional/idempotency behavior. The new terminal `close()`
+must own their transactional/idempotency behavior. Terminal `close()`
 aborts the per-invocation signal and observes cooperative drain; ordinary pause
 and stop retain their existing non-cancellation meaning.
 

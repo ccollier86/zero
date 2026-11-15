@@ -40,6 +40,11 @@ export function installedJobsConfig(): AppConfig {
       registry.create({ name: 'installed.workflow', version: 1, flow: flow(step('work', { name: 'installed.activity', version: '1' }, { retries: 1 })) });
     } },
     serverExtensions: [
+      defineEndpoint({ method: 'GET', path: '/qualification/jobs-health', auth: 'user', handler({ zero }) {
+        zero.access.requirePlatformAdmin();
+        const state = zero.unsafe.jobs!.diagnostics();
+        return { gate: state.gate, runner: state.runner };
+      } }),
       defineEndpoint({ method: 'POST', path: '/qualification/enqueue', auth: 'user', async handler({ zero, body }) {
         const input = body as { kind: string; idempotencyKey: string };
         return zero.logging!.run(async () => Response.json(await zero.jobs!.enqueue(job,

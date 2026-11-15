@@ -7,12 +7,12 @@ status: draft
 visibility: internal
 system: frontend
 feature: durable-jobs
-maturity: planned
-applies_to: ["Unreleased feature/core-worker-runtime-upgrades source; not a selected updater archive"]
+maturity: preview
+applies_to: ["2.11.0 local source candidate; not a selected updater or deployment qualification"]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.10.5"
-  commit: "62971773c682915e3b8f230f1458ba142779f7b5"
+  version: "2.11.0"
+  commit: "c401dbd68b29efbc185e55273d37e71aac3bd536"
   snapshot: dirty
   date: "2026-11-15"
   evidence_level: source-observed
@@ -22,10 +22,12 @@ reviewed_against:
 
 [Frontend index](./index.md) · [Durable jobs contract](../backend/scheduler/durable-jobs.md) · [Foundation plan](../_work/durable-jobs-and-workers-plan.md)
 
-This is the native current-scope schedule and execution-history view under
-development. It is not yet a qualified release or an alternative workflow
-executor. Place it in an AppShell content pane under the application's shared
-AppProvider. Keep that provider mounted during router navigation.
+`JobsWorkspace` is the implemented native current-scope schedule and
+execution-history view in the 2.11.0 local source candidate. Final exact
+installed-archive/Linux qualification and normal updater selection remain
+pending; it is not a published release or an alternative workflow executor.
+Place it in an AppShell content pane under the application's shared AppProvider.
+Keep that provider mounted during router navigation.
 
 ```tsx
 import { JobsWorkspace } from '@zero/framework/frontend';
@@ -119,9 +121,11 @@ composition details. No separate authentication client or tenant selector is use
 
 ## Qualification boundary
 
-The working branch includes in-memory controller checks and a short-lived
-synthetic transport/browser fixture. Those are not substitutes for real managed
-Guardian/Fabric/Torrent, bundled Linux deployment or final installed-archive
-qualification. The foundation plan records actual results and remaining gates.
+Source coverage includes in-memory controller checks and a short-lived synthetic
+transport/browser fixture. The managed service also has Guardian/Fabric/Torrent
+fixtures; neither layer alone substitutes for final exact installed-archive UI,
+bundled Linux deployment and lifecycle qualification. Those final candidate
+gates are ongoing. The foundation plan records actual results and remaining
+gates, without treating source implementation as updater publication.
 The preview script owns its fixture root/server and cleans them on normal exit,
 SIGINT, SIGTERM and its ten-minute deadline; no preview is retained by default.

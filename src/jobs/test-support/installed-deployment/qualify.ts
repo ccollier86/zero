@@ -254,7 +254,22 @@ async function calls(): Promise<{ instanceId: string; kind: string; version: num
 }
 async function completed(id: string, kind: string) {
   let page: any;
-  await eventually(async () => { page = await request('GET', '/jobs/schedules/' + id + '/occurrences'); return page.total === 1 && page.items[0].state === 'terminal'; }, 'Native timer completion: ' + kind);
+  try {
+    await eventually(async () => { page = await request('GET', '/jobs/schedules/' + id + '/occurrences'); return page.total === 1 && page.items[0].state === 'terminal'; }, 'Native timer completion: ' + kind);
+  } catch (error) {
+    // Closed native views and counters only: never persist inputs, seals,
+    // provider messages, workflow results or credential-bearing requests.
+    const detail = await request('GET', '/jobs/schedules/' + id);
+    evidence.stalledJob = { kind, id, control: detail.control, generation: detail.generation,
+      nextDueAt: detail.nextDueAt, blockedCode: detail.blockedCode, occurrences: page?.items,
+      observedLocalActivityCalls: (await calls()).filter(row => row.kind === kind).length,
+      health: await request('GET', '/qualification/jobs-health') };
+    if (page?.items?.[0]?.workflowId) {
+      const workflow = await request('GET', '/workflows/' + page.items[0].workflowId);
+      evidence.stalledWorkflow = { status: workflow.status, definitionVersion: workflow.definition_version };
+    }
+    throw error;
+  }
   assert(page.items[0].terminalStatus === 'completed' && typeof page.items[0].workflowId === 'string', 'Torrent did not complete the synthetic occurrence.');
   const workflow = await request('GET', '/workflows/' + page.items[0].workflowId);
   assert(workflow.definition_version === 1 && typeof workflow.graph_fingerprint === 'string' && workflow.graph_fingerprint.length > 0, 'Torrent did not retain the exact admitted graph pin.');

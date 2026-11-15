@@ -8,14 +8,14 @@ visibility: internal
 system: scheduler
 feature: system
 maturity: supported
-applies_to: ["Existing local scheduler; feature/core-worker-runtime-upgrades additions are unreleased"]
+applies_to: ["2.11.0 local source candidate; not a selected updater or deployment qualification"]
 modes: ["managed Bun server", "standalone Elysia plugin/service"]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.10.5"
-  commit: "4691a89c3847e2e2b4d4d2a93603430ca7c728d5"
+  version: "2.11.0"
+  commit: "c401dbd68b29efbc185e55273d37e71aac3bd536"
   snapshot: dirty
-  date: "2026-11-14"
+  date: "2026-11-15"
   evidence_level: source-observed
 ---
 
@@ -31,16 +31,18 @@ Torrent persists its own deadlines/recovery state and uses Scheduler for wake
 jobs. Scheduler is the timer mechanism, not the durable source of truth. A
 process restart recreates code-defined jobs; it does not replay missed work.
 
-The approved [shared scheduling/jobs expansion](../../_work/durable-jobs-and-workers-plan.md)
-is being implemented on a feature branch. Its [worker foundation](../workers/index.md)
-is additive. The [durable jobs source contract](./durable-jobs.md) now includes
-managed admission, Fabric/Torrent handoff and native HTTP/SDK integration on
-that branch, but is not part of the released archive or this local cron API.
+The 2.11.0 local source candidate implements the additive
+[worker foundation](../workers/index.md) and optional [durable jobs](./durable-jobs.md),
+including managed admission, private Fabric state, exact Torrent handoff, native
+HTTP/SDK integration and the operator workspace. It also implements app-bound
+Scheduler observability and cooperative, bounded `close()`.
 
-This source-backed guide also describes the feature branch's app-bound
-observability and cooperative, bounded `close()` additions. They are not yet
-qualified in a selected update archive. The private durable scheduling storage
-being built alongside them does not turn this local timer into a durable queue.
+These are current source APIs, not proposals, but final exact
+installed-archive/Linux qualification and normal updater selection remain
+pending. No published release or application deployment approval is implied.
+The [foundation record](../../_work/durable-jobs-and-workers-plan.md) distinguishes
+source evidence from release gates. Durable jobs are a separate service; they do
+not turn this app-local timer registry into a durable queue.
 
 ## Choose An Integration
 
@@ -50,6 +52,7 @@ being built alongside them does not turn this local timer into a durable queue.
 | Standalone trusted cron registry | SchedulerService from @zero/framework/scheduler. |
 | Elysia admin controls and lifecycle | createSchedulerPlugin with app-local auth/service dependencies. |
 | Restart recovery, waits, scoped run authority | Torrent's durable workflow service, not an in-memory job alone. |
+| Durable one-off/recurring schedules and current-scope controls | Optional `zero.jobs`, backed by private Fabric state and pinned Torrent handoffs. |
 
 All managed apps construct Scheduler; there is no AppConfig.scheduler toggle.
 Normal trusted server code uses zero.scheduler. A tenant-scoped request does not
@@ -63,7 +66,7 @@ tenants' or platform maintenance jobs.
   plugin prefix/dependencies, startup and app-local binding.
 - [Jobs](./jobs.md): exact declaration fields, cron/timezone, pause/manual runs,
   captured options, overlap and caught-versus-rethrown failure policy.
-- [Durable jobs](./durable-jobs.md): unreleased managed configuration, ownership,
+- [Durable jobs](./durable-jobs.md): candidate managed configuration, ownership,
   permanent receipts, pinned handoff, live reads and remaining qualification.
 - [Status](./status.md): list/get/existence, busy versus scheduled state and
   timestamp meaning.

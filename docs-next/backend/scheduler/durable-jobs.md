@@ -7,27 +7,28 @@ status: draft
 visibility: internal
 system: scheduler
 feature: durable-jobs
-maturity: planned
-applies_to: ["Unreleased feature/core-worker-runtime-upgrades source; not a qualified archive"]
+maturity: preview
+applies_to: ["2.11.0 local source candidate; not a selected updater or deployment qualification"]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.10.5"
-  commit: "58c9324b79bfbb81605114a394ec1856d3195e6b"
+  version: "2.11.0"
+  commit: "c401dbd68b29efbc185e55273d37e71aac3bd536"
   snapshot: dirty
-  date: "2026-11-14"
+  date: "2026-11-15"
   evidence_level: source-observed
 ---
 
-# Durable jobs and schedules — implementation boundary
+# Durable jobs and schedules
 
 [Scheduler](./index.md) · [Foundation plan](../../_work/durable-jobs-and-workers-plan.md)
 
-This documents the **unreleased feature branch**, not the selected Zero updater.
-Managed configuration, Guardian admission, private Fabric storage, pinned Torrent
-handoffs, HTTP and SDK contracts are implemented in source. The native
-[operator workspace](../../frontend/jobs-workspace.md) is being qualified;
-remaining service/deployment qualification and the final archive are unfinished.
-Do not use this page to claim the complete foundation is ready to deploy.
+The 2.11.0 local source candidate implements managed configuration, Guardian
+admission, private Fabric storage, pinned Torrent handoffs, HTTP/SDK contracts,
+live reads, semantic audit and the native
+[operator workspace](../../frontend/jobs-workspace.md). These are current source
+APIs, not proposed contracts. Final exact installed-archive/Linux qualification
+and normal updater selection remain pending. No published release or deployment
+approval is implied by source implementation.
 Calendar components and the calendar backend remain outside this work.
 
 ## Responsibilities
@@ -93,15 +94,28 @@ Jobs actors use the fixed actor entry, not the application entry, and default
 to an empty child environment. Bundled/compiled deployment still needs final
 package qualification; do not assume source execution proves that deployment.
 
+Official jobs builds use the source Bun CLI (`bun run zero build`, or the
+installed source-backed `zero build` command). Its jobs-only build helper captures
+canonical migration sources in a fresh, pure-import process with an empty
+environment and dotenv disabled; it does not start the app. A compiled Zero CLI
+cannot run that source snapshot helper and fails closed. Building a compiled
+application from the source CLI is a separate capability; its complete jobs
+runtime remains outside the current installed-bundle qualification.
+
 ## Definitions, ownership and authority
 
 - A definition is an exact code-registered object or a registered name. Multiple
-  explicit definition versions may coexist, with one default per name. Clients
-  send names, never executable parsers or a caller-selected workflow pin.
+  explicit definition versions may coexist, with at most one default per name.
+  `default` is true when omitted; set it false on retained non-default versions.
+  Name-only admission requires an available default. Browser/HTTP clients send
+  names, never executable parsers or a caller-selected workflow pin.
   Omitted definition `access` means administrator, not every signed-in user.
-- Inputs are detached, bounded canonical JSON (32 KiB). Version parser/policy
-  changes explicitly. Definition fingerprints describe metadata, not executable
-  code integrity or proof of equivalent semantics.
+- Inputs are detached, bounded canonical JSON (32 KiB). Parsers must be pure,
+  synchronous and idempotent: their canonical output must be accepted unchanged
+  by the same parser. Admission checks a second normalization, and handoff checks
+  the retained canonical input against its registered definition. Version
+  parser/policy changes explicitly. Definition fingerprints describe metadata,
+  not executable code integrity or proof of equivalent semantics.
 - Actor-owned work retains its exact sealed authority. Logout/revocation does
   not silently turn it into SYSTEM work. New handoff requires current actor
   authority, current source eligibility, and the same admitted graph pin.
@@ -211,8 +225,8 @@ with fresh current authority and a new generation. A cancelled identity cannot
 be revived. Resuming an elapsed one-off time is invalid; select a new future
 time or explicitly create a new immediate run.
 
-In this source contract, `runNow` creates an independently admitted one-off job
-from the inspected schedule under the current initiating authority. It does not
+`runNow` creates an independently admitted one-off job from the inspected
+schedule under the current initiating authority. It does not
 rewrite the original nominal occurrence or impersonate its creator. Pausing or
 cancelling scheduling does not claim that already handed-off Torrent work or an
 external delivery has been undone. Inspect/control that actual run separately.
@@ -270,7 +284,8 @@ are backed by coalesced private commit hints plus reauthorized bounded pages,
 not fabricated Sync row events. Denial retires the subscription and clears the
 hook's visible page. A bounded SSE lifetime forces fresh HTTP admission; it does
 not bypass audit delivery or credential checks. Streams contain public views,
-not job payloads. The live boundary's source/browser qualification is ongoing.
+not job payloads. The live boundary is implemented; final exact installed-archive
+and deployed-browser qualification remain separate from source coverage.
 
 Watch listeners may accept a second `JobWatchUpdate` argument. Its closed
 `invalidated` boolean reports an actual admitted source-change hint, not an

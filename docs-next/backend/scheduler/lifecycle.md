@@ -8,14 +8,14 @@ visibility: internal
 system: scheduler
 feature: removal-and-shutdown
 maturity: supported
-applies_to: ["Existing local scheduler; feature/core-worker-runtime-upgrades additions are unreleased"]
+applies_to: ["2.11.0 local source candidate; not a selected updater or deployment qualification"]
 modes: ["managed Bun server", "standalone Elysia plugin/service"]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.10.5"
-  commit: "4691a89c3847e2e2b4d4d2a93603430ca7c728d5"
+  version: "2.11.0"
+  commit: "c401dbd68b29efbc185e55273d37e71aac3bd536"
   snapshot: dirty
-  date: "2026-11-14"
+  date: "2026-11-15"
   evidence_level: source-observed
 ---
 
@@ -23,9 +23,11 @@ reviewed_against:
 
 [Scheduler](./index.md) · [Configuration](./configuration.md) · [Documentation index](../../index.md)
 
-Scheduler owns future cron firing and job-map entries. The feature branch adds
-terminal cooperative shutdown; this is not remote-effect cancellation,
-persistent queuing or missed-execution recovery.
+Scheduler owns future cron firing, job-map entries and terminal cooperative
+shutdown. This is not remote-effect cancellation, persistent queuing or
+missed-execution recovery. The APIs below are implemented in the 2.11.0 local
+source candidate; final exact installed-archive/Linux qualification and normal
+updater selection remain pending.
 
 ## Remove And Stop
 
@@ -34,9 +36,8 @@ removes the entry. It returns true when a job existed and false when absent.
 Recreating the same name requires a new registration; resume cannot resurrect
 a removed Croner instance.
 
-The current source supports trusted-server
-`unregister(name, expectedRun)`. It removes the schedule only if its currently
-registered callback is that exact function reference. Use this optional fence
+Trusted-server `unregister(name, expectedRun)` removes the schedule only if its
+currently registered callback is that exact function reference. Use this optional fence
 when a subsystem retires its own timer: a later replacement under the same name
 must remain untouched. The ordinary one-argument and HTTP contracts are unchanged;
 the callback is an ownership fence, not a credential or a serializable API input.
@@ -49,7 +50,7 @@ create new work; stopAll is not a permanent-disposal state on SchedulerService.
 An already executing callback is app work: `stopAll()` alone does not cancel or
 drain it. This compatible synchronous method remains distinct from `close()`.
 
-## Terminal Close (Feature Branch)
+## Terminal Close
 
 `close(): Promise<void>` permanently stops registration and timers, aborts the
 `signal` passed to each active callback, and observes callback settlement.
@@ -65,7 +66,8 @@ There is no subprocess termination or CPU isolation in this local service.
 
 No-argument callbacks remain valid. New callbacks may use `run: async ({ signal })
 => { ... }` and pass the signal to their own cancellable I/O. Do not use a timer
-callback for unbounded CPU work; use the qualified worker/Torrent boundary.
+callback for unbounded CPU work; use the registered worker/Torrent boundary and
+qualify its actual deployment containment.
 
 ## Plugin Ownership
 
