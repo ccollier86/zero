@@ -17,6 +17,16 @@ publication, search, and production agent bundles.
 
 ## Available Material
 
+- [Shared scheduling, jobs and worker foundation](./durable-jobs-and-workers-plan.md):
+  the agreed prerequisite framework upgrade: cron/durable scheduling, fair worker
+  pools, Guardian/Fabric/Torrent service integration, public facades, docs and
+  final package qualification before calendar backend work.
+  - [Private scheduling storage checkpoint](./durable-jobs-storage-checkpoint.md):
+    real Fabric state/lifecycle, immutable admissions, permanent receipts, fenced
+    handoffs, bounded overlap/recovery and explicit remaining managed integration.
+  - [Calendar return handoff](./calendar-return-handoff.md): preserved UI and
+    backend requirements to resume only after the shared foundation is qualified.
+
 - [Logging and auditing replacement](./logging-auditing-replacement-plan.md):
   the current generic product plan replacing transport-centered activity with
   automatic native operations, historical lists, record views and duration,

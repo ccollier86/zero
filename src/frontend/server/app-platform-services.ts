@@ -200,7 +200,7 @@ export async function mountPlatformServices({
     }));
   }
 
-  const scheduler = new SchedulerService();
+  const scheduler = new SchedulerService({ observability: observabilityRuntime });
   if (config.workers) {
     const workers = new WorkerService(config.workers);
     runtime.set(ZERO_WORKER_SERVICE, workers);

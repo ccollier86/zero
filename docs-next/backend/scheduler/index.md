@@ -8,14 +8,14 @@ visibility: internal
 system: scheduler
 feature: system
 maturity: supported
-applies_to: ["2.1.1 source plus reviewed uncommitted Scheduler corrections"]
+applies_to: ["Existing local scheduler; feature/core-worker-runtime-upgrades additions are unreleased"]
 modes: ["managed Bun server", "standalone Elysia plugin/service"]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.10.5"
+  commit: "4691a89c3847e2e2b4d4d2a93603430ca7c728d5"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-11-14"
   evidence_level: source-observed
 ---
 
@@ -36,9 +36,10 @@ is being implemented on a feature branch. Its [worker foundation](../workers/ind
 is additive; the proposed durable `zero.jobs`/schedule API is not part of the
 current cron service or released archive.
 
-This source-backed draft includes reviewed uncommitted error-policy,
-composition-cleanup, declaration-snapshot and immediate-overlap corrections.
-It is not a qualification of the original clean commit or an installed archive.
+This source-backed guide also describes the feature branch's app-bound
+observability and cooperative, bounded `close()` additions. They are not yet
+qualified in a selected update archive. The private durable scheduling storage
+being built alongside them does not turn this local timer into a durable queue.
 
 ## Choose An Integration
 
@@ -73,7 +74,8 @@ tenants' or platform maintenance jobs.
 
 The service owns named scheduling and control; the Elysia plugin owns transport,
 auth guard and cleanup. Callbacks capture their required app-local services and
-receive no injected name/context argument. A callback must establish its own
+receive a `{ signal }` context for cooperative shutdown. Existing no-argument
+callbacks remain compatible and simply ignore it. A callback must establish its own
 current authority before accessing scoped data or invoking another service.
 
 The guiding philosophy inferred from the implementation is a small reusable

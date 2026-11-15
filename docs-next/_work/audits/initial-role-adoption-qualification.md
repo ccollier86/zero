@@ -9,6 +9,8 @@ visibility: internal
 
 # Initial Single/Simple Role Binding Qualification
 
+[Audit working evidence](./index.md)
+
 [RBAC upgrade procedure](../../backend/guardian/rbac.md#first-permission-bindings-on-an-existing-single-simple-installation)
 · [Configuration](../../backend/guardian/configuration.md)
 · [Saved releases](../../cli/tooling/releases.md)

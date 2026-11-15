@@ -13,11 +13,12 @@ import { createAuthMiddleware } from '../auth/auth.middleware';
 import { getTokenService } from '../auth/auth.plugin';
 import type { SchedulerPluginConfig } from './types';
 import { OBS_CODES } from '../observability/codes';
-import { emitPlatformCode } from '../observability/sink';
+import { emitPlatformCode, emitPlatformCodeTo } from '../observability/sink';
 import { CompatibilityProviderRegistry } from '../runtime/compatibility-provider-registry';
 import {
   ZERO_AUTH_TOKEN_SERVICE,
   ZERO_SCHEDULER_SERVICE,
+  ZERO_OBSERVABILITY_RUNTIME,
 } from '../runtime/service-keys';
 import type { ZeroAppRuntime } from '../runtime/zero-app-runtime';
 import type { TokenService } from '../auth/token-service';
@@ -71,7 +72,11 @@ export function createSchedulerPlugin(
   config?: SchedulerPluginConfig & SchedulerPluginRuntimeConfig,
 ) {
   const prefix = config?.prefix ?? '/scheduler';
-  const scheduler = config?.service ?? new SchedulerService();
+  const observability = config?.runtime?.get(ZERO_OBSERVABILITY_RUNTIME) ?? undefined;
+  const scheduler = config?.service ?? new SchedulerService({ observability });
+  const emit = (definition: typeof OBS_CODES.SCHEDULER_STARTED | typeof OBS_CODES.SCHEDULER_STOPPED) => {
+    if (observability) emitPlatformCodeTo(observability, definition); else emitPlatformCode(definition);
+  };
   const getSchedulerTokenService = config?.getTokenService
     ?? (config?.runtime
       ? () => config.runtime!.get(ZERO_AUTH_TOKEN_SERVICE)
@@ -79,16 +84,18 @@ export function createSchedulerPlugin(
   const owner = {};
   let registration: ReturnType<typeof schedulerProviders.register> | null = null;
   let cleanedUp = false;
+  let cleanupTask: Promise<void> | null = null;
   const cleanup = () => {
-    if (cleanedUp) return;
+    if (cleanupTask) return cleanupTask;
     cleanedUp = true;
     try {
-      scheduler.stopAll();
+      cleanupTask = scheduler.close();
     } finally {
       config?.runtime?.clear(ZERO_SCHEDULER_SERVICE, scheduler);
       registration?.unregister();
       registration = null;
     }
+    return cleanupTask!;
   };
   let removeRuntimeCleanup: (() => void) | undefined;
   try {
@@ -97,7 +104,13 @@ export function createSchedulerPlugin(
     config?.onServiceCreated?.(scheduler);
   } catch (error) {
     removeRuntimeCleanup?.();
-    cleanup();
+    // Synchronous construction must still stop timers immediately; the retained
+    // close task observes any callback settlement without an unhandled rejection.
+    void cleanup().catch(() => {
+      const options = { metadata: { failureCode: 'SCHEDULER_DRAIN_TIMEOUT' } };
+      if (observability) emitPlatformCodeTo(observability, OBS_CODES.SCHEDULER_DRAIN_FAILED, options);
+      else emitPlatformCode(OBS_CODES.SCHEDULER_DRAIN_FAILED, options);
+    });
     throw error;
   }
 
@@ -110,12 +123,12 @@ export function createSchedulerPlugin(
         throw new SchedulerError('SCHEDULER_STOPPED', '[scheduler] Cannot start after its app runtime has stopped.');
       }
       registration = schedulerProviders.register(owner, () => scheduler);
-      emitPlatformCode(OBS_CODES.SCHEDULER_STARTED);
+      emit(OBS_CODES.SCHEDULER_STARTED);
     })
 
-    .onStop(() => {
-      cleanup();
-      emitPlatformCode(OBS_CODES.SCHEDULER_STOPPED);
+    .onStop(async () => {
+      await cleanup();
+      emit(OBS_CODES.SCHEDULER_STOPPED);
     })
 
     .derive({ as: 'global' }, () => ({

@@ -9,6 +9,16 @@ import type { JobDefinition, JobStatus } from './types';
 import { SchedulerError } from './scheduler-error';
 import { OBS_CODES } from '../observability/codes';
 import { emitPlatformCode } from '../observability/sink';
+import { emitPlatformCodeTo } from '../observability/sink';
+import type { PlatformObservabilityRuntime, PlatformCodeDefinition, PlatformCodeEmitOptions } from '../observability/types';
+import { types as utilTypes } from 'node:util';
+
+export interface SchedulerServiceOptions {
+  /** Managed runtimes supply their own sink; standalone compatibility uses the ambient sink. */
+  observability?: PlatformObservabilityRuntime;
+  /** Cooperative shutdown bound, not permission to claim ignored work has stopped. Default: 5000 ms. */
+  shutdownGraceMs?: number;
+}
 
 // ─── SchedulerService ────────────────────────────────────────────────────────
 
@@ -30,15 +40,27 @@ import { emitPlatformCode } from '../observability/sink';
  */
 export class SchedulerService {
   private jobs = new Map<string, { cron: Cron; def: JobDefinition }>();
+  private readonly active = new Set<{ controller: AbortController; done: Promise<void> }>();
+  private readonly graceMs: number;
+  private retiring = false;
+  private closeTask: Promise<void> | null = null;
+  private readonly options: SchedulerServiceOptions;
+
+  constructor(options: SchedulerServiceOptions = {}) {
+    this.options = Object.freeze({ ...options });
+    this.graceMs = options.shutdownGraceMs ?? 5000;
+    if (!Number.isSafeInteger(this.graceMs) || this.graceMs < 0 || this.graceMs > 30_000) throw invalidJob();
+  }
 
   /**
    * Register a new scheduled job.
    * Throws if a job with the same name is already registered.
    */
   register(definition: JobDefinition): void {
+    if (this.retiring) throw new SchedulerError('SCHEDULER_STOPPED', '[scheduler] Scheduler is closing.');
     // Scheduling, callbacks and status must share the identity/options admitted
     // at registration, not a caller-owned object that can change afterward.
-    const def: JobDefinition = Object.freeze({ ...definition });
+    const def = admitDefinition(definition);
     if (this.jobs.has(def.name)) {
       throw new SchedulerError(
         'SCHEDULER_JOB_ALREADY_REGISTERED',
@@ -58,7 +80,7 @@ export class SchedulerService {
           protect: def.protect ?? true,
           catch: catchErrors
             ? (err: unknown) => {
-                emitPlatformCode(OBS_CODES.SCHEDULER_JOB_FAILED, {
+                this.emit(OBS_CODES.SCHEDULER_JOB_FAILED, {
                   error: err,
                   metadata: { name: def.name, pattern: def.pattern },
                 });
@@ -67,14 +89,14 @@ export class SchedulerService {
         },
         async () => {
           if (catchErrors) {
-            await def.run();
+            await this.invoke(def);
             return;
           }
 
           try {
-            await def.run();
+            await this.invoke(def);
           } catch (err) {
-            emitPlatformCode(OBS_CODES.SCHEDULER_JOB_UNHANDLED_FAILED, {
+            this.emit(OBS_CODES.SCHEDULER_JOB_UNHANDLED_FAILED, {
               error: err,
               metadata: { name: def.name, pattern: def.pattern },
             });
@@ -88,7 +110,7 @@ export class SchedulerService {
 
     this.jobs.set(def.name, { cron: cronInstance, def });
     const state = def.paused ? 'paused' : 'scheduled';
-    emitPlatformCode(OBS_CODES.SCHEDULER_JOB_REGISTERED, {
+    this.emit(OBS_CODES.SCHEDULER_JOB_REGISTERED, {
       metadata: { name: def.name, pattern: def.pattern, state },
     });
   }
@@ -109,7 +131,7 @@ export class SchedulerService {
     if (!entry || expectedRun !== undefined && entry.def.run !== expectedRun) return false;
     entry.cron.stop();
     this.jobs.delete(name);
-    emitPlatformCode(OBS_CODES.SCHEDULER_JOB_UNREGISTERED, {
+    this.emit(OBS_CODES.SCHEDULER_JOB_UNREGISTERED, {
       metadata: { name },
     });
     return true;
@@ -185,7 +207,7 @@ export class SchedulerService {
       entry.cron.stop();
     }
     this.jobs.clear();
-    emitPlatformCode(OBS_CODES.SCHEDULER_ALL_STOPPED);
+    this.emit(OBS_CODES.SCHEDULER_ALL_STOPPED);
   }
 
   /** Canonical stop alias for stopAll(). */
@@ -193,7 +215,41 @@ export class SchedulerService {
     this.stopAll();
   }
 
+  /** Terminal shutdown: stop admission/timers, abort cooperative callbacks, and observe settlement within the configured bound. */
+  close(): Promise<void> {
+    if (this.closeTask) return this.closeTask;
+    this.retiring = true; this.stopAll();
+    for (const run of this.active) run.controller.abort();
+    const settled = Promise.all([...this.active].map(run => run.done)).then(() => {});
+    this.closeTask = (async () => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([settled, new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new SchedulerError('SCHEDULER_DRAIN_TIMEOUT', '[scheduler] Running callbacks have not settled; their effects may still be in progress.')), this.graceMs);
+        })]);
+      } finally { if (timer !== undefined) clearTimeout(timer); }
+    })();
+    return this.closeTask;
+  }
+
+  /** Unsettled callbacks remain counted after a drain timeout; no false process-stop or rollback claim. */
+  diagnostics() { return { accepting: !this.retiring, registered: this.jobs.size, active: this.active.size }; }
+
   // ─── Internal ───────────────────────────────────────────────────────────
+
+  private emit(definition: PlatformCodeDefinition, options: PlatformCodeEmitOptions = {}): void {
+    if (this.options.observability) emitPlatformCodeTo(this.options.observability, definition, options);
+    else emitPlatformCode(definition, options);
+  }
+
+  private async invoke(definition: JobDefinition): Promise<void> {
+    if (this.retiring) return;
+    let finish!: () => void;
+    const entry = { controller: new AbortController(), done: new Promise<void>(resolve => { finish = resolve; }) };
+    this.active.add(entry);
+    try { await definition.run(Object.freeze({ signal: entry.controller.signal })); }
+    finally { this.active.delete(entry); finish(); }
+  }
 
   private toStatus(entry: { cron: Cron; def: JobDefinition }): JobStatus {
     const { cron, def } = entry;
@@ -212,3 +268,18 @@ export class SchedulerService {
     };
   }
 }
+
+/** Reject malformed/accessor declarations before touching Croner or starting any timer. */
+function admitDefinition(input: JobDefinition): Readonly<JobDefinition> {
+  if (!input || typeof input !== 'object' || utilTypes.isProxy(input) || ![Object.prototype, null].includes(Object.getPrototypeOf(input))) throw invalidJob();
+  const descriptors = Object.getOwnPropertyDescriptors(input);
+  const allowed = ['name', 'pattern', 'run', 'timezone', 'paused', 'protect', 'catchErrors'];
+  if (Reflect.ownKeys(input).some(key => typeof key !== 'string' || !allowed.includes(key) || !descriptors[key]?.enumerable || !('value' in descriptors[key]!))) throw invalidJob();
+  const def = { ...input };
+  if (typeof def.name !== 'string' || !def.name.trim() || def.name !== def.name.trim() || def.name.length > 200 || /[\u0000-\u001f\u007f]/.test(def.name)
+    || typeof def.pattern !== 'string' || !def.pattern.trim() || def.pattern.length > 256 || typeof def.run !== 'function'
+    || def.timezone !== undefined && (typeof def.timezone !== 'string' || !def.timezone.trim() || def.timezone.length > 128)
+    || [def.paused, def.protect, def.catchErrors].some(value => value !== undefined && typeof value !== 'boolean')) throw invalidJob();
+  return Object.freeze(def);
+}
+function invalidJob() { return new SchedulerError('SCHEDULER_JOB_INVALID', '[scheduler] Invalid job declaration or options.'); }

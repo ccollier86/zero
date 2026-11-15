@@ -874,7 +874,7 @@ export { NOTIFICATION_TABLES } from '../notifications/types';
 export { createSchedulerPlugin, getScheduler } from '../scheduler';
 export { SchedulerError } from '../scheduler';
 export type { SchedulerErrorCode } from '../scheduler';
-export type { JobDefinition, JobStatus, SchedulerPluginConfig } from '../scheduler';
+export type { JobDefinition, JobStatus, SchedulerRunContext, SchedulerServiceOptions, SchedulerPluginConfig } from '../scheduler';
 
 // ─── Workflows: Server ──────────────────────────────────────────────────
 export {

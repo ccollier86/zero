@@ -3,7 +3,8 @@ id: zero.workers.index
 type: reference
 audience: [developer, agent, operator]
 owner: platform-runtime
-status: in-progress
+status: draft
+implementation_state: in-progress
 visibility: internal
 system: workers
 feature: task-execution
@@ -246,9 +247,14 @@ The plan tracks remaining compiled Linux/supervisor qualification,
 installed exports/archive/updater, durable scheduling and its control-plane UI.
 Source tests are not proof that a released archive or deployed app is qualified.
 
-Maintainer checks: `bun --no-env-file scripts/qualify-worker-foundation.ts` owns
-a new frozen dependency installation, runs the focused core/compatibility group
-and strict types, and removes that installation in `finally`. It refuses an
+Maintainer checks (run the required storage preflight first):
+`TMPDIR=/Volumes/code-bank/tmp/scratch/zero-platform bun --no-env-file scripts/qualify-worker-foundation.ts`
+owns a new frozen dependency installation, runs the focused worker/jobs/local-cron
+and compatibility group plus strict types, and removes that installation in
+`finally`. The TypeScript compiler runs directly under Bun rather than falling
+through a Node shebang. Its ten-minute diagnostic bound accommodates a loaded
+external development drive; it does not change a production task/claim timeout.
+The script refuses an
 existing `node_modules` instead of borrowing or replacing it. The package test
 independently installs a temporary archive and exercises public task/pool/actor
 entries plus a minified child without app boot. These are focused checks, not

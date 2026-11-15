@@ -20,18 +20,21 @@ try {
   cleanable = true;
   await run([process.execPath, '--no-env-file', 'install', '--frozen-lockfile', '--ignore-scripts'], 180_000);
   const tests = focus.length ? focus : [
-    'src/workers', 'src/messaging/work-pool.test.ts', 'src/doctor/source-only-background-checks.test.ts',
+    'src/workers', 'src/jobs', 'src/scheduler', 'src/messaging/work-pool.test.ts', 'src/doctor/source-only-background-checks.test.ts',
+    'src/workflows/workflow-runtime-ownership.test.ts',
     'src/frontend/server/app-workflow-execution-services.integration.test.ts',
     'src/frontend/server/workflow-execution-capability-topology.integration.test.ts',
     'src/workflows/workflow-execution-authority.integration.test.ts',
     'src/workflows/workflow-graph-runtime.test.ts', 'src/workflows/workflow-interaction-service.test.ts',
     'src/ai/ai-session.test.ts', 'src/ai/ai-embedding-operations.test.ts'];
   await run([process.execPath, '--no-env-file', 'test', '--timeout', '120000', ...tests], 600_000);
-  await run([process.execPath, '--no-env-file', 'x', '--no-install', 'tsc', '--noEmit', '--strict',
+  await run([process.execPath, '--no-env-file', join(dependencies, 'typescript/bin/tsc'), '--noEmit', '--strict',
     '--skipLibCheck', '--module', 'preserve', '--moduleResolution', 'bundler', '--target', 'esnext',
     '--jsx', 'react-jsx', '--allowImportingTsExtensions', '--types', 'bun', '--esModuleInterop',
     'src/workers/index.ts', 'src/workers/types.test.ts', 'src/workers/torrent-managed.test.ts',
-    'src/workers/managed.test.ts', 'src/doctor/source-only-background-checks.ts'], 180_000);
+    'src/workers/managed.test.ts', 'src/jobs/runtime.ts', 'src/jobs/definition.ts', 'src/jobs/definition.test.ts',
+    'src/jobs/realm.integration.test.ts', 'src/jobs/runtime.integration.test.ts', 'src/jobs/persistence-config.test.ts',
+    'src/scheduler/index.ts', 'src/scheduler/scheduler-lifecycle.test.ts', 'src/doctor/source-only-background-checks.ts'], 600_000);
 } finally {
   const current = await lstat(dependencies);
   if (!cleanable || current.isSymbolicLink() || current.dev !== identity.dev || current.ino !== identity.ino

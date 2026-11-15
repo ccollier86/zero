@@ -8,14 +8,14 @@ visibility: internal
 system: scheduler
 feature: removal-and-shutdown
 maturity: supported
-applies_to: ["2.1.1 source plus reviewed uncommitted Scheduler corrections"]
+applies_to: ["Existing local scheduler; feature/core-worker-runtime-upgrades additions are unreleased"]
 modes: ["managed Bun server", "standalone Elysia plugin/service"]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.10.5"
+  commit: "4691a89c3847e2e2b4d4d2a93603430ca7c728d5"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-11-14"
   evidence_level: source-observed
 ---
 
@@ -23,9 +23,9 @@ reviewed_against:
 
 [Scheduler](./index.md) · [Configuration](./configuration.md) · [Documentation index](../../index.md)
 
-Scheduler owns future cron firing and job-map entries. It does not implicitly
-abort app callback work, wait for remote effects, persist a queue or recover
-missed executions.
+Scheduler owns future cron firing and job-map entries. The feature branch adds
+terminal cooperative shutdown; this is not remote-effect cancellation,
+persistent queuing or missed-execution recovery.
 
 ## Remove And Stop
 
@@ -34,7 +34,7 @@ removes the entry. It returns true when a job existed and false when absent.
 Recreating the same name requires a new registration; resume cannot resurrect
 a removed Croner instance.
 
-The messaging development branch additionally supports trusted-server
+The current source supports trusted-server
 `unregister(name, expectedRun)`. It removes the schedule only if its currently
 registered callback is that exact function reference. Use this optional fence
 when a subsystem retires its own timer: a later replacement under the same name
@@ -46,10 +46,26 @@ stopAll(), and its stop alias, stops every admitted schedule and clears the
 registry. These methods return void. A later direct service registration can
 create new work; stopAll is not a permanent-disposal state on SchedulerService.
 
-An already executing callback is app work: stopping its timer does not cancel
-or synchronously drain it. If the callback uses services about to be disposed,
-the app must fence/abort/drain that work through its own lifecycle or use the
-durable workflow service.
+An already executing callback is app work: `stopAll()` alone does not cancel or
+drain it. This compatible synchronous method remains distinct from `close()`.
+
+## Terminal Close (Feature Branch)
+
+`close(): Promise<void>` permanently stops registration and timers, aborts the
+`signal` passed to each active callback, and observes callback settlement.
+Repeated calls return the same close promise. Managed plugin/runtime cleanup
+awaits this boundary; it does not merely clear the registry and forget work.
+
+`new SchedulerService({ shutdownGraceMs })` sets the bound: 5000 ms by default,
+integer 0–30000. A callback ignoring abort is **not** reported as stopped after
+that deadline. Close rejects `SCHEDULER_DRAIN_TIMEOUT`; `diagnostics().active`
+continues counting it until it actually settles, and new registration stays
+closed. No automatic replay or claim of rolled-back external effects follows.
+There is no subprocess termination or CPU isolation in this local service.
+
+No-argument callbacks remain valid. New callbacks may use `run: async ({ signal })
+=> { ... }` and pass the signal to their own cancellable I/O. Do not use a timer
+callback for unbounded CPU work; use the qualified worker/Torrent boundary.
 
 ## Plugin Ownership
 
@@ -58,12 +74,13 @@ the compatibility getter when Elysia starts. Startup after the owning runtime
 was already disposed rejects SCHEDULER_STOPPED rather than reattaching a partial
 service.
 
-On stop/runtime cleanup, the plugin stops every job, clears the matching runtime
-binding and unregisters its compatibility provider. Cleanup is idempotent.
+On stop/runtime cleanup, the plugin closes the scheduler, clears the matching
+runtime binding and unregisters its compatibility provider. Cleanup is idempotent
+and its returned promise observes drain failure rather than pretending success.
 A synchronous onServiceCreated failure performs the same rollback before
 rethrowing; no scheduled jobs or stale runtime binding remain.
 
-If you supply a service to the plugin, the plugin still owns clearing its jobs.
+If you supply a service to the plugin, the plugin still owns its terminal close.
 Do not attach one shared registry to independent applications and expect one
 application's shutdown to leave the other's jobs intact.
 

@@ -5,8 +5,8 @@ export interface JobDefinition {
   name: string;
   /** Cron expression (6-field with seconds, or @daily/@hourly/etc). */
   pattern: string;
-  /** The work to run. Capture any required app-local dependencies in this callback. */
-  run: () => void | Promise<void>;
+  /** The work to run. Capture app-local dependencies; honor the signal for cooperative shutdown. */
+  run: (context: SchedulerRunContext) => void | Promise<void>;
   /** IANA timezone. Default: system timezone. */
   timezone?: string;
   /** Start paused — must be resumed manually or via API. */
@@ -19,6 +19,9 @@ export interface JobDefinition {
    */
   catchErrors?: boolean;
 }
+
+/** One local invocation, not durable execution authority or a database lease. */
+export interface SchedulerRunContext { readonly signal: AbortSignal }
 
 export interface JobStatus {
   name: string;

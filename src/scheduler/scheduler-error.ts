@@ -8,6 +8,7 @@ export type SchedulerErrorCode =
   | 'SCHEDULER_JOB_ALREADY_REGISTERED'
   | 'SCHEDULER_JOB_INVALID'
   | 'SCHEDULER_JOB_BUSY'
+  | 'SCHEDULER_DRAIN_TIMEOUT'
   | 'SCHEDULER_STOPPED';
 
 /** Scheduler setup failure, with no dependency-specific message exposed. */

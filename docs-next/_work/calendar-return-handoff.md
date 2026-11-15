@@ -1,17 +1,20 @@
 ---
 id: zero.work.calendar-return-handoff
-type: handoff
+type: reference
 audience: [developer, agent]
 owner: calendar
-status: paused
+status: draft
+implementation_state: paused
 visibility: internal
 system: calendar
 feature: integration-return-notes
 maturity: experimental
-applies_to: ["feature/durable-scheduling-foundation; source notes, not release qualification"]
+applies_to: ["feature/core-worker-runtime-upgrades; calendar backend paused, source notes only"]
 ---
 
 # Return to calendar after the shared scheduling foundation
+
+[Working evidence](./index.md)
 
 Recorded 2026-11-14 at the user's request. Preserve this handoff until the
 calendar backend integration is finished. It is source documentation, not a

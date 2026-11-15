@@ -8,14 +8,14 @@ visibility: internal
 system: scheduler
 feature: job-registration-and-control
 maturity: supported
-applies_to: ["2.1.1 source plus reviewed uncommitted Scheduler corrections"]
+applies_to: ["Existing local scheduler; feature/core-worker-runtime-upgrades additions are unreleased"]
 modes: ["managed Bun server", "standalone Elysia plugin/service"]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.10.5"
+  commit: "4691a89c3847e2e2b4d4d2a93603430ca7c728d5"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-11-14"
   evidence_level: source-observed
 ---
 
@@ -52,7 +52,8 @@ export function installMaintenance(
 }
 ```
 
-The callback receives no injected arguments. Capture required services explicitly,
+The feature branch passes a `{ signal: AbortSignal }` callback context. Existing
+no-argument functions such as `cleanup` remain compatible. Capture services explicitly,
 and establish live authority within the maintenance operation before accessing
 scoped data. A cron name is not a tenant ID or authorization scope.
 
@@ -62,7 +63,7 @@ scoped data. A cron name is not a tenant ID or authorization scope.
 | --- | --- | --- |
 | name | Required | Unique within this service's job map; duplicate registration rejects without replacing existing work. |
 | pattern | Required | String interpreted by the installed Croner dependency. Prefer six fields including seconds, or a supported alias. |
-| run | Required | () => void or Promise<void>; trusted server work. |
+| run | Required | (context: SchedulerRunContext) => void or Promise<void>; no-argument callbacks remain compatible. |
 | timezone | Omitted: system timezone | IANA timezone such as UTC or America/New_York. |
 | paused | false | Suppresses automatic scheduled firing until resumed. |
 | protect | true | Prevents admitting overlapping scheduled or public immediate executions for this job. |
@@ -71,6 +72,11 @@ scoped data. A cron name is not a tenant ID or authorization scope.
 create is the register alias. Registration is synchronous and returns void,
 not a persisted definition ID or first-run completion. Invalid schedules/options
 raise SCHEDULER_JOB_INVALID, and duplicates SCHEDULER_JOB_ALREADY_REGISTERED.
+The feature branch also rejects malformed names/handlers, unknown declaration
+fields, accessors, proxies and non-boolean controls before constructing Croner.
+Names are trimmed nonempty strings up to 200 characters without control bytes;
+patterns are nonempty strings up to 256 characters. Error messages do not echo
+invalid declarations. Versioned durable definitions use a different contract.
 
 ## Schedule And Timezone
 
@@ -94,8 +100,9 @@ Pause does not abort a callback already executing. Explicit trigger/run remains
 available while a schedule is paused; this is useful for controlled maintenance.
 
 Do not present pause as cancellation of an external operation. App callbacks
-must own any AbortController, cooperative drain and transactional/idempotency
-behavior they require.
+must own their transactional/idempotency behavior. The new terminal `close()`
+aborts the per-invocation signal and observes cooperative drain; ordinary pause
+and stop retain their existing non-cancellation meaning.
 
 ## Immediate Runs And Overlap
 

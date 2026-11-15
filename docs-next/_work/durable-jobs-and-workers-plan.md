@@ -1,9 +1,10 @@
 ---
 id: zero.work.durable-jobs-and-workers
-type: implementation-plan
+type: roadmap
 audience: [developer, agent, operator]
 owner: scheduler
-status: in-progress
+status: draft
+implementation_state: in-progress
 visibility: internal
 system: scheduler
 feature: durable-jobs-and-workers
@@ -13,7 +14,7 @@ applies_to: ["feature/core-worker-runtime-upgrades; proposed contracts unless ex
 
 # Shared scheduling, jobs and worker foundation
 
-[Scheduler](../backend/scheduler/index.md) ·
+[Working evidence](./index.md) · [Scheduler](../backend/scheduler/index.md) ·
 [Calendar return handoff](./calendar-return-handoff.md)
 
 User approved implementation on 2026-11-14. Calendar backend work is paused.
@@ -31,13 +32,13 @@ review and qualify that foundation before resuming calendar-specific backend
 implementation. Include the concrete earlier execution/integration gaps below;
 do not turn this into a rewrite of unrelated completed Zero features.
 
-Four unwired scheduling draft files (`src/jobs/error.ts`, `model.ts`,
-`realm-schema.ts`, `validation.ts`) are independently preserved on
-`feature/parked-scheduling-drafts`, commit `2cc8bd5`. They are not in the active
-core-upgrade worktree and have never been wired into managed startup or released.
-They can now be reviewed and brought forward as part of this foundation; their
-existence is not evidence that a supported durable scheduling service exists.
-The earlier private time-math prototype is not an enabled scheduler feature.
+Four original scheduling drafts (`src/jobs/error.ts`, `model.ts`,
+`realm-schema.ts`, `validation.ts`) remain independently preserved on
+`feature/parked-scheduling-drafts`, commit `2cc8bd5`. Reviewed/corrected versions
+are now in the active foundation branch, with a private Fabric realm/lifecycle
+and code-owned definition contracts. None is wired into managed AppConfig,
+native routes or the updater yet. Their existence is not evidence that a
+supported durable scheduling service has shipped.
 
 Core checkpoint gap-close checklist:
 
@@ -71,8 +72,12 @@ requirement to publish an intermediate worker-only release before scheduling.
 | Torrent handoffs | Actor-preserving commit-acknowledged enqueue, native HTTP/SDK/hooks and scope retirement. | Reuse these receipts in durable scheduling; do not introduce a second execution/retry engine. |
 | Cron | Existing lightweight in-memory scheduler remains compatible. | Durable occurrence ownership, restart/misfire handling, overlap policies and admitted control APIs. |
 | Time selection | Private, tested timezone/DST/misfire prototype. | Integrate with persisted cursors and atomic occurrence creation; it is not currently an enabled scheduler. |
-| Durable jobs | Four parked schema/validation/model drafts. | Reviewed contracts, Fabric placement, catalog/config/runtime, authorization, dispatch, SDK and live views. |
+| Durable jobs | Private validated admissions/realm, owner catalog, scoped Fabric lifecycle, real subprocess tests and content-free change hints; pure code-owned definition contracts. | Managed optional config, Guardian/Torrent bridge and dispatch loop, native facade/HTTP/SDK/hooks, service adapters and operator view. |
 | Documentation/release | Working guides and this plan. | Supported/planned consistency, adoption instructions, exact final package/updater qualification. No new release has been selected. |
+
+The [private storage checkpoint](./durable-jobs-storage-checkpoint.md) records
+the implemented model/definition/Fabric boundary, its tests and the missing
+managed admission/dispatch integration. Do not mistake it for a public jobs API.
 
 ### 1. Close the existing execution foundation
 

@@ -8,14 +8,14 @@ visibility: internal
 system: scheduler
 feature: errors-observability-testing-and-upgrades
 maturity: supported
-applies_to: ["2.1.1 source plus reviewed uncommitted Scheduler corrections"]
+applies_to: ["Existing local scheduler; feature/core-worker-runtime-upgrades additions are unreleased"]
 modes: ["managed Bun server", "standalone Elysia plugin/service"]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.10.5"
+  commit: "4691a89c3847e2e2b4d4d2a93603430ca7c728d5"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-11-14"
   evidence_level: source-observed
 ---
 
@@ -31,11 +31,15 @@ and an in-process status list is not a durable job ledger.
 
 SchedulerError exposes a stable code and message. Setup/control codes are
 SCHEDULER_JOB_ALREADY_REGISTERED, SCHEDULER_JOB_INVALID, SCHEDULER_JOB_BUSY and
-SCHEDULER_STOPPED. Missing job controls preserve boolean/null service results;
+SCHEDULER_STOPPED. The feature branch adds SCHEDULER_DRAIN_TIMEOUT for callbacks
+which have not settled within cooperative close. Missing controls preserve boolean/null results;
 the HTTP adapter preserves NOT_FOUND / 404 and maps protected busy to 409.
 
 Platform codes cover scheduler.started, stopped, all_stopped, job.registered,
-job.unregistered, job.failed and job.unhandled_failed. Registration metadata
+job.unregistered, job.failed and job.unhandled_failed; the feature branch also
+reports `scheduler.drain.failed` when failed construction cannot complete drain.
+Managed lifecycle/job events use that application's observability runtime.
+Registration metadata
 contains job name/pattern and scheduled/paused state. Callback failure carries
 the error through Zero's established sink; do not put secrets or sensitive
 records in job names, patterns or exception messages.
@@ -75,9 +79,10 @@ admission now preserve the stated protect contract. Existing method names and
 cron dependency remain; blocked trigger/run returns false and HTTP reports
 SCHEDULER_JOB_BUSY. This is a correctness change, not a distributed scheduler.
 
-The focused service/plugin/concurrency/HTTP subset passed 11 tests and 49
-assertions on Bun 1.3.14. Those are uncommitted source checks, not proof an old
-archive includes the corrections or that a live application was updated.
+The old October diagnostic used Bun 1.3.14. It is historical evidence only, not
+the current runtime qualification: Zero now requires Bun 1.4.4. The foundation
+[implementation record](../../_work/durable-jobs-and-workers-plan.md) records
+current targeted checks and remaining exact-package/Linux release gates.
 
 ## Upgrades And Restart
 

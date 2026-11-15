@@ -8,14 +8,14 @@ visibility: internal
 system: scheduler
 feature: configuration
 maturity: supported
-applies_to: ["2.1.1 source plus reviewed uncommitted Scheduler corrections"]
+applies_to: ["Existing local scheduler; feature/core-worker-runtime-upgrades additions are unreleased"]
 modes: ["managed Bun server", "standalone Elysia plugin/service"]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
+  version: "2.10.5"
+  commit: "4691a89c3847e2e2b4d4d2a93603430ca7c728d5"
   snapshot: dirty
-  date: "2026-10-05"
+  date: "2026-11-14"
   evidence_level: source-observed
 ---
 
@@ -90,8 +90,17 @@ registry merely to access its service.
 
 ## Public Packages
 
+The feature branch adds `SchedulerServiceOptions` on the canonical scheduler
+entry: `observability` selects an explicit app-local observability runtime, and
+`shutdownGraceMs` configures cooperative close (default 5000 ms; 0–30000).
+Managed construction supplies its own observability runtime automatically.
+Standalone callers omitting it retain ambient compatibility. Two managed apps
+must not publish each other's job events through whichever sink was configured
+last. These additions still need final installed-archive qualification.
+
 @zero/framework/scheduler exports SchedulerService, createSchedulerPlugin,
-getScheduler, SchedulerError and JobDefinition/JobStatus/plugin/error types.
+getScheduler, SchedulerError and JobDefinition/JobStatus/plugin/error types;
+the feature branch also exports `SchedulerRunContext` and `SchedulerServiceOptions`.
 @zero/framework/server re-exports the plugin/getter, types and working setup
 error surface, but not SchedulerService itself. Use the canonical subpath for
 the class instead of an internal file import.
