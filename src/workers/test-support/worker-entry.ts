@@ -19,8 +19,25 @@ export const tasks = [
     run: () => { process.exit(70); } }),
   defineWorkerTask({ name: 'fixture.idle-exit', version: '1', parseInput: identity, parseOutput: identity,
     run: () => { setTimeout(() => process.exit(70), 30); return { pid: process.pid }; } }),
+  defineWorkerTask({ name: 'fixture.slow-close', version: '1', parseInput: identity, parseOutput: identity,
+    run: () => {
+      const delay = (message: unknown) => {
+        if (!message || typeof message !== 'object' || (message as { type?: unknown }).type !== 'shutdown') return;
+        process.off('message', delay);
+        const until = performance.now() + 300;
+        while (performance.now() < until) { /* Deliberately delay graceful ack, without an indefinite fixture. */ }
+      };
+      process.on('message', delay); return null;
+    } }),
   defineWorkerTask({ name: 'fixture.hang', version: '1', parseInput: identity, parseOutput: identity,
-    run: () => { while (true) { /* Parent must terminate this exact generation. */ } } }),
+    run: () => {
+      // Ignore IPC/abort long enough to qualify forced parent-side termination.
+      // Test-only dead-man fuse: a killed test runner must not strand an infinite
+      // CPU loop. This is not a production parent-death containment claim.
+      const hardStop = performance.now() + 10_000;
+      while (performance.now() < hardStop) { /* Parent must terminate this exact generation first. */ }
+      process.exit(70);
+    } }),
 ];
 
 if (import.meta.main) {

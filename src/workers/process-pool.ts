@@ -44,7 +44,7 @@ export class ProcessWorkPool {
     try {
       this.createExecutor = createSubprocessDatabaseExecutorFactory({ launch: options.launch, actorFlag: WORKER_CHILD_FLAG, env: options.env,
         executor: { maxInFlight: 1, operationTimeoutMs: this.executionTimeoutMs, startupTimeoutMs: options.startupTimeoutMs ?? 5000,
-          shutdownAckTimeoutMs: 100, shutdownExitTimeoutMs: 100, sigtermTimeoutMs: 250, sigkillTimeoutMs: 1000 } });
+          shutdownAckTimeoutMs: 1000, shutdownExitTimeoutMs: 1000, sigtermTimeoutMs: 500, sigkillTimeoutMs: 1000 } });
     } catch { throw new WorkerError('WORKER_CONFIG_INVALID', 'Worker launch configuration is invalid.'); }
   }
 
@@ -137,8 +137,16 @@ export class ProcessWorkPool {
     const closing = (async () => {
       try { await session.executor.close(); }
       catch (error) {
-        if (error instanceof DatabaseError) throw new WorkerError('WORKER_PROCESS_FAILED', 'Worker process settlement or launch-directory cleanup was not confirmed.', 'unknown');
-        throw error;
+        // A missing graceful ack may have required forced termination. Reconcile
+        // only after the transport has actually observed that exact exit. Its
+        // second close still verifies/retries private cwd cleanup; a settled PID
+        // alone never authorizes deleting unknown child-created contents.
+        if (error instanceof DatabaseError && session.executor.diagnostics().settled) {
+          try { await session.executor.close(); }
+          catch { throw new WorkerError('WORKER_PROCESS_FAILED', 'Worker launch-directory cleanup was not confirmed.', 'unknown'); }
+        } else if (error instanceof DatabaseError) {
+          throw new WorkerError('WORKER_PROCESS_FAILED', 'Worker process settlement was not confirmed.', 'unknown');
+        } else throw error;
       }
       if (!session.executor.diagnostics().settled) throw new WorkerError('WORKER_PROCESS_FAILED', 'Worker process settlement was not confirmed.', 'unknown');
       if (this.sessions.get(session.slot) === session) this.sessions.delete(session.slot);

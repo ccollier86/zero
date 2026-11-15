@@ -148,6 +148,12 @@ can be terminated using the existing transport's bounded shutdown/SIGTERM/
 SIGKILL and observed-exit protocol. Disconnect alone is not settlement. Never
 delete child launch contents recursively or claim failed drain succeeded.
 
+The task executor allows 1,000 ms each for graceful acknowledgment and exit,
+then 500 ms for SIGTERM and 1,000 ms for observed SIGKILL settlement. A delayed
+graceful acknowledgment may require termination; cleanup reconciles an already
+observed exit and retries the transport's private-directory release once. It
+does not replay the task or free an unconfirmed physical slot.
+
 Sanitized native errors preserve `WorkerError.code`/`outcome`, not raw child
 exceptions. Only not-started capacity/queue rejection is advertised retryable.
 No automatic task retry occurs. Use Torrent with deliberate downstream
@@ -162,7 +168,10 @@ failed close can be explicitly retried. An idle child that exits is reconciled
 before its physical slot is reused. Never treat a rejected Promise or IPC
 disconnect as proof that a CPU-heavy child has stopped.
 
-Use a production supervisor/container with child-process containment. Ordinary
+Use a production supervisor/container with child-process containment: request
+graceful shutdown from the parent, then contain surviving children at the final
+forced-stop deadline. Actors are detached from the parent's terminal process
+group; a signal to that group alone is not containment. Ordinary
 graceful shutdown, task timeout and observed child exit are covered in source
 tests; abrupt parent SIGKILL while a child is synchronously CPU-bound has **not**
 been qualified here. JavaScript `finally` cannot run after SIGKILL. Do not claim
@@ -186,6 +195,9 @@ The branch also exercises the queued actor HTTP/SDK path, current-scope retireme
 result revocation, Doctor and minified bundle catalog parity. Owned synthetic
 fixture allocation registers exact markers and cleans state in `finally` after
 all owned handles close. No provider traffic is used.
+The deliberately unresponsive fixture has its own ten-second exit fuse; it
+cannot spin forever if the creating test runner is forcibly killed. Normal
+tests still require the parent to terminate that generation much earlier.
 
 The plan tracks remaining compiled Linux/supervisor qualification,
 installed exports/archive/updater, durable scheduling and its control-plane UI.

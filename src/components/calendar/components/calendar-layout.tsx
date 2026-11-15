@@ -17,7 +17,10 @@ export function calendarColor(value?: string) {
   if (/^[a-z]+(?:\.[0-9])?$/.test(value)) { const [hue, level = '6'] = value.split('.'); return `var(--calendar-color-${hue}-${level})`; }
   return value;
 }
-export function layoutProps<T extends LayoutAliases & { style?: CSSProperties }>(props: T) {
+export function layoutProps<T extends LayoutAliases & { style?: CSSProperties }>(props: T): {
+  rest: Omit<T, keyof LayoutAliases | 'style'>;
+  style: CSSProperties;
+} {
   const { p, px, py, pt, pb, m, mx, my, mt, mb, w, h, gap, style, ...rest } = props;
   return { rest, style: {
     ...(p !== undefined ? { padding: calendarLength(p) } : {}),

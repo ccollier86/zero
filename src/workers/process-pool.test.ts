@@ -5,6 +5,8 @@ import { ProcessWorkPool } from './process-pool';
 import { tasks } from './test-support/worker-entry';
 import { workerValue } from './worker-value';
 import { defineWorkerTask } from './worker-task';
+import { join } from 'node:path';
+import { ownedWorkerFixture } from './test-support/owned-fixture';
 
 const launch = { kind: 'source' as const, entrypoint: fileURLToPath(new URL('./test-support/worker-entry.ts', import.meta.url)) };
 function pool(processes = 2) { return new ProcessWorkPool({ tasks, launch, processes, executionTimeoutMs: 3000 }); }
@@ -98,6 +100,30 @@ test('death while idle does not permanently consume the process slot and the nex
     await new Promise<void>(resolve => setTimeout(resolve, 80));
     const next = await owner.run('fixture.echo', null) as { pid: number };
     expect(next.pid).not.toBe(first.pid); expect(owner.status().processes).toBe(1);
+  } finally { await owner.close(); }
+});
+
+test('a failed child startup is not-started and settles before owned launch state is removed', async () => {
+  const fixture = await ownedWorkerFixture('failed-start');
+  let owner: ProcessWorkPool | undefined, closed = false;
+  try {
+    owner = new ProcessWorkPool({ tasks, launch: { kind: 'source', entrypoint: join(fixture.root, 'missing-entry.ts') },
+      processes: 1, startupTimeoutMs: 1000 });
+    await expect(owner.run('fixture.echo', { synthetic: true })).rejects.toMatchObject({ code: 'WORKER_START_FAILED', outcome: 'not-started' });
+    expect(owner.status()).toMatchObject({ processes: 0, active: 0 });
+    await owner.close(); closed = true;
+  } finally {
+    if (owner && !closed) { await owner.close(); closed = true; }
+    if (!owner || closed) await fixture.cleanup();
+  }
+});
+
+test('a bounded delayed graceful shutdown is given realistic admission time and still proves process settlement', async () => {
+  const owner = pool(1);
+  try {
+    await owner.run('fixture.slow-close', null);
+    await owner.close();
+    expect(owner.status()).toMatchObject({ state: 'closed', active: 0, queued: 0, processes: 0 });
   } finally { await owner.close(); }
 });
 

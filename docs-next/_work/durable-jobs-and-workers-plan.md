@@ -284,7 +284,35 @@ createApp/Guardian HTTP, actual child death/timeouts, native queued actor HTTP,
 SDK/hooks compatibility and bounded timezone/misfire math. No release archive or
 Linux qualification has been claimed. An initial full TypeScript check identified
 three local errors in new worker code; those were corrected. Final verification
-and two additional queued-hook regressions are being checked before checkpoint.
+and two additional queued-hook regressions were checked before checkpoint.
+The queued-hook/configuration/ownership-cleanup follow-up passes 37 tests in
+three files. Source is preserved in feature checkpoint `e8ba379`; no main merge
+or release publication is implied.
+
+A later process-only load recheck found two shutdown failures (8 passed / 2
+failed); retain that evidence, not a claim that every interim run passed. The
+100 ms graceful ack/exit bounds were too aggressive. They are now 1,000 ms, and
+retirement explicitly reconciles an already observed exit plus private-directory
+release before freeing its slot. Unsettled exits/cleanup failures still reject.
+A deterministic delayed-shutdown fixture and failed-start cleanup regression
+cover the correction. Final focused requalification passes **139 tests in 19
+files / 734 expectations**; no full framework-suite pass is implied.
+
+The repository-wide TypeScript check completed with one portable-declaration
+error in the earlier calendar layout helper: inference named `csstype` through
+the temporary dependency symlink. An explicit exported `CSSProperties`/rest
+return annotation removes that path dependency without changing the UI. Final
+focused declaration/type checks cover this correction; the failed full-check
+result is not relabeled as a passing full check.
+
+Final strict focused checks passed for the worker implementation/configuration/
+process tests and calendar helper. A separate strict `--declaration --noEmit`
+check passed for worker exports, schedule-time selection and calendar layout;
+no declarations/build trees were retained. Final cleanup verified no owned task
+children or synthetic fixture directories, and the dependency symlink was
+removed by EXIT. External free space is about 233.4 GiB. The internal 77.8 GiB
+warning remains under the user's explicit external-only exception, not a claim
+that machine-wide storage pressure has been repaired.
 
 Worker contracts now enforce canonical/idempotent pure parser results. One-way
 normalization is rejected before handler dispatch, avoiding a second silent
@@ -307,6 +335,9 @@ a child is synchronously CPU-bound still needs the actual Linux supervisor/
 container qualification. A JavaScript cleanup callback cannot run after SIGKILL;
 do not claim standalone OS orphan prevention or introduce an unreviewed watchdog
 or executable protocol to disguise that boundary.
+The deliberately noncooperative synthetic worker now has a ten-second hard-stop
+fuse too, so killing the runner cannot strand an infinite test CPU loop. This
+fixture safeguard does not stand in for Linux production containment testing.
 
 Next implementation boundary: finish the private Fabric schedule realm, owner
 catalog and durable intent/receipt handoff before publishing `zero.jobs`. Define
