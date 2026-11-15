@@ -33,7 +33,7 @@ and normal updater publication are still pending.
 | Durable user-owned workflow handoff | Branch API `zero.workflows.enqueueOnce(name, input, { idempotencyKey, version? })`. |
 | Short database-automation handoff | Existing source-bound `zero.torrent.enqueue(...)`. |
 | Local maintenance timer | Existing `zero.scheduler`. |
-| Durable one-off/recurring schedules | Planned shared jobs module, paused until the core upgrade is qualified; see the plan. |
+| Durable one-off/recurring schedules | Shared jobs module planned as part of this framework foundation; see the implementation plan. |
 
 A Promise pool is not CPU isolation or persistence. A subprocess is not an OS
 sandbox: registered code retains the application's OS privileges. Never execute

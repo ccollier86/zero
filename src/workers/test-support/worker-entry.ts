@@ -18,6 +18,20 @@ export const tasks = [
   defineWorkerTask({ name: 'fixture.cpu', version: '1', parseInput: value => {
     if (typeof value !== 'number' || value < 0 || value > 1000) throw new Error('Invalid synthetic duration.'); return value;
   }, parseOutput: identity, run: ms => { const startedAt = Date.now(), until = performance.now() + ms; let n = 0; while (performance.now() < until) n++; return { pid: process.pid, worked: n > 0, startedAt, finishedAt: Date.now() }; } }),
+  defineWorkerTask({ name: 'fixture.barrier', version: '1', parseInput: value => {
+    if (!value || typeof value !== 'object' || Array.isArray(value) || typeof value.directory !== 'string'
+      || value.id !== 'a' && value.id !== 'b') throw new Error('Synthetic barrier identity required.');
+    return { directory: value.directory, id: value.id };
+  }, parseOutput: identity, run: async value => {
+    const startedAt = Date.now();
+    await Bun.write(value.directory + '/' + value.id + '.ready', 'owned-synthetic-task-entered');
+    const deadline = Date.now() + 10_000;
+    while (!await Bun.file(value.directory + '/release').exists()) {
+      if (Date.now() >= deadline) throw new Error('Synthetic barrier was not released.');
+      await Bun.sleep(5);
+    }
+    return { pid: process.pid, startedAt, finishedAt: Date.now() };
+  } }),
   defineWorkerTask({ name: 'fixture.env', version: '1', parseInput: identity, parseOutput: identity,
     run: () => ({ inheritedSecret: Object.hasOwn(process.env, 'ZERO_WORKER_SYNTHETIC_SECRET'),
       allowedValue: process.env.ZERO_WORKER_SYNTHETIC_ALLOWED === 'allowed' }) }),

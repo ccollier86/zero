@@ -45,15 +45,15 @@ Active gap-close implementation is now on `feature/core-worker-runtime-upgrades`
 The older scheduling branch/worktree name is historical. Calendar application
 work is paused; shared durable scheduling belongs to this foundation.
 
-- [ ] Per-scope waiting limits and usable spare capacity under a saturated key,
+- [x] Source checks: per-scope waiting limits and usable spare capacity under a saturated key,
   preserving the existing messaging adapter's queue behavior.
-- [ ] Explicit worker cancellation outcome, observed process settlement, idle
+- [x] Source checks: explicit worker cancellation outcome, observed process settlement, idle
   generation recovery and simultaneous acquire/close regression coverage.
-- [ ] Typed registered-task references through the managed facade; fixed catalog
+- [x] Source checks: typed registered-task references through the managed facade; fixed catalog
   admission remains authoritative, not caller-selected parsers/permissions.
-- [ ] Actual managed Torrent-to-worker integration and independent progress;
+- [x] Source checks: actual managed Torrent-to-worker integration and independent progress;
   existing AI/automation concurrency contracts remain compatible.
-- [ ] Actionable source-only Doctor guidance for eager long work on a sequential
+- [x] Source checks: actionable source-only Doctor guidance for eager long work on a sequential
   automation lane, with narrow syntax ownership and no automatic rewrites.
 - [ ] Source/bundle/package exports, Linux process lifecycle qualification,
   cleanup, current documentation and an honest release readiness record.
@@ -67,7 +67,7 @@ requirement to publish an intermediate worker-only release before scheduling.
 
 | Area | Present now | Still required |
 | --- | --- | --- |
-| Shared workers | Bounded fair async pool; fixed typed task catalogs; isolated processes; managed scoped facade; messaging compatibility. | Finish race/lifecycle qualification, deterministic managed concurrency proof and Linux containment. |
+| Shared workers | Bounded fair async pool; fixed typed task catalogs; isolated processes; managed scoped facade; messaging compatibility; coordinated native concurrency proof. | Finish deployment qualification, including Linux startup/containment. |
 | Torrent handoffs | Actor-preserving commit-acknowledged enqueue, native HTTP/SDK/hooks and scope retirement. | Reuse these receipts in durable scheduling; do not introduce a second execution/retry engine. |
 | Cron | Existing lightweight in-memory scheduler remains compatible. | Durable occurrence ownership, restart/misfire handling, overlap policies and admitted control APIs. |
 | Time selection | Private, tested timezone/DST/misfire prototype. | Integrate with persisted cursors and atomic occurrence creation; it is not currently an enabled scheduler. |
@@ -129,6 +129,9 @@ Torrent/provider calls. Dispatch to the pinned Torrent workflow using a permanen
 logical receipt; reconcile death between enqueue and receipt persistence.
 Respect receipt capacity with an observable safe stop unless a separately
 qualified permanent compact-receipt design is implemented.
+Review the existing local timer's registration/control validation, per-runtime
+observability and stop/drain behavior as well; fix confirmed integration gaps
+compatibly rather than assuming that a new durable module repairs old callers.
 
 Gate: downtime, DST gap/fold, clock movement, duplicate wakes, stale claims,
 revision edits, worker death, no-overlap and independent concurrent schedules
@@ -223,8 +226,14 @@ as final independent-package qualification.
 
 Another targeted group passed 21 tests and failed one native concurrency timing
 assertion: separate HTTP enqueues need not arrive within a 200 ms CPU window.
-Phase 1 explicitly replaces that brittle timing precondition with coordinated
-task entry; it must not be hidden or called passing beforehand.
+Phase 1 replaced that brittle timing precondition with coordinated real task
+entry before release, retaining the distinct-process/overlap/independent-progress
+assertions. Final targeted revalidation passes **26 tests / five files / 131
+expectations**, including the native worker requests and real Torrent/AI/data
+fixture, process races, task contracts and configuration. Earlier failures remain
+recorded, not relabeled. The runtime/planning checkpoint is saved as `a796f1d`;
+the coordinated test fix is saved in the follow-up checkpoint. This is not a
+full-suite, final-archive or normal-updater qualification claim.
 
 Two isolated Linux/amd64-on-Colima/Rosetta archive runs completed: three passing /
 18 failing, then 12 passing / nine failing after ordinary fixture budgets were

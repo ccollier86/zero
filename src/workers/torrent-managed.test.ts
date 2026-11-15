@@ -43,7 +43,9 @@ test('queued actor work integrates scoped workers, independent AI progress, app-
           await ai.generateText({ prompt: context.input.prompt, maxRetries: 0, abortSignal: context.signal });
           context.assertCurrentAuthority();
           if (!context.zero?.workers) throw new Error('Scoped workers were not provided to the admitted actor.');
-          const result = await context.zero.workers.run('fixture.cpu', 200) as { pid: number; startedAt: number; finishedAt: number };
+          const result = await (context.input.prompt === 'SLOW'
+            ? context.zero.workers.run('fixture.cpu', 200)
+            : context.zero.workers.run('fixture.barrier', { directory: root, id: context.input.prompt === 'FAST A' ? 'a' : 'b' })) as { pid: number; startedAt: number; finishedAt: number };
           finished.set(context.instanceId, result); return { complete: true };
         });
         registry.registerHandler<unknown, WorkflowExecutionServerServices>('core.cancel', async context => {
@@ -93,6 +95,12 @@ test('queued actor work integrates scoped workers, independent AI progress, app-
     const slowId = await enqueue('core-compute', 'core:slow', { prompt: 'SLOW' });
     await wait(() => slowEntered);
     const [a, b] = await Promise.all([enqueue('core-compute', 'core:fast-a', { prompt: 'FAST A' }), enqueue('core-compute', 'core:fast-b', { prompt: 'FAST B' })]);
+    // Separate HTTP requests may arrive farther apart than a short CPU task.
+    // Observe both real child entries before release instead of relying on a
+    // host-speed timing window as the precondition for concurrency evidence.
+    await wait(() => existsSync(join(root, 'a.ready')) && existsSync(join(root, 'b.ready')));
+    expect(finished.has(a) || finished.has(b)).toBe(false);
+    await Bun.write(join(root, 'release'), 'owned-synthetic-barrier-release');
     await wait(() => finished.has(a) && finished.has(b));
     expect(finished.has(slowId)).toBe(false);
     expect((await request('/workflows/' + a)).body.status).toBe('completed');
