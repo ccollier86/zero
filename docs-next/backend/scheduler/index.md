@@ -8,13 +8,13 @@ visibility: internal
 system: scheduler
 feature: system
 maturity: supported
-applies_to: ["2.11.0 local source candidate; not a selected updater or deployment qualification"]
+applies_to: ["2.11.0 source/local APIs; deployment requires matching artifact provenance and qualification"]
 modes: ["managed Bun server", "standalone Elysia plugin/service"]
 reviewed_against:
   package: "@zero/framework"
   version: "2.11.0"
-  commit: "c401dbd68b29efbc185e55273d37e71aac3bd536"
-  snapshot: dirty
+  commit: "bc396a957c1e0fb85ac935bfa5b1d6dfdfb8b0b3"
+  snapshot: clean
   date: "2026-11-15"
   evidence_level: source-observed
 ---
@@ -31,15 +31,15 @@ Torrent persists its own deadlines/recovery state and uses Scheduler for wake
 jobs. Scheduler is the timer mechanism, not the durable source of truth. A
 process restart recreates code-defined jobs; it does not replay missed work.
 
-The 2.11.0 local source candidate implements the additive
+Zero 2.11.0 implements the additive
 [worker foundation](../workers/index.md) and optional [durable jobs](./durable-jobs.md),
 including managed admission, private Fabric state, exact Torrent handoff, native
 HTTP/SDK integration and the operator workspace. It also implements app-bound
 Scheduler observability and cooperative, bounded `close()`.
 
-These are current source APIs, not proposals, but final exact
-installed-archive/Linux qualification and normal updater selection remain
-pending. No published release or application deployment approval is implied.
+These are implemented source/local APIs. Use the exact installed commit/archive
+provenance and matching qualification receipt for deployment decisions; a version
+number alone is not application deployment approval.
 The [foundation record](../../_work/durable-jobs-and-workers-plan.md) distinguishes
 source evidence from release gates. Durable jobs are a separate service; they do
 not turn this app-local timer registry into a durable queue.
@@ -66,8 +66,8 @@ tenants' or platform maintenance jobs.
   plugin prefix/dependencies, startup and app-local binding.
 - [Jobs](./jobs.md): exact declaration fields, cron/timezone, pause/manual runs,
   captured options, overlap and caught-versus-rethrown failure policy.
-- [Durable jobs](./durable-jobs.md): candidate managed configuration, ownership,
-  permanent receipts, pinned handoff, live reads and remaining qualification.
+- [Durable jobs](./durable-jobs.md): managed configuration, ownership,
+  permanent receipts, pinned handoff, live reads and deployment boundaries.
 - [Status](./status.md): list/get/existence, busy versus scheduled state and
   timestamp meaning.
 - [Lifecycle](./lifecycle.md): removal, stop, registration ownership and shutdown.

@@ -8,12 +8,12 @@ visibility: internal
 system: workers
 feature: service-composition
 maturity: preview
-applies_to: ["2.11.0 local source candidate; not a selected updater or deployment qualification"]
+applies_to: ["2.11.0 source/local APIs; deployment requires matching artifact provenance and qualification"]
 reviewed_against:
   package: "@zero/framework"
   version: "2.11.0"
-  commit: "c401dbd68b29efbc185e55273d37e71aac3bd536"
-  snapshot: dirty
+  commit: "bc396a957c1e0fb85ac935bfa5b1d6dfdfb8b0b3"
+  snapshot: clean
   date: "2026-11-15"
   evidence_level: source-observed
 ---
@@ -25,9 +25,9 @@ reviewed_against:
 Zero runs locally integrated services. These layers have different ownership;
 sharing a process does not mean holding a database transaction while waiting for
 an AI model, provider or CPU computation. File-backed mode is first-class.
-This guide describes the implemented 2.11.0 local source candidate. Final exact
-installed-archive/Linux qualification and normal updater selection remain
-pending; source implementation alone does not approve an application deployment.
+This guide describes implemented 2.11.0 source/local APIs. For deployment, consult
+the exact commit/archive provenance and matching qualification receipt; a version
+number or source implementation alone does not approve an application deployment.
 
 ## Choose ownership, not another queue
 

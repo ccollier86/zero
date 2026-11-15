@@ -1019,6 +1019,43 @@ Colima profile is stopped between native checks and the next Linux phase. No
 normal updater selection, main merge, production change or calendar work has
 occurred. The feature checkpoint (not a release) is preserved on both remotes.
 
+### Corrected exact installed Linux jobs boundary (November 15)
+
+Committed runtime candidate `bc396a957c1e0fb85ac935bfa5b1d6dfdfb8b0b3`,
+archive SHA-256 `957019bbc8cdfd7d236355476dd47622c9fbd78e85e3530e556d38b5430dfeb7`,
+now **passes** the independent Linux/x64 installed-archive probe. This is a
+qualified substage, not selection of the normal updater or a complete framework
+release gate.
+
+The report verifies every archive-owned installed file, consumer frozen reinstall,
+public import resolution, native source execution, the official build, minified
+server startup against source-created file-backed application/SYSTEM/private jobs
+state, and a further retained bundled restart. Three app boots executed eight
+version-pinned local activities exactly once. All 32 expected semantic job events
+arrived with the intended user/system attribution and no replay duplicates.
+Six observed jobs actor processes used the exact installed fixed source entry
+and excluded the synthetic parent environment sentinel. Both previously stalled
+native/application-endpoint enqueue paths completed without changing deadlines.
+
+Evidence: `artifacts/zero-platform/diagnostics/core-workers-release/`
+`bc396a957c1e0fb85ac935bfa5b1d6dfdfb8b0b3-jobs-installed.json` on the external
+development volume. It records the pinned Bun image, exact archive/consumer-lock
+hashes, all stage flags and confirmed retirement/cleanup. The VM is aarch64 with
+Linux/x64 emulation; this is not a native x64 CPU latency measurement. The
+logging fixture explicitly uses a 30-second cold-start budget; jobs actors keep
+their unchanged default launch configuration. No real providers, genuine unknown
+transport fault, multi-host election or compiled jobs application are qualified
+by this probe.
+
+The container, private databases, app bundle/build copies, dependencies and
+transient candidate package were removed by their owning finally handlers. A
+stale control socket in the dedicated test VM was repaired through its own
+force-stop/start commands; its VM disks/download cache and unrelated profiles
+were preserved. Small reports remain, not full successful fixture copies.
+Next: release-neutral reference wording and a final frozen-source sweep, followed
+by exact final worker/deployment/package/updater qualification. Do not restart
+calendar/backend/backup work or infer a main merge from this passing substage.
+
 The dedicated external Colima profile was started for this qualification phase;
 it must be stopped after owned containers retire. Calendar/backups, real
 applications and production state remain untouched. The normal selected release

@@ -8,12 +8,12 @@ visibility: internal
 system: scheduler
 feature: durable-jobs
 maturity: preview
-applies_to: ["2.11.0 local source candidate; not a selected updater or deployment qualification"]
+applies_to: ["2.11.0 source/local APIs; deployment requires matching artifact provenance and qualification"]
 reviewed_against:
   package: "@zero/framework"
   version: "2.11.0"
-  commit: "c401dbd68b29efbc185e55273d37e71aac3bd536"
-  snapshot: dirty
+  commit: "bc396a957c1e0fb85ac935bfa5b1d6dfdfb8b0b3"
+  snapshot: clean
   date: "2026-11-15"
   evidence_level: source-observed
 ---
@@ -22,13 +22,14 @@ reviewed_against:
 
 [Scheduler](./index.md) · [Foundation plan](../../_work/durable-jobs-and-workers-plan.md)
 
-The 2.11.0 local source candidate implements managed configuration, Guardian
+Zero 2.11.0 implements managed configuration, Guardian
 admission, private Fabric storage, pinned Torrent handoffs, HTTP/SDK contracts,
 live reads, semantic audit and the native
 [operator workspace](../../frontend/jobs-workspace.md). These are current source
-APIs, not proposed contracts. Final exact installed-archive/Linux qualification
-and normal updater selection remain pending. No published release or deployment
-approval is implied by source implementation.
+APIs, not proposed contracts. This source/local manual does not assert release
+status: use the exact commit/archive provenance and matching qualification
+receipt for the intended runtime and deployment topology. A version number alone
+is not deployment approval.
 Calendar components and the calendar backend remain outside this work.
 
 ## Responsibilities
@@ -91,16 +92,17 @@ root. Each application/tenant scope gets a separately owned Fabric file. Job
 roots cannot overlap application/control files, asset/build output, Storage,
 logging, blog or messaging roots. Canonical startup checks also reject aliases.
 Jobs actors use the fixed actor entry, not the application entry, and default
-to an empty child environment. Bundled/compiled deployment still needs final
-package qualification; do not assume source execution proves that deployment.
+to an empty child environment. Source and minified installed-app qualification
+are distinct from a compiled jobs application; do not infer one from the other.
 
 Official jobs builds use the source Bun CLI (`bun run zero build`, or the
 installed source-backed `zero build` command). Its jobs-only build helper captures
 canonical migration sources in a fresh, pure-import process with an empty
 environment and dotenv disabled; it does not start the app. A compiled Zero CLI
-cannot run that source snapshot helper and fails closed. Building a compiled
-application from the source CLI is a separate capability; its complete jobs
-runtime remains outside the current installed-bundle qualification.
+cannot run that source snapshot helper and fails closed. Compiled Zero CLI jobs
+builds are unsupported. Building a compiled application from the source CLI is a
+separate capability; a complete compiled jobs application is not qualified by
+the source/minified installed-app receipt and requires its own qualification.
 
 ## Definitions, ownership and authority
 
@@ -276,7 +278,7 @@ external delivery has been undone. Inspect/control that actual run separately.
 - Missing established files, changed roots and inconsistent retained ownership
   require explicit recovery, never empty replacement.
 
-## Live reads, logging and remaining qualification
+## Live reads and logging
 
 The SDK's `client.jobs` uses the same native routes. Account/scope replacement
 retires pending acknowledgments. `schedules.watch()` and `useJobSchedules()`
@@ -284,8 +286,8 @@ are backed by coalesced private commit hints plus reauthorized bounded pages,
 not fabricated Sync row events. Denial retires the subscription and clears the
 hook's visible page. A bounded SSE lifetime forces fresh HTTP admission; it does
 not bypass audit delivery or credential checks. Streams contain public views,
-not job payloads. The live boundary is implemented; final exact installed-archive
-and deployed-browser qualification remain separate from source coverage.
+not job payloads. The live boundary is implemented; exact installed-archive and
+deployed-browser evidence remain separate from source coverage.
 
 Watch listeners may accept a second `JobWatchUpdate` argument. Its closed
 `invalidated` boolean reports an actual admitted source-change hint, not an
@@ -330,11 +332,11 @@ controls, idle reads, timer wakes, cursor materialization and claim leases do
 not append audit rows. Supervised delivery is awakened for actual semantic
 commands; no handler waits on a remote sink while holding its SQL transaction.
 An accepted handoff is not a completed workflow, and a completed workflow is
-not proof of provider delivery. Final managed/deployed acceptance remains part
-of the foundation qualification, not implied by an audit-row append.
+not proof of provider delivery. Managed/deployed acceptance requires a matching
+qualification receipt; it is not implied by an audit-row append.
 
 Shutdown retires job intake, stops its exact registered timer, drains shared
 admission/dispatch, then closes logging sources and Fabric before Torrent and
 the underlying providers. Scripts own cleanup of their synthetic files and
 temporary dependencies on success/failure. Source checks are not a substitute
-for the final frozen archive, real browser UI, Linux lifecycle and updater gates.
+for exact-archive, real browser UI, Linux lifecycle and updater qualification.

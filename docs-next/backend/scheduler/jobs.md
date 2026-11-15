@@ -8,13 +8,13 @@ visibility: internal
 system: scheduler
 feature: job-registration-and-control
 maturity: supported
-applies_to: ["2.11.0 local source candidate; not a selected updater or deployment qualification"]
+applies_to: ["2.11.0 source/local APIs; deployment requires matching artifact provenance and qualification"]
 modes: ["managed Bun server", "standalone Elysia plugin/service"]
 reviewed_against:
   package: "@zero/framework"
   version: "2.11.0"
-  commit: "c401dbd68b29efbc185e55273d37e71aac3bd536"
-  snapshot: dirty
+  commit: "bc396a957c1e0fb85ac935bfa5b1d6dfdfb8b0b3"
+  snapshot: clean
   date: "2026-11-15"
   evidence_level: source-observed
 ---
@@ -27,9 +27,10 @@ Register a named callback with a code-defined cron pattern. Scheduler copies
 the admitted declaration, so later caller mutation cannot rename its status,
 replace its handler, change its failure policy or misreport the scheduled
 pattern. Update a job by deliberately removing and recreating it.
-These are implemented local Scheduler APIs in the 2.11.0 source candidate,
-not [durable job definitions](./durable-jobs.md). Final exact installed-archive/
-Linux qualification and normal updater selection remain pending.
+These are implemented 2.11.0 source/local Scheduler APIs, not
+[durable job definitions](./durable-jobs.md). Deployment requires the exact
+installed artifact's provenance and matching qualification receipt, not its
+version number alone.
 
 ## Complete Service Helper
 

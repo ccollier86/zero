@@ -8,13 +8,13 @@ visibility: internal
 system: scheduler
 feature: configuration
 maturity: supported
-applies_to: ["2.11.0 local source candidate; not a selected updater or deployment qualification"]
+applies_to: ["2.11.0 source/local APIs; deployment requires matching artifact provenance and qualification"]
 modes: ["managed Bun server", "standalone Elysia plugin/service"]
 reviewed_against:
   package: "@zero/framework"
   version: "2.11.0"
-  commit: "c401dbd68b29efbc185e55273d37e71aac3bd536"
-  snapshot: dirty
+  commit: "bc396a957c1e0fb85ac935bfa5b1d6dfdfb8b0b3"
+  snapshot: clean
   date: "2026-11-15"
   evidence_level: source-observed
 ---
@@ -27,8 +27,9 @@ Managed Zero creates one app-local SchedulerService and mounts its plugin
 before notification/Torrent consumers. No public scheduler enable/disable
 object, persisted job settings table or scheduler-specific environment binding
 exists. Job behavior is declared when trusted server code registers the job.
-This describes the implemented 2.11.0 local source candidate; final exact
-installed-archive/Linux qualification and normal updater selection are pending.
+This describes implemented 2.11.0 source/local APIs. Match the exact installed
+commit/archive and deployment topology to its provenance and qualification
+receipt; a version number alone is not deployment approval.
 The optional [durable jobs configuration](./durable-jobs.md) is separate from
 this always-present local timer registry.
 
@@ -100,7 +101,7 @@ registry merely to access its service.
 Managed construction supplies its own observability runtime automatically.
 Standalone callers omitting it retain ambient compatibility. Two managed apps
 must not publish each other's job events through whichever sink was configured
-last. Final exact installed-archive qualification remains a separate gate.
+last. Verify installed exports against the exact artifact's qualification receipt.
 
 @zero/framework/scheduler exports SchedulerService, createSchedulerPlugin,
 getScheduler, SchedulerError and JobDefinition/JobStatus/plugin/error types,

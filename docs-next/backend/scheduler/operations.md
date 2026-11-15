@@ -8,13 +8,13 @@ visibility: internal
 system: scheduler
 feature: errors-observability-testing-and-upgrades
 maturity: supported
-applies_to: ["2.11.0 local source candidate; not a selected updater or deployment qualification"]
+applies_to: ["2.11.0 source/local APIs; deployment requires matching artifact provenance and qualification"]
 modes: ["managed Bun server", "standalone Elysia plugin/service"]
 reviewed_against:
   package: "@zero/framework"
   version: "2.11.0"
-  commit: "c401dbd68b29efbc185e55273d37e71aac3bd536"
-  snapshot: dirty
+  commit: "bc396a957c1e0fb85ac935bfa5b1d6dfdfb8b0b3"
+  snapshot: clean
   date: "2026-11-15"
   evidence_level: source-observed
 ---
@@ -26,9 +26,9 @@ reviewed_against:
 Scheduler setup, callback execution and durable-consumer recovery are separate
 outcomes. A synchronous accepted trigger does not prove the callback succeeded,
 and an in-process status list is not a durable job ledger.
-The 2.11.0 local source candidate implements the contracts below. Final exact
-installed-archive/Linux qualification and normal updater selection remain
-pending; this guide does not certify a published release or app deployment.
+This manual describes implemented 2.11.0 source/local contracts. Match the exact
+installed commit/archive, runtime and topology to its provenance and
+qualification receipt; a version number alone is not deployment approval.
 
 ## Errors And Events
 
@@ -85,9 +85,17 @@ SCHEDULER_JOB_BUSY. This is a correctness change, not a distributed scheduler.
 The old October diagnostic used Bun 1.3.14. It is historical evidence only, not
 the current runtime qualification: Zero now requires Bun 1.4.4. The foundation
 [implementation record](../../_work/durable-jobs-and-workers-plan.md) records
-current targeted checks and remaining exact-package/Linux release gates.
+dated source, exact-package/Linux checks and their qualification boundaries.
 
 ## Upgrades And Restart
+
+For a source/local upgrade, choose the inspected commit or saved archive whose
+provenance and qualification receipt match the intended runtime/topology. Review
+the [normal updater's dry run and rollback contract](../../cli/tooling/update.md),
+or use the [saved committed-package updater](../../cli/tooling/zero-update.md)
+after inspecting its selected archive. Updating the dependency does not enable
+jobs/workers, rewrite app configuration or run migrations. Prepare required
+migrations explicitly before enabling retained file-backed jobs state.
 
 Scheduler definitions are code and process-local. No Scheduler table migration
 is introduced by these corrections. Recreate job declarations on app startup;

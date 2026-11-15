@@ -8,13 +8,13 @@ visibility: internal
 system: scheduler
 feature: removal-and-shutdown
 maturity: supported
-applies_to: ["2.11.0 local source candidate; not a selected updater or deployment qualification"]
+applies_to: ["2.11.0 source/local APIs; deployment requires matching artifact provenance and qualification"]
 modes: ["managed Bun server", "standalone Elysia plugin/service"]
 reviewed_against:
   package: "@zero/framework"
   version: "2.11.0"
-  commit: "c401dbd68b29efbc185e55273d37e71aac3bd536"
-  snapshot: dirty
+  commit: "bc396a957c1e0fb85ac935bfa5b1d6dfdfb8b0b3"
+  snapshot: clean
   date: "2026-11-15"
   evidence_level: source-observed
 ---
@@ -25,9 +25,9 @@ reviewed_against:
 
 Scheduler owns future cron firing, job-map entries and terminal cooperative
 shutdown. This is not remote-effect cancellation, persistent queuing or
-missed-execution recovery. The APIs below are implemented in the 2.11.0 local
-source candidate; final exact installed-archive/Linux qualification and normal
-updater selection remain pending.
+missed-execution recovery. These are implemented 2.11.0 source/local APIs;
+match the exact installed artifact and deployment topology to its provenance
+and qualification receipt. A version number alone is not deployment approval.
 
 ## Remove And Stop
 
@@ -41,7 +41,8 @@ currently registered callback is that exact function reference. Use this optiona
 when a subsystem retires its own timer: a later replacement under the same name
 must remain untouched. The ordinary one-argument and HTTP contracts are unchanged;
 the callback is an ownership fence, not a credential or a serializable API input.
-This additive capability is not available in older selected archives.
+When upgrading an older archive, verify this additive export/behavior against
+the exact installed artifact rather than assuming version-name equivalence.
 
 stopAll(), and its stop alias, stops every admitted schedule and clears the
 registry. These methods return void. A later direct service registration can

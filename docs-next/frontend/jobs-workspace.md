@@ -8,12 +8,12 @@ visibility: internal
 system: frontend
 feature: durable-jobs
 maturity: preview
-applies_to: ["2.11.0 local source candidate; not a selected updater or deployment qualification"]
+applies_to: ["2.11.0 source/local APIs; deployment requires matching artifact provenance and qualification"]
 reviewed_against:
   package: "@zero/framework"
   version: "2.11.0"
-  commit: "c401dbd68b29efbc185e55273d37e71aac3bd536"
-  snapshot: dirty
+  commit: "bc396a957c1e0fb85ac935bfa5b1d6dfdfb8b0b3"
+  snapshot: clean
   date: "2026-11-15"
   evidence_level: source-observed
 ---
@@ -23,9 +23,10 @@ reviewed_against:
 [Frontend index](./index.md) · [Durable jobs contract](../backend/scheduler/durable-jobs.md) · [Foundation plan](../_work/durable-jobs-and-workers-plan.md)
 
 `JobsWorkspace` is the implemented native current-scope schedule and
-execution-history view in the 2.11.0 local source candidate. Final exact
-installed-archive/Linux qualification and normal updater selection remain
-pending; it is not a published release or an alternative workflow executor.
+execution-history view in Zero 2.11.0. This is a source/local API manual, not a
+release-status receipt or an alternative workflow executor. Match the exact
+installed artifact and topology to its provenance and qualification receipt;
+a version number alone is not deployment approval.
 Place it in an AppShell content pane under the application's shared AppProvider.
 Keep that provider mounted during router navigation.
 
@@ -123,9 +124,10 @@ composition details. No separate authentication client or tenant selector is use
 
 Source coverage includes in-memory controller checks and a short-lived synthetic
 transport/browser fixture. The managed service also has Guardian/Fabric/Torrent
-fixtures; neither layer alone substitutes for final exact installed-archive UI,
-bundled Linux deployment and lifecycle qualification. Those final candidate
-gates are ongoing. The foundation plan records actual results and remaining
-gates, without treating source implementation as updater publication.
+fixtures; neither layer alone substitutes for exact installed-archive UI,
+bundled Linux deployment and lifecycle qualification. The foundation plan
+records dated results and qualification boundaries. Use the receipt matching
+your exact artifact/topology rather than inferring deployment approval from
+source implementation or the package version.
 The preview script owns its fixture root/server and cleans them on normal exit,
 SIGINT, SIGTERM and its ten-minute deadline; no preview is retained by default.

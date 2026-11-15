@@ -9,13 +9,13 @@ visibility: internal
 system: workers
 feature: task-execution
 maturity: preview
-applies_to: ["2.11.0 local source candidate; not a selected updater or deployment qualification"]
+applies_to: ["2.11.0 source/local APIs; deployment requires matching artifact provenance and qualification"]
 modes: [managed-bun, trusted-standalone]
 reviewed_against:
   package: "@zero/framework"
   version: "2.11.0"
-  commit: "c401dbd68b29efbc185e55273d37e71aac3bd536"
-  snapshot: dirty
+  commit: "bc396a957c1e0fb85ac935bfa5b1d6dfdfb8b0b3"
+  snapshot: clean
   date: "2026-11-15"
   evidence_level: source-observed
 ---
@@ -25,14 +25,15 @@ reviewed_against:
 [Backend](../index.md) · [Request services](../runtime/server-services.md) ·
 [Expansion plan](../../_work/durable-jobs-and-workers-plan.md)
 
-The 2.11.0 local source candidate implements shared execution pools, isolated Bun
+Zero 2.11.0 implements shared execution pools, isolated Bun
 task processes and the managed `zero.workers.run()` facade, together with the
 optional [durable jobs/schedule facade](../scheduler/durable-jobs.md). Existing
 cron and Torrent APIs remain compatible. See [cross-service composition](./service-integration.md)
 for the boundaries between admission, provider work and authorized results.
-Source implementation is complete; final exact installed-archive/Linux
-qualification and normal updater selection remain pending. A local version or
-passing source check is not a published release or deployment approval.
+This is a source/local API manual, not a release-status receipt. Match the exact
+installed commit/archive checksum, runtime and deployment topology to its
+qualification record. A version number or passing source check alone is not
+deployment approval.
 
 ## Choose the layer
 
@@ -228,8 +229,9 @@ forced-stop deadline. Actors are detached from the parent's terminal process
 group; a signal to that group alone is not containment. Ordinary
 graceful shutdown, task timeout and observed child exit are covered in source
 tests. A bounded Linux/x64 emulated diagnostic also passed CPU-bound child
-containment after parent SIGKILL with an explicit 15-second startup budget;
-final-archive/native/default-budget deployment qualification remains pending.
+containment after parent SIGKILL with an explicit 15-second startup budget.
+That diagnostic is distinct from the production 5,000 ms startup default and
+does not qualify every native/default-budget deployment.
 JavaScript `finally` cannot run after SIGKILL. Do not claim
 this library alone prevents OS-level orphans after forcible parent death; the
 Linux deployment/restart qualification must verify the actual supervisor.
@@ -266,12 +268,11 @@ The deliberately unresponsive fixture has its own ten-second exit fuse; it
 cannot spin forever if the creating test runner is forcibly killed. Normal
 tests still require the parent to terminate that generation much earlier.
 
-The plan records completed source implementation and prior diagnostic evidence
-separately from ongoing final compiled Linux/supervisor and exact
-installed-archive/export qualification. Durable scheduling and its native
-control-plane UI are implemented; their final deployment qualification and normal
-updater selection are not implied by that implementation.
-Source tests are not proof that a released archive or deployed app is qualified.
+The [foundation record](../../_work/durable-jobs-and-workers-plan.md) keeps exact
+commit/archive receipts and source, installed-app, Linux and diagnostic evidence
+separate. Check the receipt matching the artifact and topology you intend to
+run; worker-process evidence does not automatically qualify a compiled jobs
+application. Source tests alone do not approve a deployed app.
 
 Maintainer checks (run the required storage preflight first):
 `TMPDIR=/Volumes/code-bank/tmp/scratch/zero-platform bun --no-env-file scripts/qualify-worker-foundation.ts`
