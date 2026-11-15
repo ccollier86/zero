@@ -15,7 +15,7 @@ export function resolveWorkersConfig(input: WorkersConfig | false | undefined, p
   auth: NormalizedAuthBehaviorConfig | null): ResolvedWorkersConfig | false {
   if (input === undefined || input === false) return false;
   if (!auth) throw new WorkerError('WORKER_CONFIG_INVALID', 'Managed workers require Guardian.');
-  workerRecord(input, ['tasks', 'launch', 'env', 'processes', 'maxQueued', 'queueTimeoutMs', 'executionTimeoutMs', 'startupTimeoutMs', 'shutdownGraceMs']);
+  workerRecord(input, ['tasks', 'launch', 'env', 'processes', 'maxQueued', 'maxQueuedPerKey', 'maxConcurrentPerKey', 'queueTimeoutMs', 'executionTimeoutMs', 'startupTimeoutMs', 'shutdownGraceMs']);
   const launch = { ...workerRecord(input.launch) } as unknown as WorkersConfig['launch'];
   if ((launch.kind === 'source' || launch.kind === 'bundle') && typeof launch.entrypoint === 'string' && !isAbsolute(launch.entrypoint)) {
     (launch as { entrypoint: string }).entrypoint = resolve(projectRoot, launch.entrypoint);

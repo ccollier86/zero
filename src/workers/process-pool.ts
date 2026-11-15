@@ -4,7 +4,7 @@ import type { DatabaseExecutor } from '../databases/database-executor';
 import { DatabaseError } from '../databases/database-error';
 import { createSubprocessDatabaseExecutorFactory, type DatabaseActorLaunch } from '../databases/subprocess-database-executor-factory';
 import { WorkPool, type WorkPoolRunOptions } from './work-pool';
-import { WorkerTaskCatalog, type WorkerTask } from './worker-task';
+import { WorkerTaskCatalog, type WorkerTask, type WorkerTaskInput, type WorkerTaskOutput } from './worker-task';
 import { WorkerError } from './worker-error';
 import { workerRecord } from './worker-value';
 import { WORKER_CHILD_FLAG } from './worker-bootstrap';
@@ -17,6 +17,9 @@ export interface ProcessWorkPoolOptions {
   /** Max is min(4, available CPUs), not 100 CPU-heavy child processes. */
   processes?: number | 'max';
   maxQueued?: number;
+  /** Omitted caps one scope's waiting share at min(25, maxQueued). Not a reserved quota. */
+  maxQueuedPerKey?: number;
+  maxConcurrentPerKey?: number;
   queueTimeoutMs?: number;
   executionTimeoutMs?: number;
   startupTimeoutMs?: number;
@@ -32,14 +35,16 @@ export class ProcessWorkPool {
   private readonly sessions = new Map<number, Session>();
   private closed = false;
   private closeTask: Promise<void> | null = null;
+  private acquiring: Promise<void> = Promise.resolve();
   private readonly executionTimeoutMs: number;
   constructor(options: ProcessWorkPoolOptions) {
-    workerRecord(options, ['tasks', 'launch', 'env', 'processes', 'maxQueued', 'queueTimeoutMs', 'executionTimeoutMs', 'startupTimeoutMs', 'shutdownGraceMs']);
+    workerRecord(options, ['tasks', 'launch', 'env', 'processes', 'maxQueued', 'maxQueuedPerKey', 'maxConcurrentPerKey', 'queueTimeoutMs', 'executionTimeoutMs', 'startupTimeoutMs', 'shutdownGraceMs']);
     this.catalog = new WorkerTaskCatalog(options.tasks);
     const processes = options.processes === undefined || options.processes === 'max' ? Math.min(4, availableParallelism()) : options.processes;
     if (!Number.isSafeInteger(processes) || processes < 1 || processes > 64) throw new WorkerError('WORKER_CONFIG_INVALID', 'Worker process capacity is invalid.');
     this.capacity = processes; this.executionTimeoutMs = options.executionTimeoutMs ?? 30_000;
     this.queue = new WorkPool({ concurrency: processes, maxConcurrency: 64, maxQueued: options.maxQueued,
+      maxQueuedPerKey: options.maxQueuedPerKey ?? Math.min(25, options.maxQueued ?? 100), maxConcurrentPerKey: options.maxConcurrentPerKey,
       queueTimeoutMs: options.queueTimeoutMs, executionTimeoutMs: this.executionTimeoutMs, shutdownGraceMs: options.shutdownGraceMs });
     try {
       this.createExecutor = createSubprocessDatabaseExecutorFactory({ launch: options.launch, actorFlag: WORKER_CHILD_FLAG, env: options.env,
@@ -48,23 +53,42 @@ export class ProcessWorkPool {
     } catch { throw new WorkerError('WORKER_CONFIG_INVALID', 'Worker launch configuration is invalid.'); }
   }
 
-  run(name: string, input: unknown, options: WorkPoolRunOptions = {}, assertCurrent: () => void = () => {}): Promise<unknown> {
+  run<Task extends WorkerTask>(task: Task, input: WorkerTaskInput<NoInfer<Task>>, options?: WorkPoolRunOptions, assertCurrent?: () => void): Promise<WorkerTaskOutput<Task>>;
+  run(name: string, input: unknown, options?: WorkPoolRunOptions, assertCurrent?: () => void): Promise<unknown>;
+  run(target: string | WorkerTask, input: unknown, options: WorkPoolRunOptions = {}, assertCurrent: () => void = () => {}): Promise<unknown> {
     try {
       const admittedOptions = Object.freeze({ ...workerRecord(options, ['signal', 'key', 'queueTimeoutMs', 'executionTimeoutMs']) }) as WorkPoolRunOptions;
-      const task = this.catalog.get(name), acceptedInput = task.parseInput(input);
+      const task = this.catalog.resolve(target), acceptedInput = task.parseInput(input);
+      let dispatched = false;
       return this.queue.run(async signal => {
         signal.throwIfAborted(); if (this.closed) throw new WorkerError('WORKER_NOT_READY', 'Worker pool is closing.');
         assertCurrent();
-        const session = await this.acquire(); let dispatched = false;
+        let session = await this.acquire(signal);
         let authorityFailed = false;
         const fence = () => { try { assertCurrent(); } catch (error) { authorityFailed = true; throw error; } };
         const abort = () => { void this.retire(session).catch(() => {}); };
         signal.addEventListener('abort', abort, { once: true });
         try {
           signal.throwIfAborted();
-          await session.executor.start(); signal.throwIfAborted();
-          const fingerprint = await session.executor.execute({ operation: 'worker.catalog', kind: 'read', payload: null });
-          if (fingerprint !== this.catalog.fingerprint) throw new WorkerError('WORKER_VERSION_MISMATCH', 'Worker catalog does not match the admitted task versions.');
+          for (let replacement = 0; ; replacement++) {
+            const reused = session.executor.diagnostics().state === 'ready';
+            try {
+              signal.throwIfAborted();
+              await session.executor.start(); signal.throwIfAborted();
+              const fingerprint = await session.executor.execute({ operation: 'worker.catalog', kind: 'read', payload: null });
+              if (fingerprint !== this.catalog.fingerprint) throw new WorkerError('WORKER_VERSION_MISMATCH', 'Worker catalog does not match the admitted task versions.');
+              break;
+            } catch (error) {
+              // An idle generation can die after acquisition but before its
+              // catalog response. No task has been sent. Reconcile that exact
+              // generation once, never retry a task or mask a contract mismatch.
+              if (replacement || !reused || signal.aborted || this.closed || !(error instanceof DatabaseError)
+                || !['DATABASE_EXECUTOR_FAILED', 'DATABASE_EXECUTOR_START_FAILED'].includes(error.code)) throw error;
+              await this.retire(session); session.busy = false;
+              signal.throwIfAborted(); fence();
+              session = await this.acquire(signal);
+            }
+          }
           signal.throwIfAborted(); fence(); dispatched = true;
           const raw = await session.executor.execute({ operation: 'worker.execute', kind: 'write',
             payload: { name: task.name, version: task.version, input: acceptedInput, catalog: this.catalog.fingerprint } },
@@ -96,7 +120,12 @@ export class ProcessWorkPool {
             session.busy = false;
           }
         }
-      }, admittedOptions);
+      }, admittedOptions).catch(error => {
+        if (admittedOptions.signal?.aborted && error === admittedOptions.signal.reason) {
+          throw new WorkerError('WORKER_CANCELLED', 'Worker execution was cancelled; reconcile any dispatched external effect.', dispatched ? 'unknown' : 'not-started');
+        }
+        throw error;
+      });
     } catch (error) { return Promise.reject(error); }
   }
 
@@ -117,14 +146,23 @@ export class ProcessWorkPool {
     void closing.catch(() => { if (this.closeTask === closing) this.closeTask = null; });
     return closing;
   }
-  private async acquire(): Promise<Session> {
+  private acquire(signal: AbortSignal): Promise<Session> {
+    // Only process assignment/retirement is serialized, never task execution.
+    // Waiting calls are already bounded by the shared execution pool.
+    const admitted = this.acquiring.then(() => { signal.throwIfAborted(); return this.acquireSession(signal); });
+    this.acquiring = admitted.then(() => undefined, () => undefined);
+    return admitted;
+  }
+  private async acquireSession(signal: AbortSignal): Promise<Session> {
     if (this.closed) throw new WorkerError('WORKER_NOT_READY', 'Worker pool is closing.');
     // Idle children can die between requests too. Reconcile their exact
     // generation before selecting a replacement; do not strand a permanent
     // capacity slot or treat a mere disconnect as process settlement.
     for (const session of [...this.sessions.values()]) if (!session.busy && session.executor.diagnostics().state !== 'ready') {
-      session.busy = true; await this.retire(session);
+      session.busy = true;
+      try { await this.retire(session); } finally { session.busy = false; }
     }
+    signal.throwIfAborted();
     if (this.closed) throw new WorkerError('WORKER_NOT_READY', 'Worker pool is closing.');
     for (const session of this.sessions.values()) if (!session.busy && !session.closing && session.executor.diagnostics().state === 'ready') { session.busy = true; return session; }
     let slot = 0; while (this.sessions.has(slot)) slot++;

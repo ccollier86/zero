@@ -9,6 +9,7 @@ test('worker HTTP failures distinguish capacity, invalid input and unknown execu
     ['WORKER_CAPACITY', 'not-started', 429, true], ['WORKER_QUEUE_TIMEOUT', 'not-started', 503, true],
     ['WORKER_TASK_INVALID', 'not-started', 422, false], ['WORKER_EXECUTION_TIMEOUT', 'unknown', 504, false],
     ['WORKER_AUTHORITY_CHANGED', 'unknown', 503, false], ['WORKER_PROCESS_FAILED', 'unknown', 500, false],
+    ['WORKER_CANCELLED', 'not-started', 409, false], ['WORKER_CANCELLED', 'unknown', 409, false],
   ];
   const app = applyServerExtensionErrorHandler(new Elysia()).get('/worker/:case', ({ params }) => {
     const [code, outcome] = cases[Number(params.case)]!;

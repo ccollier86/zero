@@ -175,6 +175,13 @@ describe('durable workflow execution authority', () => {
       status: 'failed',
       retries: 1,
     });
+    // Keep this retry pending while the second runtime starts. Otherwise its
+    // real startup recovery can legitimately complete an already-due retry
+    // before this test's explicit poll, especially on an I/O-contended host.
+    first.db.update('workflow_steps',
+      String(first.workflows.getSteps(instanceId, tenantScope(actor))[0]!.step_id), {
+        retry_at: new Date(Date.now() + 3_600_000).toISOString(),
+      });
     await stopHarness(first);
 
     const second = await startHarness({ database: raw, register: registerRetry });

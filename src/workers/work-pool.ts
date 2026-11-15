@@ -15,6 +15,8 @@ export interface WorkPoolOptions {
   concurrency?: number | 'max';
   maxConcurrency?: number;
   maxQueued?: number;
+  /** Per-key waiting budget; defaults to maxQueued for standalone compatibility. */
+  maxQueuedPerKey?: number;
   /** Optional per-key limit; keys partition fair admission, not Guardian authority. */
   maxConcurrentPerKey?: number;
   queueTimeoutMs?: number;
@@ -49,6 +51,7 @@ interface Entry {
 export class WorkPool {
   readonly capacity: number;
   private readonly maxQueued: number;
+  private readonly maxQueuedPerKey: number;
   private readonly maxPerKey: number;
   private readonly queueTimeoutMs?: number;
   private readonly executionTimeoutMs?: number;
@@ -63,13 +66,14 @@ export class WorkPool {
 
   constructor(options: WorkPoolOptions = {}) {
     try {
-      options = { ...workerRecord(options, ['concurrency', 'maxConcurrency', 'maxQueued', 'maxConcurrentPerKey',
+      options = { ...workerRecord(options, ['concurrency', 'maxConcurrency', 'maxQueued', 'maxQueuedPerKey', 'maxConcurrentPerKey',
         'queueTimeoutMs', 'executionTimeoutMs', 'shutdownGraceMs']) } as WorkPoolOptions;
     } catch { throw invalid(); }
     const ceiling = integer(options.maxConcurrency ?? DEFAULT_WORK_POOL_CAPACITY, 1, MAX_CAPACITY);
     this.capacity = options.concurrency === undefined || options.concurrency === 'max'
       ? ceiling : integer(options.concurrency, 1, ceiling);
     this.maxQueued = integer(options.maxQueued ?? 100, 0, 100_000);
+    this.maxQueuedPerKey = integer(options.maxQueuedPerKey ?? this.maxQueued, 0, this.maxQueued);
     this.maxPerKey = integer(options.maxConcurrentPerKey ?? this.capacity, 1, this.capacity);
     this.queueTimeoutMs = timeout(options.queueTimeoutMs);
     this.executionTimeoutMs = timeout(options.executionTimeoutMs);
@@ -95,8 +99,14 @@ export class WorkPool {
       const executionMs = timeout(options.executionTimeoutMs) ?? this.executionTimeoutMs;
       if (this.state !== 'open') throw closed();
       signal?.throwIfAborted();
-      const canStart = this.active.size < this.capacity && (this.activeKeys.get(key) ?? 0) < this.maxPerKey && this.queued === 0;
-      if (!canStart && this.queued >= this.maxQueued) throw new WorkerError('WORKER_CAPACITY', 'Work-pool admission is exhausted.');
+      // Admit older eligible waiters first. Remaining waiters may all be blocked
+      // by their own per-key limits; they must not strand a free slot or prevent
+      // an independent key from using it just because the waiting budget is full.
+      this.pump();
+      const canStart = this.active.size < this.capacity && (this.activeKeys.get(key) ?? 0) < this.maxPerKey;
+      if (!canStart && (this.queued >= this.maxQueued || (this.waiting.get(key)?.length ?? 0) >= this.maxQueuedPerKey)) {
+        throw new WorkerError('WORKER_CAPACITY', 'Work-pool admission is exhausted.');
+      }
       return new Promise<T>((resolve, reject) => {
         let callerSettled = false;
         const settle = (ok: boolean, value: unknown) => {

@@ -16,7 +16,10 @@ export interface WorkerTaskDefinition<Input, Output> {
   /** Managed admission only; omitted means platform administrator, not public. */
   access?: AccessRequirement;
 }
-export interface WorkerTask {
+declare const workerTaskTypes: unique symbol;
+export interface WorkerTask<Input = unknown, Output = unknown> {
+  /** Type-only contract; never serialized or used as runtime authority. */
+  readonly [workerTaskTypes]?: { readonly input: Input; readonly output: Output };
   readonly name: string;
   readonly version: string;
   readonly access: AccessRequirement;
@@ -24,9 +27,11 @@ export interface WorkerTask {
   readonly parseOutput: (value: unknown) => WorkerValue;
   readonly invoke: (input: unknown) => Promise<WorkerValue>;
 }
+export type WorkerTaskInput<Task extends WorkerTask> = NonNullable<Task[typeof workerTaskTypes]>['input'];
+export type WorkerTaskOutput<Task extends WorkerTask> = NonNullable<Task[typeof workerTaskTypes]>['output'];
 const registered = new WeakSet<WorkerTask>();
 
-export function defineWorkerTask<Input, Output>(definition: WorkerTaskDefinition<Input, Output>): WorkerTask {
+export function defineWorkerTask<Input, Output>(definition: WorkerTaskDefinition<Input, Output>): WorkerTask<Input, Output> {
   workerRecord(definition, ['name', 'version', 'parseInput', 'parseOutput', 'run', 'access']);
   if (typeof definition.name !== 'string' || !/^[a-zA-Z][a-zA-Z0-9_.-]{0,95}$/.test(definition.name)
     || typeof definition.version !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/.test(definition.version)
@@ -35,7 +40,7 @@ export function defineWorkerTask<Input, Output>(definition: WorkerTaskDefinition
   }
   const name = definition.name, version = definition.version, parseInput = definition.parseInput,
     parseOutput = definition.parseOutput, run = definition.run;
-  const task: WorkerTask = Object.freeze({ name, version,
+  const task: WorkerTask<Input, Output> = Object.freeze({ name, version,
     access: freeze(structuredClone(definition.access ?? 'admin')),
     parseInput: (value: unknown) => parseSafely(parseInput, value),
     parseOutput: (value: unknown) => parseSafely(parseOutput, value),
@@ -60,6 +65,12 @@ export class WorkerTaskCatalog {
   }
   get(name: string): WorkerTask {
     const task = this.tasks.get(name); if (!task) throw new WorkerError('WORKER_TASK_INVALID', 'Worker task is not registered.');
+    return task;
+  }
+  /** References must be the exact registered object, never a same-name weaker contract. */
+  resolve(task: string | WorkerTask): WorkerTask {
+    if (typeof task === 'string') return this.get(task);
+    if (!registered.has(task) || this.tasks.get(task.name) !== task) throw new WorkerError('WORKER_TASK_INVALID', 'Worker task reference is not registered in this catalog.');
     return task;
   }
   list(): readonly WorkerTask[] { return Object.freeze([...this.tasks.values()]); }

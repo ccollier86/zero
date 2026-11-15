@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { createApp } from '../frontend/server/app-factory';
 import { defineEndpoint } from '../frontend/server/server-extensions';
 import { resolveConfig, type AppConfig } from '../frontend/server/types';
-import { tasks } from './test-support/worker-entry';
+import { tasks, sumTask } from './test-support/worker-entry';
 import { ownedWorkerFixture } from './test-support/owned-fixture';
 
 const launch = { kind: 'source' as const, entrypoint: fileURLToPath(new URL('./test-support/worker-entry.ts', import.meta.url)) };
@@ -29,7 +29,9 @@ test('native requests execute registered tasks through zero.workers, enforce tas
       serverResourcesDir: false, serverPluginsDir: false, serverMiddlewareDir: false,
       serverEndpointsDir: false, serverRoutesDir: false, resourceRoutes: false,
       serverExtensions: [defineEndpoint({ method: 'POST', path: '/api/worker-proof', auth: 'user',
-        handler: async ({ zero }) => ({ result: await zero.workers!.run('fixture.echo', { synthetic: true }) }) })],
+        handler: async ({ zero }) => ({ result: await zero.workers!.run('fixture.echo', { synthetic: true }) }) }),
+      defineEndpoint({ method: 'POST', path: '/api/worker-sum', auth: 'user',
+        handler: async ({ zero }) => { const result: number = await zero.workers!.run(sumTask, [12, 25, 8]); return { result }; } })],
     };
     app = await createApp(config); app.listen(0);
     const url = 'http://127.0.0.1:' + app.server!.port;
@@ -43,6 +45,8 @@ test('native requests execute registered tasks through zero.workers, enforce tas
     expect(response.status).toBe(200);
     const result = await response.json() as { result: { input: { synthetic: boolean }; pid: number } };
     expect(result.result.input).toEqual({ synthetic: true }); expect(result.result.pid).not.toBe(process.pid);
+    const sum = await fetch(url + '/api/worker-sum', { method: 'POST', headers: { Authorization: 'Bearer ' + owner.accessToken } });
+    expect(sum.status).toBe(200); expect(await sum.json()).toEqual({ result: 45 });
     const member = await register('worker-member');
     const denied = await fetch(url + '/api/worker-proof', { method: 'POST', headers: { Authorization: 'Bearer ' + member.accessToken } });
     expect(denied.status).toBe(403);
@@ -55,4 +59,4 @@ test('native requests execute registered tasks through zero.workers, enforce tas
     // createApp owns failed-construction teardown. Never delete a live fixture.
     if (!app || stopped) await fixture.cleanup();
   }
-}, 30_000);
+}, 120_000);

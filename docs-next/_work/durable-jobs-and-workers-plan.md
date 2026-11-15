@@ -8,7 +8,7 @@ visibility: internal
 system: scheduler
 feature: durable-jobs-and-workers
 maturity: planned
-applies_to: ["feature/durable-scheduling-foundation; proposed contracts unless explicitly qualified"]
+applies_to: ["feature/core-worker-runtime-upgrades; proposed contracts unless explicitly qualified"]
 ---
 
 # Shared scheduling, jobs and worker foundation
@@ -21,6 +21,222 @@ This document is the execution/decision record and must be updated as work
 lands. Proposals below are **not existing APIs** merely because they appear in
 an example. No main merge, release archive, updater selection or deployment is
 implied by a local implementation checkpoint.
+
+## Confirmed scope — the complete framework foundation before calendars
+
+The user's latest clarification supersedes the earlier artificial split between
+core workers and durable scheduling. **Cron/durable scheduling, worker pools and
+cross-service integration together are the prerequisite Zero upgrade.** Complete,
+review and qualify that foundation before resuming calendar-specific backend
+implementation. Include the concrete earlier execution/integration gaps below;
+do not turn this into a rewrite of unrelated completed Zero features.
+
+Four unwired scheduling draft files (`src/jobs/error.ts`, `model.ts`,
+`realm-schema.ts`, `validation.ts`) are independently preserved on
+`feature/parked-scheduling-drafts`, commit `2cc8bd5`. They are not in the active
+core-upgrade worktree and have never been wired into managed startup or released.
+They can now be reviewed and brought forward as part of this foundation; their
+existence is not evidence that a supported durable scheduling service exists.
+The earlier private time-math prototype is not an enabled scheduler feature.
+
+Core checkpoint gap-close checklist:
+
+Active gap-close implementation is now on `feature/core-worker-runtime-upgrades`.
+The older scheduling branch/worktree name is historical. Calendar application
+work is paused; shared durable scheduling belongs to this foundation.
+
+- [ ] Per-scope waiting limits and usable spare capacity under a saturated key,
+  preserving the existing messaging adapter's queue behavior.
+- [ ] Explicit worker cancellation outcome, observed process settlement, idle
+  generation recovery and simultaneous acquire/close regression coverage.
+- [ ] Typed registered-task references through the managed facade; fixed catalog
+  admission remains authoritative, not caller-selected parsers/permissions.
+- [ ] Actual managed Torrent-to-worker integration and independent progress;
+  existing AI/automation concurrency contracts remain compatible.
+- [ ] Actionable source-only Doctor guidance for eager long work on a sequential
+  automation lane, with narrow syntax ownership and no automatic rewrites.
+- [ ] Source/bundle/package exports, Linux process lifecycle qualification,
+  cleanup, current documentation and an honest release readiness record.
+
+These are implementation checkpoints within one framework upgrade, not a
+requirement to publish an intermediate worker-only release before scheduling.
+
+## Stocktake and step-by-step execution
+
+### Actual state, not release claims
+
+| Area | Present now | Still required |
+| --- | --- | --- |
+| Shared workers | Bounded fair async pool; fixed typed task catalogs; isolated processes; managed scoped facade; messaging compatibility. | Finish race/lifecycle qualification, deterministic managed concurrency proof and Linux containment. |
+| Torrent handoffs | Actor-preserving commit-acknowledged enqueue, native HTTP/SDK/hooks and scope retirement. | Reuse these receipts in durable scheduling; do not introduce a second execution/retry engine. |
+| Cron | Existing lightweight in-memory scheduler remains compatible. | Durable occurrence ownership, restart/misfire handling, overlap policies and admitted control APIs. |
+| Time selection | Private, tested timezone/DST/misfire prototype. | Integrate with persisted cursors and atomic occurrence creation; it is not currently an enabled scheduler. |
+| Durable jobs | Four parked schema/validation/model drafts. | Reviewed contracts, Fabric placement, catalog/config/runtime, authorization, dispatch, SDK and live views. |
+| Documentation/release | Working guides and this plan. | Supported/planned consistency, adoption instructions, exact final package/updater qualification. No new release has been selected. |
+
+### 1. Close the existing execution foundation
+
+Finish fair capacity, cancellation, failed/idle-generation recovery, concurrent
+acquire/close and source/bundle task identity. Preserve both per-file SQLite
+ordering and independent work across files. Repair brittle test preconditions
+without loosening production authority or replay rules. In the native managed
+concurrency test, coordinate actual task entry rather than assuming two separate
+HTTP requests arrive within a 200 ms CPU window. Use a small IPC probe to diagnose
+platform failures before repeating expensive package installs. Keep failed
+intermediate evidence visible.
+
+Gate: real native actor/worker/data progress and revocation pass; slots remain
+counted until actual settlement; optional workers stay disabled without side
+effects. This checkpoint can be committed while the later foundation work
+continues; it is not a release-readiness claim.
+
+### 2. Freeze durable ownership and admission contracts
+
+Review the parked drafts against actual Guardian/Fabric/Torrent contracts before
+restoring them. Define versioned, code-owned job definitions and workflow pins,
+bounded inputs, explicit actor-owned versus service-owned execution, current
+scope and a deliberate future-session policy. Actor authority must not silently
+become SYSTEM after expiry/revocation. A long-lived service schedule needs an
+explicit code-admitted service principal, permitted scope, provenance and live
+eligibility checks. Preserve the initiating user separately from the executor.
+Review API-key/machine support and the currently intentional SYSTEM/API-key
+worker restrictions; do not simply remove a guard to make integration work.
+
+Gate: ordinary users, administrators, machines, tenant changes, revoked owners
+and service-owned work have explicit supported/denied behaviors and tests.
+
+### 3. Implement the private Fabric scheduling state
+
+Use existing supported realm contributions, ownership registration and migration
+boundaries. Persist schedules, immutable admitted generations, due cursors,
+occurrence intents, fenced claims and exact dispatch receipts in the appropriate
+private scope/file. Validate retained realm identity; missing established state
+requires recovery, not an empty replacement. Keep disabled configuration inert
+and preserve retained state when disabled. Do not expose authority seals, inputs
+or internal lease tables through generic client Sync.
+
+Gate: atomic intent/cursor changes, rollback, duplicate identity, scoped queries,
+independent-file writes, restart and retained-file errors pass using synthetic
+owned databases only.
+
+### 4. Implement durable scheduling and dispatch
+
+Connect explicit-timezone cron/one-off calculation to bounded due selection,
+misfire age/count budgets, overlap policy, monotonic ownership/revision fences
+and pause/resume/cancel/run-now. A short timer wake discovers work; it does not
+prove acceptance. Release SQL/authority commit leases before queue waits or
+Torrent/provider calls. Dispatch to the pinned Torrent workflow using a permanent
+logical receipt; reconcile death between enqueue and receipt persistence.
+Respect receipt capacity with an observable safe stop unless a separately
+qualified permanent compact-receipt design is implemented.
+
+Gate: downtime, DST gap/fold, clock movement, duplicate wakes, stale claims,
+revision edits, worker death, no-overlap and independent concurrent schedules
+produce the intended bounded occurrences without duplicating effects.
+
+### 5. Wire the Zero public facade end to end
+
+Finish pure optional configuration, managed startup/recovery/drain, typed
+`zero.jobs` and scheduling operations, native admitted HTTP contracts, SDK and
+scope-retired hooks. Preserve compatible `zero.scheduler` calls; do not imply
+legacy callbacks have become durable. Browser/machine adapters use the same
+service admission, stable errors and accepted/unknown semantics, not raw actor
+handles or caller-selected database paths. Reuse existing reactive transport
+with current-authority snapshots and commit-derived update hints.
+
+Gate: enable/disable in existing and new apps, each supported auth/topology mode,
+real immediate/future runs, reads/control writes, SDK replacement, denial and
+reconnect all work through public surfaces.
+
+### 6. Close the earlier cross-service integration gaps
+
+Use the integration matrix below as the checklist: Torrent and source automations
+for short durable handoffs; AI/decision calls with independent bounded progress;
+email/notifications with per-intent identity and truthful provider outcomes;
+authorized private Storage/result references; Guardian at admission/effect/result
+boundaries; Fabric at persistence; semantic logging at accepted control/effect
+boundaries. Do not audit every timer/lease/heartbeat or expose prompts/results.
+Map long-running built-in callers to the right existing mechanism deliberately;
+do not replace logging custody or other feature-specific protocols with a generic
+pool merely to share infrastructure. Declare unsupported adapters explicitly.
+
+Gate: representative real managed integrations pass, including slow AI not
+holding unrelated work or database leases, uncertain external effects needing
+reconciliation and genuine revocation still stopping publication.
+
+### 7. Review operator/developer experience and documentation
+
+Provide the planned native job/schedule control view and live scoped state using
+existing DataTable/filter/count/modal primitives where included in the supported
+boundary. Distinguish admitted, queued/running, completed, blocked and unknown.
+Document configuration, permissions, definition/version changes, recovery,
+backpressure, cancellation, topology, worker deployment and application adoption.
+Complete narrow Doctor guidance and public examples; link the main references
+to individual APIs. No custom polling/audit substitutes or fabricated row events.
+
+Gate: examples match the installed public exports; live denial withdraws old
+content; inspection/control UI and guides explain actual supported behavior.
+
+### 8. One final polish and release qualification
+
+Use targeted tests during implementation; do not restart every unrelated suite
+after every edit. Freeze the complete foundation candidate, then perform the
+repository-required final security/recovery/types/package/browser-if-UI/Linux
+and normal-updater qualification. Record exact commit/archive/hash, original
+failures and the final successful checks. Clean owned fixtures, containers,
+temporary dependencies and builds on each phase's success/failure; retain only
+small evidence and useful bounded caches. Publish/merge/select only when the
+actual release gates are satisfied. No production app/data changes here.
+Reconcile the then-current main before that final freeze, preserving unrelated
+work. Final candidate qualification uses its own frozen dependency installation,
+not a borrowed dependency symlink used for quick source diagnostics.
+
+Then return to the preserved calendar backend requirements. The user's additional
+Zero improvements requested for after scheduling stay in a separate backlog;
+their detailed list/order can be added without starting them during this phase.
+
+### Core gap-close working evidence (November 14)
+
+Keep unsuccessful intermediate results visible. One diagnostic group used Bun's
+five-second default and finished 133 passing / one timed-out cross-tenant auth
+test (19 files); that was not a successful qualification. A fresh independently
+installed run with the documented 120-second test deadline passed that boundary
+but found an idle-generation reuse race (139 passing / one failure, 20 files).
+The old child can die between pool selection and catalog acknowledgment. The
+correction permits exactly one replacement of a reused generation **before task
+dispatch**, only for a transport failure and after confirmed retirement plus an
+authority recheck. It does not replay dispatched tasks or weaken unknown outcomes.
+Focused process revalidation passed all 16 then-current tests, including five
+repeated death races. The final expanded group and Linux/package checks are
+recorded below only once they actually finish.
+
+Subsequent stocktake: an independently installed source group completed 143
+tests (141 passing, two failing). Its packed/public-export consumer passed. One
+failure was a 30-second managed-fixture deadline under host I/O load; the other
+was a restart fixture whose due retry had already been correctly completed by
+startup recovery before its explicit poll. That fixture now keeps the retry in
+the future until the intended poll. Targeted restart (one test) and managed
+requests (two tests) pass. Strict TypeScript checks of worker exports, typed
+facades, native fixtures, Doctor and qualification scripts pass. These targeted
+source diagnostics used an EXIT-cleaned dependency link; they are not relabeled
+as final independent-package qualification.
+
+Another targeted group passed 21 tests and failed one native concurrency timing
+assertion: separate HTTP enqueues need not arrive within a 200 ms CPU window.
+Phase 1 explicitly replaces that brittle timing precondition with coordinated
+task entry; it must not be hidden or called passing beforehand.
+
+Two isolated Linux/amd64-on-Colima/Rosetta archive runs completed: three passing /
+18 failing, then 12 passing / nine failing after ordinary fixture budgets were
+aligned with the actual execution default. The remaining failures cluster at
+the five-second child-start deadline under emulation. The latter run passed the
+real managed requests, Torrent/AI/worker integration and minified worker case.
+No successful full Linux qualification or compiled/supervisor qualification is
+claimed. A small payload-free IPC probe can exchange a message in that environment;
+further startup diagnosis is still required. Dedicated labelled containers and
+synthetic bind roots were removed by their creating scripts after both failures.
+The reusable external-backed Colima profile/image/package cache is intentionally
+retained, not production state. Calendar source/preview pins remain untouched.
 
 ## Outcome and boundaries
 

@@ -49,11 +49,12 @@ export function applyServerExtensionErrorHandler(app: AnyElysia): AnyElysia {
 
     if (error instanceof WorkerError) {
       const status = error.code === 'WORKER_CAPACITY' ? 429
+        : error.code === 'WORKER_CANCELLED' ? 409
         : error.code === 'WORKER_TASK_INVALID' ? 422
           : error.code === 'WORKER_QUEUE_TIMEOUT' || error.code === 'WORKER_NOT_READY' || error.code === 'WORKER_AUTHORITY_CHANGED' ? 503
             : error.code === 'WORKER_EXECUTION_TIMEOUT' ? 504 : 500;
       set.status = status;
-      return { error: status === 422 ? 'Worker task input was rejected.' : 'Worker operation could not be completed.',
+      return { error: error.code === 'WORKER_CANCELLED' ? 'Worker task was cancelled.' : status === 422 ? 'Worker task input was rejected.' : 'Worker operation could not be completed.',
         code: error.code, outcome: error.outcome,
         ...(error.outcome === 'not-started' && (status === 429 || error.code === 'WORKER_QUEUE_TIMEOUT') ? { retryable: true } : {}) };
     }

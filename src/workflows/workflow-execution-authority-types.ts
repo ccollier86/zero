@@ -99,6 +99,8 @@ export interface WorkflowExecutionServiceProvider<TServices = unknown> {
   createServices(input: {
     readonly authority: WorkflowResolvedExecutionAuthority;
     readonly assertCurrentAuthority: () => void;
+    /** Attempt-local cancellation only; never persisted or authority evidence. */
+    readonly signal?: AbortSignal;
   }): TServices;
 }
 

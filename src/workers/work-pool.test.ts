@@ -149,3 +149,29 @@ test('configuration and per-call options reject accessors without executing auth
     expect(reads).toBe(0); expect(pool.size).toBe(0);
   } finally { await pool.close(); }
 });
+
+test('a saturated key cannot strand spare execution capacity behind a full waiting queue', async () => {
+  const pool = new WorkPool({ concurrency: 2, maxConcurrentPerKey: 1, maxQueued: 1 }), hold = gate();
+  const pending: Promise<unknown>[] = [];
+  try {
+    pending.push(pool.run(() => hold.promise, { key: 'busy' }));
+    pending.push(pool.run(() => 2, { key: 'busy' }));
+    expect(pool.status()).toMatchObject({ active: 1, queued: 1 });
+    expect(await pool.run(() => 3, { key: 'independent' })).toBe(3);
+    expect(pool.status()).toMatchObject({ active: 1, queued: 1 });
+    hold.release(); await Promise.all(pending);
+  } finally { hold.release(); await pool.close(); await Promise.allSettled(pending); }
+});
+
+test('per-key waiting limits leave headroom for other admitted scopes without changing max execution concurrency', async () => {
+  const pool = new WorkPool({ concurrency: 2, maxQueued: 4, maxQueuedPerKey: 1 }), hold = gate();
+  const pending: Promise<unknown>[] = [];
+  try {
+    pending.push(pool.run(() => hold.promise, { key: 'a' }), pool.run(() => hold.promise, { key: 'a' }));
+    pending.push(pool.run(() => 1, { key: 'a' }));
+    await expect(pool.run(() => 2, { key: 'a' })).rejects.toMatchObject({ code: 'WORKER_CAPACITY', outcome: 'not-started' });
+    const other = pool.run(() => 3, { key: 'b' }); pending.push(other);
+    expect(pool.status()).toMatchObject({ capacity: 2, active: 2, queued: 2, waitingKeys: 2 });
+    hold.release(); expect(await other).toBe(3); await Promise.all(pending);
+  } finally { hold.release(); await pool.close(); await Promise.allSettled(pending); }
+});

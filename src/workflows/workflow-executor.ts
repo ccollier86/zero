@@ -180,10 +180,12 @@ export class WorkflowExecutor {
     }
 
     const prepared = preparation.prepared;
+    const controller = new AbortController();
     const authorityLease = this.transaction(() => this.authority.begin({
       instanceId,
       leaseId: stepId,
       executionId: prepared.attemptId,
+      signal: controller.signal,
       isCurrent: () => this.attempts.isCurrent(prepared),
     }));
     if (!authorityLease) {
@@ -192,7 +194,7 @@ export class WorkflowExecutor {
     }
 
     try {
-      return await this.executePrepared(prepared, authorityLease);
+      return await this.executePrepared(prepared, authorityLease, controller);
     } finally {
       this.transaction(() => this.authority.release(authorityLease));
     }
@@ -224,6 +226,7 @@ export class WorkflowExecutor {
   private async executePrepared(
     prepared: PreparedWorkflowExecution,
     authorityLease: WorkflowAuthorityLease,
+    controller: AbortController,
   ): Promise<WorkflowExecutionResult> {
     const { instanceId, step } = prepared;
     const handler = this.registry.getHandler(prepared.handlerName);
@@ -250,8 +253,6 @@ export class WorkflowExecutor {
     // ReactiveDB listeners run synchronously as prepare commits. A listener
     // can pause/cancel/timeout before this attempt is registered in memory.
     if (!this.transaction(() => this.attempts.isCurrent(prepared))) return 'stale';
-    const controller = new AbortController();
-
     const context: StepContext = Object.freeze({
       input: prepared.input,
       workflowInput: prepared.workflowInput,

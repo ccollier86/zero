@@ -64,10 +64,12 @@ export class WorkflowGraphInteractionValidator {
     }
     const attemptId = `wvalidate_${crypto.randomUUID()}`;
     const trackingKey = `${step.step_id}:validator:${context.submissionId}`;
+    const controller = new AbortController();
     const authority = this.authority.begin({
       instanceId: instance.instance_id,
       leaseId: trackingKey,
       executionId: attemptId,
+      signal: controller.signal,
       isCurrent: () => {
         const currentInstance = this.store.getInstance(instance.instance_id);
         const currentStep = this.store.getStep(step.step_id);
@@ -81,7 +83,6 @@ export class WorkflowGraphInteractionValidator {
       stepId: step.step_id,
       attemptId,
     });
-    const controller = new AbortController();
     const payloadHash = createHash('sha256')
       .update(JSON.stringify(context.payload))
       .digest('hex');

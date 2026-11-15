@@ -4,6 +4,14 @@ import { runWorkerIfRequested } from '../worker-bootstrap';
 import type { WorkerValue } from '../worker-value';
 
 const identity = (value: WorkerValue) => value;
+export const sumTask = defineWorkerTask({ name: 'fixture.sum', version: '1',
+  parseInput(value) {
+    if (!Array.isArray(value) || value.some(item => typeof item !== 'number')) throw new Error('Synthetic numeric array required.');
+    return value as number[];
+  },
+  parseOutput(value) { if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error('Synthetic finite sum required.'); return value; },
+  run: values => values.reduce((total, value) => total + value, 0),
+});
 export const tasks = [
   defineWorkerTask({ name: 'fixture.echo', version: '1', parseInput: identity, parseOutput: identity,
     run: input => ({ input, pid: process.pid }) }),
@@ -13,6 +21,15 @@ export const tasks = [
   defineWorkerTask({ name: 'fixture.env', version: '1', parseInput: identity, parseOutput: identity,
     run: () => ({ inheritedSecret: Object.hasOwn(process.env, 'ZERO_WORKER_SYNTHETIC_SECRET'),
       allowedValue: process.env.ZERO_WORKER_SYNTHETIC_ALLOWED === 'allowed' }) }),
+  defineWorkerTask({ name: 'fixture.entered', version: '1', parseInput: value => {
+    if (!value || typeof value !== 'object' || Array.isArray(value) || typeof value.marker !== 'string') throw new Error('Synthetic marker required.');
+    return { marker: value.marker };
+  }, parseOutput: identity, run: async value => {
+    await Bun.write(value.marker, 'synthetic-task-entered');
+    const until = performance.now() + 500;
+    while (performance.now() < until) { /* Bounded test CPU; cannot outlive a crashed runner indefinitely. */ }
+    return { pid: process.pid };
+  } }),
   defineWorkerTask({ name: 'fixture.fail', version: '1', parseInput: identity, parseOutput: identity,
     run: () => { throw new Error('PRIVATE_SYNTHETIC_FAILURE_VALUE'); } }),
   defineWorkerTask({ name: 'fixture.exit', version: '1', parseInput: identity, parseOutput: identity,
@@ -38,6 +55,7 @@ export const tasks = [
       while (performance.now() < hardStop) { /* Parent must terminate this exact generation first. */ }
       process.exit(70);
     } }),
+  sumTask,
 ];
 
 if (import.meta.main) {

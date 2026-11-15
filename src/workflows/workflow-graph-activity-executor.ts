@@ -86,7 +86,8 @@ export class WorkflowGraphActivityExecutor {
   ): Promise<WorkflowGraphActivityResult> {
     if (this.disposed) return 'stale';
     if (this.tracker.isStepActive(stepId)) return 'stale';
-    const prepared = this.prepare(instanceId, stepId, graph, node, item);
+    const controller = new AbortController();
+    const prepared = this.prepare(instanceId, stepId, graph, node, controller.signal, item);
     if (!prepared) return 'stale';
 
     let activity;
@@ -100,7 +101,6 @@ export class WorkflowGraphActivityExecutor {
       stepId,
       attemptId: prepared.attemptId,
     });
-    const controller = new AbortController();
     const context = Object.freeze({
       input: prepared.input,
       workflowInput: prepared.workflowInput,
@@ -221,6 +221,7 @@ export class WorkflowGraphActivityExecutor {
     stepId: string,
     graph: WorkflowGraphIR,
     node: WorkflowActivityNode,
+    signal: AbortSignal,
     item?: WorkflowGraphActivityItemContext,
   ): PreparedActivity | null {
     const attemptId = `wexec_${crypto.randomUUID()}`;
@@ -281,6 +282,7 @@ export class WorkflowGraphActivityExecutor {
         instanceId,
         leaseId: stepId,
         executionId: attemptId,
+        signal,
         isCurrent: () => {
           const currentInstance = this.store.getInstance(instanceId);
           const currentStep = this.store.getStep(stepId);

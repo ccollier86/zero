@@ -74,6 +74,7 @@ export function createWorkflowExecutionServiceProvider(
         scope: authority.scope,
         assertCurrentAuthority: async () => { assertCurrentAuthority(); },
         assertCurrentAuthoritySync: assertCurrentAuthority,
+        signal: input.signal,
         allowUnsafe: false,
         strict: true,
         privilegedSystem: authority.identity.kind === 'system',

@@ -87,6 +87,8 @@ export interface CreateAuthorityScopedServerServicesOptions {
   assertCurrentAuthoritySync: () => void;
   /** Optional request metadata; background execution deliberately omits it. */
   request?: Request;
+  /** Background attempt lifetime; does not grant identity, scope or permission. */
+  signal?: AbortSignal;
   /** Frozen policy properties captured with background actor authority. */
   userProperties?: Readonly<Record<string, string>>;
 }

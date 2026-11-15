@@ -124,6 +124,9 @@ interface CreateInternalAuthorityScopedServerServicesOptions
 export function createInternalAuthorityScopedServerServices(
   options: CreateInternalAuthorityScopedServerServicesOptions,
 ): AuthorityScopedServerServices {
+  if (options.signal !== undefined && !(options.signal instanceof AbortSignal)) {
+    throw new TypeError('Authority-scoped server services require a valid cancellation signal.');
+  }
   if (typeof options.assertCurrentAuthority !== 'function'
     || typeof options.assertCurrentAuthoritySync !== 'function') {
     throw new TypeError(
@@ -135,6 +138,7 @@ export function createInternalAuthorityScopedServerServices(
     services,
     scope,
     request,
+    signal,
     assertCurrentAuthority: assertGuardianAuthority,
     assertCurrentAuthoritySync: assertGuardianAuthoritySync,
     allowUnsafe,
@@ -247,7 +251,8 @@ export function createInternalAuthorityScopedServerServices(
 
   const overrides: Record<PropertyKey, unknown> = {
     workers: services.workers && access.context && access.context.credentialKind !== 'api-key'
-      ? services.workers.forAuthority({ access: projectedAccess, scope, assertCurrentAuthority, assertCurrentAuthoritySync, signal: request?.signal }) : null,
+      ? services.workers.forAuthority({ access: projectedAccess, scope, assertCurrentAuthority, assertCurrentAuthoritySync,
+        signal: signal && request?.signal ? AbortSignal.any([signal, request.signal]) : signal ?? request?.signal }) : null,
     messaging: services.messaging && access.context && access.context.credentialKind !== 'api-key'
       ? services.messaging.forAuthority({ access: projectedAccess, scope, assertCurrentAuthoritySync }) : null,
     blog: services.blog && access.context && access.context.credentialKind !== 'api-key'

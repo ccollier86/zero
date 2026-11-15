@@ -60,6 +60,7 @@ export interface BeginWorkflowAuthorityLeaseInput {
   instanceId: string;
   leaseId: string;
   executionId: string;
+  signal?: AbortSignal;
   /** Must re-read durable state; never close over a stale row snapshot. */
   isCurrent: () => boolean;
 }
@@ -177,6 +178,7 @@ export class WorkflowExecutionAuthorityGate {
       const zero = this.services?.createServices({
         authority: resolved,
         assertCurrentAuthority,
+        ...(input.signal ? { signal: input.signal } : {}),
       }) ?? null;
       return Object.freeze({
         instanceId: input.instanceId,

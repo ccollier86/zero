@@ -14,7 +14,7 @@ export interface AIEmbedManyRequest<RUNTIME_CONTEXT extends Context = Context> {
   model?: string;
   /** Non-empty text values to embed in this exact order. */
   values: readonly string[];
-  /** Maximum concurrent provider calls after SDK batching. Defaults to four. */
+  /** Maximum concurrent provider calls after SDK batching. Defaults to the supported bounded maximum (32). */
   maxParallelCalls?: number;
   /** Maximum retry count for each provider call. */
   maxRetries?: number;

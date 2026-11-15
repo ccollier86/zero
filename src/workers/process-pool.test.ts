@@ -2,14 +2,18 @@
 import { expect, test } from 'bun:test';
 import { fileURLToPath } from 'node:url';
 import { ProcessWorkPool } from './process-pool';
-import { tasks } from './test-support/worker-entry';
+import { tasks, sumTask } from './test-support/worker-entry';
 import { workerValue } from './worker-value';
 import { defineWorkerTask } from './worker-task';
 import { join } from 'node:path';
 import { ownedWorkerFixture } from './test-support/owned-fixture';
+import { existsSync } from 'node:fs';
 
 const launch = { kind: 'source' as const, entrypoint: fileURLToPath(new URL('./test-support/worker-entry.ts', import.meta.url)) };
-function pool(processes = 2) { return new ProcessWorkPool({ tasks, launch, processes, executionTimeoutMs: 3000 }); }
+// Routine tests use the public execution default. A 3 s whole-operation budget
+// incorrectly timed out cold Linux/amd64 workers under architecture emulation;
+// deadline-specific tests below still supply their own short explicit limits.
+function pool(processes = 2) { return new ProcessWorkPool({ tasks, launch, processes }); }
 
 test('registered tasks execute in another reusable process and return detached values', async () => {
   const owner = pool(1);
@@ -103,6 +107,36 @@ test('death while idle does not permanently consume the process slot and the nex
   } finally { await owner.close(); }
 });
 
+test('death racing reuse is reconciled before dispatch without replaying a task or losing its authority fence', async () => {
+  const owner = pool(1);
+  try {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const previous = await owner.run('fixture.echo', null) as { pid: number };
+      let checks = 0;
+      const current = await owner.run('fixture.echo', { once: attempt }, {}, () => {
+        if (checks++ === 0) process.kill(previous.pid, 'SIGKILL');
+      }) as { pid: number; input: unknown };
+      expect(current.pid).not.toBe(previous.pid);
+      expect(current.input).toEqual({ once: attempt });
+      expect(checks).toBeGreaterThanOrEqual(2);
+      expect(owner.status()).toMatchObject({ processes: 1, active: 0, queued: 0 });
+    }
+  } finally { await owner.close(); }
+});
+
+test('simultaneous acquire/close rejects undispatched work and cannot create a child after shutdown', async () => {
+  const owner = pool(2); const pending: Promise<unknown>[] = [];
+  try {
+    await Promise.all([owner.run('fixture.echo', null), owner.run('fixture.echo', null)]);
+    for (let i = 0; i < 6; i++) pending.push(owner.run('fixture.cpu', 100));
+    const results = Promise.allSettled(pending);
+    await owner.close();
+    expect((await results).every(result => result.status === 'rejected')).toBe(true);
+    expect(owner.status()).toMatchObject({ state: 'closed', processes: 0, active: 0, queued: 0 });
+    await expect(owner.run('fixture.echo', null)).rejects.toMatchObject({ code: 'WORKER_NOT_READY', outcome: 'not-started' });
+  } finally { await owner.close(); await Promise.allSettled(pending); }
+});
+
 test('a failed child startup is not-started and settles before owned launch state is removed', async () => {
   const fixture = await ownedWorkerFixture('failed-start');
   let owner: ProcessWorkPool | undefined, closed = false;
@@ -135,4 +169,70 @@ test('portable values reject getters, cycles, non-JSON atoms and oversized conte
     expect(() => workerValue(value)).toThrow();
   }
   expect(workerValue({ safe: [null, true, -0, 1] })).toEqual({ safe: [null, true, 0, 1] });
+});
+
+test('queued caller cancellation is not-started, sanitized and cannot interrupt the running task', async () => {
+  const owner = pool(1), abort = new AbortController();
+  const pending: Promise<unknown>[] = [];
+  try {
+    await owner.run('fixture.echo', null);
+    const occupied = owner.run('fixture.cpu', 100); pending.push(occupied);
+    const waiting = owner.run('fixture.echo', 'never-dispatched', { signal: abort.signal }); pending.push(waiting);
+    const outcome = waiting.catch(error => error);
+    abort.abort(new Error('PRIVATE_CANCELLATION_REASON'));
+    const failure = await outcome;
+    expect(failure).toMatchObject({ code: 'WORKER_CANCELLED', outcome: 'not-started' });
+    expect(String(failure)).not.toContain('PRIVATE_CANCELLATION_REASON');
+    await occupied;
+    expect(await owner.run('fixture.echo', 'still-usable')).toMatchObject({ input: 'still-usable' });
+  } finally { await owner.close(); await Promise.allSettled(pending); }
+});
+
+test('cancellation after a real child entered the handler is unknown and still settles its owned process', async () => {
+  const fixture = await ownedWorkerFixture('cancel-entered'), owner = pool(1), abort = new AbortController();
+  let pending: Promise<unknown> | undefined, closed = false;
+  try {
+    const marker = join(fixture.root, 'entered.txt');
+    pending = owner.run('fixture.entered', { marker }, { signal: abort.signal });
+    const outcome = pending.catch(error => error);
+    const deadline = Date.now() + 10_000;
+    while (!existsSync(marker)) {
+      if (Date.now() >= deadline) throw new Error('Synthetic task entry was not observed.');
+      await new Promise<void>(resolve => setTimeout(resolve, 2));
+    }
+    abort.abort(new Error('PRIVATE_RUNNING_CANCELLATION_REASON'));
+    const failure = await outcome;
+    expect(failure).toMatchObject({ code: 'WORKER_CANCELLED', outcome: 'unknown' });
+    expect(String(failure)).not.toContain('PRIVATE_RUNNING_CANCELLATION_REASON');
+    await owner.close(); closed = true;
+    expect(owner.status()).toMatchObject({ state: 'closed', processes: 0, active: 0 });
+  } finally {
+    abort.abort(); if (!closed) { await owner.close(); closed = true; }
+    await pending?.catch(() => {});
+    if (closed) await fixture.cleanup();
+  }
+});
+
+test('a burst after simultaneous idle-child exits replaces generations without oversubscribing capacity', async () => {
+  const owner = pool(2);
+  try {
+    const original = await Promise.all([owner.run('fixture.idle-exit', null), owner.run('fixture.idle-exit', null)]) as { pid: number }[];
+    await new Promise<void>(resolve => setTimeout(resolve, 80));
+    const result = await Promise.all(Array.from({ length: 6 }, (_, i) => owner.run('fixture.echo', i))) as { pid: number; input: number }[];
+    expect(result.map(value => value.input)).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(new Set(result.map(value => value.pid)).size).toBeLessThanOrEqual(2);
+    expect(result.every(value => !original.some(previous => previous.pid === value.pid))).toBe(true);
+    expect(owner.status()).toMatchObject({ processes: 2, active: 0, queued: 0 });
+  } finally { await owner.close(); }
+});
+
+test('typed task references preserve input/output contracts and reject substituted same-name policies before parsing', async () => {
+  const owner = pool(1); let parsed = 0;
+  const substitute = defineWorkerTask({ name: sumTask.name, version: sumTask.version, access: 'user',
+    parseInput(value) { parsed++; return value; }, parseOutput: value => value, run: value => value });
+  try {
+    await expect(owner.run(substitute, [1, 2])).rejects.toMatchObject({ code: 'WORKER_TASK_INVALID', outcome: 'not-started' });
+    expect(parsed).toBe(0); expect(owner.status().processes).toBe(0);
+    const result: number = await owner.run(sumTask, [12, 25, 8]); expect(result).toBe(45);
+  } finally { await owner.close(); }
 });

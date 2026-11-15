@@ -32,3 +32,15 @@ test('shutdown interrupts owned cooperative work and rejects bounded waiters wit
   const outcomes = Promise.allSettled([active, pending]); await Promise.resolve(); await pool.close();
   expect((await outcomes).map(value => value.status)).toEqual(['rejected', 'rejected']); expect(pendingEntered).toBe(false); expect(pool.size).toBe(0);
 });
+
+test('the shared-pool adapter preserves messaging admission of one active plus one hundred waiting calls', async () => {
+  const pool = new MessagingWorkPool(1), hold = deferred();
+  const pending: Promise<unknown>[] = [];
+  try {
+    pending.push(pool.run(async () => { await hold.promise; }));
+    for (let i = 0; i < 100; i++) pending.push(pool.run(async () => i));
+    expect(pool.size).toBe(101);
+    await expect(pool.run(async () => 'overflow')).rejects.toMatchObject({ code: 'MESSAGING_CAPACITY' });
+    hold.release(); await Promise.all(pending); expect(pool.size).toBe(0);
+  } finally { hold.release(); await pool.close(); await Promise.allSettled(pending); }
+});

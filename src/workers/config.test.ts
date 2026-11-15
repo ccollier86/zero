@@ -28,3 +28,12 @@ test('mutable file URL internal slots cannot change a later managed launch', () 
   entrypoint.pathname = '/synthetic/changed.ts';
   expect(resolved.launch).toMatchObject({ kind: 'source', entrypoint: '/synthetic/worker-entry.ts' });
 });
+
+test('scope concurrency/waiting budgets are admitted before resources open and cannot exceed physical/global bounds', () => {
+  const launch = { kind: 'source' as const, entrypoint: '/synthetic/worker-entry.ts' };
+  const auth = resolveAuthBehaviorConfig({});
+  for (const policy of [{ maxQueued: 2, maxQueuedPerKey: 3 }, { maxQueuedPerKey: -1 }, { maxConcurrentPerKey: 3 }, { maxConcurrentPerKey: 0 }]) {
+    expect(() => resolveWorkersConfig({ tasks: [task], launch, processes: 2, ...policy }, process.cwd(), auth)).toThrow();
+  }
+  expect(resolveWorkersConfig({ tasks: [task], launch, processes: 2, maxQueued: 20, maxQueuedPerKey: 4, maxConcurrentPerKey: 1 }, process.cwd(), auth)).toMatchObject({ maxQueuedPerKey: 4, maxConcurrentPerKey: 1 });
+});

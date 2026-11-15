@@ -82,6 +82,24 @@ test/spec/declaration/generated/vendor files and hard-excluded build, runtime,
 cache, repository and dependency directories. Files above 2 MB are skipped with
 a coverage warning. Scan/read/parse failures are reported, not called successful.
 
+## Background Handoff Checks (Worker-Foundation Branch)
+
+These additive warnings run in source-only normal and upgrade inspection. They
+do not execute handlers or change an application's retry policy:
+
+| Finding | Static evidence / review |
+| --- | --- |
+| `usage.background.eager_torrent_handoff` | Directly awaited `zero.torrent.start` or `deliverEvent` in an inline, literal durable `defineDatabaseFunction` handler can keep its sequential source lane occupied through the first activity. Consider the matching commit-acknowledged enqueue helper, retaining actor/scope, key and version. |
+| `usage.background.unacknowledged_torrent_enqueue` | A direct floating or `void` enqueue discards its commit acknowledgment. Await/return it so source delivery cannot report success before the durable handoff commits. |
+
+Import ownership is limited to the real `@zero/framework/database-automations`
+entry (including renamed and namespace imports). Rebound roots, spread/dynamic
+configurations, indirect handlers and uninvoked nested callbacks are not guessed.
+This is not a complete data-flow or slow-handler detector. A clean finding list
+does not prove arbitrary provider calls cannot block a source. No inspected
+argument values are copied into findings. See [Torrent enqueue](../../backend/torrent/enqueue.md)
+and [workers](../../backend/workers/index.md) for execution/lifetime boundaries.
+
 ## Structured Modal Migration
 
 The AST recognizes literal imports, import aliases, namespace access, multiline
