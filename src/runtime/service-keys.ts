@@ -1,4 +1,5 @@
 import type { SchedulerService } from '../scheduler/scheduler-service';
+import type { WorkerService } from '../workers/service';
 import type { NotificationService } from '../notifications/notification-service';
 import type { RoomService } from '../rooms/room-service';
 import type { KvService } from '../kv/kv-service';
@@ -97,6 +98,8 @@ export const ZERO_LOGGING_RUNTIME = createZeroRuntimeServiceKey<LoggingRuntime>(
 export const ZERO_SCHEDULER_SERVICE = createZeroRuntimeServiceKey<SchedulerService>(
   'Scheduler service',
 );
+/** Private app-local process/pool owner. Requests receive a live authority-bound task facade. */
+export const ZERO_WORKER_SERVICE = createZeroRuntimeServiceKey<WorkerService>('Worker service');
 
 export const ZERO_NOTIFICATION_SERVICE = createZeroRuntimeServiceKey<NotificationService>(
   'Notification service',

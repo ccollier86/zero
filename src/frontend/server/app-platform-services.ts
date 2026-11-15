@@ -1,6 +1,8 @@
 /** Runtime-backed service plugin composition mounted before application routes. */
 
 import type { Elysia } from 'elysia';
+import { WorkerService } from '../../workers/service';
+import { ZERO_WORKER_SERVICE } from '../../runtime/service-keys';
 
 import { createAIPlugin } from '../../ai';
 import { isPolicyTrustedUserProperty } from '../../auth/auth-config';
@@ -199,6 +201,11 @@ export async function mountPlatformServices({
   }
 
   const scheduler = new SchedulerService();
+  if (config.workers) {
+    const workers = new WorkerService(config.workers);
+    runtime.set(ZERO_WORKER_SERVICE, workers);
+    runtime.addCleanup(async () => { runtime.clear(ZERO_WORKER_SERVICE, workers); await workers.close(); });
+  }
   app.use(createSchedulerPlugin({
     runtime,
     getTokenService,

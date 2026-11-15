@@ -38,6 +38,8 @@ moving a long AI call behind one of those methods can still delay the caller.
 | --- | --- | --- |
 | Source-bound durable function | `zero.torrent.enqueue(name, input?, options?)` | `zero.torrent.start(...)` |
 | Source-bound resume handler | `zero.torrent.enqueueEvent(instanceId, eventName, payload?, { key? }?)` | `zero.torrent.deliverEvent(...)` |
+| Current user/request (foundation branch) | `zero.workflows.enqueueOnce(name, input, { idempotencyKey, version? })` | `zero.workflows.startOnce(...)` |
+| Browser (foundation branch) | `client.workflows.enqueueOnce(name, input, { idempotencyKey, version?, signal? })` | Existing workflow start actions |
 | Trusted system integration | `WorkflowService.enqueueAsSystemOnce(name, input, system, options?, mutation?)` | `startAsSystemOnce(...)` |
 | Trusted system event integration | `WorkflowService.enqueueEventAsSystem(instanceId, eventName, payload, system, mutation?)` | `deliverEventAsSystem(...)` |
 
@@ -47,6 +49,15 @@ future interactions. Enqueue dispatches that same lifecycle-owned frontier but
 does not join its activities. Work may begin before the receipt reaches the
 caller. Neither form supplies a separate CPU worker or bypasses AI/provider
 concurrency limits.
+
+The user/browser rows are additive on `feature/durable-scheduling-foundation`,
+not present in the published 2.10.5 archive. They retain the original actor;
+they do **not** grant the trusted SYSTEM methods to request code. The browser
+facade uses native `POST /workflows/enqueue` (202 after commit) and
+`GET /workflows/starts/:key` for its own authorized receipt. Its request schema
+does not admit a caller-selected principal, scope, binding or private memory.
+Account/scope replacement and client disposal abort and retire pending results;
+this does not prove an already admitted server run was cancelled.
 
 Only trusted system composition may call the low-level system methods.
 Ordinary request/activity workflow facades explicitly deny them; a browser

@@ -23,23 +23,25 @@ reviewed_against:
 
 [Scheduler](./index.md) · [Backend systems](../index.md) · [Documentation index](../../index.md)
 
-No approved Scheduler expansion appears in the inspected product roadmap.
-The current system is an app-local named cron registry, not an incomplete
-distributed queue. Torrent already supplies a separate durable workflow
-execution/recovery system.
+The user approved a shared scheduling/jobs/worker expansion on 2026-11-14.
+The [implementation plan](../../_work/durable-jobs-and-workers-plan.md) records
+the integration matrix, phases, authority, placement and release gates. Existing
+cron remains compatible; Torrent remains the execution/recovery engine. Calendar
+backend work is paused behind this foundation.
 
-## Explicitly Unapproved Ideas
+## Approved Expansion, Not Yet Released
 
-The following are discussion candidates, not scheduled work or supported APIs:
+Track completion in the plan; these are not already-supported cron features:
 
 - [ ] Persisted or tenant-owned schedule definitions with explicit actor authority.
 - [ ] Multi-process lease ownership and failover scheduling.
 - [ ] A reusable admin schedule/status UI if product demand warrants it.
 - [ ] Broader timezone/calendar/runtime qualification fixtures.
 
-Any proposal needs its own authority, storage, lifecycle, retry/idempotency and
-operational contract. Do not implement database schedule tables or claim a
-cluster-wide timer merely because this roadmap mentions an idea.
+The additive [worker API](../workers/index.md) and actor enqueue are in branch
+development. Durable schedule controls and full qualification remain pending.
+Do not claim cluster-wide ownership, unlimited concurrency or distributed
+exactly-once effects merely because the expansion is approved.
 
 ## Existing Boundaries To Preserve
 

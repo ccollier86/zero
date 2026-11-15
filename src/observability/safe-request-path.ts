@@ -16,5 +16,9 @@ export function sanitizeRequestPath(pathname: string): string {
     .replace(
       /(^|\/)(storage\/(?:presigned|upload-grants))\/[^/]+(?=\/|$)/g,
       '$1$2/:token',
+    )
+    .replace(
+      /(^|\/)(workflows\/starts)\/[^/]+(?=\/|$)/g,
+      '$1$2/:key',
     );
 }

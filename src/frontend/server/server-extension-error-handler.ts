@@ -5,6 +5,7 @@ import { ValidationError, type AnyElysia } from 'elysia';
 import { getPublicAuthErrorMessage } from '../../auth/auth-error-response';
 import { AuthError } from '../../auth/types';
 import { WorkflowError } from '../../workflows/workflow-error';
+import { WorkerError } from '../../workers/worker-error';
 import { LoggingError } from '../../logging/logging-error';
 import { projectLoggingHttpFailure } from '../../logging/logging-http-error';
 
@@ -44,6 +45,17 @@ export function applyServerExtensionErrorHandler(app: AnyElysia): AnyElysia {
       set.status = error.status;
       return { error: error.status >= 500 ? 'Workflow operation failed.' : error.message,
         code: error.code, ...(error.retryable ? { retryable: true } : {}) };
+    }
+
+    if (error instanceof WorkerError) {
+      const status = error.code === 'WORKER_CAPACITY' ? 429
+        : error.code === 'WORKER_TASK_INVALID' ? 422
+          : error.code === 'WORKER_QUEUE_TIMEOUT' || error.code === 'WORKER_NOT_READY' || error.code === 'WORKER_AUTHORITY_CHANGED' ? 503
+            : error.code === 'WORKER_EXECUTION_TIMEOUT' ? 504 : 500;
+      set.status = status;
+      return { error: status === 422 ? 'Worker task input was rejected.' : 'Worker operation could not be completed.',
+        code: error.code, outcome: error.outcome,
+        ...(error.outcome === 'not-started' && (status === 429 || error.code === 'WORKER_QUEUE_TIMEOUT') ? { retryable: true } : {}) };
     }
 
     if (code === 'VALIDATION' && error instanceof ValidationError

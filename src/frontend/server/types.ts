@@ -19,6 +19,7 @@ import { resolveBlogContentConfig, type ResolvedBlogContentConfig } from '../../
 import { assertBlogContentDirectoryIsolation } from '../../blog/content-isolation';
 import type { BlogConfig, ResolvedBlogConfig } from '../../blog/types';
 import { resolveMessagingConfig, type MessagingConfig, type ResolvedMessagingConfig } from '../../messaging/config';
+import { resolveWorkersConfig, type WorkersConfig, type ResolvedWorkersConfig } from '../../workers/config';
 import { assertMessagingDirectoryIsolation } from '../../messaging/isolation';
 import { resolveSeoConfig } from '../../seo/runtime';
 import type { EphemeralTopicPolicy } from '../../sync/ephemeral-policy';
@@ -277,6 +278,8 @@ export interface AppWorkflowsConfig {
  * building a full-stack app with the platform.
  */
 export interface AppConfig {
+  /** Optional registered Bun task processes. Disabled unless configured; never inherits provider environment. */
+  workers?: false | WorkersConfig;
   /** Optional current-Guardian messaging with separate private Fabric ownership. */
   messaging?: boolean | MessagingConfig;
   /** Optional Guardian-backed author directory and public profiles. Does not enable a post editor. */
@@ -601,6 +604,7 @@ export function defineZeroConfig<const TConfig extends AppConfig>(config: TConfi
 
 /** Resolved config with defaults filled in. */
 export interface ResolvedConfig {
+  readonly workers: ResolvedWorkersConfig | false;
   readonly messaging: ResolvedMessagingConfig | false;
   blog: ResolvedBlogConfig;
   readonly blogContent: ResolvedBlogContentConfig | false;
@@ -680,7 +684,7 @@ export function resolveConfig(
   const themeFoundation = resolveAppThemeFoundation(config.themeFoundation);
   const projectRoot = resolveAppProjectRoot(config);
   const logging = resolveManagedLoggingConfig(config.logging, projectRoot);
-  const inputAuth = config.auth === undefined && (blogEnabled(config.blog) || config.messaging !== undefined && config.messaging !== false) ? true : config.auth;
+  const inputAuth = config.auth === undefined && (blogEnabled(config.blog) || config.messaging !== undefined && config.messaging !== false || config.workers !== undefined && config.workers !== false) ? true : config.auth;
   const originalAuth = inputAuth === true
     ? {}
     : inputAuth === false || inputAuth === undefined
@@ -691,6 +695,7 @@ export function resolveConfig(
   const blog = resolveBlogConfig(config.blog, authBehavior);
   const blogContent = blog.enabled ? resolveBlogContentConfig(blog.content, projectRoot) : false;
   const messaging = resolveMessagingConfig(config.messaging, projectRoot, authBehavior);
+  const workers = resolveWorkersConfig(config.workers, projectRoot, authBehavior);
   if (logging) for (const permission of Object.values(logging.access)) {
     if (permission && (!authBehavior || !Object.hasOwn(authBehavior.authorization.permissions, permission))) {
       throw new Error('[app] logging permissions must be declared in Guardian authorization.permissions.');
@@ -881,6 +886,7 @@ export function resolveConfig(
     blog,
     blogContent,
     messaging,
+    workers,
     tables: normalized,
     ...(databaseAutomations === undefined ? {} : { databaseAutomations }),
     mutationValidators,

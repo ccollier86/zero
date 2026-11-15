@@ -87,6 +87,7 @@ import {
   ZERO_RESOURCE_REGISTRY,
   ZERO_ROOM_SERVICE,
   ZERO_SCHEDULER_SERVICE,
+  ZERO_WORKER_SERVICE,
   ZERO_SQLITE_SERVICE,
   ZERO_STORAGE_SERVICE,
   ZERO_SYNC_DB,
@@ -169,6 +170,8 @@ export interface ServerSystemDatabaseServices {
 
 /** Platform services exposed under `zero` in app-owned server route handlers. */
 export interface ServerRouteServices {
+  /** Trusted process owner; requests receive only current-authority task execution. */
+  readonly workers: import('../../workers/service').WorkerService | null;
   /** Privileged setup owner; admitted handlers receive a scope-closed author facade. */
   readonly blog: BlogService | null;
   readonly messaging: MessagingService | null;
@@ -257,6 +260,7 @@ export function createLazyServerRouteServices(runtime?: ZeroAppRuntime): ServerR
 
 function createServerRouteServices(runtime?: ZeroAppRuntime): ServerRouteServices {
   return {
+    get workers() { return runtime?.get(ZERO_WORKER_SERVICE) ?? null; },
     get blog() { return runtime?.get(ZERO_BLOG) ?? null; },
     get messaging() { return runtime?.get(ZERO_MESSAGING) ?? null; },
     get logging() { return runtime?.get(ZERO_LOGGING_RUNTIME) ?? null; },

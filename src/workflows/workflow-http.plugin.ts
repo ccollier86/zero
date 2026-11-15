@@ -174,6 +174,21 @@ export function createWorkflowHttpPlugin(
         version: t.Optional(t.Integer({ minimum: 1 })),
       }),
     })
+    .post('/enqueue', async ({ access, body, set }) => {
+      const auth = access.requireUser(); requestScope(access);
+      const result = await requireReadyService().enqueueAsActorOnce(body.name.trim(), body.input, auth,
+        { idempotencyKey: body.idempotencyKey, ...(body.version === undefined ? {} : { version: body.version }) });
+      set.status = 202;
+      return result;
+    }, {
+      body: t.Object({ name: t.String({ minLength: 1, maxLength: MAX_WORKFLOW_DEFINITION_NAME_LENGTH, pattern: '\\S' }),
+        input: t.Optional(t.Unknown()), version: t.Optional(t.Integer({ minimum: 1 })),
+        idempotencyKey: t.String({ minLength: 1, maxLength: 128, pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]*$' }) }, { additionalProperties: false }),
+    })
+    .get('/starts/:key', ({ access, params }) => {
+      const auth = access.requireUser(); requestScope(access);
+      return requireReadyService().getActorStartReceipt(auth, params.key);
+    }, { params: t.Object({ key: t.String({ minLength: 1, maxLength: 128, pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]*$' }) }) })
     .get('/:id', ({ access, params }) => {
       const scope = requestScope(access);
       const workflowService = requireReadyService();

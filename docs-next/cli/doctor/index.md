@@ -38,6 +38,8 @@ readiness.
 - [Source audit](./source-audit.md): config-free AST migration inspection, legacy heuristics, roots, confidence and deliberate exceptions.
 - [Infrastructure inspection](./infrastructure-inspection.md): system/app planes and read-only existing SQLite.
 - [Automation diagnostics](./database-automations.md): caller-supplied readiness/health/fingerprints.
+- [Worker diagnostics](../../backend/workers/index.md): foundation-branch entry existence,
+  fixed launch-wrapper review and explicit environment findings; no process/task launch.
 - [Roadmap](./roadmap.md): proposed discovery and agent verification work.
 
 ## Read Stages And Authority

@@ -36,6 +36,20 @@ import type { ServerRouteServices } from './server-services';
 import type { DatabaseManager } from '../../databases/database-manager';
 
 describe('request-bound server services', () => {
+  test('queued once-only workflow facade retains the current actor and cannot expose raw enqueue authority', async () => {
+    const fixture = createFixture();
+    try {
+      const owner = fixture.forToken('alpha'), other = fixture.forToken('beta');
+      const ack = await owner.workflows!.enqueueOnce('proof', { synthetic: true }, { idempotencyKey: 'request:queued' });
+      expect(owner.workflows!.get(ack.instanceId)?.started_by).toBe(fixture.contexts.get('alpha')!.userId);
+      expect(owner.workflows!.getStartReceipt('request:queued')).toEqual(ack);
+      expect(other.workflows!.getStartReceipt('request:queued')).toBeNull();
+      expect(await owner.workflows!.enqueueOnce('proof', { synthetic: true }, { idempotencyKey: 'request:queued' })).toEqual(ack);
+      expect(() => (owner.workflows as unknown as WorkflowService).enqueueAsActorOnce('proof', {}, fixture.contexts.get('beta')!, { idempotencyKey: 'raw' })).toThrow();
+      fixture.contexts.delete('alpha');
+      await expect(owner.workflows!.enqueueOnce('proof', {}, { idempotencyKey: 'retired' })).rejects.toBeDefined();
+    } finally { await fixture.workflows.dispose(); fixture.db.dispose(); }
+  });
   test('public workflow authoring and once-only starts retain tenant and credential fences', async () => {
     const fixture = createFixture();
     try {

@@ -55,6 +55,7 @@ not an organization data capability.
 | `storage` | scoped drive/object/permission/upload facade; null when unavailable or no data scope |
 | `notifications`, `rooms` | current-actor/scope facades; null when unavailable or no scope |
 | `workflows` | scoped run operations; privileged registration/lifecycle methods are not here |
+| `workers` | feature-preview registered tasks with live Guardian fences; null when disabled/unadmitted; see [workers](../workers/index.md) |
 | `pdf` | scoped renderer/storage bridge when configured |
 | `payments` | optional [Stripe foundation](../../plugins/payments/api.md): current billing subject and live authority; no merchant SDK or arbitrary customer selector |
 | `auth` | compiler/evaluator access; multi-tenant requests cannot use raw user/role/token stores |

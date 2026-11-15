@@ -48,6 +48,8 @@ ownership, authority projection and teardown explicit.
   deliberate privileged boundaries; physical selection is not business policy.
 - [Machine services](./machine-services.md): verified machine/background
   credentials with mandatory live fences and no unsafe service bag.
+- [Workers](../workers/index.md): opt-in feature-preview task processes, separate
+  from cron timers and durable workflow admission.
 - [Data planes](./data-planes.md): application versus system handles and local
   identity anchors for user-owned application records.
 - [Lifecycle](./lifecycle.md): startup/readiness ordering and owned cleanup after

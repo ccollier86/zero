@@ -246,6 +246,8 @@ export function createInternalAuthorityScopedServerServices(
     : null;
 
   const overrides: Record<PropertyKey, unknown> = {
+    workers: services.workers && access.context && access.context.credentialKind !== 'api-key'
+      ? services.workers.forAuthority({ access: projectedAccess, scope, assertCurrentAuthority, assertCurrentAuthoritySync, signal: request?.signal }) : null,
     messaging: services.messaging && access.context && access.context.credentialKind !== 'api-key'
       ? services.messaging.forAuthority({ access: projectedAccess, scope, assertCurrentAuthoritySync }) : null,
     blog: services.blog && access.context && access.context.credentialKind !== 'api-key'
@@ -315,6 +317,7 @@ function createUncommittedRequestServices(
 ): ServerRequestServices {
   const authority = createAuthorityRevalidators(request, access, services);
   const overrides: Record<PropertyKey, unknown> = {
+    workers: null,
     blog: null,
     messaging: null,
     logging: null,

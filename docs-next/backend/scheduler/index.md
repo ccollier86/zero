@@ -31,6 +31,11 @@ Torrent persists its own deadlines/recovery state and uses Scheduler for wake
 jobs. Scheduler is the timer mechanism, not the durable source of truth. A
 process restart recreates code-defined jobs; it does not replay missed work.
 
+The approved [shared scheduling/jobs expansion](../../_work/durable-jobs-and-workers-plan.md)
+is being implemented on a feature branch. Its [worker foundation](../workers/index.md)
+is additive; the proposed durable `zero.jobs`/schedule API is not part of the
+current cron service or released archive.
+
 This source-backed draft includes reviewed uncommitted error-policy,
 composition-cleanup, declaration-snapshot and immediate-overlap corrections.
 It is not a qualification of the original clean commit or an installed archive.

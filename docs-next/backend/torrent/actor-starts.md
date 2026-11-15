@@ -46,6 +46,25 @@ including exact graph/version IDs. A key alone never grants access.
 
 ## Authority And Recovery
 
+On `feature/durable-scheduling-foundation`, the additive
+`zero.workflows.enqueueOnce(name, input, options)` and trusted
+`WorkflowService.enqueueAsActorOnce(...)` commit the **same** actor seal,
+immutable pins and permanent receipt without awaiting the initial activities.
+Start/queued replays share command identity, not a second namespace. Existing
+`startOnce` stays eager. Use `getStartReceipt` to reconcile either form. These
+branch APIs are not yet in the published 2.10.5 archive; see [workers](../workers/index.md).
+
+The same branch adds `client.workflows.enqueueOnce(name, input,
+{ idempotencyKey, version?, signal? })` and
+`client.workflows.getStartReceipt(key, { signal? }?)`. The browser client sends
+one native authenticated admission request and never automatically replays an
+uncertain write. `useWorkflowActions()` exposes both methods through its existing
+authorization-generation fence; see [hooks](../../frontend/torrent/hooks.md).
+Native HTTP admission is `POST /workflows/enqueue` (202, the exact original
+receipt); `GET /workflows/starts/:key` returns that actor's receipt or null.
+No SYSTEM identity, other scope, private memory or arbitrary binding is accepted
+from these HTTP request bodies. Browser receipt lookup alone does not run work.
+
 Both first creation and replay require current Guardian authority, the same
 actor/credential namespace and final synchronous app fences. The original actor
 seal is retained, not rewritten from a newer role snapshot. If that original

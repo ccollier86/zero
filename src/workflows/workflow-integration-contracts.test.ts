@@ -20,6 +20,54 @@ function activities(f: ReturnType<typeof workflowContractFixture>, calls: unknow
 }
 
 describe('public workflow authoring and actor starts', () => {
+  test('queued actor starts acknowledge durable acceptance while slow work is blocked and independent jobs progress', async () => {
+    const f = workflowContractFixture();
+    let release!: () => void, entered!: () => void, calls = 0;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    try {
+      f.registry.registerActivity({ name: 'queued.slow', version: '1', handler: async () => {
+        calls++; entered(); await gate; return { complete: true };
+      } });
+      f.registry.registerActivity({ name: 'queued.fast', version: '1', handler: async () => ({ complete: true }) });
+      f.registry.create({ name: 'queued-slow', version: 1, flow: flow(step('run', 'queued.slow')) });
+      f.registry.create({ name: 'queued-fast', version: 1, flow: flow(step('run', 'queued.fast')) });
+      await f.restart();
+      const options = { idempotencyKey: 'queued:one', version: 1, binding: { source: 'synthetic' } };
+      const ack = await within(f.service.enqueueAsActorOnce('queued-slow', { value: 1 }, f.context, options));
+      await within(started);
+      expect(f.service.get(ack.instanceId)?.status).toBe('running');
+      expect(f.service.get(ack.instanceId)?.started_by).toBe(f.context.userId);
+      expect(await within(f.service.enqueueAsActorOnce('queued-slow', { value: 1 }, f.context, options))).toEqual(ack);
+      expect(f.service.getActorStartReceipt(f.context, 'queued:one')).toEqual(ack);
+      expect(f.db.prepare('SELECT authority_kind FROM _workflow_execution_authorities WHERE instance_id = ?').get(ack.instanceId)).toEqual({ authority_kind: 'actor' });
+      expect(f.db.prepare('SELECT COUNT(*) AS n FROM _workflow_system_start_receipts').get()).toEqual({ n: 0 });
+      const fast = await within(f.service.startAsActorOnce('queued-fast', {}, f.context, { idempotencyKey: 'queued:other', version: 1 }));
+      expect(f.service.get(fast.instanceId)?.status).toBe('completed');
+      await expect(f.service.enqueueAsActorOnce('queued-slow', { value: 2 }, f.context, options)).rejects.toMatchObject({ code: 'WORKFLOW_START_IDEMPOTENCY_CONFLICT' });
+      release(); await within(f.service.advance(ack.instanceId));
+      expect(await f.service.startAsActorOnce('queued-slow', { value: 1 }, f.context, options)).toEqual(ack);
+      expect(calls).toBe(1);
+    } finally { release(); await f.close(); }
+  });
+
+  test('actor enqueue preserves independent transactions, final authority rollback and current-actor replay fences', async () => {
+    const f = workflowContractFixture(), calls: unknown[] = [];
+    try {
+      activities(f, calls); f.service.definitionsForActor(f.context).publish({ name: 'chain', graph: graph() });
+      let nested!: ReturnType<typeof f.service.enqueueAsActorOnce>;
+      f.db.transaction(() => { nested = f.service.enqueueAsActorOnce('chain', {}, f.context, { idempotencyKey: 'nested' }); });
+      await expect(nested).rejects.toMatchObject({ code: 'WORKFLOW_REQUEST_INVALID' });
+      await expect(f.service.enqueueAsActorOnce('chain', {}, f.context, { idempotencyKey: 'fenced' }, () => {
+        if ((f.db.prepare('SELECT COUNT(*) AS n FROM _workflow_actor_start_receipts').get() as { n: number }).n) f.revoke();
+      })).rejects.toBeDefined();
+      expect(f.db.prepare('SELECT COUNT(*) AS n FROM workflow_instances').get()).toEqual({ n: 0 });
+      expect(f.db.prepare('SELECT COUNT(*) AS n FROM _workflow_actor_start_receipts').get()).toEqual({ n: 0 });
+      expect(calls).toEqual([]);
+      await expect(f.service.enqueueAsActorOnce('chain', {}, f.context, { idempotencyKey: 'revoked' })).rejects.toMatchObject({ code: 'AUTH_STATE_CHANGED' });
+    } finally { await f.close(); }
+  });
+
   test('metadata pages have stable cursors and include the maximum supported version', async () => {
     const f = workflowContractFixture();
     try {
@@ -165,6 +213,13 @@ describe('public workflow authoring and actor starts', () => {
     } finally { await f.close(); await member.close(); }
   });
 });
+
+async function within<T>(promise: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try { return await Promise.race([promise, new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error('Synthetic workflow handoff exceeded its bounded wait.')), 2000);
+  })]); } finally { clearTimeout(timer); }
+}
 
 describe('structured workflow bindings', () => {
   test('missing is distinct from explicit null, literals are never recursive templates, and accessors never execute', () => {

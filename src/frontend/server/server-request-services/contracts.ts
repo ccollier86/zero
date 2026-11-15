@@ -30,6 +30,7 @@ export interface ServerRequestServices extends Omit<
   | 'rooms'
   | 'storage'
   | 'workflows'
+  | 'workers'
 > {
   /** The same live authorization facade exposed on the Elysia request. */
   readonly access: RequestAuthorizationAccess;
@@ -51,6 +52,7 @@ export interface ServerRequestServices extends Omit<
   readonly rooms: ScopedRoomService | null;
   /** Scope-closed workflow facade; privileged lifecycle APIs remain under unsafe. */
   readonly workflows: ScopedWorkflowService | null;
+  readonly workers: import('../../../workers/service').ScopedWorkers | null;
   /** Scope-closed PDF facade. */
   readonly pdf: ScopedPdfService | null;
   /** Observability services; multi-tenant runtime projections hide raw sinks. */
@@ -107,6 +109,7 @@ export type AuthorityScopedObservabilityServices = Pick<
  * absent from this public contract because strict projections reject them.
  */
 export interface AuthorityScopedServerServices {
+  readonly workers: import('../../../workers/service').ScopedWorkers | null;
   readonly messaging: MessagingApi | null;
   readonly blog: ScopedBlog | null;
   readonly logging: ScopedLogging | null;

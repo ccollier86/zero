@@ -378,6 +378,17 @@ export class WorkflowService {
   /** Atomically retain the original actor, pinned graph and request receipt; exact retries cannot start another run. */
   async startAsActorOnce(name: string, input: unknown, context: AuthContext, options: WorkflowActorStartOptions,
     assertCurrentAuthority?: () => void): Promise<WorkflowActorStartResult> {
+    return this.startActorOnce(name, input, context, options, assertCurrentAuthority, false);
+  }
+
+  /** Same actor seal and permanent receipt as startAsActorOnce, without joining slow initial activities. */
+  async enqueueAsActorOnce(name: string, input: unknown, context: AuthContext, options: WorkflowActorStartOptions,
+    assertCurrentAuthority?: () => void): Promise<WorkflowActorStartResult> {
+    return this.startActorOnce(name, input, context, options, assertCurrentAuthority, true);
+  }
+
+  private async startActorOnce(name: string, input: unknown, context: AuthContext, options: WorkflowActorStartOptions,
+    assertCurrentAuthority: (() => void) | undefined, deferred: boolean): Promise<WorkflowActorStartResult> {
     const captured = this.captureActorAuthorityFence(context);
     if (!options || typeof options !== 'object' || Array.isArray(options)) throw new WorkflowError('Workflow actor start options must be an object', 'WORKFLOW_REQUEST_INVALID', 422);
     const { idempotencyKey, binding, ...startOptions } = options;
@@ -385,7 +396,7 @@ export class WorkflowService {
     const bindingJson = text === null ? null : serializeWorkflowJson(JSON.parse(text), 'WORKFLOW_REQUEST_INVALID', 422);
     return this.idempotentStarts.startActor(name, input, captured.authority, idempotencyKey, startOptions, bindingJson, {
       assertCurrentAuthority: () => { captured.assertCurrentAuthority(); assertWorkflowSynchronousAuthority(assertCurrentAuthority); },
-    });
+    }, deferred);
   }
 
   /** Reconcile a lost start acknowledgement under the same live actor/credential/scope, without running any work. */

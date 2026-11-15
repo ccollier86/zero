@@ -237,6 +237,18 @@
       "types": "./src/frontend/server.ts",
       "import": "./src/frontend/server.ts"
     },
+    "./workers": {
+      "types": "./src/workers/index.ts",
+      "import": "./src/workers/index.ts"
+    },
+    "./workers/actor": {
+      "types": "./src/workers/worker-bootstrap.ts",
+      "import": "./src/workers/worker-bootstrap.ts"
+    },
+    "./workers/tasks": {
+      "types": "./src/workers/worker-task.ts",
+      "import": "./src/workers/worker-task.ts"
+    },
     "./schema": {
       "types": "./src/schema/index.ts",
       "import": "./src/schema/index.ts"

@@ -64,6 +64,26 @@ Actions reject while authorization scope changes and fence returned results
 against the captured boundary. Backend policy remains decisive; an enabled
 button is not permission.
 
+### Queued admission (foundation branch)
+
+`feature/durable-scheduling-foundation` adds two actions; these are **not** in the
+published 2.10.5 archive:
+
+- `enqueueOnce(name, input, { idempotencyKey, version?, signal? })` returns the
+  exact durable actor receipt `{ instanceId, name, createdAt, definitionVersion }`
+  without joining the initial activity.
+- `getStartReceipt(key, { signal? }?)` reconciles that actor/scope's original
+  receipt or returns null without executing the workflow.
+
+The same methods live on `client.workflows` for non-hook consumers. They use
+native authenticated HTTP, reject obsolete completions after an account/scope
+change, and perform no automatic retries. Preserve one caller-generated key for
+one logical command. A transport abort or unknown response is not a cancellation
+or proof of rollback; reconcile before deciding what to do next. Live run views
+still use the existing authorized workflow collections/observation hooks, not
+receipt polling. [Actor starts](../../backend/torrent/actor-starts.md) describes
+permissions, version pins, permanent receipt limits and replay conflicts.
+
 ## Run Hook And Progress
 
 useWorkflowRun(name, { instanceId?, version? }?) exposes live fields plus

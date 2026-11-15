@@ -14,6 +14,8 @@ import { useClient } from './client-context';
 import { useAuthorizationScopeBoundary } from './authorization-scope-hooks';
 import { useQuery, useRow } from './data-hooks';
 import { unwrap } from './api';
+import type { WorkflowEnqueueOptions } from './workflow-client';
+import type { WorkflowActorStartResult } from '../../workflows/workflow-actor-start-contract';
 import type {
   WorkflowClientInteractionRecord,
   WorkflowStatus,
@@ -62,6 +64,8 @@ export interface WorkflowInteractionSubmissionResult {
 }
 
 export interface WorkflowActions {
+  enqueueOnce: (name: string, input: unknown, options: WorkflowEnqueueOptions) => Promise<WorkflowActorStartResult>;
+  getStartReceipt: (idempotencyKey: string, options?: { signal?: AbortSignal }) => Promise<WorkflowActorStartResult | null>;
   start: (
     name: string,
     input?: unknown,
@@ -273,6 +277,11 @@ export function useWorkflowActions(): WorkflowActions {
     unwrap(await client.api.workflows[instanceId].cancel.post());
   }), [client, runAction]);
 
+  const enqueueOnce = useCallback((name: string, input: unknown, options: WorkflowEnqueueOptions) =>
+    runAction(() => client.workflows.enqueueOnce(name, input, options)), [client, runAction]);
+  const getStartReceipt = useCallback((key: string, options?: { signal?: AbortSignal }) =>
+    runAction(() => client.workflows.getStartReceipt(key, options)), [client, runAction]);
+
   const pause = useCallback((instanceId: string): Promise<void> => runAction(async () => {
     unwrap(await client.api.workflows[instanceId].pause.post());
   }), [client, runAction]);
@@ -304,7 +313,7 @@ export function useWorkflowActions(): WorkflowActions {
     return result as WorkflowInteractionSubmissionResult;
   }), [client, runAction]);
 
-  return { start, cancel, pause, resume, sendEvent, submitResponse };
+  return { start, enqueueOnce, getStartReceipt, cancel, pause, resume, sendEvent, submitResponse };
 }
 
 function isActiveWorkflowStep(step: WorkflowClientStepRecord): boolean {

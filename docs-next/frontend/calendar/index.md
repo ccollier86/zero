@@ -21,6 +21,11 @@ native Zero component family. **No calendar backend is enabled.** Do not infer a
 scheduling service, Fabric store, permission policy or production booking API
 from these component exports. The current released archive is unchanged.
 
+Calendar backend work is paused for the shared scheduling/worker expansion.
+The [return handoff](../../_work/calendar-return-handoff.md) preserves the full
+reviewed UI and integration requirements; resume from that document after the
+[foundation plan](../../_work/durable-jobs-and-workers-plan.md) is qualified.
+
 Sources and the full composition guide are in
 [`src/components/calendar/README.md`](../../../src/components/calendar/README.md).
 The family has its own `components`, `models`, `hooks`, `recovered`, `styles`

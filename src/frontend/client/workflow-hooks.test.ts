@@ -18,6 +18,8 @@ import { AuthorizationDataBoundaryController } from './authorization-data-bounda
 import { ClientProvider } from './client-context';
 import type { Collection } from './collection';
 import { FetchError, type Client } from './sdk';
+import { createWorkflowClient } from './workflow-client';
+import type { WorkflowActorStartResult } from '../../workflows/workflow-actor-start-contract';
 import {
   useWorkflow,
   useWorkflowActions,
@@ -695,6 +697,45 @@ describe('workflow observation hooks', () => {
 });
 
 describe('workflow action hooks', () => {
+  test('queued actions expose the SDK receipt, preserve logical keys and keep callbacks stable', async () => {
+    const client = workflowClient(), calls: string[] = [];
+    const accepted: WorkflowActorStartResult = { instanceId: 'queued_1', name: 'approval', definitionVersion: 1, createdAt: '2030-01-01T00:00:00.000Z' };
+    const handoff = createWorkflowClient(async <T>(path: string) => { calls.push(path); return accepted as T; });
+    try {
+      const value: Client = { ...client.value, workflows: handoff };
+      const rendered = await renderHook(({ revision: _revision }: { revision: number }) => useWorkflowActions(), { revision: 0 }, value);
+      const original = rendered.current;
+      expect(await original.enqueueOnce('approval', { requestId: 'one' }, { idempotencyKey: 'logical:one' })).toEqual(accepted);
+      expect(await original.getStartReceipt('logical:one')).toEqual(accepted);
+      expect(calls).toEqual(['/workflows/enqueue', '/workflows/starts/logical%3Aone']);
+      await rendered.rerender({ revision: 1 });
+      expect(rendered.current.enqueueOnce).toBe(original.enqueueOnce);
+      expect(rendered.current.getStartReceipt).toBe(original.getStartReceipt);
+      await rendered.unmount();
+    } finally { handoff.clear(); }
+  });
+
+  test('queued hook completions and retained callbacks cannot cross an authorization revision', async () => {
+    const client = workflowClient(), accepted = deferred<WorkflowActorStartResult>(); let calls = 0;
+    const handoff = createWorkflowClient(async <T>() => { calls++; return await accepted.promise as T; });
+    let pending: Promise<WorkflowActorStartResult> | undefined;
+    try {
+      const value: Client = { ...client.value, workflows: handoff };
+      const rendered = await renderHook(() => useWorkflowActions(), undefined, value);
+      const old = rendered.current.enqueueOnce;
+      pending = old('approval', {}, { idempotencyKey: 'logical:late' });
+      const outcome = pending.catch(error => error);
+      await act(async () => { client.authorizationData.invalidate(); });
+      accepted.resolve({ instanceId: 'queued_2', name: 'approval', definitionVersion: 1, createdAt: '2030-01-01T00:00:00.000Z' });
+      expect(String(await outcome)).toContain('authorization scope changed');
+      await expect(old('approval', {}, { idempotencyKey: 'logical:obsolete' })).rejects.toThrow('authorization scope transition');
+      expect(calls).toBe(1); await rendered.unmount();
+    } finally {
+      accepted.resolve({ instanceId: 'queued_2', name: 'approval', definitionVersion: 1, createdAt: '2030-01-01T00:00:00.000Z' });
+      await pending?.catch(() => {}); handoff.clear();
+    }
+  });
+
   test('wires every Eden action, preserves return values, errors, and callback identities', async () => {
     const client = workflowClient();
     const rendered = await renderHook(

@@ -66,6 +66,8 @@ than importing implementation files or reconstructing authentication in routes.
 
 ## Background Coordination
 
+- [Workers](./workers/index.md): feature-preview shared pools, registered Bun
+  task processes and current-Guardian execution; not a durable queue.
 - [Scheduler](./scheduler/index.md): process-local cron and immediate jobs,
   overlap/cancellation ownership, safe errors and managed lifecycle.
 - [Torrent](./torrent/index.md): durable workflow definitions, activity

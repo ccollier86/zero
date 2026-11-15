@@ -45,8 +45,8 @@ export class WorkflowIdempotentStartCoordinator {
 
   /** Actor and SYSTEM commands share atomic creation mechanics, never their authority or receipt namespace. */
   async startActor(name: string, input: unknown, actor: WorkflowActorExecutionAuthority, key: string,
-    options: WorkflowStartOptions, bindingJson: string | null, mutation: WorkflowSystemStartMutation): Promise<WorkflowSystemStartResult> {
-    return this.startAuthorized(name, input, actor, requireWorkflowSystemStartKey(key), options, mutation, bindingJson);
+    options: WorkflowStartOptions, bindingJson: string | null, mutation: WorkflowSystemStartMutation, deferred = false): Promise<WorkflowSystemStartResult> {
+    return this.startAuthorized(name, input, actor, requireWorkflowSystemStartKey(key), options, mutation, bindingJson, deferred);
   }
 
   /** Reconcile a lost acknowledgement without executing work or reusing SYSTEM authority. */

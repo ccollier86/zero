@@ -32,6 +32,8 @@ export type ScopedWorkflowInstanceListFilter = Omit<
 export interface ScopedWorkflowService {
   readonly definitions: WorkflowDefinitionAuthoring;
   startOnce(name: string, input: unknown, options: WorkflowActorStartOptions): Promise<WorkflowActorStartResult>;
+  /** Durable actor-bound handoff receipt, not completion of the workflow activity. */
+  enqueueOnce(name: string, input: unknown, options: WorkflowActorStartOptions): Promise<WorkflowActorStartResult>;
   getStartReceipt(idempotencyKey: string): WorkflowActorStartResult | null;
   start(
     name: string,
@@ -68,6 +70,7 @@ export interface ScopedWorkflowService {
 type NonRequestWorkflowMember =
   | 'definitionsForActor'
   | 'startAsActorOnce'
+  | 'enqueueAsActorOnce'
   | 'getActorStartReceipt'
   | 'startAsActor'
   | 'runAsActor'
@@ -87,7 +90,7 @@ type NonRequestWorkflowMember =
 
 const WORKFLOW_SERVICE_INVENTORY: CompleteServiceMemberInventory<
   WorkflowService,
-  Exclude<keyof ScopedWorkflowService, 'definitions' | 'startOnce' | 'getStartReceipt'>,
+  Exclude<keyof ScopedWorkflowService, 'definitions' | 'startOnce' | 'enqueueOnce' | 'getStartReceipt'>,
   NonRequestWorkflowMember
 > = true;
 void WORKFLOW_SERVICE_INVENTORY;
@@ -135,6 +138,12 @@ export function createScopedWorkflowService(
     async startOnce(name, input, options) {
       await assertCurrentAuthority();
       const result = await service.startAsActorOnce(name, input, access.requireUser(), options, assertCurrentAuthoritySync);
+      await assertCurrentAuthority();
+      return result;
+    },
+    async enqueueOnce(name, input, options) {
+      await assertCurrentAuthority();
+      const result = await service.enqueueAsActorOnce(name, input, access.requireUser(), options, assertCurrentAuthoritySync);
       await assertCurrentAuthority();
       return result;
     },

@@ -1,4 +1,6 @@
 /** Workflow observation hooks and client-safe definitions. Curated client-safe re-exports only; implementation/context ownership stays with the existing modules. */
+export type { WorkflowClient, WorkflowEnqueueOptions } from '../../client/workflow-client';
+export type { WorkflowActorStartResult } from '../../../workflows/workflow-actor-start-contract';
 
 // ─── Workflows: React Hooks ────────────────────────────────────────────
 export {

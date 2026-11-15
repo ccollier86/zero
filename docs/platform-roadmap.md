@@ -393,8 +393,11 @@ the linked documentation.
 
 ## Collaboration and communications
 
-- [ ] **Calendar and scheduling** — **Official plugin**. Use the previously
-  built FullCalendar UI as a design and behavior reference.
+- [ ] **Calendar and scheduling** — Native tokenized UI is preserved on the
+  calendar feature branch, not yet released. The shared
+  [jobs/worker foundation](../docs-next/_work/durable-jobs-and-workers-plan.md)
+  is approved and in progress before calendar backend integration; preserve
+  the [return handoff](../docs-next/_work/calendar-return-handoff.md).
   - Support an internal Google Calendar-like experience with realtime events,
     recurrence, availability, resources, time zones, reminders, and permission
     policy.

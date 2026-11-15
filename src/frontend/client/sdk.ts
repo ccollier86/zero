@@ -146,6 +146,7 @@ import { createLoggingClient } from './logging-client';
 import { createBlogClient } from './blog-client';
 import type { BlogClient } from '../../blog/client-contracts';
 import { createMessagingClient } from './messaging-client';
+import { createWorkflowClient, type WorkflowClient } from './workflow-client';
 import type { MessagingClient } from '../../messaging/client-contracts';
 import type { LoggingClient } from '../../logging/logging-api-contracts';
 
@@ -767,6 +768,8 @@ export interface Client extends AuthAdminSdkSurface {
   readonly logging: LoggingClient;
   readonly blog: BlogClient;
   readonly messaging: MessagingClient;
+  /** Commit-acknowledged, actor-owned workflow starts and receipt reconciliation. */
+  readonly workflows: WorkflowClient;
 
   // ─── Data ────────────────────────────────────────────────────────
 
@@ -963,6 +966,7 @@ export function createClient(config: ClientConfig): Client {
   let logging!: LoggingClient;
   let blog!: BlogClient;
   let messaging!: MessagingClient;
+  let workflows!: WorkflowClient;
   let syncStarted = autoConnect;
   const authorizationDataBoundary = new AuthorizationDataBoundaryController();
 
@@ -988,6 +992,7 @@ export function createClient(config: ClientConfig): Client {
     logging?.clear();
     blog?.clear();
     messaging?.clear();
+    workflows?.clear();
     try {
       authClient?.invalidateAuthorization();
     } finally {
@@ -1010,6 +1015,7 @@ export function createClient(config: ClientConfig): Client {
     logging?.clear();
     blog?.clear();
     messaging?.clear();
+    workflows?.clear();
     syncClient.beginAuthorizationScopeTransition();
     stateClient?.beginAuthorizationScopeTransition();
     ephemeralClient.beginAuthorizationScopeTransition();
@@ -1236,6 +1242,7 @@ export function createClient(config: ClientConfig): Client {
   logging = createLoggingClient(clientFetch);
   blog = createBlogClient(clientFetch, (path, init) => authClient ? authClient.fetchWithAuth(`${url}${path}`, init) : fetch(`${url}${path}`, init));
   messaging = createMessagingClient(clientFetch, (path, init) => authClient ? authClient.fetchWithAuth(`${url}${path}`, init) : fetch(`${url}${path}`, init));
+  workflows = createWorkflowClient(clientFetch);
   const presenceClient = createSdkPresence(presenceEnabled, url, authClient, authorizationDataBoundary, syncClient, ephemeralClient);
 
   let previousAuthToken = currentAuthToken();
@@ -1262,6 +1269,7 @@ export function createClient(config: ClientConfig): Client {
       logging.clear();
       blog.clear();
       messaging.clear();
+      workflows.clear();
       syncClient.beginAuthorizationScopeTransition();
       stateClient?.beginAuthorizationScopeTransition();
       ephemeralClient.beginAuthorizationScopeTransition();
@@ -1400,6 +1408,7 @@ export function createClient(config: ClientConfig): Client {
     get logging() { return logging; },
     get blog() { return blog; },
     get messaging() { return messaging; },
+    get workflows() { return workflows; },
     get presence() { return presenceClient; },
     vectorVisualization,
     vectorVisualizationFor,
@@ -1649,6 +1658,7 @@ export function createClient(config: ClientConfig): Client {
       logging.clear();
       blog.clear();
       messaging.clear();
+      workflows.clear();
       _instance = null;
     },
   };

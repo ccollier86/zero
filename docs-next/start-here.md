@@ -81,6 +81,11 @@ families are listed in the [backend index](./backend/index.md).
   remain the default.
 - **Coding agent:** read [agent guidance](./agents/index.md), then the relevant
   canonical feature/config page. Respect the app's actual instructions and scope.
+- **Background work:** use [Torrent](./backend/torrent/index.md) for durable
+  execution and [Scheduler](./backend/scheduler/index.md) for local cron. The
+  [worker foundation](./backend/workers/index.md) and
+  [shared jobs plan](./_work/durable-jobs-and-workers-plan.md) are feature-branch
+  development, not APIs in the current stable archive.
 - **Markdown documentation:** install and declare the optional
   [docs plugin](./plugins/docs/index.md); its public reader includes
   [passage-aware search](./plugins/docs/search.md) and uses the shared

@@ -47,6 +47,7 @@ import {
 } from './platform-doctor-data';
 import { checkObservability, checkStorage } from './platform-doctor-operations';
 import { checkLogging } from './platform-doctor-logging';
+import { checkWorkers } from './platform-doctor-workers';
 import type { PlatformDoctorOptions } from './platform-doctor-options';
 import { checkPdf } from './platform-doctor-pdf';
 import { checkResources } from './platform-doctor-resources';
@@ -132,6 +133,7 @@ export function runPlatformDoctor(
     checkAuthPublicPaths(resolved, sink);
     checkObservability(resolved, sink, env);
     checkLogging(resolved, sink);
+    checkWorkers(resolved, sink);
     checkAI(resolved, sink, env);
     checkVector(resolved, sink);
     checkPdf(resolved, sink);
