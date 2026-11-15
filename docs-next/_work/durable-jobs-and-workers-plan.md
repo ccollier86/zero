@@ -1056,6 +1056,19 @@ Next: release-neutral reference wording and a final frozen-source sweep, followe
 by exact final worker/deployment/package/updater qualification. Do not restart
 calendar/backend/backup work or infer a main merge from this passing substage.
 
+The first frozen-source attempt at `6739fe54dd90e2211cddc1ae43d17ca406cb8cac`
+correctly stopped at the root TypeScript gate: four stream-iteration typing errors
+in three new test/deployment helpers were hidden by the earlier ESNext-focused
+type invocation. The source package targets ES2022/DOM, so those helpers now use
+standard explicit stream readers with finally-released locks instead of widening
+the root library/target. Browser diagnostic draining is observed at teardown.
+No production scheduling/authority code or test assertion/deadline was relaxed.
+No complete test inventory ran in that attempt, and it is not reported as one.
+Its independently installed root/payments dependencies, exact private Chrome SDK
+source fixture, temporary artifacts and owned awake process all retired, with
+the failed type output and small source/provenance report retained. The next
+frozen candidate must run the normal full source gate from the beginning.
+
 The dedicated external Colima profile was started for this qualification phase;
 it must be stopped after owned containers retire. Calendar/backups, real
 applications and production state remain untouched. The normal selected release

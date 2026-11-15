@@ -6,13 +6,20 @@ import { acquirePlaywrightTestBrowser, playwrightTestBrowserAvailable, type Play
 
 const browserTest = playwrightTestBrowserAvailable ? test : test.skip;
 let child: ReturnType<typeof Bun.spawn> | undefined, lease: PlaywrightTestBrowserLease | undefined, origin = '';
-let diagnostic = '';
+let diagnostic = '', diagnosticDrain: Promise<void> | undefined;
 beforeAll(async () => {
   if (!playwrightTestBrowserAvailable) return;
   child = Bun.spawn([process.execPath, '--no-env-file', join(import.meta.dir, '../../../scripts/preview-jobs-workspace.ts')], {
     env: { TMPDIR: tmpdir(), PATH: process.env.PATH ?? '' }, stdout: 'pipe', stderr: 'pipe', stdin: 'ignore',
   });
-  void (async () => { for await (const chunk of child!.stderr as ReadableStream<Uint8Array>) diagnostic = (diagnostic + new TextDecoder().decode(chunk)).slice(-4000); })();
+  diagnosticDrain = (async () => {
+    const reader = (child!.stderr as ReadableStream<Uint8Array>).getReader(), decoder = new TextDecoder();
+    try {
+      for (;;) { const chunk = await reader.read(); if (chunk.done) break; diagnostic = (diagnostic + decoder.decode(chunk.value, { stream: true })).slice(-4000); }
+      diagnostic = (diagnostic + decoder.decode()).slice(-4000);
+    } finally { reader.releaseLock(); }
+  })();
+  void diagnosticDrain.catch(() => {}); // Teardown observes it after the owned child settles.
   const reader = (child.stdout as ReadableStream<Uint8Array>).getReader();
   const timeout = setTimeout(() => child?.kill('SIGTERM'), 60_000);
   try {
@@ -38,7 +45,7 @@ afterAll(async () => {
       child.kill('SIGTERM');
       const force = setTimeout(() => child?.kill('SIGKILL'), 10_000);
       try { expect(await child.exited).toBe(0); }
-      finally { clearTimeout(force); }
+      finally { clearTimeout(force); await diagnosticDrain; }
     }
   }
 });

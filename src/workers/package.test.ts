@@ -13,9 +13,11 @@ test('an independently installed candidate archive executes public source and mi
     const timer = setTimeout(() => { timedOut = true; safeToClean = false; child.kill('SIGKILL'); }, 120_000);
     // Bounded diagnostics; no complete successful install/test environment is retained.
     const tail = async (stream: ReadableStream<Uint8Array>) => {
-      let result = ''; const decoder = new TextDecoder();
-      for await (const chunk of stream) result = (result + decoder.decode(chunk, { stream: true })).slice(-24_000);
-      return result + decoder.decode();
+      let result = ''; const decoder = new TextDecoder(), reader = stream.getReader();
+      try {
+        for (;;) { const chunk = await reader.read(); if (chunk.done) break; result = (result + decoder.decode(chunk.value, { stream: true })).slice(-24_000); }
+        return result + decoder.decode();
+      } finally { reader.releaseLock(); }
     };
     try {
       const [stdout, stderr, code] = await Promise.all([tail(child.stdout), tail(child.stderr), child.exited]);

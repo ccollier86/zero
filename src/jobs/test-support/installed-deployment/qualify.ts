@@ -189,8 +189,18 @@ async function assertStoppedBeforeDue(pending: Awaited<ReturnType<typeof future>
   assert(!(await calls()).some(row => row.kind === pending.key), 'Future work executed before its restart boundary.');
 }
 function childEnv() { return { PATH: process.env.PATH ?? '', TMPDIR: join(root, 'tmp'), NODE_ENV: 'production', ZERO_INSTALLED_JOBS_PARENT_SENTINEL: 'synthetic-parent-only' }; }
-async function hashFile(path: string) { const hash = new Bun.CryptoHasher('sha256'); for await (const bytes of Bun.file(path).stream()) hash.update(bytes); return hash.digest('hex'); }
-async function tail(stream: ReadableStream<Uint8Array>, limit = 24000) { let text = ''; const decoder = new TextDecoder(); for await (const bytes of stream) text = (text + decoder.decode(bytes, { stream: true })).slice(-limit); return text + decoder.decode(); }
+async function hashFile(path: string) {
+  const hash = new Bun.CryptoHasher('sha256'), reader = Bun.file(path).stream().getReader();
+  try { for (;;) { const part = await reader.read(); if (part.done) return hash.digest('hex'); hash.update(part.value); } }
+  finally { reader.releaseLock(); }
+}
+async function tail(stream: ReadableStream<Uint8Array>, limit = 24000) {
+  let text = ''; const decoder = new TextDecoder(), reader = stream.getReader();
+  try {
+    for (;;) { const part = await reader.read(); if (part.done) break; text = (text + decoder.decode(part.value, { stream: true })).slice(-limit); }
+    return text + decoder.decode();
+  } finally { reader.releaseLock(); }
+}
 async function command(argv: string[], cwd: string, timeout = 120000, limit = 24000) {
   const process = Bun.spawn(argv, { cwd, env: childEnv(), stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' });
   let timedOut = false; const timer = setTimeout(() => { timedOut = true; retirementConfirmed = false; process.kill('SIGKILL'); }, timeout);
