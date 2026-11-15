@@ -945,6 +945,18 @@ exports. The qualifier now uses Bun's actual consumer import resolver. This is
 a fixture correction, not a change to or relaxation of the public exports; the
 original failed diagnostic remains retained under core-workers-release.
 
+The second exact attempt, `c401dbd68b29efbc185e55273d37e71aac3bd536`
+(`984d619076a73161983405f0f7cfbc191f5aa03cceb0fdf9f059e15f6e1277e3`),
+verified every installed file, then correctly rejected an invalid deployment
+fixture: the code registry accepts one graph per name, not two code graph
+versions with the same name. The fixture now registers one explicit graph and
+pins activity version 1 over a newer default activity version 2, using the real
+public contracts. It explicitly declares its database capability and one total
+attempt. A new cheap registry-admission regression passed (one test/five
+expectations) before the next packaged runtime probe. Both failed containers,
+synthetic roots and transient candidate packages were retired; their small
+failure reports remain. No framework guard or production default was relaxed.
+
 The dedicated external Colima profile was started for this qualification phase;
 it must be stopped after owned containers retire. Calendar/backups, real
 applications and production state remain untouched. The normal selected release

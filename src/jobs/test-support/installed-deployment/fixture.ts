@@ -24,7 +24,7 @@ export function installedJobsConfig(): AppConfig {
     logging: { preset: 'activity', rootDirectory: join(state, 'logging'),
       actors: { launch: { kind: 'source', entrypoint: join(root, 'logging-actor.ts') }, env: {}, executor: { startupTimeoutMs: 30000 } } },
     workflows: { register(registry) {
-      registry.registerActivity<{ kind: string }, WorkflowExecutionServerServices>({ name: 'installed.activity', version: '1', async handler(context) {
+      registry.registerActivity<{ kind: string }, WorkflowExecutionServerServices>({ name: 'installed.activity', version: '1', capabilities: ['database'], async handler(context) {
         context.assertCurrentAuthority();
         await appendFile(join(root, 'calls.ndjson'), JSON.stringify({ instanceId: context.instanceId, kind: context.input.kind, version: 1, attempt: context.attempt }) + '\n');
         if (!context.zero?.data) throw new Error('The scoped workflow data facade was unavailable.');
@@ -32,9 +32,12 @@ export function installedJobsConfig(): AppConfig {
           { idempotencyKey: 'installed-mark:' + context.instanceId });
         return { completed: true };
       } });
-      registry.registerActivity({ name: 'installed.wrong-version', version: '2', handler() { throw new Error('The unpinned default workflow was selected.'); } });
-      registry.create({ name: 'installed.workflow', version: 1, flow: flow(step('work', { name: 'installed.activity', version: '1' })) });
-      registry.create({ name: 'installed.workflow', version: 2, activate: true, flow: flow(step('wrong', { name: 'installed.wrong-version', version: '2' })) });
+      // One code-owned graph per name is the registry contract. Pin its actual
+      // activity version despite a newer default; do not invent a second code
+      // graph registration to simulate the database publication API.
+      registry.registerActivity({ name: 'installed.activity', version: '2', default: true,
+        handler() { throw new Error('The unpinned default activity was selected.'); } });
+      registry.create({ name: 'installed.workflow', version: 1, flow: flow(step('work', { name: 'installed.activity', version: '1' }, { retries: 1 })) });
     } },
     serverExtensions: [
       defineEndpoint({ method: 'POST', path: '/qualification/enqueue', auth: 'user', async handler({ zero, body }) {

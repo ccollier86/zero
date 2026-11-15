@@ -35,7 +35,7 @@ try {
     '--skipLibCheck', '--module', 'preserve', '--moduleResolution', 'bundler', '--target', 'esnext',
     '--jsx', 'react-jsx', '--allowImportingTsExtensions', '--types', 'bun', '--esModuleInterop',
     'src/workers/index.ts', 'src/workers/types.test.ts', 'src/workers/process-pool.test.ts', 'src/workers/worker-task.test.ts',
-    'src/build/jobs-realm-build-plugin.test.ts', 'src/jobs/public-types.test.ts',
+    'src/build/jobs-realm-build-plugin.test.ts', 'src/jobs/public-types.test.ts', 'src/jobs/installed-fixture.test.ts',
     'src/jobs/test-support/installed-deployment/fixture.ts', 'src/jobs/test-support/installed-deployment/qualify.ts',
     'scripts/qualify-jobs-installed-linux.ts', 'scripts/qualify-worker-linux.ts', 'src/workers/torrent-managed.test.ts',
     'src/workers/managed.test.ts', 'src/jobs/runtime.ts', 'src/jobs/definition.ts', 'src/jobs/definition.test.ts',
