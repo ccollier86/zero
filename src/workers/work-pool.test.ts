@@ -1,5 +1,8 @@
 /** Pure synthetic activities; every test settles owned work and closes its pool. No files or providers. */
 import { expect, test } from 'bun:test';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { currentLoggingAttribution, runWithLoggingAttribution } from '../logging/logging-attribution';
+import { loggingContext } from '../logging/test-support/logging-fixture';
 import { WorkPool, DEFAULT_WORK_POOL_CAPACITY } from './work-pool';
 
 function gate() {
@@ -7,6 +10,105 @@ function gate() {
   return { promise: new Promise<void>(resolve => { release = resolve; }), release: () => release() };
 }
 async function turn() { await new Promise<void>(resolve => setTimeout(resolve, 0)); }
+
+for (const outcome of ['fulfilled', 'rejected', 'cancelled'] as const) {
+  test(`callbacks keep their submitting async context across ${outcome} refill and queued cancellation`, async () => {
+    const local = new AsyncLocalStorage<string>(), pool = new WorkPool({ concurrency: 1 });
+    const hold = gate(), entered = gate(), runningAbort = new AbortController(), waitingAbort = new AbortController();
+    const pending: Promise<unknown>[] = [];
+    let cancelledEntered = false;
+    const read = async () => { const before = local.getStore() ?? null; await Promise.resolve(); return [before, local.getStore() ?? null]; };
+    try {
+      const first = local.run('first', () => pool.run(async () => {
+        entered.release(); expect(await read()).toEqual(['first', 'first']); await hold.promise;
+        expect(await read()).toEqual(['first', 'first']);
+        if (outcome === 'rejected') throw new Error('Synthetic first-task rejection.');
+        return 'first';
+      }, { signal: runningAbort.signal }));
+      const firstOutcome = first.then(value => ({ value }), error => ({ error })); pending.push(firstOutcome);
+      await entered.promise;
+      const cancelled = local.run('cancelled', () => pool.run(() => { cancelledEntered = true; }, { signal: waitingAbort.signal }));
+      const cancelledOutcome = cancelled.catch(error => error); pending.push(cancelledOutcome);
+      const second = local.run('second', () => pool.run(read)); pending.push(second);
+      const background = pool.run(read); pending.push(background);
+      local.run('foreign-cancellation', () => waitingAbort.abort(new Error('Synthetic queued cancellation.')));
+      expect(await cancelledOutcome).toMatchObject({ message: 'Synthetic queued cancellation.' });
+      expect(cancelledEntered).toBe(false);
+      if (outcome === 'cancelled') {
+        local.run('foreign-cancellation', () => runningAbort.abort(new Error('Synthetic active cancellation.')));
+        expect(await firstOutcome).toMatchObject({ error: { message: 'Synthetic active cancellation.' } });
+        expect(pool.status()).toMatchObject({ active: 1, queued: 2 });
+      }
+      local.run('foreign-release', () => hold.release());
+      expect(await second).toEqual(['second', 'second']);
+      expect(await background).toEqual([null, null]);
+      if (outcome === 'fulfilled') expect(await firstOutcome).toEqual({ value: 'first' });
+      if (outcome === 'rejected') expect(await firstOutcome).toMatchObject({ error: { message: 'Synthetic first-task rejection.' } });
+      expect(pool.status()).toMatchObject({ active: 0, queued: 0 });
+    } finally { hold.release(); await local.run('foreign-close', () => pool.close()); await Promise.allSettled(pending); }
+  });
+}
+
+test('a queued callback\'s thenable is assimilated in its submitting async context', async () => {
+  const local = new AsyncLocalStorage<string>(), pool = new WorkPool({ concurrency: 1 }), hold = gate();
+  const first = local.run('previous-owner', () => pool.run(() => hold.promise));
+  const second = local.run('thenable-owner', () => pool.run(() => {
+    const callbackOwner = local.getStore();
+    return { then(resolve: (value: [string | undefined, string | undefined]) => void) {
+      resolve([callbackOwner, local.getStore()]);
+    } } as PromiseLike<[string | undefined, string | undefined]>;
+  }));
+  const outcomes = Promise.allSettled([first, second]);
+  try {
+    expect(pool.status()).toMatchObject({ active: 1, queued: 1 }); hold.release();
+    expect(await second).toEqual(['thenable-owner', 'thenable-owner']); await first;
+  } finally { hold.release(); await pool.close(); await outcomes; }
+});
+
+test('close cancels queued callbacks without changing a running callback\'s submitting async context', async () => {
+  const local = new AsyncLocalStorage<string>(), pool = new WorkPool({ concurrency: 1 });
+  const hold = gate(), entered = gate(); let queuedEntered = false;
+  const running = local.run('running-owner', () => pool.run(async signal => {
+    entered.release(); expect(local.getStore()).toBe('running-owner'); await hold.promise;
+    expect(local.getStore()).toBe('running-owner'); expect(signal.aborted).toBe(true);
+  }));
+  const waiting = local.run('queued-owner', () => pool.run(() => { queuedEntered = true; }));
+  const outcomes = Promise.allSettled([running, waiting]);
+  let closing: Promise<void> | undefined;
+  try {
+    await entered.promise; closing = local.run('closing-owner', () => pool.close());
+    expect(pool.status()).toMatchObject({ state: 'closing', active: 1, queued: 0 });
+    expect(queuedEntered).toBe(false); hold.release(); await closing;
+    expect((await outcomes).map(value => value.status)).toEqual(['rejected', 'rejected']);
+    expect(pool.status()).toMatchObject({ state: 'closed', active: 0, queued: 0 });
+  } finally { hold.release(); await closing; await pool.close(); await outcomes; }
+});
+
+test('queued background work cannot borrow a retired audit frame, while its own retired frame still fails closed', async () => {
+  const owner = {}, pool = new WorkPool({ concurrency: 1 }), hold = gate();
+  const pending: Promise<unknown>[] = [];
+  try {
+    await runWithLoggingAttribution(owner, loggingContext(null), () => {}, () => {
+      // This callback deliberately waits beyond its caller's audit lifetime but
+      // performs no attributed work. Its completion must not lend that lifetime.
+      pending.push(pool.run(() => hold.promise));
+    });
+    const background = pool.run(async () => { await Promise.resolve(); return currentLoggingAttribution(owner); }); pending.push(background);
+    let retiredOutcome!: Promise<unknown>;
+    await runWithLoggingAttribution(owner, loggingContext(null), () => {}, () => {
+      retiredOutcome = pool.run(() => currentLoggingAttribution(owner)).catch(error => error); pending.push(retiredOutcome);
+    });
+    const activeContext = { ...loggingContext(null), requestId: 'synthetic-active-request' };
+    const active = runWithLoggingAttribution(owner, activeContext, () => {}, () => pool.run(async () => {
+      expect(currentLoggingAttribution(owner)).toBe(activeContext); await Promise.resolve(); return currentLoggingAttribution(owner);
+    })); pending.push(active);
+    expect(pool.status()).toMatchObject({ active: 1, queued: 3 }); hold.release();
+    expect(await background).toBeNull();
+    expect(await retiredOutcome).toMatchObject({ message: 'Logging attribution lifetime is closed.' });
+    expect(await active).toBe(activeContext);
+    expect(pool.status()).toMatchObject({ active: 0, queued: 0 });
+  } finally { hold.release(); await pool.close(); await Promise.allSettled(pending); }
+});
 
 test('max is finite, configuration is strict and maxQueued zero still admits immediate execution', async () => {
   const pool = new WorkPool(), immediate = new WorkPool({ concurrency: 1, maxQueued: 0 });

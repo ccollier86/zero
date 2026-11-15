@@ -51,6 +51,12 @@ sandbox: registered code retains the application's OS privileges. Never execute
 user-supplied code/imports/commands. No queue wait or task may hold SQL/Guardian
 commit leases. Durable acceptance and retry policy belong in Torrent/jobs.
 
+Queued callbacks retain their own submitting async context, including an
+intentionally empty background context; refill cannot borrow the preceding
+caller's audit frame. This does not extend authority: if the callback's own
+request/audit lifetime has retired, its native checks still fail closed. Use a
+durable admitted handoff for work that must outlive the initiating request.
+
 ## Fixed task catalog
 
 Example side-effect-free `server/worker-tasks.ts`, shared by parent and child:

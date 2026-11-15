@@ -3,6 +3,7 @@
  * executor or authorization boundary. Callers must not hold database leases
  * while waiting for admission. Cancellation never proves an effect rolled back.
  */
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { WorkerError } from './worker-error';
 import { workerRecord } from './worker-value';
 
@@ -99,6 +100,12 @@ export class WorkPool {
       const executionMs = timeout(options.executionTimeoutMs) ?? this.executionTimeoutMs;
       if (this.state !== 'open') throw closed();
       signal?.throwIfAborted();
+      // Refill may occur in a different caller's completion/cancellation frame.
+      // Preserve the submitter's stores (including an intentionally empty one),
+      // not the previous task's live or already-retired audit/authority lifetime.
+      const execute = AsyncLocalStorage.bind((executionSignal: AbortSignal) => Promise.resolve().then(() => {
+        executionSignal.throwIfAborted(); return work(executionSignal);
+      }));
       // Admit older eligible waiters first. Remaining waiters may all be blocked
       // by their own per-key limits; they must not strand a free slot or prevent
       // an independent key from using it just because the waiting budget is full.
@@ -145,7 +152,7 @@ export class WorkPool {
             };
             // Both branches consume callback rejection. Cleanup cannot reject a
             // detached finally promise or let a synchronous throw strand a slot.
-            void Promise.resolve().then(() => { controller.signal.throwIfAborted(); return work(controller.signal); })
+            void execute(controller.signal)
               .then(value => { settle(true, value); complete(); }, error => { settle(false, error); complete(); });
           },
         };

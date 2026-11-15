@@ -10,6 +10,9 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { currentLoggingAttribution, runWithLoggingAttribution } from '../logging/logging-attribution';
+import { loggingContext } from '../logging/test-support/logging-fixture';
+import { ownedWorkerFixture } from '../workers/test-support/owned-fixture';
 
 import {
   installAuthAuthorityRevision,
@@ -26,6 +29,7 @@ import {
   type DatabaseCoordinatorLease,
 } from './database-coordinator';
 import { DatabaseError } from './database-error';
+import { installDatabaseLoggingBinding, prepareDatabaseLoggingBinding } from './database-logging-binding';
 import { SubprocessDatabaseExecutor } from './subprocess-database-executor';
 import { databaseActorFixtureRealm } from './test-fixtures/database-actor-realm';
 
@@ -46,6 +50,99 @@ describe('Fabric actor cross-process Guardian commit fence', () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  test('pre-dispatch audit/configuration failures release shared authority without retiring a healthy real actor', async () => {
+    const owned = await ownedWorkerFixture('database-audit-admission'), authority = new AuthorityCommitCoordinator(), auditOwner = {};
+    let system: ReturnType<typeof createReactiveDB> | null = null, coordinator: DatabaseCoordinator | null = null;
+    let lease: DatabaseCoordinatorLease | null = null, removeLogging: (() => void) | undefined, throwingContext = true;
+    let throwingClock = false, armDiagnosticClock = false, throwingDiagnosticClock = false;
+    try {
+      const systemPath = join(owned.root, 'system.sqlite'), fabricRoot = join(owned.root, 'fabric'); mkdirSync(fabricRoot);
+      system = createReactiveDB({ mode: 'file', path: systemPath }); defineAuthTables(system); installAuthAuthorityRevision(system);
+      coordinator = new DatabaseCoordinator({ rootDirectory: fabricRoot, realm: databaseActorFixtureRealm, readers: false,
+        maxDatabases: 1, sweepIntervalMs: false, authorityCommitCoordinator: authority, requireCommitAuthority: true,
+        now() {
+          if (throwingDiagnosticClock || throwingClock && authority.diagnostics().activeShared > 0) {
+            throwingDiagnosticClock = false; throwingClock = false; throw new Error('PRIVATE_CLOCK_FAILURE');
+          }
+          return Date.now();
+        },
+        actorAuthorityContext: new DatabaseActorAuthorityContext(system, systemPath),
+        createExecutor: ({ role, slot }) => new SubprocessDatabaseExecutor({
+          command: [process.execPath, '--no-env-file', ACTOR_CHILD_PATH, role, String(slot)], env: {}, role, slot, maxInFlight: 1,
+          startupTimeoutMs: 5_000, operationTimeoutMs: 5_000, shutdownAckTimeoutMs: 2_000, shutdownExitTimeoutMs: 2_000,
+          sigtermTimeoutMs: 1_000, sigkillTimeoutMs: 1_000,
+        }) });
+      removeLogging = installDatabaseLoggingBinding(coordinator, { records: false, workflow: false, policyVersion: 'synthetic-audit-policy',
+        sourceQueue: { maxEvents: 100, maxBytes: 16_384 }, context() {
+          if (throwingContext) throw new Error('PRIVATE_AUDIT_CONTEXT_FAILURE');
+          if (armDiagnosticClock) { armDiagnosticClock = false; throwingDiagnosticClock = true; }
+          return currentLoggingAttribution(auditOwner);
+        } });
+      prepareDatabaseLoggingBinding(coordinator, 'audit-admission', { kind: 'application', tenantId: null });
+      coordinator.start(); lease = await acquireAuthorized(coordinator, authority, 'audit-admission');
+      const writerGeneration = coordinator.diagnostics().databases[0]!.writerGeneration;
+      const rejectedCommands = [createTodo('throwing-context', 'Synthetic audit rejection'), createTodo('retired-context', 'Synthetic retired rejection')];
+      const failures: DatabaseError[] = [await databaseError(lease.execute(rejectedCommands[0]!))];
+      throwingContext = false;
+      let release!: () => void, retiredWrite!: Promise<unknown>;
+      const held = new Promise<void>(done => { release = done; });
+      await runWithLoggingAttribution(auditOwner, loggingContext(null), () => {}, () => {
+        retiredWrite = held.then(() => lease!.execute(rejectedCommands[1]!));
+        void retiredWrite.catch(() => {});
+      });
+      release(); failures.push(await databaseError(retiredWrite));
+      for (const failure of failures) {
+        expect(failure).toMatchObject({ code: 'DATABASE_AUTHORITY_CHANGED', retryable: false, outcome: 'not-started' });
+        expect(String(failure)).not.toContain('PRIVATE_');
+        expect(String(failure)).not.toContain('Logging attribution lifetime');
+      }
+      const clockCommand = createTodo('throwing-clock', 'Synthetic clock rejection'); rejectedCommands.push(clockCommand);
+      throwingClock = true;
+      const clockFailure = await databaseError(lease.execute(clockCommand));
+      expect(throwingClock).toBe(false);
+      const timeoutCommand = createTodo('throwing-timeout', 'Synthetic timeout rejection'); rejectedCommands.push(timeoutCommand);
+      let timeoutReads = 0;
+      const timeoutOptions = Object.defineProperty({}, 'operationTimeoutMs', { get() { timeoutReads++; throw new Error('PRIVATE_TIMEOUT_FAILURE'); } });
+      const timeoutFailure = await databaseError(lease.execute(timeoutCommand, timeoutOptions));
+      expect(timeoutReads).toBe(1);
+      const invalidCommand = createTodo('invalid-timeout', 'Synthetic invalid timeout'); rejectedCommands.push(invalidCommand);
+      const invalidFailure = await databaseError(lease.execute(invalidCommand, { operationTimeoutMs: 0 }));
+      for (const failure of [clockFailure, timeoutFailure, invalidFailure]) {
+        expect(failure).toMatchObject({ code: 'DATABASE_CONFIG_INVALID', retryable: false, outcome: 'not-started' });
+        expect(String(failure)).not.toContain('PRIVATE_');
+      }
+      expect(coordinator.diagnostics().heldAuthorityLeases).toBe(0);
+      expect(authority.diagnostics()).toMatchObject({ activeShared: 0, activeExclusive: false, pendingExclusive: 0 });
+      // The failed call must not reserve Guardian's exclusive side until actor
+      // shutdown, nor consume a business write/receipt before actual dispatch.
+      const exclusive = await authority.acquireExclusive({ timeoutMs: 1_000 }); exclusive.release();
+      for (const command of rejectedCommands) expect(await title(lease, command.mutation.row.id)).toBeUndefined();
+      for (const command of rejectedCommands) await expect(lease.execute(command)).resolves.toMatchObject({ replayed: false });
+      // Here a real actor receives and rejects a duplicate primary key. A clock
+      // throwing only in error diagnostics must not rewrite that known outcome
+      // as unknown, leak authority, or unnecessarily retire the healthy actor.
+      armDiagnosticClock = true;
+      const conflict = await databaseError(lease.execute({ ...rejectedCommands[0]!, idempotencyKey: 'synthetic-diagnostic-conflict' }));
+      expect(throwingDiagnosticClock).toBe(false);
+      expect(conflict).toMatchObject({ code: 'DATABASE_CONFLICT', outcome: 'not-committed' });
+      expect(String(conflict)).not.toContain('PRIVATE_');
+      expect(coordinator.diagnostics().databases[0]!.writerGeneration).toBe(writerGeneration);
+      expect(coordinator.diagnostics().heldAuthorityLeases).toBe(0);
+      expect(authority.diagnostics().activeShared).toBe(0);
+    } finally {
+      lease?.release();
+      const failures: unknown[] = [];
+      try { await coordinator?.close(); } catch (error) { failures.push(error); }
+      removeLogging?.();
+      if (!failures.length) {
+        try { await authority.close(); } catch (error) { failures.push(error); }
+        try { system?.dispose(); } catch (error) { failures.push(error); }
+      }
+      if (failures.length) throw new AggregateError(failures, 'Synthetic audit-admission fixture retirement unconfirmed; preserving ' + owned.root);
+      await owned.cleanup();
+    }
+  }, 30_000);
 
   test('orders Guardian and concurrent tenant commits at the final edge', async () => {
     const base = realpathSync.native(

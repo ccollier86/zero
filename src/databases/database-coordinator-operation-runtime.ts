@@ -162,17 +162,17 @@ export class DatabaseCoordinatorOperationRuntime {
       () => this.executePresenceProjection(entry, publication, execution, commitAuthority));
     this.options.assertUsableEntry(entry);
     return this.enqueueLane(entry, 'mutation', execution, () => this.withWriterAuthority(entry, execution, commitAuthority, async (writer, authorityRevision) => {
-      const startedAt = this.options.now();
+      const { startedAt, timeoutMs } = this.prepareActorDispatch(execution);
       try {
         const raw = await writer.execute({ operation: DATABASE_ACTOR_OPERATIONS.presenceProjection, kind: 'write',
           payload: { ...payload, ...(authorityRevision === undefined ? {} : { authorityRevision }) } as unknown as DatabaseExecutorValue },
-          { timeoutMs: operationTimeout(execution, this.options.operationTimeoutMs) });
+          { timeoutMs });
         return validateDatabasePresenceProjectionReceipt(raw, payload.publication);
       } catch (caught) {
         const error = safeCoordinatorError(caught);
         this.options.emit({ type: error.outcome === 'unknown' ? 'operation-outcome-unknown' : 'operation-failed',
           databaseRef: entry.databaseRef, placement: entry.placement.mode, role: 'writer', slot: entry.slot,
-          generation: writer.diagnostics().generation, operation: 'mutation', durationMs: elapsed(startedAt, this.options.now()), error });
+          generation: writer.diagnostics().generation, operation: 'mutation', durationMs: this.diagnosticElapsed(startedAt), error });
         if (error.outcome === 'unknown' || this.options.isTerminalFailure(writer, error)) await this.options.retire(entry, writer, error);
         throw error;
       }
@@ -355,7 +355,7 @@ export class DatabaseCoordinatorOperationRuntime {
           role: 'writer',
           slot: entry.slot,
           generation: writer.diagnostics().generation,
-          durationMs: elapsed(startedAt, this.options.now()),
+          durationMs: this.diagnosticElapsed(startedAt),
           error,
         });
         await this.retireIfTerminal(entry, writer, error);
@@ -423,7 +423,7 @@ export class DatabaseCoordinatorOperationRuntime {
           generation: writer.diagnostics().generation,
           sequenceStart: payload.afterSeq,
           sequenceEnd: payload.afterSeq,
-          durationMs: elapsed(startedAt, this.options.now()),
+          durationMs: this.diagnosticElapsed(startedAt),
           error,
         });
         await this.retireIfTerminal(entry, writer, error);
@@ -660,8 +660,16 @@ export class DatabaseCoordinatorOperationRuntime {
     onCommitSettled?: () => void,
   ): Promise<DatabaseReadResult | DatabaseCommitResult> {
     const kind = isWriteOperation(operation) ? 'write' : 'read';
-    const loggingContext = kind === 'write' ? this.options.loggingContext?.() : undefined;
-    const startedAt = this.options.now();
+    const { startedAt, timeoutMs } = this.prepareActorDispatch(execution);
+    let loggingContext: LoggingContext | undefined;
+    try { loggingContext = kind === 'write' ? this.options.loggingContext?.() : undefined; }
+    catch {
+      // Attribution is a live final-edge authority check, before any actor
+      // dispatch. A retired/throwing context cannot become an unknown write:
+      // that would retain the shared lease until this still-healthy actor exits.
+      throw new DatabaseError('DATABASE_AUTHORITY_CHANGED', 'Database audit authority is unavailable before dispatch.',
+        { retryable: false, outcome: 'not-started' });
+    }
     try {
       const value = await executor.execute({
         operation: DATABASE_ACTOR_OPERATIONS.execute,
@@ -678,7 +686,7 @@ export class DatabaseCoordinatorOperationRuntime {
             : { authorityRevision }),
         } as unknown as DatabaseExecutorValue,
       }, {
-        timeoutMs: operationTimeout(execution, this.options.operationTimeoutMs),
+        timeoutMs,
         ...(onCommitSettled ? { onCommitSettled } : {}),
       });
       if (logicalReceiptFingerprint === undefined) {
@@ -732,7 +740,7 @@ export class DatabaseCoordinatorOperationRuntime {
         role: executor === entry.writer ? 'writer' : 'reader',
         slot: entry.slot,
         generation: executor.diagnostics().generation,
-        durationMs: elapsed(startedAt, this.options.now()),
+        durationMs: this.diagnosticElapsed(startedAt),
         error,
       } : {
         type: error.outcome === 'unknown'
@@ -744,7 +752,7 @@ export class DatabaseCoordinatorOperationRuntime {
         slot: entry.slot,
         generation: executor.diagnostics().generation,
         operation: operationClass(operation),
-        durationMs: elapsed(startedAt, this.options.now()),
+        durationMs: this.diagnosticElapsed(startedAt),
         ...(failureReason === null ? {} : { failureReason }),
         error,
       });
@@ -754,6 +762,22 @@ export class DatabaseCoordinatorOperationRuntime {
       }
       throw error;
     }
+  }
+
+  private prepareActorDispatch(execution: DatabaseExecutionOptions): { startedAt: number; timeoutMs: number } {
+    try {
+      return { startedAt: this.options.now(), timeoutMs: operationTimeout(execution, this.options.operationTimeoutMs) };
+    } catch {
+      // Neither a clock failure nor an authored timeout accessor can have
+      // dispatched this operation. Do not retain authority or retire its actor.
+      throw new DatabaseError('DATABASE_CONFIG_INVALID', 'Database dispatch configuration is invalid.',
+        { retryable: false, outcome: 'not-started' });
+    }
+  }
+
+  private diagnosticElapsed(startedAt: number): number {
+    try { return elapsed(startedAt, this.options.now()); }
+    catch { return 0; } // Diagnostics cannot replace the outcome or skip retirement.
   }
 
   private emitReceiptCompaction(

@@ -957,6 +957,68 @@ expectations) before the next packaged runtime probe. Both failed containers,
 synthetic roots and transient candidate packages were retired; their small
 failure reports remain. No framework guard or production default was relaxed.
 
+The next Linux archive (`a49f84ae20f7143b7e292b9586381660bd1c2476`,
+`9bc085909611303bdcceeab42e0b5c77265b49690d23157b41d0585644ebf470`)
+passed source execution, the official build, minified restart against retained
+source-created state, and the bundled native HTTP controls/receipt path. Its
+application-endpoint SDK enqueue then failed the unchanged 60-second completion
+deadline. This is a failed candidate, not a qualified bundle result; source and
+retained-state substage observations remain distinct from overall failure.
+The next probe records only closed public occurrence/schedule fields and
+content-free runner/pool health before retiring its synthetic state, to identify
+the actual stalled boundary without retaining private inputs or increasing the
+deadline. Independent review also identified a generic shared-pool async-context
+handoff risk; that requires its own regression and correction, not an inferred
+explanation of the Linux failure without supporting state.
+
+The cheap deployment-registry test passed at runtime but its strict phase found
+the required registration-context argument missing from the test. It now passes
+the native `{ ai: null }` disabled-service context and awaits setup. Final source
+types remain a required gate; that failed type phase is not called a pass.
+
+The safe-state diagnostic on `ecf0e32aa00722fcaf8bcdeb370abc3e113d6f9d`
+(`dbb95ef17b94eaaf46c9a84eaf2b3573794167c1bc23cf9df7ebae2d356331ff`)
+failed earlier, on a source-mode receipt-reconciled enqueue: the occurrence was
+still pending with no workflow/activity, while dispatch had reported an unknown
+outcome and later admissions reported database conflicts. This disproves a
+bundle-only diagnosis. Root review identified two concrete shared boundaries:
+
+- WorkPool refill used the preceding callback's async context instead of the
+  queued callback's submission context. A separate committed-baseline probe
+  reproduced `first-caller` where `second-caller` was required; the corrected
+  pool preserves `second-caller`. The bound execution includes PromiseLike
+  assimilation, not only the synchronous function call.
+- A retired/throwing logging-context getter ran before actor dispatch but outside
+  the actor error boundary. Its plain error was normalized to unknown and the
+  shared authority lease could be held until a still-healthy actor exited.
+  Pre-dispatch capture now fails as sanitized authority-changed/not-started.
+  Real dispatched-unknown handling remains unchanged.
+
+After those corrections, a fresh frozen focused group passed **110 tests /
+eight files / 1,180 expectations**, followed by expanded strict types. It covers
+the real actor lease regression, existing dispatched-unknown settlement fences,
+WorkPool/messaging compatibility, canonical builds, real managed activity/
+detailed audit delivery and native jobs/Torrent/AI-service independent progress.
+The native regression proves no held/shared lease, successful exclusive admission,
+no rejected row/receipt, later accepted same-key writes and no healthy actor
+generation change. This is not yet an exact Linux archive pass. A final review
+also found analogous supported clock/timeout preflight and diagnostic-clock
+failure paths; their bounded correction and fresh recheck are in progress.
+
+That follow-up is now implemented and checked: preflight pins the configured
+clock/timeout before actor dispatch and final-edge attribution, and diagnostic
+clock failures cannot replace the original outcome or skip retirement. The
+shared-authority presence writer uses the same preflight. A fresh focused
+recheck passed **76 database tests / two files / 943 expectations**, including
+the expanded real-actor failure cases and the unchanged dispatched-unknown
+settlement tests, followed by expanded strict types. These overlap the prior
+110-test run; they are reported separately, not summed into a new total.
+
+All focused dependencies/owned fixtures are retired. The dedicated external
+Colima profile is stopped between native checks and the next Linux phase. No
+normal updater selection, main merge, production change or calendar work has
+occurred. The feature checkpoint (not a release) is preserved on both remotes.
+
 The dedicated external Colima profile was started for this qualification phase;
 it must be stopped after owned containers retire. Calendar/backups, real
 applications and production state remain untouched. The normal selected release

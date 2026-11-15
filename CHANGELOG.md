@@ -23,6 +23,11 @@ Torrent admission, native operator controls and explicit recovery boundaries.
   whole-batch barrier or opening all idle databases on every tick. SQL/authority
   leases are not held while waiting on providers or pool capacity. Defaults are
   finite, fair limits rather than unbounded concurrency.
+- Preserve each pooled callback's submitting async context across refill,
+  cancellation and thenable assimilation. Do not borrow another request's
+  retired audit/authority frame. Reject failed final-edge audit context capture
+  before actor dispatch as not-started, releasing its shared authority lease
+  instead of retaining a healthy actor indefinitely as an unknown write.
 - Append semantic job transitions atomically through the existing private source
   outbox. Background ticks do not inherit an HTTP request's audit lifetime;
   polls, claims, replay and unchanged live authority checks stay quiet.
