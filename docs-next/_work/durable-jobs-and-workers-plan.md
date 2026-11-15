@@ -352,29 +352,58 @@ intentionally retained. At completion external free space was about 229 GiB;
 the internal-drive guard still warns (about 74 GiB), under the user's explicit
 external-only exception. Source, history and real runtime data are preserved.
 
-### Remaining operator-read contract slice (review, November 15)
+### Operator-read contract slice (review and source follow-up, November 15)
 
-Complete these before assembling the native management view; they are not
-implemented just because the current request facade already has controls:
+The review identified these prerequisites before assembling the native
+management view. Checked items are source implementations, not released UI:
 
-- Publish code-owned, payload-safe definition/capability discovery and
+- [x] Publish code-owned, payload-safe definition/capability discovery and
   per-schedule action availability through the same server policy. A browser
   role/owner check cannot reconstruct custom management policy, service-owned
   readmission or an administrator's inability to impersonate another actor.
-- Share a bounded scheduling/execution summary across list, detail and live
-  reads. List pages currently omit next due, blocked reason and occurrence
-  changes, so equal-page coalescing can hide a meaningful runtime update.
+- [x] Share a bounded scheduling/execution summary across list, detail and live
+  reads. Earlier list pages omitted next due, blocked reason and occurrence
+  changes, so equal-page coalescing hid meaningful runtime updates.
   Keep paused scheduling separate from an older generation's still-running work.
-- Give browser mutations a typed, static failure contract retaining their
+- [x] Give browser mutations a typed, static failure contract retaining their
   original idempotency key and explicit uncertainty/reconciliation requirement.
   Transport loss or an invalid acknowledgment is not proof of rejection. Never
   create a new key to bypass an uncertain write or interpret a null receipt as
   permission to replay an external effect.
-- Expose linked Torrent run observation only where its own authority admits it.
+- [ ] Expose linked Torrent run observation only where its own authority admits it.
   A job-management permission does not automatically grant arbitrary workflow
   control, and `dispatched` is not evidence the provider effect completed.
-- Distinguish retained quota stops from temporary pool pressure. Do not propose
+- [ ] Distinguish retained quota stops from temporary pool pressure. Do not propose
   deleting permanent receipts or rotating service principals as capacity repair.
+
+This source slice adds `definitions.list`, live-request action availability and
+bounded latest/active-generation summaries without changing the original
+mutation/receipt shape, private schema or histories. Native routes and SDK
+parsers share the contract; service eligibility/parser code is not executed for
+discovery. A first managed/operator/SDK group passed **30 tests / five files /
+229 expectations**. The independent frozen combined follow-up then passed
+**45 tests / nine files / 433 expectations**, including actual native
+live-completion/eligibility-block changes without a fabricated schedule revision,
+ordinary-user discovery, administrator non-impersonation, private history,
+logging and index-plan checks. Its type phase found three new parser/test
+narrowing errors; these were corrected with explicit typed action construction
+and literal fixtures, not disabled checks or unsafe transport casts.
+
+Independent review also rejected a broad auth-code regex in the mutation error
+projection. Only explicit recognized pre-admission codes are now retained;
+unrecognized auth-prefixed response content remains code-null/unknown. Explicit
+unknown outcomes override any apparent rejection. The final frozen focused
+follow-up passes **22 tests / four files / 138 expectations** and the expanded
+strict direct-Bun TypeScript group. It preserves the dispatched key despite
+caller mutation, retires late rejected responses after scope replacement, and
+does not retry or expose raw response messages/bodies. These overlapping groups
+are deliberately not summed or described as a complete-framework suite.
+
+Documentation checks remain **892 pages/unique IDs reachable, zero problems**.
+All owned synthetic runs/dependencies were removed by finally/EXIT; the dedicated
+Colima profile remains stopped. Source and warm caches are retained. Full
+operator UI, admitted Torrent run detail/control, source semantic-run audit and
+final release qualification remain outstanding, not implied by these reads.
 
 Review also found jobs omitted from two existing SDK retirement paths. They now
 clear the logical jobs subscription boundary during read-authority invalidation

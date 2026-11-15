@@ -1,15 +1,13 @@
 /** Closed job failures: static messages only; uncertainty never implies rollback or automatic replay. */
 import { AuthError } from '../auth/types';
 import { DatabaseError } from '../databases/database-error';
+import { JOBS_REJECTIONS, type JobsErrorCode, type JobOperationOutcome } from './failure-contract';
+export { JOBS_REJECTIONS } from './failure-contract';
+export type { JobsErrorCode, JobOperationOutcome } from './failure-contract';
 
-// Append only: the ordinal is the private actor rejection discriminator.
-export const JOBS_REJECTIONS = ['JOBS_INPUT_INVALID', 'JOBS_NOT_FOUND', 'JOBS_FORBIDDEN', 'JOBS_REVISION_CONFLICT',
-  'JOBS_INTENT_CONFLICT', 'JOBS_CAPACITY', 'JOBS_STAGE_CONFLICT', 'JOBS_STATE_INVALID'] as const;
-export type JobsErrorCode = typeof JOBS_REJECTIONS[number] | 'JOBS_NOT_READY' | 'JOBS_CONFIG_INVALID'
-  | 'JOBS_DEFINITION_UNAVAILABLE' | 'JOBS_AUTHORITY_RETIRED' | 'JOBS_OUTCOME_UNKNOWN';
 export class JobsError extends AuthError {
-  readonly outcome: 'not-started' | 'not-committed' | 'unknown';
-  constructor(code: JobsErrorCode, outcome: 'not-started' | 'not-committed' | 'unknown' = code === 'JOBS_OUTCOME_UNKNOWN' ? 'unknown' : 'not-started') {
+  readonly outcome: JobOperationOutcome;
+  constructor(code: JobsErrorCode, outcome: JobOperationOutcome = code === 'JOBS_OUTCOME_UNKNOWN' ? 'unknown' : 'not-started') {
     super(code === 'JOBS_OUTCOME_UNKNOWN'
       ? 'The job operation may have committed; reconcile using the original request identity.'
       : code === 'JOBS_NOT_READY' ? 'Job execution is not ready.' : 'The job request was not accepted.', code, statusFor(code));

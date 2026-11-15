@@ -120,6 +120,10 @@ test('private Fabric controls preserve permanent intents, ownership, revisions, 
       expect(db.query("SELECT count(*) AS n FROM _jobs_admissions WHERE schedule_id='quota-denied'").get()).toEqual({ n: 0 });
       const plan = JSON.stringify(db.query("EXPLAIN QUERY PLAN SELECT id FROM _jobs_cursors WHERE scope_id=? AND next_due_at<=? AND blocked_code IS NULL ORDER BY next_due_at,id LIMIT 32").all('application', due));
       expect(plan).toContain('jobs_due'); expect(plan).not.toContain('TEMP B-TREE');
+      const latest = JSON.stringify(db.query('EXPLAIN QUERY PLAN SELECT id FROM _jobs_occurrences WHERE scope_id=? AND schedule_id=? ORDER BY scheduled_at DESC,id DESC LIMIT 1').all('application', 'job-one'));
+      const active = JSON.stringify(db.query('EXPLAIN QUERY PLAN SELECT id FROM _jobs_occurrences WHERE scope_id=? AND schedule_id=? AND state=? ORDER BY generation,scheduled_at DESC LIMIT 1').all('application', 'job-one', 'claimed'));
+      expect(latest).toContain('jobs_occurrence_page'); expect(latest).not.toContain('TEMP B-TREE');
+      expect(active).toContain('jobs_occurrence_overlap'); expect(active).not.toContain('TEMP B-TREE');
     });
   } finally { await f.close(); }
 }, 120_000);

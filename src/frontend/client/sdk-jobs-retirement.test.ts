@@ -14,6 +14,9 @@ const accepted = {
   id: 'job_synthetic', definition: 'synthetic.job', definitionVersion: '1', ownerId: user.userId,
   runAs: 'actor', control: 'active', revision: 1, generation: 1, createdAt: 1, updatedAt: 1,
 };
+const allowed = { allowed: true, reason: null };
+const summary = { ...accepted, nextDueAt: null, skipped: false, blockedCode: null, latestOccurrence: null, activeOccurrence: null,
+  actions: { pause: allowed, cancel: allowed, resume: allowed, update: allowed, runNow: allowed } };
 const tenant = (tenantId: string) => ({ tenantId, kind: 'organization', slug: tenantId, name: tenantId, role: 'owner' });
 
 afterEach(() => {
@@ -37,7 +40,7 @@ for (const boundary of ['read-authority-reset', 'tenant-switch'] as const) {
         opened++;
         return new Response(new ReadableStream<Uint8Array>({
           start(controller) {
-            controller.enqueue(new TextEncoder().encode('data: ' + JSON.stringify({ version: 1, value: { items: [accepted], total: 1 } }) + '\n\n'));
+            controller.enqueue(new TextEncoder().encode('data: ' + JSON.stringify({ version: 1, value: { items: [summary], total: 1 } }) + '\n\n'));
             // Stay idle: scope retirement must release this reader without requiring another server chunk.
           },
           cancel() { cancelled++; },

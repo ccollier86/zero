@@ -9,20 +9,21 @@ import { ownedWorkerFixture } from '../workers/test-support/owned-fixture';
 import { flow, step } from '../workflows/workflow-dsl';
 import { defineJob } from './definition';
 
-async function fixture(multi = false, file = false) {
+async function fixture(multi = false, file = false, restrictedDefinition = false) {
   const owned = await ownedWorkerFixture('jobs-managed');
-  const calls: string[] = [], eligible = { value: true };
+  const calls: string[] = [], eligible = { value: true, checks: 0 };
   let release!: () => void;
   const barrier = new Promise<void>(resolve => { release = resolve; });
   const definition = defineJob({ name: 'synthetic.job', version: '1', workflow: { name: 'synthetic.work', version: 1 }, access: 'user', parseInput: value => value,
-    service: { principal: 'synthetic.jobs', scopes: ['application', 'tenant'], isEligible: () => eligible.value } });
+    service: { principal: 'synthetic.jobs', scopes: ['application', 'tenant'], isEligible: () => { eligible.checks++; return eligible.value; } } });
+  const restricted = defineJob({ name: 'synthetic.restricted', version: '1', workflow: { name: 'synthetic.work', version: 1 }, access: 'admin', parseInput: value => value });
   const running: { app: Awaited<ReturnType<typeof createApp>> | null } = { app: null };
   let url = '', startupRetirementConfirmed = true;
   try {
     const config: AppConfig = { projectRoot: owned.root, db: file ? { mode: 'file', path: join(owned.root, 'application.sqlite') } : { mode: 'memory' },
       ...(file ? { systemDb: { mode: 'file' as const, path: join(owned.root, 'system.sqlite') } } : {}), tables: {},
       auth: { ...(multi ? { tenancy: 'multi' as const } : {}), bootstrap: 'public', registration: { mode: 'public' }, accountEmails: { passwordReset: false } },
-      jobs: { definitions: [definition], rootDirectory: join(owned.root, 'jobs') },
+      jobs: { definitions: restrictedDefinition ? [definition, restricted] : [definition], rootDirectory: join(owned.root, 'jobs') },
       workflows: { register(registry) {
         registry.registerActivity({ name: 'synthetic.work', version: '1', handler: async context => {
           const input = context.input as { kind: string }; calls.push(input.kind);
@@ -71,6 +72,66 @@ async function eventually(check: () => boolean, tick: () => Promise<unknown>, ti
   const deadline = Date.now() + timeout;
   while (!check()) { if (Date.now() >= deadline) throw new Error('Synthetic job did not settle.'); await tick(); await Bun.sleep(5); }
 }
+
+test('operator discovery and actions follow real current Guardian ownership without leaking policy or invoking service eligibility', async () => {
+  const f = await fixture(false, false, true);
+  try {
+    const other = await f.request('POST', '/auth/register', { username: 'other-job-owner', email: 'other-job-owner@example.test', password: 'Synthetic-Jobs-Password-95!' });
+    expect(other.status).toBe(200); const token = String(other.body.accessToken);
+    const catalog = await f.request('GET', '/jobs/definitions', undefined, token);
+    expect(catalog.status).toBe(200);
+    expect(catalog.body).toEqual({ items: [{ name: 'synthetic.job', version: '1', default: true, ownership: { actor: true, service: true } }] });
+    expect((await f.request('GET', '/jobs/definitions')).body.items).toHaveLength(2);
+    expect(f.eligible.checks).toBe(0);
+    const created = await f.request('POST', '/jobs/schedules', { schedule: { definition: 'synthetic.job', input: { kind: 'owned', private: 'NEVER_IN_OPERATOR_METADATA' },
+      timing: { kind: 'once', at: new Date(Date.now() + 3_600_000).toISOString() } }, options: { idempotencyKey: 'owned-schedule' } }, token);
+    expect(created.status).toBe(202); expect(Object.keys(created.body)).toHaveLength(10);
+    const own = await f.request('GET', '/jobs/schedules/' + created.body.id, undefined, token);
+    expect(own.body).toMatchObject({ latestOccurrence: null, activeOccurrence: null, blockedCode: null, skipped: false,
+      actions: { resume: { allowed: true, reason: null }, update: { allowed: true, reason: null } } });
+    const managed = (await f.request('GET', '/jobs/schedules')).body.items.find((row: any) => row.id === created.body.id);
+    expect(managed.actions).toMatchObject({ pause: { allowed: true, reason: null }, cancel: { allowed: true, reason: null },
+      resume: { allowed: false, reason: 'owner-required' }, update: { allowed: false, reason: 'owner-required' }, runNow: { allowed: true, reason: null } });
+    expect(JSON.stringify(managed)).not.toContain('NEVER_IN_OPERATOR_METADATA'); expect(JSON.stringify(catalog.body)).not.toContain('isEligible');
+    expect((await f.request('POST', '/jobs/schedules/' + created.body.id + '/resume', { idempotencyKey: 'no-impersonation', expectedRevision: 1 })).status).toBe(403);
+    const now = await f.request('POST', '/jobs/schedules/' + created.body.id + '/runNow', { idempotencyKey: 'independent-run', expectedRevision: 1 });
+    expect(now.status).toBe(200); expect(now.body.ownerId).not.toBe(created.body.ownerId); expect(Object.keys(now.body)).toHaveLength(10);
+    expect((await f.request('GET', '/jobs/schedules/' + now.body.id, undefined, token)).status).toBe(404);
+    expect(f.eligible.checks).toBe(0);
+  } finally { await f.close(); }
+}, 120_000);
+
+test('live operator pages report completion and a real eligibility stop without manufacturing a schedule revision', async () => {
+  const f = await fixture(), owner = new AbortController();
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  try {
+    const actor = await f.request('POST', '/jobs/enqueue', { definition: 'synthetic.job', input: { kind: 'slow' }, idempotencyKey: 'live-completion' });
+    expect(actor.status).toBe(202); await eventually(() => f.calls.includes('slow'), () => f.request('POST', '/api/synthetic-tick'));
+    const service = await f.request('POST', '/jobs/schedules', { schedule: { definition: 'synthetic.job', ownership: 'service', input: { kind: 'blocked-live' },
+      timing: { kind: 'once', at: new Date(Date.now() + 2000).toISOString() } }, options: { idempotencyKey: 'live-eligibility' } });
+    expect(service.status).toBe(202);
+    const response = await f.open('/jobs/schedules/live', AbortSignal.any([owner.signal, AbortSignal.timeout(30_000)]));
+    expect(response.status).toBe(200); reader = response.body!.getReader();
+    const decoder = new TextDecoder(); let buffered = '';
+    const packet = async () => {
+      for (;;) {
+        const end = buffered.indexOf('\n\n');
+        if (end >= 0) { const message = buffered.slice(0, end); buffered = buffered.slice(end + 2); return JSON.parse(message.split('\n').find(line => line.startsWith('data:'))!.slice(5)); }
+        const next = await reader!.read(); if (next.done) throw new Error('Synthetic live summary ended before expected evidence.'); buffered += decoder.decode(next.value, { stream: true });
+      }
+    };
+    expect((await packet()).value.total).toBe(2);
+    f.eligible.value = false; f.release();
+    let completed = false, blocked = false;
+    while (!completed || !blocked) {
+      const result = await packet(); expect(result.error).not.toBe(true);
+      const a = result.value.items.find((row: any) => row.id === actor.body.id), b = result.value.items.find((row: any) => row.id === service.body.id);
+      if (a?.latestOccurrence?.terminalStatus === 'completed') { completed = true; expect(a.revision).toBe(1); expect(a.activeOccurrence).toBeNull(); }
+      if (b?.blockedCode === 'JOBS_AUTHORITY_RETIRED') { blocked = true; expect(b.revision).toBe(1); expect(b.latestOccurrence.state).toBe('blocked'); expect(b.activeOccurrence).toBeNull(); }
+    }
+    expect(f.calls).not.toContain('blocked-live');
+  } finally { owner.abort(); await reader?.cancel().catch(() => {}); reader?.releaseLock(); await f.close(); }
+}, 120_000);
 test('managed enqueue uses permanent semantic receipts, public views omit secrets, and slow work does not hold unrelated admission', async () => {
   const f = await fixture();
   try {

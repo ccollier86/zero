@@ -8,6 +8,8 @@ import type { JobControlOptions, JobEnqueueOptions, JobOccurrenceView, JobPageOp
 import type { JobDefinition } from './definition';
 import { JobsError } from './error';
 import type { JobAdmission, JobScheduleRow } from './model';
+import { JobOperatorPolicy } from './operator-policy';
+import type { JobScheduleReadDetail, JobScheduleReadSummary } from './operator-views';
 import { JobsRunner, jobGateKey } from './runner';
 import { JobsRuntime } from './runtime';
 import { normalizeScheduleTiming, type ScheduleTiming } from './schedule-time';
@@ -60,6 +62,10 @@ export class JobsService {
         now => timing({ kind: 'once', at: new Date(now).toISOString(), maxLatenessMs }));
     };
     return Object.freeze({ enqueue: enqueue as ScopedJobs['enqueue'],
+      definitions: Object.freeze({ list: async () => {
+        const context = await admit(), result = this.operatorPolicy(request, context).definitions();
+        await context.confirm(); return result;
+      } }),
       receipts: Object.freeze({ get: async (key: string) => {
         const context = await admit(); return this.read<JobScheduleView | null>(context, 'jobs.receipt', { actor: context.actor, requestId: jobKey(key) });
       } }),
@@ -69,8 +75,11 @@ export class JobsService {
           if (!patch.definition || !patch.timing) throw new JobsError('JOBS_INPUT_INVALID');
           return this.create(context, request, patch, opts.idempotencyKey, jobHash(['schedule', this.intentPatch(patch)]), () => patch.timing!);
         },
-        get: async (id: string) => { const context = await admit(); return this.read<JobScheduleDetail>(context, 'jobs.schedule', { actor: context.actor, id: jobText(id, 96) }); },
-        list: async (options?: JobPageOptions) => { const context = await admit(); return this.read<{ items: JobScheduleView[]; total: number }>(context, 'jobs.schedules', { actor: context.actor, ...page(options, true) }); },
+        get: async (id: string): Promise<JobScheduleDetail> => {
+          const context = await admit(), detail = await this.read<JobScheduleReadDetail>(context, 'jobs.schedule', { actor: context.actor, id: jobText(id, 96) });
+          return { ...detail, actions: this.operatorPolicy(request, context).actions(context.actor, detail) };
+        },
+        list: async (options?: JobPageOptions) => { const context = await admit(); return this.readSchedules(request, context, page(options, true)); },
         watch: (listener: (page: JobSchedulePage) => void, options: JobWatchOptions = {}) => {
           const r = jobRecord(options, ['query', 'signal', 'onError']), query = page(r.query, true);
           if (typeof listener !== 'function' || r.onError !== undefined && typeof r.onError !== 'function'
@@ -78,7 +87,7 @@ export class JobsService {
           const signal = AbortSignal.any([this.abort.signal, ...[request.signal, r.signal].filter((item): item is AbortSignal => item instanceof AbortSignal)]);
           return watchJobSchedules({ listener, signal, onError: r.onError as ((error: unknown) => void) | undefined, prepare: async () => {
             const context = await admit(signal);
-            return { read: () => this.read<JobSchedulePage>(context, 'jobs.schedules', { actor: context.actor, ...query }),
+            return { read: () => this.readSchedules(request, context, query),
               subscribe: changed => this.options.runtime.subscribe(context.scope, changed, context.actor.manageAll ? {} : { ownerId: context.actor.userId }) };
           } });
         },
@@ -148,6 +157,15 @@ export class JobsService {
   }
   private receipt(context: JobRequestAuthority, key: string, intent: unknown): Promise<JobScheduleView | null> {
     return this.read(context, 'jobs.receipt', { actor: context.actor, requestId: key, intentDigest: jobHash(intent) });
+  }
+  private operatorPolicy(request: JobsAuthority, context: JobRequestAuthority): JobOperatorPolicy {
+    context.guard();
+    return new JobOperatorPolicy(this.options.config.catalog, context.scope.scopeKind, definition => request.access.authorize(definition.access));
+  }
+  private async readSchedules(request: JobsAuthority, context: JobRequestAuthority, query: JobPageOptions): Promise<JobSchedulePage> {
+    const result = await this.read<{ items: JobScheduleReadSummary[]; total: number }>(context, 'jobs.schedules', { actor: context.actor, ...query });
+    const policy = this.operatorPolicy(request, context);
+    return { items: result.items.map(item => ({ ...item, actions: policy.actions(context.actor, item) })), total: result.total };
   }
   private async read<T>(context: JobRequestAuthority, name: string, input: unknown): Promise<T> {
     context.guard(); const result = await this.options.runtime.read<T>(context.scope, name, input, context.guard, context.signal);

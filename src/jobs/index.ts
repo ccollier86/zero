@@ -4,6 +4,7 @@ export type { JobDefinition, JobDefinitionInput, JobDefinitionValue, JobServiceP
 export type { JobsConfig } from './config';
 export type { JobControlOptions, JobEnqueueOptions, JobOccurrenceView, JobPageOptions, JobRequestOptions, JobScheduleDetail, JobScheduleInput, JobScheduleView, ScopedJobs } from './contracts';
 export type { JobSchedulePage, JobWatchOptions } from './contracts';
+export type { JobActionAvailability, JobActionUnavailableReason, JobBlockedCode, JobDefinitionPage, JobDefinitionView, JobScheduleActions, JobScheduleSummary } from './contracts';
 export type { ScheduleTiming, MisfirePolicy } from './schedule-time';
 export { JobsError } from './error';
-export type { JobsErrorCode } from './error';
+export type { JobsErrorCode, JobOperationOutcome } from './error';

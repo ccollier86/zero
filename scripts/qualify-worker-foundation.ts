@@ -38,7 +38,9 @@ try {
     'src/workers/managed.test.ts', 'src/jobs/runtime.ts', 'src/jobs/definition.ts', 'src/jobs/definition.test.ts',
     'src/jobs/realm.integration.test.ts', 'src/jobs/runtime.integration.test.ts', 'src/jobs/persistence-config.test.ts',
     'src/jobs/config.test.ts', 'src/jobs/managed.integration.test.ts', 'src/jobs/logging.integration.test.ts',
-    'src/jobs/service.ts', 'src/jobs/runner.ts', 'src/jobs/runner.test.ts', 'src/jobs/stream.ts', 'src/jobs/watch.test.ts', 'src/frontend/client/jobs-client.test.ts', 'src/frontend/client/sdk-jobs-retirement.test.ts', 'src/frontend/client/jobs-hooks.ts',
+    'src/jobs/service.ts', 'src/jobs/runner.ts', 'src/jobs/runner.test.ts', 'src/jobs/operator-policy.test.ts', 'src/jobs/operator-views.test.ts',
+    'src/jobs/stream.ts', 'src/jobs/watch.test.ts', 'src/frontend/client/jobs-client.test.ts', 'src/frontend/client/sdk-jobs-retirement.test.ts',
+    'src/frontend/client/jobs-hooks.ts', 'src/frontend/exports/features/jobs.ts',
     'src/scheduler/index.ts', 'src/scheduler/scheduler-lifecycle.test.ts', 'src/doctor/source-only-background-checks.ts'], 600_000);
 } finally {
   const current = await lstat(dependencies);

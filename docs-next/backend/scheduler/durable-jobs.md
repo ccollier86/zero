@@ -114,6 +114,40 @@ Raw inputs, authority seals, claim nonces and actor handles never appear in
 public schedule/run views. Trusted setup receives the lifecycle owner; ordinary
 handlers receive only the admitted `zero.jobs` facade.
 
+## Operator reads and action discovery
+
+`zero.jobs.definitions.list()` and `client.jobs.definitions.list()` use native
+`GET /jobs/definitions`. They return only permitted code registrations: name,
+version, default selection and declared actor/service ownership support in the
+current scope. They do not expose access policies, callbacks, workflow pins,
+inputs or credentials. Reading discovery never runs a parser or dynamic service
+eligibility callback. Available metadata is not a promise an arbitrary input or
+future workflow handoff will succeed.
+
+List/detail/live pages share `JobScheduleSummary`: the original identity and
+control fields plus `nextDueAt`, `skipped`, a closed `blockedCode`,
+`latestOccurrence`, `activeOccurrence` and server-owned `actions`.
+Each action has `allowed` and a closed unavailable `reason`. Use these advisory
+prerequisites rather than guessing permissions from a browser role. Mutations
+still validate current authority, revision, definition, inputs and eligibility.
+In particular, administrators can stop another actor's schedule but cannot
+resume/update it as that actor; run-now is a new admission by the initiator.
+
+Scheduling control and execution are separate. A paused schedule can retain
+older active work. `latestOccurrence` is the latest nominal occurrence;
+`activeOccurrence` is one claimed/dispatched representative, preferring the
+oldest active generation. It is **not** a total/count or a complete history of
+concurrent work. Use paged occurrences for that history. A dispatch receipt is
+not proof an AI/provider effect completed or a grant to control its Torrent run.
+
+Summary changes participate in the existing coalesced live page, even when a
+schedule's control revision stays unchanged. A nonrepresentative concurrent
+occurrence change may leave this bounded summary equal; its actual committed
+hint still revalidates, and its history remains inspectable. No full-history
+count or scan is needed merely to render each row. Mutation acknowledgments
+and permanent receipts remain the original ten-field `JobScheduleView`; they
+are not silently rewritten as current summary snapshots.
+
 ## Commands and receipts
 
 ```ts
@@ -145,6 +179,21 @@ Read the current schedule separately. Controls require the accepted revision.
 Unknown outcomes require reconciliation using the **same** request identity;
 neither server nor SDK invents a replacement key or automatically replays an
 uncertain external effect.
+
+Browser mutations throw the exported `JobsMutationError` after a dispatched
+request fails or returns an unverifiable acknowledgment. It retains the
+original `idempotencyKey`, safe `status`/`code`, `outcome`,
+`requiresReconciliation` and `requiresSameIdempotencyKey`. Messages are static;
+raw response bodies/provider errors are not copied into it. Explicit native
+rejections remain `not-started`/`not-committed`; missing responses, malformed
+acknowledgments and explicit unknown outcomes remain `unknown`. There is no
+automatic retry. Scope/cancellation failures retain the `AbortError` name so
+retired views can discard their callbacks, without asserting no write occurred.
+Local validation/pre-dispatch cancellation still issues no request.
+
+A null receipt under replacement authority does not prove the old operation
+never committed. Keep the same logical identity when reconciling uncertainty;
+do not generate another key or blindly repeat an external effect.
 
 `enqueue` and schedule creation return an accepted schedule identity, not AI
 output or a completed workflow. Native HTTP uses `/jobs/enqueue`,

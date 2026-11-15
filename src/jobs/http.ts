@@ -12,6 +12,9 @@ const page = t.Object({ limit: t.Optional(t.Numeric({ minimum: 1, maximum: 100 }
 export async function createJobsHttp(runtime: ZeroAppRuntime) {
   return createServerExtensionApp({ runtime, name: 'zero.jobs.http', extensions: [defineRouter({ name: 'zero.jobs', prefix: '/jobs',
     auth: { user: 'required', credentials: ['session'] }, endpoints: [
+      defineEndpoint({ method: 'GET', path: '/definitions', async handler({ zero }) {
+        if (!zero.jobs) throw new JobsError('JOBS_NOT_READY'); return zero.jobs.definitions.list();
+      } }),
       // Keep the raw JSON object: Elysia's default object normalization removes
       // undeclared keys before the broker can reject caller scope/authority.
       defineEndpoint({ method: 'POST', path: '/enqueue', body: t.Unknown(),

@@ -2,6 +2,7 @@
 import type { JobControlOptions, JobEnqueueOptions, JobPageOptions, JobRequestOptions, JobScheduleInput, JobSchedulePage, JobScheduleView, JobWatchOptions, ScopedJobs } from '../../jobs/contracts';
 import type { FetchInit } from './sdk';
 import { watchJobsPage } from './jobs-watch';
+import { jobMutationFailure } from './jobs-mutation';
 
 export type ClientJobScheduleInput = Omit<JobScheduleInput, 'definition'> & { readonly definition: string };
 export interface JobsClient extends Omit<ScopedJobs, 'enqueue' | 'schedules'> {
@@ -14,13 +15,24 @@ export interface JobsClient extends Omit<ScopedJobs, 'enqueue' | 'schedules'> {
 }
 export function createJobsClient(fetch: <T = unknown>(path: string, init?: FetchInit) => Promise<T>, open?: (path: string, init: RequestInit) => Promise<Response>): JobsClient {
   let generation = 0, boundary = new AbortController();
-  const call = async <T>(path: string, method = 'GET', body?: unknown, signal?: AbortSignal): Promise<T> => {
+  const call = async <T>(path: string, method = 'GET', body?: unknown, signal?: AbortSignal, dispatched?: () => void): Promise<T> => {
     const epoch = generation, combined = AbortSignal.any([boundary.signal, ...(signal ? [signal] : [])]); combined.throwIfAborted();
     const captured = body === undefined ? undefined : structuredClone(body);
-    const result = await fetch<T>('/jobs' + path, { method, ...(captured === undefined ? {} : { body: captured }), signal: combined });
+    dispatched?.();
+    let result: T;
+    try { result = await fetch<T>('/jobs' + path, { method, ...(captured === undefined ? {} : { body: captured }), signal: combined }); }
+    catch (error) {
+      if (epoch !== generation || combined.aborted) throw new DOMException('Jobs authority scope changed.', 'AbortError');
+      throw error;
+    }
     if (epoch !== generation || combined.aborted) throw new DOMException('Jobs authority scope changed.', 'AbortError'); return result;
   };
-  const mutation = async (path: string, method: string, body: unknown, options: JobRequestOptions) => view(await call(path, method, body, options.signal));
+  const mutation = async (path: string, method: string, body: unknown, options: JobRequestOptions) => {
+    const key = requestKey(options.idempotencyKey);
+    let dispatched = false;
+    try { return view(await call(path, method, body, options.signal, () => { dispatched = true; })); }
+    catch (error) { if (!dispatched) throw error; throw jobMutationFailure(error, key); }
+  };
   const control = (action: string, id: string, supplied: JobControlOptions) => {
     const options = requestOptions(supplied, ['expectedRevision']);
     if (!Number.isSafeInteger(options.expectedRevision) || Number(options.expectedRevision) < 1) throw invalid();
@@ -37,16 +49,28 @@ export function createJobsClient(fetch: <T = unknown>(path: string, init?: Fetch
       if (!result || typeof result !== 'object' || Object.keys(result).length !== 1 || !Object.hasOwn(result, 'receipt')) throw invalid();
       return result.receipt === null ? null : view(result.receipt);
     } }),
+    definitions: Object.freeze({ async list() {
+      const page = record(await call('/definitions'), ['items']);
+      if (!Array.isArray(page.items) || page.items.length > 256) throw invalid();
+      const seen = new Set<string>();
+      const items = page.items.map(value => {
+        const r = record(value, ['name', 'version', 'default', 'ownership']), ownership = record(r.ownership, ['actor', 'service']);
+        const name = identifier(r.name, 96), version = identifier(r.version, 64), key = name + ':' + version;
+        if (Object.keys(r).length !== 4 || Object.keys(ownership).length !== 2 || typeof r.default !== 'boolean'
+          || ownership.actor !== true || typeof ownership.service !== 'boolean' || seen.has(key)) throw invalid();
+        seen.add(key);
+        return Object.freeze({ name, version, default: r.default, ownership: Object.freeze({ actor: true as const, service: ownership.service }) });
+      });
+      return Object.freeze({ items: Object.freeze(items) });
+    } }),
     schedules: Object.freeze({
       async create(input: ClientJobScheduleInput, supplied: JobRequestOptions) { return mutation('/schedules', 'POST', { schedule: input, options: requestOptions(supplied) }, supplied); },
       async get(id: string) {
         const result = await call<Record<string, unknown>>('/schedules/' + encodeURIComponent(identifier(id)));
-        const { timing, overlap, nextDueAt, skipped, blockedCode, ...base } = result ?? {};
-        view(base);
+        const { timing, overlap, ...rest } = result ?? {}, base = summary(rest);
         const acceptedTiming = timingView(timing);
-        if (!['skip', 'allow', 'queue-one'].includes(String(overlap)) || nextDueAt !== null && (!Number.isSafeInteger(nextDueAt) || Number(nextDueAt) < 0)
-          || typeof skipped !== 'boolean' || blockedCode !== null && (typeof blockedCode !== 'string' || !/^JOBS_[A-Z_]+$/.test(blockedCode))) throw invalid();
-        return Object.freeze({ ...base, timing: acceptedTiming, overlap, nextDueAt, skipped, blockedCode }) as Awaited<ReturnType<ScopedJobs['schedules']['get']>>;
+        if (!['skip', 'allow', 'queue-one'].includes(String(overlap))) throw invalid();
+        return Object.freeze({ ...base, timing: acceptedTiming, overlap }) as Awaited<ReturnType<ScopedJobs['schedules']['get']>>;
       },
       async list(options?: JobPageOptions) {
         return schedulePage(await call('/schedules' + query(options, true)));
@@ -60,14 +84,7 @@ export function createJobsClient(fetch: <T = unknown>(path: string, init?: Fetch
       async occurrences(id: string, options?: Pick<JobPageOptions, 'limit' | 'offset'>) {
         const result = await call<{ items: unknown[]; total: number }>('/schedules/' + encodeURIComponent(identifier(id)) + '/occurrences' + query(options));
         if (!result || !Array.isArray(result.items) || result.items.length > 100 || !Number.isSafeInteger(result.total) || result.total < 0) throw invalid();
-        const items = result.items.map(item => {
-          const r = record(item, ['id', 'generation', 'scheduledAt', 'state', 'workflowId', 'terminalStatus', 'errorCode', 'createdAt', 'updatedAt']);
-          if (Object.keys(r).length !== 9 || !['pending', 'claimed', 'dispatched', 'terminal', 'blocked', 'cancelled'].includes(String(r.state))) throw invalid();
-          identifier(r.id, 128);
-          for (const key of ['generation', 'scheduledAt', 'createdAt', 'updatedAt']) if (!Number.isSafeInteger(r[key]) || Number(r[key]) < (key === 'generation' ? 1 : 0)) throw invalid();
-          for (const key of ['workflowId', 'terminalStatus', 'errorCode']) if (r[key] !== null && (typeof r[key] !== 'string' || String(r[key]).length > 128)) throw invalid();
-          return Object.freeze(r) as unknown as import('../../jobs/contracts').JobOccurrenceView;
-        });
+        const items = result.items.map(occurrenceView);
         return Object.freeze({ items: Object.freeze(items), total: result.total });
       },
       async update(id: string, input: Partial<ClientJobScheduleInput>, supplied: JobControlOptions) {
@@ -118,7 +135,41 @@ function invalid() { return new Error('Invalid jobs request or acknowledgment.')
 function schedulePage(input: unknown): JobSchedulePage {
   const r = record(input, ['items', 'total']);
   if (!Array.isArray(r.items) || r.items.length > 100 || !Number.isSafeInteger(r.total) || Number(r.total) < 0) throw invalid();
-  return Object.freeze({ items: Object.freeze(r.items.map(view)), total: Number(r.total) });
+  return Object.freeze({ items: Object.freeze(r.items.map(summary)), total: Number(r.total) });
+}
+function occurrenceView(value: unknown): import('../../jobs/contracts').JobOccurrenceView {
+  const r = record(value, ['id', 'generation', 'scheduledAt', 'state', 'workflowId', 'terminalStatus', 'errorCode', 'createdAt', 'updatedAt']);
+  if (Object.keys(r).length !== 9 || !['pending', 'claimed', 'dispatched', 'terminal', 'blocked', 'cancelled'].includes(String(r.state))) throw invalid();
+  identifier(r.id, 128);
+  for (const key of ['generation', 'scheduledAt', 'createdAt', 'updatedAt']) if (!Number.isSafeInteger(r[key]) || Number(r[key]) < (key === 'generation' ? 1 : 0)) throw invalid();
+  if (r.workflowId !== null) identifier(r.workflowId, 128);
+  if (r.terminalStatus !== null && !['superseded', 'expired', 'overlap-skipped', 'not-dispatched', 'completed', 'failed', 'cancelled'].includes(String(r.terminalStatus))) throw invalid();
+  if (r.errorCode !== null && !['JOBS_NOT_DISPATCHED', 'JOBS_CAPACITY', 'JOBS_AUTHORITY_RETIRED', 'JOBS_DEFINITION_UNAVAILABLE'].includes(String(r.errorCode))) throw invalid();
+  return Object.freeze(r) as unknown as import('../../jobs/contracts').JobOccurrenceView;
+}
+function summary(value: unknown): import('../../jobs/contracts').JobScheduleSummary {
+  const r = record(value, ['id', 'definition', 'definitionVersion', 'ownerId', 'runAs', 'control', 'revision', 'generation', 'createdAt', 'updatedAt',
+    'nextDueAt', 'skipped', 'blockedCode', 'latestOccurrence', 'activeOccurrence', 'actions']);
+  const { nextDueAt, skipped, blockedCode, latestOccurrence, activeOccurrence, actions, ...base } = r;
+  const accepted = view(base);
+  if (typeof skipped !== 'boolean' || nextDueAt !== null && (!Number.isSafeInteger(nextDueAt) || Number(nextDueAt) < 0)
+    || blockedCode !== null && !['JOBS_CAPACITY', 'JOBS_AUTHORITY_RETIRED', 'JOBS_DEFINITION_UNAVAILABLE'].includes(String(blockedCode))) throw invalid();
+  const actionKeys = ['pause', 'cancel', 'resume', 'update', 'runNow'] as const, a = record(actions, actionKeys);
+  if (Object.keys(a).length !== 5) throw invalid();
+  const admittedActions = Object.freeze({ pause: actionView(a.pause), cancel: actionView(a.cancel), resume: actionView(a.resume),
+    update: actionView(a.update), runNow: actionView(a.runNow) });
+  const latest = latestOccurrence === null ? null : occurrenceView(latestOccurrence), active = activeOccurrence === null ? null : occurrenceView(activeOccurrence);
+  if (active && !['claimed', 'dispatched'].includes(active.state)) throw invalid();
+  return Object.freeze({ ...accepted, nextDueAt: nextDueAt === null ? null : Number(nextDueAt), skipped,
+    blockedCode: blockedCode as import('../../jobs/contracts').JobBlockedCode | null,
+    latestOccurrence: latest, activeOccurrence: active, actions: admittedActions });
+}
+function actionView(value: unknown): import('../../jobs/contracts').JobActionAvailability {
+  const r = record(value, ['allowed', 'reason']); if (Object.keys(r).length !== 2) throw invalid();
+  if (r.allowed === true && r.reason === null) return Object.freeze({ allowed: true, reason: null });
+  if (r.allowed === false && (r.reason === 'cancelled' || r.reason === 'owner-required' || r.reason === 'definition-unavailable'
+    || r.reason === 'access-denied' || r.reason === 'ownership-unavailable')) return Object.freeze({ allowed: false, reason: r.reason });
+  throw invalid();
 }
 function timingView(value: unknown): import('../../jobs/schedule-time').ScheduleTiming {
   const r = record(value, ['kind', 'at', 'maxLatenessMs', 'pattern', 'timezone', 'misfire', 'catchUpLimit']);

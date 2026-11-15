@@ -4,6 +4,7 @@ import { JobsError } from './error';
 import type { JobAdmissionRow, JobOccurrenceRow, JobScheduleRow } from './model';
 import { digest, jobAdmissionId } from './model';
 import { decodeJobAdmission, jobActor, jobScope, scheduleView, type JobActor } from './realm-model';
+import { activeJobOccurrence, jobBlockedCode, jobOccurrenceView, JOB_OCCURRENCE_VIEW_COLUMNS, type JobOccurrenceProjectionRow, type JobScheduleReadSummary } from './operator-views';
 import { jobHash, jobInteger, jobKey, jobRecord, jobText, jobTime } from './validation';
 
 function owner(context: DatabaseReadQueryContext, scope: string): void {
@@ -19,11 +20,9 @@ function readSchedule(context: DatabaseReadQueryContext, actor: JobActor, id: un
 export function readJobSchedule(context: DatabaseReadQueryContext, input: unknown) {
   const r = jobRecord(input, ['actor', 'id']), actor = jobActor(r.actor), row = readSchedule(context, actor, r.id);
   const admission = context.database.query<JobAdmissionRow>('SELECT * FROM _jobs_admissions WHERE id=? AND scope_id=?').get(jobAdmissionId(row.id, row.generation), actor.scopeId);
-  const cursor = context.database.query<{ next_due_at: number | null; skipped: number; blocked_code: string | null }>('SELECT next_due_at,skipped,blocked_code FROM _jobs_cursors WHERE id=? AND scope_id=?').get(row.id, actor.scopeId);
-  if (!admission || !cursor) throw new JobsError('JOBS_STATE_INVALID');
+  if (!admission) throw new JobsError('JOBS_STATE_INVALID');
   const admitted = decodeJobAdmission(admission);
-  return { ...scheduleView(row), timing: admitted.timing, overlap: admitted.overlap, nextDueAt: cursor.next_due_at,
-    skipped: cursor.skipped === 1, blockedCode: cursor.blocked_code };
+  return { ...readJobScheduleSummary(context, row), timing: admitted.timing, overlap: admitted.overlap };
 }
 export function listJobSchedules(context: DatabaseReadQueryContext, input: unknown) {
   const r = jobRecord(input, ['actor', 'limit', 'offset', 'control']), actor = jobActor(r.actor), limit = jobInteger(r.limit ?? 25, 1, 100), offset = jobInteger(r.offset ?? 0, 0, 10_000);
@@ -33,7 +32,24 @@ export function listJobSchedules(context: DatabaseReadQueryContext, input: unkno
   const params = [actor.scopeId, ...(actor.manageAll ? [] : [actor.userId]), ...(r.control === undefined ? [] : [String(r.control)])];
   const total = context.database.query<{ n: number }>('SELECT count(*) AS n FROM job_schedules WHERE ' + where).get(...params)!.n;
   const rows = context.database.query<JobScheduleRow>('SELECT * FROM job_schedules WHERE ' + where + ' ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?').all(...params, limit, offset);
-  return { items: rows.map(scheduleView), total };
+  return { items: rows.map(row => readJobScheduleSummary(context, row)), total };
+}
+/** One native query request, at most four indexed point/range probes per bounded page row. No occurrence history count. */
+function readJobScheduleSummary(context: DatabaseReadQueryContext, row: JobScheduleRow): JobScheduleReadSummary {
+  const cursor = context.database.query<{ next_due_at: number | null; skipped: number; blocked_code: string | null }>(
+    'SELECT next_due_at,skipped,blocked_code FROM _jobs_cursors WHERE id=? AND scope_id=?').get(row.id, row.scope_id);
+  if (!cursor) throw new JobsError('JOBS_STATE_INVALID');
+  const latest = context.database.query<JobOccurrenceProjectionRow>('SELECT ' + JOB_OCCURRENCE_VIEW_COLUMNS +
+    ' FROM _jobs_occurrences WHERE scope_id=? AND schedule_id=? ORDER BY scheduled_at DESC,id DESC LIMIT 1').get(row.scope_id, row.id);
+  const active = (state: 'claimed' | 'dispatched') => {
+    // jobs_occurrence_overlap indexes (scope,schedule,state,generation,scheduled_at DESC).
+    // Prefer an older active generation even when a newer generation has already queued work.
+    const occurrence = context.database.query<JobOccurrenceProjectionRow>('SELECT ' + JOB_OCCURRENCE_VIEW_COLUMNS +
+      ' FROM _jobs_occurrences WHERE scope_id=? AND schedule_id=? AND state=? ORDER BY generation,scheduled_at DESC LIMIT 1').get(row.scope_id, row.id, state);
+    return occurrence ? jobOccurrenceView(occurrence) : null;
+  };
+  return { ...scheduleView(row), nextDueAt: cursor.next_due_at, skipped: cursor.skipped === 1, blockedCode: jobBlockedCode(cursor.blocked_code),
+    latestOccurrence: latest ? jobOccurrenceView(latest) : null, activeOccurrence: activeJobOccurrence(active('claimed'), active('dispatched')) };
 }
 export function readJobIntent(context: DatabaseReadQueryContext, input: unknown) {
   const r = jobRecord(input, ['actor', 'requestId', 'intentDigest']), actor = jobActor(r.actor); owner(context, actor.scopeId);
@@ -73,10 +89,9 @@ export function listJobOccurrences(context: DatabaseReadQueryContext, input: unk
   const r = jobRecord(input, ['actor', 'id', 'limit', 'offset']), actor = jobActor(r.actor), row = readSchedule(context, actor, r.id);
   const limit = jobInteger(r.limit ?? 25, 1, 100), offset = jobInteger(r.offset ?? 0, 0, 100_000);
   const total = context.database.query<{ n: number }>('SELECT count(*) AS n FROM _jobs_occurrences WHERE scope_id=? AND schedule_id=?').get(actor.scopeId, row.id)!.n;
-  const rows = context.database.query<JobOccurrenceRow>('SELECT * FROM _jobs_occurrences WHERE scope_id=? AND schedule_id=? ORDER BY scheduled_at DESC,id DESC LIMIT ? OFFSET ?').all(actor.scopeId, row.id, limit, offset);
-  return { items: rows.map(item => ({ id: item.id, generation: item.generation, scheduledAt: item.scheduled_at, state: item.state,
-    workflowId: item.workflow_id, terminalStatus: item.terminal_status, errorCode: item.error_code,
-    createdAt: item.created_at, updatedAt: item.updated_at })), total };
+  const rows = context.database.query<JobOccurrenceProjectionRow>('SELECT ' + JOB_OCCURRENCE_VIEW_COLUMNS +
+    ' FROM _jobs_occurrences WHERE scope_id=? AND schedule_id=? ORDER BY scheduled_at DESC,id DESC LIMIT ? OFFSET ?').all(actor.scopeId, row.id, limit, offset);
+  return { items: rows.map(jobOccurrenceView), total };
 }
 export function dueJobSchedules(context: DatabaseReadQueryContext, input: unknown) {
   const r = jobRecord(input, ['scopeId', 'now', 'limit']), scope = jobScope(r.scopeId), now = jobTime(r.now), limit = jobInteger(r.limit ?? 32, 1, 100); owner(context, scope);
