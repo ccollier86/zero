@@ -8,6 +8,39 @@ import { resolveJobsConfig } from './config';
 import type { JobsDueCursor, JobsRuntime } from './runtime';
 import { JobsRunner } from './runner';
 import { JobsError } from './error';
+import { currentLoggingAttribution, runWithLoggingAttribution } from '../logging/logging-attribution';
+import { loggingContext } from '../logging/test-support/logging-fixture';
+
+for (const entry of ['tick', 'wake'] as const) for (const phase of ['active', 'retired'] as const) test(`background ${entry} cannot inherit an ${phase} request audit lifetime`, async () => {
+  const owner = {}, scope = trustedSystemServiceDataScope({ scopeKind: 'application' });
+  const configured = resolveJobsConfig(true, process.cwd(), resolveAuthBehaviorConfig({}), true);
+  if (!configured) throw new Error('Synthetic jobs config was not admitted.');
+  const gate = new WorkPool({ concurrency: 1 });
+  let due = true, reads = 0, release!: () => void, finished!: () => void;
+  const later = new Promise<void>(resolve => { release = resolve; });
+  const settled = new Promise<void>(resolve => { finished = resolve; });
+  const runtime = {
+    dueScopePage() { return due ? [{ scope, cursor: { wakeAt: 0, id: 'application' } }] : []; },
+    async read<T>(): Promise<T> { expect(currentLoggingAttribution(owner)).toBeNull(); reads++; return [] as T; },
+    async refreshWake() { due = false; finished(); },
+  } as unknown as JobsRuntime;
+  const runner = new JobsRunner({ runtime, config: configured, bridge: { assertRuntimeCurrent() {} } as WorkflowDeferredStartBridge, gate });
+  let deferred: Promise<void> | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const observe = () => Promise.race([settled, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Owned background run did not settle.')), 1000); })]);
+  try {
+    await runWithLoggingAttribution(owner, loggingContext(null), () => {}, async () => {
+      expect(currentLoggingAttribution(owner)).not.toBeNull();
+      if (phase === 'active') {
+        if (entry === 'tick') await runner.tick(); else runner.wake();
+        await observe();
+      } else deferred = later.then(async () => { if (entry === 'tick') await runner.tick(); else runner.wake(); });
+    });
+    release(); await deferred;
+    if (phase === 'retired') await observe();
+    expect(reads).toBeGreaterThan(0); expect(runner.diagnostics().reportedFailures).toEqual([]);
+  } finally { clearTimeout(timer); release(); await deferred; await runner.close(); await gate.close(); }
+});
 
 function duePage(scopes: readonly ReturnType<typeof trustedSystemServiceDataScope>[], limit: number, after?: JobsDueCursor) {
   return scopes.map(scope => ({ scope, cursor: { wakeAt: 0, id: serviceDataScopeKey(scope) } }))

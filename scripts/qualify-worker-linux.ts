@@ -1,6 +1,6 @@
 /** Explicit local Colima Linux/amd64 qualification. No remote context, image build, saved-release selection or app data. */
 import { copyFile, readdir, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ownedWorkerFixture } from '../src/workers/test-support/owned-fixture';
 
@@ -8,8 +8,17 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const context = 'colima-zero-workers';
 const socket = 'unix:///Volumes/code-bank/docker/colima/zero-workers/docker.sock';
 const image = 'oven/bun:1.4.4';
-const emulatedSmoke = Bun.argv.slice(2).length === 1 && Bun.argv[2] === '--emulated-smoke';
-if (Bun.argv.length > 2 && !emulatedSmoke) throw new Error('Only --emulated-smoke is supported.');
+let emulatedSmoke = false, selectedArchive: string | undefined, platform = 'linux/amd64';
+const supplied = new Set<string>();
+for (let index = 2; index < Bun.argv.length; index++) {
+  const flag = Bun.argv[index]!;
+  if (supplied.has(flag)) throw new Error('Duplicate qualification option.'); supplied.add(flag);
+  if (flag === '--emulated-smoke') emulatedSmoke = true;
+  else if (flag === '--archive') { selectedArchive = Bun.argv[++index]; if (!selectedArchive || !isAbsolute(selectedArchive)) throw new Error('An absolute candidate archive is required.'); }
+  else if (flag === '--platform') { platform = Bun.argv[++index]!; if (!['linux/arm64', 'linux/amd64'].includes(platform)) throw new Error('Only reviewed local Linux platforms are admitted.'); }
+  else throw new Error('Unsupported qualification option.');
+}
+if (emulatedSmoke && platform !== 'linux/amd64') throw new Error('The emulated startup budget applies only to Linux/amd64.');
 // Rosetta's raw Bun-only IPC baseline can exceed 5 s before any Zero imports.
 // This explicit diagnostic deployment budget does not change runtime defaults
 // or relabel the earlier default-budget matrix as passing.
@@ -23,11 +32,12 @@ const labels = ['--label', 'dev.storage.disposable=true', '--label', 'dev.storag
 const packageRoot = fixture.root;
 let containerStarted = false, settled = false;
 try {
-  await command([process.execPath, '--no-env-file', 'pm', 'pack', '--ignore-scripts', '--quiet', '--destination', fixture.root], root);
+  if (selectedArchive) await copyFile(selectedArchive, join(fixture.root, 'candidate.tgz'));
+  else await command([process.execPath, '--no-env-file', 'pm', 'pack', '--ignore-scripts', '--quiet', '--destination', fixture.root], root);
   const archive = (await readdir(fixture.root)).find(name => name.endsWith('.tgz'));
   if (!archive) throw new Error('No candidate archive.');
   const archiveHash = new Bun.CryptoHasher('sha256').update(await Bun.file(join(fixture.root, archive)).arrayBuffer()).digest('hex');
-  console.log(JSON.stringify({ stage: 'candidate-provenance', archiveSha256: archiveHash, image, platform: 'linux/amd64', supervisor: 'docker-init',
+  console.log(JSON.stringify({ stage: 'candidate-provenance', archiveSha256: archiveHash, image, platform, supervisor: 'docker-init',
     mode: emulatedSmoke ? 'explicit-budget-emulated-smoke' : 'default-budget-matrix', startupTimeoutMs: startupBudget }));
   await copyFile(join(root, 'bun.lock'), join(fixture.root, 'bun.lock'));
   await writeFile(join(packageRoot, 'worker-linux-probe.ts'), `
@@ -53,7 +63,7 @@ try {
     import {defineWorkerTask} from '@zero/framework/workers/tasks';
     export const tasks=[defineWorkerTask({name:'containment.spin',version:'1',
       parseInput(v){if(typeof v!=='string')throw Error('marker');return v;},parseOutput:()=>null,
-      run(marker){writeFileSync(marker,'owned-synthetic-cpu-entered');const end=performance.now()+10000;while(performance.now()<end){}return null;}
+      run(marker){writeFileSync(marker,JSON.stringify({kind:'owned-synthetic-cpu-entered',enteredAt:Date.now(),pid:process.pid}));const end=performance.now()+10000;while(performance.now()<end){}return null;}
     })];
   `);
   await writeFile(join(packageRoot, 'worker-containment-child.ts'), `
@@ -109,22 +119,26 @@ try {
   const cacheLabels = JSON.parse((await command(docker(['volume', 'inspect', cache, '--format', '{{json .Labels}}']))).trim());
   if (cacheLabels['dev.storage.project'] !== 'zero-platform' || cacheLabels['dev.storage.purpose'] !== 'worker-package-cache') throw new Error('Worker cache ownership mismatch.');
   containerStarted = true;
-  await command(docker(['run', '--name', name, '--rm', '--init', '--platform', 'linux/amd64',
+  await command(docker(['run', '--name', name, '--rm', '--init', '--platform', platform,
     ...labels,
     '--memory', '3g', '--cpus', '4', '--pids-limit', '128', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
     '--mount', `type=bind,src=${fixture.root},dst=/qualify`,
     '--mount', `type=volume,src=${cache},dst=/work/cache`,
     '--env', 'ZERO_WORKER_SYNTHETIC_SECRET=parent-only-synthetic',
     '--entrypoint', '/usr/local/bin/bun', image, '--no-env-file', '/qualify/run.ts']), root, 600_000);
-  await command(docker(['run', '--name', name + '-containment', '--rm', '--init', '--platform', 'linux/amd64', ...labels,
+  await command(docker(['run', '--name', name + '-containment', '--rm', '--init', '--platform', platform, ...labels,
     '--network', 'none', '--memory', '1g', '--cpus', '1', '--pids-limit', '32', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
     '--mount', `type=bind,src=${fixture.root},dst=/qualify`, '--env', 'TMPDIR=/qualify/tmp',
     '--entrypoint', '/usr/local/bin/bun', image, '--no-env-file', '/qualify/containment-parent.js']), root, 60_000, 137);
   if (!await Bun.file(join(fixture.root, 'containment-entered')).exists()) throw new Error('Container termination did not exercise an entered CPU task.');
+  const entered = await Bun.file(join(fixture.root, 'containment-entered')).json();
+  const containmentElapsedMs = Date.now() - entered.enteredAt;
+  if (entered.kind !== 'owned-synthetic-cpu-entered' || !Number.isSafeInteger(entered.enteredAt)
+    || containmentElapsedMs < -1000 || containmentElapsedMs >= 8000) throw new Error('Supervisor retirement was not observed before the synthetic CPU fuse; do not claim orphan containment.');
   settled = !(await command(docker(['ps', '-aq', '--filter', 'label=dev.storage.run-id=' + runId]))).trim();
   if (!settled) throw new Error('Owned container remained after successful qualification.');
-  console.log(JSON.stringify({ result: emulatedSmoke ? 'linux-amd64-explicit-budget-source-bundle-compiled-supervised-death-smoke-passed' : 'linux-amd64-default-budget-matrix-and-supervised-parent-death-passed', archiveSha256: archiveHash,
-    startupTimeoutMs: startupBudget, defaultBudgetMatrixPassed: !emulatedSmoke,
+  console.log(JSON.stringify({ result: emulatedSmoke ? 'linux-amd64-explicit-budget-source-bundle-compiled-supervised-death-smoke-passed' : platform.replace('/', '-') + '-default-budget-matrix-and-supervised-parent-death-passed', archiveSha256: archiveHash, platform,
+    startupTimeoutMs: startupBudget, defaultBudgetMatrixPassed: !emulatedSmoke, containmentElapsedMs,
     image, imageIdentity: (await command(docker(['image', 'inspect', image, '--format', '{{json .RepoDigests}}']))).trim() }));
 } finally {
   if (containerStarted && !settled) {

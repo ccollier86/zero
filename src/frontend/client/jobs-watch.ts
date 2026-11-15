@@ -3,10 +3,10 @@ import type { JobSchedulePage, JobWatchOptions, JobWatchUpdate } from '../../job
 export function watchJobsPage(open: (path: string, init: RequestInit) => Promise<Response>, path: string, boundary: AbortSignal,
   listener: (page: JobSchedulePage, update?: JobWatchUpdate) => void, parse: (value: unknown) => JobSchedulePage, options: JobWatchOptions): () => void {
   const owner = new AbortController(), signal = AbortSignal.any([owner.signal, boundary, ...(options.signal ? [options.signal] : [])]);
-  let retry: ReturnType<typeof setTimeout> | undefined;
+  let retry: ReturnType<typeof setTimeout> | undefined, published = false;
   const consume = async () => {
     const connection = AbortSignal.any([signal, AbortSignal.timeout(30_000)]);
-    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined, failed = false, denied = false;
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined, failed = false, denied = false, firstSnapshot = true;
     const cancel = () => { void reader?.cancel().catch(() => {}); };
     try {
       const response = await open(path, { signal: connection });
@@ -34,8 +34,15 @@ export function watchJobsPage(open: (path: string, init: RequestInit) => Promise
           }
           // Older servers omit this field. Never expose the wire envelope or
           // arbitrary metadata to callers, including malformed denied frames.
-          const update: JobWatchUpdate = Object.freeze({ invalidated: value.invalidated === true });
-          const page = parse(value.value); if (!signal.aborted) listener(page, update);
+          const page = parse(value.value);
+          if (!signal.aborted) {
+            // A clean bounded stream lifetime has a subscription gap. The first
+            // new admitted snapshot reconciles retained off-page inspectors,
+            // without pretending that a missed commit hint was observed.
+            const update: JobWatchUpdate = Object.freeze({ invalidated: value.invalidated === true,
+              ...(firstSnapshot && published ? { reconnected: true } : {}) });
+            firstSnapshot = false; published = true; listener(page, update);
+          }
         }
       }
     } catch (error) { failed = true; if (!signal.aborted) try { options.onError?.(error); } catch { /* Observer only. */ } }

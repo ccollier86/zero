@@ -10,7 +10,7 @@ import { ownedWorkerFixture } from '../workers/test-support/owned-fixture';
 import { flow, step } from '../workflows/workflow-dsl';
 import { defineJob } from './definition';
 
-for (const preset of ['activity', 'detailed'] as const) test(`native ${preset} controls retain their user while timer observations deliver independently as system facts`, async () => {
+for (const preset of ['activity', 'detailed'] as const) for (const dispatch of ['timer', 'request-wake'] as const) test(`native ${preset} controls retain their user while ${dispatch} observations deliver independently as system facts`, async () => {
   const owned = await ownedWorkerFixture('jobs-logging-native');
   let app: Awaited<ReturnType<typeof createApp>> | null = null, logging: LoggingRuntime | undefined, release!: () => void, entered = false, startupSettled = true;
   const held = new Promise<void>(resolve => { release = resolve; }), sources: DeliverySourceRegistration[] = [];
@@ -42,7 +42,9 @@ for (const preset of ['activity', 'detailed'] as const) test(`native ${preset} c
     expect(registered.status).toBe(200);
     const user = await registered.json() as { accessToken: string; user: { userId: string } };
     const command = { schedule: { definition: definition.name, input: { private: 'NEVER_NATIVE_JOB_INPUT' }, timing: { kind: 'once', at: new Date(Date.now() + 8000).toISOString() } }, options: { idempotencyKey: 'native-semantic-job' } };
-    const response = await request('/jobs/schedules', command, user.accessToken); expect(response.status).toBe(202);
+    const path = dispatch === 'timer' ? '/jobs/schedules' : '/jobs/enqueue';
+    const body = dispatch === 'timer' ? command : { definition: definition.name, input: { private: 'NEVER_NATIVE_JOB_INPUT' }, idempotencyKey: 'native-semantic-job' };
+    const response = await request(path, body, user.accessToken); expect(response.status).toBe(202);
     const accepted = await response.json() as { id: string };
     let events: LoggingEvent[] = [];
     const read = async () => { events = (await logging!.page('audit', { kind: 'application' }, { family: 'workflow', limit: 100 })).events.map(row => row.event).filter(event => event.action.startsWith('jobs.')); };
@@ -50,7 +52,9 @@ for (const preset of ['activity', 'detailed'] as const) test(`native ${preset} c
     expect(events.find(event => event.action === 'jobs.schedule.created')!.actor).toMatchObject({ kind: 'user', id: user.user.userId, initiatorId: null });
     expect(sources).toHaveLength(1);
     const idle = () => { const state = sources[0]!.diagnostics(); return !state.pending && !state.active && state.queued === 0; };
-    await until(async () => idle()); // The create event's source is genuinely idle before a later timer-owned write.
+    // Future scheduling additionally proves handoff wakes an already idle
+    // source. Immediate enqueue proves HTTP-triggered work loses request ALS.
+    if (dispatch === 'timer') await until(async () => idle());
     await until(async () => { await read(); return entered && events.some(event => event.action === 'jobs.occurrence.handed-off'); });
     await until(async () => idle()); // Terminal delivery must wake an idle source again, not ride the create/handoff flush.
     release();
@@ -63,7 +67,7 @@ for (const preset of ['activity', 'detailed'] as const) test(`native ${preset} c
       && event.origin === 'system' && event.scope.kind === 'application' && event.metadata.scheduleId === accepted.id && event.evidence === 'server-confirmed')).toBe(true);
     expect(observed.find(event => event.action === 'jobs.occurrence.terminal-observed')!.metadata.workflowStatus).toBe('completed');
     expect(new Set(events.map(event => event.id)).size).toBe(3); expect(JSON.stringify(events)).not.toContain('NEVER_NATIVE_JOB');
-    const replay = await request('/jobs/schedules', command, user.accessToken); expect(replay.status).toBe(202); expect(await replay.json()).toMatchObject({ id: accepted.id });
+    const replay = await request(path, body, user.accessToken); expect(replay.status).toBe(202); expect(await replay.json()).toMatchObject({ id: accepted.id });
     await read(); expect(events).toHaveLength(3);
   } finally {
     release(); if (app) await app.stop(true);

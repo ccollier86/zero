@@ -208,8 +208,10 @@ graceful shutdown from the parent, then contain surviving children at the final
 forced-stop deadline. Actors are detached from the parent's terminal process
 group; a signal to that group alone is not containment. Ordinary
 graceful shutdown, task timeout and observed child exit are covered in source
-tests; abrupt parent SIGKILL while a child is synchronously CPU-bound has **not**
-been qualified here. JavaScript `finally` cannot run after SIGKILL. Do not claim
+tests. A bounded Linux/x64 emulated diagnostic also passed CPU-bound child
+containment after parent SIGKILL with an explicit 15-second startup budget;
+final-archive/native/default-budget deployment qualification remains pending.
+JavaScript `finally` cannot run after SIGKILL. Do not claim
 this library alone prevents OS-level orphans after forcible parent death; the
 Linux deployment/restart qualification must verify the actual supervisor.
 

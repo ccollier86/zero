@@ -41,8 +41,13 @@ export interface JobScheduleDetail extends JobScheduleSummary {
 }
 export interface JobPageOptions { readonly limit?: number; readonly offset?: number; readonly control?: 'active' | 'paused' | 'cancelled' }
 export interface JobSchedulePage { readonly items: readonly JobScheduleSummary[]; readonly total: number }
-/** Content-free committed-change invalidation, not evidence of an insertion or a changed visible row. */
-export interface JobWatchUpdate { readonly invalidated: boolean }
+/** Content-free read notifications, not evidence of an insertion or a changed visible row. */
+export interface JobWatchUpdate {
+  /** True only for an actual admitted committed-change hint. */
+  readonly invalidated: boolean;
+  /** Browser transport only: the first valid snapshot after a previously published connection was replaced. */
+  readonly reconnected?: boolean;
+}
 export interface JobWatchOptions { readonly query?: JobPageOptions; readonly signal?: AbortSignal; readonly onError?: (error: unknown) => void }
 export interface JobOccurrenceView {
   readonly id: string; readonly generation: number; readonly scheduledAt: number; readonly state: 'pending' | 'claimed' | 'dispatched' | 'terminal' | 'blocked' | 'cancelled';

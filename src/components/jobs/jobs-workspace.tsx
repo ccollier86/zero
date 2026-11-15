@@ -62,7 +62,7 @@ function JobsWorkspaceBody({ client, boundaryKey, ...props }: JobsWorkspaceProps
     ...(control === 'all' ? {} : { control }) };
   const live = useJobSchedules(query);
   const pageFingerprint = live.page ? JSON.stringify(live.page) : '';
-  const detailChange = React.useRef({ id: selectedId, summary: '', query: '', revision: 0, version: 0, readDenied: false });
+  const detailChange = React.useRef({ id: selectedId, summary: '', query: '', revision: 0, reconnectRevision: 0, version: 0, readDenied: false });
   const selectedRow = live.page?.items.find(row => row.id === selectedId);
   const queryKey = JSON.stringify(query), observation = detailChange.current;
   if (observation.id !== selectedId) { observation.id = selectedId; observation.summary = ''; observation.version++; }
@@ -72,8 +72,10 @@ function JobsWorkspaceBody({ client, boundaryKey, ...props }: JobsWorkspaceProps
     if (observation.readDenied) { observation.readDenied = false; observation.version++; }
     // Page replacement alone must not reset an independently selected inspector.
     // A real committed hint still refreshes it when the selected job/history is off-page.
-    if (observation.query !== queryKey) { observation.query = queryKey; observation.revision = 0; }
+    // A successful transport re-admission separately reconciles any subscription gap.
+    if (observation.query !== queryKey) { observation.query = queryKey; observation.revision = 0; observation.reconnectRevision = 0; }
     if (live.invalidationRevision > observation.revision) { observation.revision = live.invalidationRevision; observation.version++; }
+    if (live.reconnectRevision > observation.reconnectRevision) { observation.reconnectRevision = live.reconnectRevision; observation.version++; }
     if (selectedRow && observation.summary !== JSON.stringify(selectedRow)) { observation.summary = JSON.stringify(selectedRow); observation.version++; }
   }
   const controller = useJobsWorkspace(client.jobs, boundaryKey, selectedId, observation.version);

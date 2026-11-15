@@ -10,8 +10,8 @@ import { ModalManager } from '../../modals/modal-manager';
 import { TooltipProvider } from '../tooltip';
 import { configureFrontendObservability } from '../../frontend/client/observability';
 
-const listeners = new Set<() => void>(), streams = new Set<() => void>();
-let tenant = 'north', denied = false, uncertain = false, writes = 0;
+const listeners = new Set<() => void>(), streams = new Set<() => void>(), disconnects = new Set<() => void>();
+let tenant = 'north', denied = false, uncertain = false, writes = 0, historyRevision = 0;
 const allowed = { allowed: true as const, reason: null };
 function job(index: number): JobScheduleSummary {
   return { id: `${tenant}-job-${index}`, definition: index === 0 ? 'reports.daily' : 'notifications.summary', definitionVersion: 'v1',
@@ -20,7 +20,7 @@ function job(index: number): JobScheduleSummary {
     skipped: false, blockedCode: index === 1 ? 'JOBS_CAPACITY' : null, latestOccurrence: index === 0 ? occurrence() : null,
     activeOccurrence: null, actions: { pause: allowed, resume: allowed, update: allowed, cancel: allowed, runNow: allowed } };
 }
-function occurrence() { return { id: 'synthetic-occurrence', generation: 1, scheduledAt: 1794700000000, state: 'terminal' as const,
+function occurrence() { return { id: 'synthetic-occurrence-' + historyRevision, generation: 1, scheduledAt: 1794700000000, state: 'terminal' as const,
   workflowId: 'synthetic-workflow', terminalStatus: 'completed', errorCode: null, createdAt: 1794700000000, updatedAt: 1794700060000 }; }
 let rows = Array.from({ length: 27 }, (_, index) => job(index));
 const receipts = new Map<string, unknown>();
@@ -61,8 +61,9 @@ const jobs = createJobsClient(async <T,>(path: string, options?: { method?: stri
   let remove = () => {};
   const body = new ReadableStream<Uint8Array>({ start(controller) {
     const notify = (invalidated = true) => controller.enqueue(encoder.encode('data: ' + JSON.stringify(denied ? { version: 1, error: true } : { version: 1, value: page(url), invalidated }) + '\n\n'));
-    remove = () => { streams.delete(notify); };
-    streams.add(notify); notify(false);
+    const disconnect = () => { remove(); controller.close(); };
+    remove = () => { streams.delete(notify); disconnects.delete(disconnect); };
+    streams.add(notify); disconnects.add(disconnect); notify(false);
   }, cancel() { remove(); } });
   return new Response(body, { headers: { 'Content-Type': 'text/event-stream' } });
 });
@@ -79,6 +80,11 @@ function Fixture() {
         <button onClick={() => { denied = !denied; update(); }}>Toggle denied reads</button>
         <button onClick={() => { rows = [job(rows.length), ...rows]; update(); }}>Add synthetic job</button>
         <button onClick={() => { rows = rows.map(row => row.id === `${tenant}-job-0` ? { ...row, revision: row.revision + 1, updatedAt: row.updatedAt + 1 } : row); update(); }}>Change hidden selected job</button>
+        <button onClick={() => {
+          for (const disconnect of [...disconnects]) disconnect();
+          rows = rows.map(row => row.id === `${tenant}-job-0` ? { ...row, revision: row.revision + 1, updatedAt: row.updatedAt + 1 } : row);
+          historyRevision++; setCount(value => value + 1);
+        }}>Change hidden job while disconnected</button>
         <button onClick={() => { tenant = tenant === 'north' ? 'south' : 'north'; auth.activeTenant = { tenantId: tenant }; jobs.clear(); rows = Array.from({ length: 3 }, (_, index) => job(index)); for (const listener of listeners) listener(); update(); }}>Replace synthetic scope</button>
         <output aria-label="Synthetic write count">Writes: {writes} · {count}</output>
       </nav>

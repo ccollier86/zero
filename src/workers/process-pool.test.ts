@@ -8,6 +8,8 @@ import { defineWorkerTask } from './worker-task';
 import { join } from 'node:path';
 import { ownedWorkerFixture } from './test-support/owned-fixture';
 import { existsSync } from 'node:fs';
+import type { DatabaseExecutor, DatabaseExecutorDiagnostics, DatabaseExecutorRequest, DatabaseExecutorState, DatabaseExecutorValue } from '../databases/database-executor';
+import { DatabaseError } from '../databases/database-error';
 
 const launch = { kind: 'source' as const, entrypoint: fileURLToPath(new URL('./test-support/worker-entry.ts', import.meta.url)) };
 // Routine tests use the public execution default. A 3 s whole-operation budget
@@ -235,4 +237,96 @@ test('typed task references preserve input/output contracts and reject substitut
     expect(parsed).toBe(0); expect(owner.status().processes).toBe(0);
     const result: number = await owner.run(sumTask, [12, 25, 8]); expect(result).toBe(45);
   } finally { await owner.close(); }
+});
+
+/** Pure lifecycle double: no OS process, launch directory, database or fixture is created. */
+class LifecycleExecutor implements DatabaseExecutor {
+  state: DatabaseExecutorState = 'created';
+  confirmed = false;
+  refuseClose = false;
+  closes = 0;
+  dispatches = 0;
+  constructor(readonly slot: number, private readonly fingerprint: string) {}
+  async start() { this.state = 'ready'; }
+  async execute<Result extends DatabaseExecutorValue = DatabaseExecutorValue, Payload extends DatabaseExecutorValue = DatabaseExecutorValue>(request: DatabaseExecutorRequest<Payload>): Promise<Result> {
+    if (request.operation === 'worker.catalog') return this.fingerprint as Result;
+    if (request.operation !== 'worker.execute') throw new Error('Unexpected synthetic operation.');
+    this.dispatches++;
+    return { ok: true, value: (request.payload as unknown as { input: DatabaseExecutorValue }).input } as unknown as Result;
+  }
+  async close() {
+    this.closes++;
+    if (this.refuseClose) throw new DatabaseError('DATABASE_EXECUTOR_FAILED', 'Synthetic generation did not settle.', { outcome: 'unknown' });
+    this.confirmed = true; this.state = 'closed';
+  }
+  async settled() { if (!this.confirmed) throw new Error('Synthetic generation is not settled.'); }
+  diagnostics(): DatabaseExecutorDiagnostics {
+    return { state: this.state, slot: this.slot, generation: this.slot + 1, inFlight: 0, maxInFlight: 1,
+      disconnectObserved: false, exitObserved: this.confirmed, settled: this.confirmed, exitCode: this.confirmed ? 0 : null, signalCode: null, lastFailureCode: null };
+  }
+  async [Symbol.asyncDispose]() { await this.close(); }
+}
+function lifecyclePool(capacity: number) {
+  const task = defineWorkerTask({ name: 'lifecycle.echo', version: '1', parseInput: value => value, parseOutput: value => value, run: value => value });
+  const owner = new ProcessWorkPool({ tasks: [task], launch, processes: capacity });
+  // Keep this test seam private: production callers cannot replace the factory
+  // or free a physical slot by forging a process-settlement observation.
+  const internals = owner as unknown as { createExecutor(context: { slot: number }): DatabaseExecutor; acquireSession(signal: AbortSignal): Promise<unknown>;
+    sessions: Map<number, { executor: DatabaseExecutor; slot: number; busy: boolean; closing: Promise<void> | null }> };
+  const executors: LifecycleExecutor[] = [];
+  const make = (slot: number) => { const executor = new LifecycleExecutor(slot, owner.catalog.fingerprint); executors.push(executor); return executor; };
+  internals.createExecutor = ({ slot }) => make(slot);
+  const install = (slot: number, state: 'ready' | 'quarantined') => {
+    const executor = make(slot); executor.state = state; executor.refuseClose = state === 'quarantined';
+    internals.sessions.set(slot, { executor, slot, busy: false, closing: null }); return executor;
+  };
+  return { owner, executors, install, acquire: (signal: AbortSignal) => internals.acquireSession(signal),
+    async close() { for (const executor of executors) executor.refuseClose = false; await owner.close(); } };
+}
+
+test('pre-aborted physical acquisition cannot allocate or bootstrap a free generation', async () => {
+  const f = lifecyclePool(1), abort = new AbortController(), reason = new Error('Synthetic acquisition cancelled.');
+  try {
+    abort.abort(reason);
+    await expect(f.acquire(abort.signal)).rejects.toBe(reason);
+    expect(f.executors).toHaveLength(0); expect(f.owner.status()).toMatchObject({ processes: 0, active: 0 });
+  } finally { await f.close(); }
+});
+
+test('an unconfirmed generation cannot delay a healthy idle slot or hide its retained shutdown failure', async () => {
+  const f = lifecyclePool(2), quarantined = f.install(0, 'quarantined'), healthy = f.install(1, 'ready');
+  try {
+    expect(await f.owner.run('lifecycle.echo', 'healthy-result')).toBe('healthy-result');
+    expect(healthy.dispatches).toBe(1); expect(quarantined.dispatches).toBe(0); expect(quarantined.closes).toBe(0);
+    expect(f.executors).toHaveLength(2); expect(f.owner.status()).toMatchObject({ processes: 2, quarantined: 1 });
+    await expect(f.owner.close()).rejects.toMatchObject({ code: 'WORKER_DRAIN_TIMEOUT', outcome: 'unknown' });
+    expect(f.owner.status()).toMatchObject({ state: 'closing', processes: 1, quarantined: 1 });
+    expect(quarantined.confirmed).toBe(false);
+  } finally { await f.close(); }
+  expect(f.owner.status()).toMatchObject({ state: 'closed', processes: 0 });
+});
+
+test('an unconfirmed generation cannot delay a different free physical slot or be replaced beyond capacity', async () => {
+  const f = lifecyclePool(2), quarantined = f.install(0, 'quarantined');
+  try {
+    expect(await f.owner.run('lifecycle.echo', 'independent-result')).toBe('independent-result');
+    expect(f.executors.map(executor => executor.slot)).toEqual([0, 1]);
+    expect(f.executors[1]!.dispatches).toBe(1); expect(quarantined.closes).toBe(0); expect(quarantined.dispatches).toBe(0);
+    expect(f.owner.status()).toMatchObject({ processes: 2, quarantined: 1 });
+  } finally { await f.close(); }
+});
+
+test('full quarantine preserves occupied slots and rejects without dispatch, then permits explicit observed recovery', async () => {
+  const f = lifecyclePool(2), first = f.install(0, 'quarantined'), second = f.install(1, 'quarantined');
+  try {
+    await expect(f.owner.run('lifecycle.echo', 'never-sent')).rejects.toMatchObject({ code: 'WORKER_CAPACITY', outcome: 'not-started' });
+    expect(first.closes).toBe(1); expect(second.closes).toBe(1);
+    expect(f.executors).toHaveLength(2); expect(f.executors.every(executor => executor.dispatches === 0)).toBe(true);
+    expect(f.owner.status()).toMatchObject({ processes: 2, quarantined: 2 });
+    second.refuseClose = false;
+    expect(await f.owner.run('lifecycle.echo', 'after-settlement')).toBe('after-settlement');
+    expect(f.executors.map(executor => executor.slot)).toEqual([0, 1, 1]);
+    expect(first.confirmed).toBe(false); expect(second.confirmed).toBe(true);
+    expect(f.executors[2]!.dispatches).toBe(1); expect(f.owner.status()).toMatchObject({ processes: 2, quarantined: 1 });
+  } finally { await f.close(); }
 });

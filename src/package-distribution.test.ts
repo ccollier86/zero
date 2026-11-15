@@ -71,6 +71,7 @@ describe('package distribution', () => {
         'sharp-native-assets.ts',
         'sharp-native-build-plugin.ts',
         'logging-realm-build-plugin.ts',
+        'jobs-realm-build-plugin.ts',
       ]) {
         expect(packagedFiles).toContain(`package/src/build/${file}`);
       }

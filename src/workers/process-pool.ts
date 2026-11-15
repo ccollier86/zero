@@ -155,18 +155,30 @@ export class ProcessWorkPool {
   }
   private async acquireSession(signal: AbortSignal): Promise<Session> {
     if (this.closed) throw new WorkerError('WORKER_NOT_READY', 'Worker pool is closing.');
+    signal.throwIfAborted();
+    // A quarantined generation still owns its physical slot, not every slot.
+    // Do not delay unrelated healthy/free capacity on another failed drain.
+    const available = this.availableSession(); if (available) return available;
     // Idle children can die between requests too. Reconcile their exact
     // generation before selecting a replacement; do not strand a permanent
     // capacity slot or treat a mere disconnect as process settlement.
     for (const session of [...this.sessions.values()]) if (!session.busy && session.executor.diagnostics().state !== 'ready') {
       session.busy = true;
-      try { await this.retire(session); } finally { session.busy = false; }
+      try { await this.retire(session); }
+      catch { /* Unconfirmed retirement retains this exact physical slot; independent slots remain usable. */ }
+      finally { session.busy = false; }
+      signal.throwIfAborted();
+      if (this.closed) throw new WorkerError('WORKER_NOT_READY', 'Worker pool is closing.');
+      const replacement = this.availableSession(); if (replacement) return replacement;
     }
     signal.throwIfAborted();
     if (this.closed) throw new WorkerError('WORKER_NOT_READY', 'Worker pool is closing.');
+    throw new WorkerError('WORKER_CAPACITY', 'Worker process capacity is exhausted.');
+  }
+  private availableSession(): Session | null {
     for (const session of this.sessions.values()) if (!session.busy && !session.closing && session.executor.diagnostics().state === 'ready') { session.busy = true; return session; }
     let slot = 0; while (this.sessions.has(slot)) slot++;
-    if (slot >= this.capacity) throw new WorkerError('WORKER_CAPACITY', 'Worker process capacity is exhausted.');
+    if (slot >= this.capacity) return null;
     const session: Session = { executor: this.createExecutor({ role: 'writer', slot }), slot, busy: true, closing: null };
     this.sessions.set(slot, session); return session;
   }

@@ -44,6 +44,11 @@ is not a multi-host leader election or distributed-consensus implementation.
 
 ## Configure explicitly
 
+The root `@zero/framework/server` entry exports the durable definition type as
+`DurableJobDefinition`. Its existing `JobDefinition` remains the compatible
+in-memory timer type. The dedicated `@zero/framework/jobs` entry exports the
+durable type as `JobDefinition`; neither type is interchangeable with the other.
+
 ```ts
 import { defineZeroConfig, defineJob } from '@zero/framework/server';
 
@@ -93,6 +98,7 @@ package qualification; do not assume source execution proves that deployment.
 - A definition is an exact code-registered object or a registered name. Multiple
   explicit definition versions may coexist, with one default per name. Clients
   send names, never executable parsers or a caller-selected workflow pin.
+  Omitted definition `access` means administrator, not every signed-in user.
 - Inputs are detached, bounded canonical JSON (32 KiB). Version parser/policy
   changes explicitly. Definition fingerprints describe metadata, not executable
   code integrity or proof of equivalent semantics.
@@ -215,6 +221,13 @@ external delivery has been undone. Inspect/control that actual run separately.
 
 - Once timing requires a canonical UTC instant. Cron requires an explicit IANA
   timezone and supports `skip`, `latest` and bounded `catch-up` misfire policy.
+  Defaults are `misfire: 'latest'`, `maxLatenessMs: 60_000` and
+  `catchUpLimit: 10`. Lateness accepts 0–366 days in milliseconds; the catch-up
+  limit accepts integers 1–100 and caps the total recovery batch. Excess missed
+  occurrences are skipped, not recovered through an unbounded paging loop.
+  Repeated fall-back times select the first fold only; nonexistent spring-gap
+  times retain Croner's forward shift. Timezone changes are explicit schedule
+  updates, never changes inherited from the host clock configuration.
   These are job timings, **not appointment recurrence/RFC 5545 series**.
 - `skip` suppresses overlap, `allow` admits independent runs, and `queue-one`
   retains the latest unstarted occurrence while prior work is active. Older
@@ -237,7 +250,8 @@ external delivery has been undone. Inspect/control that actual run separately.
   completion rather than waiting for an unrelated slow scope or the next timer.
   Failed roots back off locally even when durable wake publication is fenced;
   bounded discovery continues past those roots to other eligible files.
-- `concurrency: 'max'` means a finite admission ceiling of 100, not unlimited
+- Omitted `concurrency` and `concurrency: 'max'` both mean a finite admission
+  ceiling of 100; an explicit integer accepts 1–100. This is not unlimited
   providers/processes or a promise every task starts instantly. Per-schedule
   controls/handoff are ordered; unrelated schedules use shared fair capacity.
   SQL/authority leases are not held while waiting on provider work.
@@ -265,6 +279,14 @@ revalidate selected detail/history even when the visible list page is equal.
 Periodic authority rechecks remain quiet when the projection is unchanged.
 `useJobSchedules().invalidationRevision` carries these notifications within its
 current client/selection boundary; it is not a persistent database sequence.
+The browser transport separately supplies optional `reconnected: true` on the
+first valid snapshot after replacing a previously published connection.
+`useJobSchedules().reconnectRevision` carries these successful re-admissions so
+an off-page inspector reconciles changes that may have occurred in the stream
+gap. Initial/idle/failed connection attempts are not successful re-admissions;
+this notification never changes `invalidated` or claims that a commit occurred.
+Both revisions retire with their client/query/authorization boundary and never
+retry a command.
 No caller receives raw commit hints or another scope's source metadata.
 
 Canonical accepted schedule controls and observed handoff/terminal transitions

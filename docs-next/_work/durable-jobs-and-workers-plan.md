@@ -877,3 +877,67 @@ and the separately pinned calendar preview remain preserved. Storage checks
 still report the approved external-only exception: approximately 229 GiB free
 externally, with the separate internal-drive warning around 74 GiB, not repaired
 or bypassed by this work.
+
+### Final independent review and qualification preparation (November 15)
+
+The pre-release review found and corrected concrete boundary defects rather
+than treating focused source tests as deployment qualification:
+
+- Official builds now preserve the canonical jobs migration sources and complete
+  realm identity, so a bundled parent can reopen state created with the matching
+  retained source actor. Runtime checksum checks are not relaxed.
+- A quarantined/unconfirmed worker generation still occupies physical capacity,
+  but does not prevent a different healthy idle/free slot from serving work.
+  Pre-aborted acquisition cannot allocate a child. Failed retirement stays visible.
+- Async validator results are rejected synchronously and genuine rejected
+  promises are observed without executing authored thenable getters.
+- Jobs ticks and their queued wake callbacks explicitly leave the initiating
+  request's logging lifetime. Background observations retain their system
+  attribution rather than borrowing a live or expired HTTP actor.
+- A successful SSE reconnection triggers a distinct authorized inspector refresh,
+  even if an off-page change occurred during the gap and the visible page is
+  equal. This is not a fabricated commit hint or a second execution engine.
+- The root server's durable definition type is `DurableJobDefinition`; its
+  existing local-timer `JobDefinition` remains compatible. Dedicated jobs exports
+  retain their own `JobDefinition` name.
+
+The first expanded follow-up retained its failed result: 62 tests passed and
+one new hook fixture failed because changing AppProvider's initial client prop
+does not replace its owned client. The corrected fixture deliberately remounts
+the provider, as required by that contract. A later diagnostic strict check
+found the duplicate root type export and two probe type errors; those were
+corrected rather than suppressing the checks.
+
+A subsequent long-lived-build regression also disproved a URL-query cache-key
+fix: Bun 1.4.4 reused the physical module, and the second synthetic migration
+kept its first checksum. That failed four-pass/one-fail probe is retained as a
+failure. Canonical jobs migration capture now uses a bounded, fresh Bun
+pure-import process with an empty environment and dotenv disabled, verifies the
+source hash before/after import, and confirms child exit. It creates no helper
+files or application/database runtime. Its replacement regression checks both
+executable migration behavior and checksum/fingerprint identity after changing
+an owned synthetic source. The follow-up passed **six tests / two files / 27
+expectations**, including child environment isolation; it is not added to the
+overlapping group below as a new total. Compiled CLI invocation fails closed;
+use the source Bun CLI for official builds, including compiled app output.
+
+After those corrections a fresh, independently frozen dependency installation
+passed **64 tests / nine files / 414 expectations**, including managed native
+activity/detailed logging with both timer/request wakes and Chromium ordinary/
+reduced motion. Its expanded strict type phase also passed, including the new
+installed Linux probe, public compatibility types and host qualification scripts.
+The independent dependency tree and all owned test fixtures were retired.
+
+New exact-archive Linux qualification uses only public application imports,
+independently installs/frozen-reinstalls the selected package, compares every
+archive-owned file independently, exercises the official build and retained
+file-backed source-to-bundle restart, and checks actor entry/environment and
+semantic evidence. Pending-work assertions must prove the process stopped
+before the due instant; terminal history alone cannot establish restart recovery.
+Its synthetic state and labelled local container are owned/removed in finally.
+This new probe is not yet a passed release gate merely because it is written.
+
+The dedicated external Colima profile was started for this qualification phase;
+it must be stopped after owned containers retire. Calendar/backups, real
+applications and production state remain untouched. The normal selected release
+is still 2.10.5 until the final committed archive and updater gates pass.

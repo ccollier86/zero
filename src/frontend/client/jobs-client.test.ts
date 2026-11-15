@@ -122,9 +122,48 @@ test('live frames expose only a closed invalidation bit and accept older frames 
   } finally { stop(); client.clear(); }
 });
 
+test('a clean reconnect reports one successful read reconciliation without fabricating a commit hint', async () => {
+  let opened = 0, controller!: ReadableStreamDefaultController<Uint8Array>;
+  const updates: unknown[] = [];
+  const client = createJobsClient(async <T>() => accepted as T, async () => {
+    opened++;
+    return new Response(new ReadableStream<Uint8Array>({ start(value) {
+      controller = value;
+      // Headers/idle closure alone establish no successful prior read.
+      if (opened === 1) value.close();
+      else value.enqueue(new TextEncoder().encode('data: ' + JSON.stringify({ version: 1,
+        value: { items: [summary], total: 1 }, invalidated: false }) + '\n\n'));
+    } }), { headers: { 'Content-Type': 'text/event-stream' } });
+  });
+  const stop = client.schedules.watch((_page, update) => { updates.push(update); });
+  const waitFor = async (count: number) => {
+    const deadline = Date.now() + 2000;
+    while (updates.length < count) {
+      if (Date.now() > deadline) throw new Error('Synthetic clean reconnect did not publish.');
+      await Bun.sleep(1);
+    }
+  };
+  try {
+    await waitFor(1);
+    expect(opened).toBe(2);
+    expect(updates).toEqual([{ invalidated: false }]);
+    // A hidden job may change in this normal clean-expiry/re-admission gap.
+    // The equal visible page still owns a fresh read, not a made-up hint.
+    controller.close();
+    await waitFor(2);
+    expect(opened).toBe(3);
+    expect(updates).toEqual([{ invalidated: false }, { invalidated: false, reconnected: true }]);
+    controller.enqueue(new TextEncoder().encode('data: ' + JSON.stringify({ version: 1,
+      value: { items: [summary], total: 1 }, invalidated: false }) + '\n\n'));
+    await waitFor(3);
+    expect(updates[2]).toEqual({ invalidated: false });
+    expect(updates.every(Object.isFrozen)).toBe(true);
+  } finally { stop(); client.clear(); }
+});
+
 test('malformed or private live invalidation metadata cannot publish and retires the connection', async () => {
   for (const extra of [{ invalidated: 'PRIVATE_DETAIL' }, { invalidated: null }, { invalidated: { input: 'PRIVATE_INPUT' } },
-    { invalidated: true, privateInput: 'PRIVATE_INPUT' }]) {
+    { invalidated: true, privateInput: 'PRIVATE_INPUT' }, { reconnected: true }]) {
     let opened = 0, delivered = 0;
     const errors: unknown[] = [];
     const client = createJobsClient(async <T>() => accepted as T, async () => {

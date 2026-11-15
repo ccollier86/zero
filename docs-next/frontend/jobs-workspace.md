@@ -56,6 +56,8 @@ admission does not become available by rendering this view.
   hints revalidate the inspector even if that job is off the visible table page
   or a history change leaves the bounded latest/active summary unchanged.
   Equal-page authority rechecks do not fabricate such change notifications.
+  A successful stream re-admission separately revalidates the inspector so a
+  change during a clean expiry/reconnect gap is not lost; it is not a commit hint.
 - A paused schedule can still have older accepted work running. One active
   representative is not a count of all concurrent work. Workflow completion is
   not proof that an email/provider delivered an external effect.

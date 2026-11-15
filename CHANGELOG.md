@@ -4,6 +4,44 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+## 2.11.0 - 2026-11-15
+
+Integrated local workers and optional durable schedules, with Guardian/Fabric/
+Torrent admission, native operator controls and explicit recovery boundaries.
+
+- Add fair bounded asynchronous work pools, fixed typed worker-task catalogs,
+  reusable isolated Bun processes and scoped `zero.workers.run()` admission.
+  CPU work stays off the request event loop; children receive only their explicit
+  environment. Cancellation does not release physical capacity before actual
+  settlement, and uncertain dispatched tasks are never automatically replayed.
+- Add opt-in `jobs` configuration and the `zero.jobs` facade, native HTTP/SDK/
+  live hooks, private per-scope Fabric files and a guarded `JobsWorkspace`.
+  One-off and explicit-timezone cron schedules retain exact definition/workflow
+  pins, permanent receipts, fenced claims, bounded misfire/overlap behavior and
+  restart reconciliation. Torrent remains the workflow/retry executor.
+- Use indexed due discovery and completion-driven scope refill instead of a
+  whole-batch barrier or opening all idle databases on every tick. SQL/authority
+  leases are not held while waiting on providers or pool capacity. Defaults are
+  finite, fair limits rather than unbounded concurrency.
+- Append semantic job transitions atomically through the existing private source
+  outbox. Background ticks do not inherit an HTTP request's audit lifetime;
+  polls, claims, replay and unchanged live authority checks stay quiet.
+- Preserve canonical jobs realm migration identity in official source/bundled
+  builds, and keep retained source actors fixed to the installed package. Add
+  source-only Doctor guidance for short automation handoffs rather than long
+  awaited provider work on a sequential database lane.
+- Retain the existing local scheduler and its root `JobDefinition` type. The
+  new root durable type is `DurableJobDefinition`; dedicated jobs exports retain
+  `JobDefinition`. Existing cron, messaging and workflow APIs remain compatible.
+
+Workers and durable jobs are additive and disabled unless explicitly configured.
+Enabling jobs against retained SYSTEM state requires normal explicit migration
+preparation for its ownership catalog; do not edit database ledgers manually.
+This is the source/local release lane, not a public npm or multi-host deployment
+claim. Calendar backend integration and the proposed backup service are not
+included. See the workers, durable jobs and JobsWorkspace guides for supported
+composition, configuration and recovery limitations.
+
 ## 2.10.5 - 2026-11-14
 
 Native vector-query optional-parameter compatibility.

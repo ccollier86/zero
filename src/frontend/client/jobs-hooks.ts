@@ -13,6 +13,8 @@ export interface UseJobSchedulesResult {
   readonly error: string | null;
   /** Current-selection committed-change notifications, including unchanged visible pages. Not an insert count. */
   readonly invalidationRevision: number;
+  /** Successful transport re-admissions after a published connection, not committed-change evidence. */
+  readonly reconnectRevision: number;
   /** Reconcile authorized reads only. Never resubmits an enqueue or control. */
   refresh(): void;
 }
@@ -24,20 +26,25 @@ export function useJobSchedules(query: JobPageOptions = {}): UseJobSchedulesResu
   const key = !ssr && boundary.ready ? JSON.stringify([boundary.key, query.limit ?? 25, query.offset ?? 0, query.control ?? null]) : null;
   const selection = fence.update(key ?? 'unselected');
   const [state, setState] = useState<{ client: typeof client; selection: number; status: 'loading' | 'ready' | 'error';
-    page: JobSchedulePage | null; invalidationRevision: number }>({ client: null, selection: 0, status: 'loading', page: null, invalidationRevision: 0 });
+    page: JobSchedulePage | null; invalidationRevision: number; reconnectRevision: number }>({ client: null, selection: 0,
+      status: 'loading', page: null, invalidationRevision: 0, reconnectRevision: 0 });
   useEffect(() => {
     if (!client || !key) return;
     const controller = new AbortController();
     const invalidationRevision = (previous: typeof state) => previous.client === client && previous.selection === selection ? previous.invalidationRevision : 0;
-    setState(previous => ({ client, selection, status: 'loading', page: null, invalidationRevision: invalidationRevision(previous) }));
+    const reconnectRevision = (previous: typeof state) => previous.client === client && previous.selection === selection ? previous.reconnectRevision : 0;
+    setState(previous => ({ client, selection, status: 'loading', page: null, invalidationRevision: invalidationRevision(previous),
+      reconnectRevision: reconnectRevision(previous) }));
     const current = () => !controller.signal.aborted && currentClient.current === client && fence.isCurrent(selection)
       && readable(client, boundary.key);
-    const failure = () => { if (current()) setState(previous => ({ client, selection, status: 'error', page: null, invalidationRevision: invalidationRevision(previous) })); };
+    const failure = () => { if (current()) setState(previous => ({ client, selection, status: 'error', page: null,
+      invalidationRevision: invalidationRevision(previous), reconnectRevision: reconnectRevision(previous) })); };
     let remove: (() => void) | undefined;
     try {
       remove = client.jobs.schedules.watch((page, update) => {
         if (current()) setState(previous => ({ client, selection, status: 'ready', page,
-          invalidationRevision: invalidationRevision(previous) + (update?.invalidated === true ? 1 : 0) }));
+          invalidationRevision: invalidationRevision(previous) + (update?.invalidated === true ? 1 : 0),
+          reconnectRevision: reconnectRevision(previous) + (update?.reconnected === true ? 1 : 0) }));
       }, {
         query: { limit: query.limit ?? 25, offset: query.offset ?? 0, ...(query.control === undefined ? {} : { control: query.control }) }, signal: controller.signal,
         onError: failure,
@@ -51,6 +58,7 @@ export function useJobSchedules(query: JobPageOptions = {}): UseJobSchedulesResu
   const visible = key && state.client === client && state.selection === selection ? state : null;
   const status = !key ? 'idle' : visible?.status ?? 'loading';
   return { status, page: visible?.page ?? null, invalidationRevision: visible?.invalidationRevision ?? 0,
+    reconnectRevision: visible?.reconnectRevision ?? 0,
     error: status === 'error' ? 'Jobs could not be loaded. Reauthorize or retry the read.' : null, refresh };
 }
 

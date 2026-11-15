@@ -61,6 +61,9 @@ for (const reducedMotion of ['reduce', 'no-preference'] as const) browserTest(`n
     await page.waitForFunction(() => document.querySelectorAll('[data-row-id]').length === 7);
     await page.getByRole('button', { name: 'Change hidden selected job', exact: true }).click();
     await page.getByText('2 / 1', { exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Change hidden job while disconnected', exact: true }).click();
+    await page.getByText('3 / 1', { exact: true }).waitFor();
+    await page.getByText('synthetic-occurrence-1', { exact: true }).waitFor();
     await page.getByRole('button', { name: 'First page', exact: true }).click();
     await page.getByRole('button', { name: 'Pause', exact: true }).click();
     const pause = page.getByRole('alertdialog', { name: 'Pause job?', exact: true });

@@ -11,6 +11,7 @@ import type { JobAdmission, JobOccurrenceRow, JobSeal } from './model';
 import type { ResolvedJobsConfig } from './config';
 import type { JobsDueCursor, JobsRuntime } from './runtime';
 import { jobHash } from './validation';
+import { withoutLoggingAttribution } from '../logging/logging-attribution';
 
 export function jobGateKey(scope: ServiceDataScope, id: string): string { return jobHash([serviceDataScopeKey(scope), id]); }
 interface RunnerOptions {
@@ -42,8 +43,15 @@ export class JobsRunner {
     scheduler.register({ name: 'zero-durable-jobs', pattern: '* * * * * *', timezone: 'UTC', protect: true, run: this.timerRun });
     this.scheduler = scheduler; this.wake();
   }
-  wake(): void { if (this.state === 'ready') queueMicrotask(() => { void this.tick().catch(error => this.report('scope', error)); }); }
+  wake(): void {
+    if (this.state === 'ready') withoutLoggingAttribution(() => queueMicrotask(() => { void this.tick().catch(error => this.report('scope', error)); }));
+  }
   tick(): Promise<void> {
+    // The runner owns background continuation, never its triggering HTTP
+    // caller's active/retired audit lifetime. Sealed job authority is unchanged.
+    return withoutLoggingAttribution(() => this.tickOwned());
+  }
+  private tickOwned(): Promise<void> {
     if (this.tickTask) return this.tickTask;
     if (this.state !== 'ready') return Promise.resolve();
     let continueScan = false;

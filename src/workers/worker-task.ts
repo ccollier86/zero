@@ -78,14 +78,25 @@ export class WorkerTaskCatalog {
 function invalid() { return new WorkerError('WORKER_CONFIG_INVALID', 'Worker task catalog is invalid.'); }
 function parseSafely<T>(parse: (value: WorkerValue) => T, value: unknown): WorkerValue {
   try {
-    const canonical = workerValue(parse(workerValue(value)));
+    const canonical = parseValue(parse, value);
     // Input is checked again in the child and output again in the parent. A
     // one-way transform would otherwise silently change it at each boundary.
     // Parsers must be pure; reject a noncanonical contract before dispatch.
-    if (!isDeepStrictEqual(canonical, workerValue(parse(workerValue(canonical))))) throw new Error('Noncanonical worker contract.');
+    if (!isDeepStrictEqual(canonical, parseValue(parse, canonical))) throw new Error('Noncanonical worker contract.');
     return canonical;
   }
   catch { throw new WorkerError('WORKER_TASK_INVALID', 'Worker input or result failed its registered contract.'); }
+}
+function parseValue<T>(parse: (value: WorkerValue) => T, input: unknown): WorkerValue {
+  const value = parse(workerValue(input));
+  try { return workerValue(value); }
+  catch (error) {
+    // Async validators never grant a contract, but their genuine Promise
+    // rejection must not escape the sanitized synchronous failure. Do not
+    // inspect an authored then property or execute a thenable callback.
+    try { Promise.prototype.then.call(value, undefined, () => {}); } catch {}
+    throw error;
+  }
 }
 function freeze<T>(value: T): T {
   if (value && typeof value === 'object') { for (const child of Object.values(value)) freeze(child); Object.freeze(value); }
