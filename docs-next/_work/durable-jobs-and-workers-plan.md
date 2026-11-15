@@ -23,6 +23,14 @@ lands. Proposals below are **not existing APIs** merely because they appear in
 an example. No main merge, release archive, updater selection or deployment is
 implied by a local implementation checkpoint.
 
+Platform-wide governing requirement reaffirmed 2026-11-15:
+[local-first performance](../backend/runtime/local-first-performance.md).
+Zero's integrated services must not require external coordination hops or HOT
+mode to be responsive. Review avoidable barriers across auth, file-backed
+reads/writes, Fabric, workers, reactive delivery and logging. Preserve per-file
+SQLite ordering, security and durability; measure mixed-load and tail latency
+rather than treating a functional test or extra hardware as a performance proof.
+
 ## Confirmed scope — the complete framework foundation before calendars
 
 The user's latest clarification supersedes the earlier artificial split between
@@ -205,7 +213,9 @@ not a borrowed dependency symlink used for quick source diagnostics.
 
 Then return to the preserved calendar backend requirements. The user's additional
 Zero improvements requested for after scheduling stay in a separate backlog;
-their detailed list/order can be added without starting them during this phase.
+the [built-in backup service](./built-in-backup-service-plan.md) is recorded
+there as a native service with destination adapters, not work to start during
+this foundation pass. Other follow-on improvements remain separately ordered.
 
 ### Core gap-close working evidence (November 14)
 
@@ -259,6 +269,118 @@ retained, not production state. Calendar source/preview pins remain untouched.
 ## Outcome and boundaries
 
 ### Managed integration working evidence — not final release qualification
+
+At committed checkpoint `5c1e9d3b692df699b136bb39882175ce4b25c70b`,
+`scripts/qualify-worker-foundation.ts` completed with its own frozen dependency
+installation: **234 passing / 42 files / 1,300 expectations**, followed by strict
+direct-Bun TypeScript. That includes an independently packed/installed public
+worker check, not just a borrowed dependency link. The script retired its owned
+dependencies and synthetic runs afterward. This is the focused core group,
+**not the entire framework suite or final selected archive**.
+
+Subsequent, overlapping source checks added native file-backed job dispatch
+across two managed restarts and explicit service-owned eligibility after creator
+logout: **eight passing / two files / 82 expectations** before the follow-up
+review below. The strict fixture type check caught an overly narrow nullable
+startup-handle inference; its typed holder was corrected. Do not confuse that
+fixture type correction with a runtime authorization change.
+
+The follow-up review now closes a whole-batch scope barrier, adds immediate
+bounded slot refill and indexed keyset discovery, and fences retry admission
+locally when durable wake publication is busy or fails. Tests include more than
+100 backed-off roots followed by healthy work. Never-started stale generations
+remain wake-visible for bounded `not-dispatched` retirement; expired claims
+still require original-receipt reconciliation. A child IPC server now imports
+the portable protocol directly rather than bootstrapping parent-executor code.
+Its independent transport/import-graph group passes **21 tests / two files /
+125 expectations**. These changes remain source work pending the final combined
+checks; earlier evidence is not silently reassigned to them.
+
+The raw Bun-only Linux/amd64 IPC probe, with no Zero imports or databases,
+completed both immediate-ping and ready-then-ping paths under Colima/Rosetta.
+Parent ready times were 4,598/4,338 ms and reply times 5,515/5,277 ms. This
+isolates a real emulation startup cost; it is not a native Linux latency claim.
+Production's five-second startup default is unchanged. An explicitly named
+`--emulated-smoke` uses a 15-second diagnostic deployment budget for source,
+bundle, compiled worker and supervised-parent-death checks, and explicitly does
+not relabel the earlier default-budget matrix as passing. A warm repeat of the
+raw probe also passes delayed-listener delivery: ready/reply times were
+527/607 ms (immediate), 632/713 ms (after-ready), and 820/887 ms (250 ms delayed
+listener). Cold/warm and contention variance must remain visible; there is no
+claim that emulation always requires five seconds or that messages are lost.
+
+The first explicit-budget package attempt failed before source worker startup.
+A later attempt passed source/bundle/compiled work but caught a containment
+fixture error: its second container set a TMPDIR that did not exist. The fixture
+now creates that private directory and immediately reports a failed launch
+instead of swallowing it until an unrelated deadline. The subsequent diagnostic
+archive **`3f6083e060e48d0e76cf6f43b75ad2c27210af0176d674b39a667977e1d0f80d`**
+passes source, minified bundle, compiled executable and entered-CPU parent
+SIGKILL/container-init containment using the explicit 15-second startup policy.
+Image: `oven/bun@sha256:1d22548f177f4ff38e0c15baa3c2c46c6c2060ba2d1bc573bb4720b407548f1d`.
+This was an independently packed/frozen-installed working candidate, **not the
+final release archive or a successful default-budget full Linux matrix**. Later
+jobs changes are not qualified by that earlier archive. Its creating script
+removed the labelled containers, extraction/dependencies, binaries and exact
+synthetic fixture after settlement; only the shared warm package cache remains.
+
+A concurrent host group produced a five-second actor-start failure under load
+and a test-precondition failure after keyset ordering changed. The concurrency
+fixture now explicitly places its slow root first rather than assuming insertion
+order survives ordered discovery. The corrected pure dispatcher and real SDK
+retirement group passes **seven tests / two files / 28 expectations**; the
+subsequent fixed-horizon case and final combined file-backed group are tracked
+separately. No failed host group is relabeled as passing or used to loosen
+production startup/security defaults.
+
+The final focused combined run for this follow-up used its **own frozen
+dependencies** and passed **52 tests / nine files / 424 expectations**, then the
+strict direct-Bun TypeScript group passed. It covers fixed-horizon discovery,
+100-root fairness, durable-deferral failure, bounded stopped-generation
+retirement, native file/WAL/indexed discovery, real managed restarts, deliberate
+service ownership, tenant isolation, source/outbox evidence, SDK/watch retirement
+and child protocol/import boundaries. The earlier standalone type diagnostic
+caught an unsupported test-only `Bun.build.write` option and overly narrow test
+boolean inference; those fixture issues were corrected before this passing run.
+Documentation: **892 pages/unique IDs reachable, zero structural problems**.
+Do not add overlapping group counts or claim a full-framework/final-updater pass.
+
+The creating scripts retired all owned synthetic state and dependency trees;
+the fixture parent is empty and the dedicated `zero-workers` Colima profile is
+stopped. Shared warm caches and the separately pinned calendar preview remain
+intentionally retained. At completion external free space was about 229 GiB;
+the internal-drive guard still warns (about 74 GiB), under the user's explicit
+external-only exception. Source, history and real runtime data are preserved.
+
+### Remaining operator-read contract slice (review, November 15)
+
+Complete these before assembling the native management view; they are not
+implemented just because the current request facade already has controls:
+
+- Publish code-owned, payload-safe definition/capability discovery and
+  per-schedule action availability through the same server policy. A browser
+  role/owner check cannot reconstruct custom management policy, service-owned
+  readmission or an administrator's inability to impersonate another actor.
+- Share a bounded scheduling/execution summary across list, detail and live
+  reads. List pages currently omit next due, blocked reason and occurrence
+  changes, so equal-page coalescing can hide a meaningful runtime update.
+  Keep paused scheduling separate from an older generation's still-running work.
+- Give browser mutations a typed, static failure contract retaining their
+  original idempotency key and explicit uncertainty/reconciliation requirement.
+  Transport loss or an invalid acknowledgment is not proof of rejection. Never
+  create a new key to bypass an uncertain write or interpret a null receipt as
+  permission to replay an external effect.
+- Expose linked Torrent run observation only where its own authority admits it.
+  A job-management permission does not automatically grant arbitrary workflow
+  control, and `dispatched` is not evidence the provider effect completed.
+- Distinguish retained quota stops from temporary pool pressure. Do not propose
+  deleting permanent receipts or rotating service principals as capacity repair.
+
+Review also found jobs omitted from two existing SDK retirement paths. They now
+clear the logical jobs subscription boundary during read-authority invalidation
+and explicit tenant transitions. Auth response chunks were already guarded;
+the corrected defect was an old imperative watch surviving to reconnect under
+replacement authority, not established disclosure of old response bytes.
 
 The next source pass connects `AppConfig.jobs`, Guardian-bound `zero.jobs`,
 private Fabric state, exact Torrent pins/receipts, bounded dispatch, the native

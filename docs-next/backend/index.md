@@ -37,6 +37,8 @@ than importing implementation files or reconstructing authentication in routes.
 
 ## Server Composition
 
+- [Local-first performance](./runtime/local-first-performance.md): core services
+  stay integrated; file-backed operation must be fast without relying on HOT mode.
 - [Platform configuration](./configuration/index.md): typed declarations,
   feature switches, data modes, precedence, routing and safe diagnostics.
 - [Runtime and extensions](./runtime/index.md): app-local composition, validated

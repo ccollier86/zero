@@ -8,6 +8,12 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const context = 'colima-zero-workers';
 const socket = 'unix:///Volumes/code-bank/docker/colima/zero-workers/docker.sock';
 const image = 'oven/bun:1.4.4';
+const emulatedSmoke = Bun.argv.slice(2).length === 1 && Bun.argv[2] === '--emulated-smoke';
+if (Bun.argv.length > 2 && !emulatedSmoke) throw new Error('Only --emulated-smoke is supported.');
+// Rosetta's raw Bun-only IPC baseline can exceed 5 s before any Zero imports.
+// This explicit diagnostic deployment budget does not change runtime defaults
+// or relabel the earlier default-budget matrix as passing.
+const startupBudget = emulatedSmoke ? 15_000 : 5000;
 const docker = (args: string[]) => ['docker', '--context', context, ...args];
 if ((await command(docker(['context', 'inspect', context, '--format', '{{.Endpoints.docker.Host}}']))).trim() !== socket) {
   throw new Error('Qualification requires the exact external, local Zero Colima context.');
@@ -21,20 +27,26 @@ try {
   const archive = (await readdir(fixture.root)).find(name => name.endsWith('.tgz'));
   if (!archive) throw new Error('No candidate archive.');
   const archiveHash = new Bun.CryptoHasher('sha256').update(await Bun.file(join(fixture.root, archive)).arrayBuffer()).digest('hex');
-  console.log(JSON.stringify({ stage: 'candidate-provenance', archiveSha256: archiveHash, image, platform: 'linux/amd64', supervisor: 'docker-init' }));
+  console.log(JSON.stringify({ stage: 'candidate-provenance', archiveSha256: archiveHash, image, platform: 'linux/amd64', supervisor: 'docker-init',
+    mode: emulatedSmoke ? 'explicit-budget-emulated-smoke' : 'default-budget-matrix', startupTimeoutMs: startupBudget }));
   await copyFile(join(root, 'bun.lock'), join(fixture.root, 'bun.lock'));
   await writeFile(join(packageRoot, 'worker-linux-probe.ts'), `
     import {ProcessWorkPool} from '@zero/framework/workers';
     import {tasks,sumTask} from './src/workers/test-support/worker-entry';
-    const owner=new ProcessWorkPool({tasks,launch:{kind:'bundle',entrypoint:'/qualify/worker-linux'},processes:2,env:{}});
+    const mode=process.argv[2]||'compiled';
+    const launch=mode==='source'?{kind:'source' as const,entrypoint:'/work/package/src/workers/test-support/worker-entry.ts'}
+      :mode==='bundle'?{kind:'source' as const,entrypoint:'/qualify/worker-bundle.js'}:{kind:'bundle' as const,entrypoint:'/qualify/worker-linux'};
+    const owner=new ProcessWorkPool({tasks,launch,processes:2,env:{},startupTimeoutMs:${startupBudget}});
+    const started=Date.now();console.log(JSON.stringify({stage:'worker-probe-start',mode,startupTimeoutMs:${startupBudget}}));
     try{
       const result:number=await owner.run(sumTask,[12,25,8]);if(result!==45)throw Error('compiled result');
       const environment=await owner.run('fixture.env',null) as {inheritedSecret:boolean};
       if(environment.inheritedSecret)throw Error('parent secret inherited');
       await Promise.all([owner.run('fixture.cpu',100),owner.run('fixture.cpu',100)]);
-    }finally{await owner.close();}
-    if(owner.status().processes!==0)throw Error('compiled worker retained');
-    console.log('LINUX_COMPILED_WORKERS_OK');
+    }catch(error){console.log(JSON.stringify({stage:'worker-probe-failed',mode,elapsedMs:Date.now()-started,code:error?.code,outcome:error?.outcome}));throw error;}
+    finally{await owner.close();}
+    if(owner.status().processes!==0)throw Error('worker retained');
+    console.log('LINUX_WORKERS_OK '+mode);
   `);
   await writeFile(join(packageRoot, 'worker-containment-catalog.ts'), `
     import {writeFileSync} from 'node:fs';
@@ -50,13 +62,18 @@ try {
     if(!await runWorkerIfRequested({tasks}))process.exitCode=64;
   `);
   await writeFile(join(packageRoot, 'worker-containment-parent.ts'), `
-    import {existsSync} from 'node:fs';
+    import {existsSync,mkdirSync} from 'node:fs';
     import {ProcessWorkPool} from '@zero/framework/workers';
     import {tasks} from './worker-containment-catalog';
-    const owner=new ProcessWorkPool({tasks,launch:{kind:'bundle',entrypoint:'/qualify/containment-child'},processes:1});
-    const pending=owner.run('containment.spin','/qualify/containment-entered');void pending.catch(()=>{});
-    const deadline=Date.now()+10000;
+    // A second container does not retain /work/tmp from the build container.
+    // Bundle isolation requires its configured TMPDIR to exist before launch.
+    mkdirSync('/qualify/tmp',{recursive:true,mode:0o700});
+    const owner=new ProcessWorkPool({tasks,launch:{kind:'bundle',entrypoint:'/qualify/containment-child'},processes:1,startupTimeoutMs:${startupBudget}});
+    let failure:string|null=null;
+    const pending=owner.run('containment.spin','/qualify/containment-entered');void pending.catch(error=>{failure=/^WORKER_[A-Z_]+$/.test(error?.code)?error.code:'WORKER_NOT_READY';});
+    const deadline=Date.now()+${startupBudget + 5000};
     while(!existsSync('/qualify/containment-entered')){
+      if(failure){await owner.close();throw Error('Synthetic containment worker failed before CPU entry: '+failure);}
       if(Date.now()>deadline){await owner.close();throw Error('CPU entry not observed');}
       await Bun.sleep(5);
     }
@@ -68,6 +85,7 @@ try {
     import {mkdir,copyFile} from 'node:fs/promises';
     const cwd='/work/package';
     async function run(args:string[]){
+      console.log(JSON.stringify({stage:'linux-step',command:args[0],target:args[1]}));
       const p=Bun.spawn([process.execPath,'--no-env-file',...args],{cwd,env:{...process.env,TMPDIR:'/work/tmp',BUN_INSTALL_CACHE_DIR:'/work/cache'},stdout:'inherit',stderr:'inherit'});
       if(await p.exited!==0)throw Error('Linux qualification stage failed');
     }
@@ -77,7 +95,7 @@ try {
     await copyFile('/qualify/bun.lock',cwd+'/bun.lock');
     for(const file of ['worker-linux-probe.ts','worker-containment-catalog.ts','worker-containment-child.ts','worker-containment-parent.ts'])await copyFile('/qualify/'+file,cwd+'/'+file);
     await run(['install','--frozen-lockfile','--ignore-scripts','--silent']);
-    await run(['test','--timeout','120000','src/workers/process-pool.test.ts','src/workers/bundle.test.ts','src/workers/managed.test.ts','src/workers/torrent-managed.test.ts']);
+    ${emulatedSmoke ? "await run(['worker-linux-probe.ts','source']);\n    await run(['build','src/workers/test-support/worker-entry.ts','--target','bun','--minify','--outfile','/qualify/worker-bundle.js']);\n    await run(['worker-linux-probe.ts','bundle']);" : "await run(['test','--timeout','120000','src/workers/process-pool.test.ts','src/workers/bundle.test.ts','src/workers/managed.test.ts','src/workers/torrent-managed.test.ts']);"}
     await run(['build','src/workers/test-support/worker-entry.ts','--compile','--minify','--outfile','/qualify/worker-linux']);
     await run(['worker-linux-probe.ts']);
     await run(['build','worker-containment-child.ts','--compile','--minify','--outfile','/qualify/containment-child']);
@@ -101,11 +119,12 @@ try {
   await command(docker(['run', '--name', name + '-containment', '--rm', '--init', '--platform', 'linux/amd64', ...labels,
     '--network', 'none', '--memory', '1g', '--cpus', '1', '--pids-limit', '32', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
     '--mount', `type=bind,src=${fixture.root},dst=/qualify`, '--env', 'TMPDIR=/qualify/tmp',
-    '--entrypoint', '/usr/local/bin/bun', image, '--no-env-file', '/qualify/containment-parent.js']), root, 30_000, 137);
+    '--entrypoint', '/usr/local/bin/bun', image, '--no-env-file', '/qualify/containment-parent.js']), root, 60_000, 137);
   if (!await Bun.file(join(fixture.root, 'containment-entered')).exists()) throw new Error('Container termination did not exercise an entered CPU task.');
   settled = !(await command(docker(['ps', '-aq', '--filter', 'label=dev.storage.run-id=' + runId]))).trim();
   if (!settled) throw new Error('Owned container remained after successful qualification.');
-  console.log(JSON.stringify({ result: 'linux-amd64-source-compiled-and-supervised-parent-death-passed', archiveSha256: archiveHash,
+  console.log(JSON.stringify({ result: emulatedSmoke ? 'linux-amd64-explicit-budget-source-bundle-compiled-supervised-death-smoke-passed' : 'linux-amd64-default-budget-matrix-and-supervised-parent-death-passed', archiveSha256: archiveHash,
+    startupTimeoutMs: startupBudget, defaultBudgetMatrixPassed: !emulatedSmoke,
     image, imageIdentity: (await command(docker(['image', 'inspect', image, '--format', '{{json .RepoDigests}}']))).trim() }));
 } finally {
   if (containerStarted && !settled) {

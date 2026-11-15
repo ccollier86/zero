@@ -63,8 +63,9 @@ export function readJobWake(context: DatabaseReadQueryContext, input: unknown) {
     WHERE c.scope_id=? AND c.blocked_code IS NULL AND s.control='active'`).get(scope)?.at ?? null;
   const claim = context.database.query<{ at: number | null }>("SELECT min(lease_until) AS at FROM _jobs_occurrences WHERE scope_id=? AND state='claimed'").get(scope)?.at ?? null;
   const dispatched = context.database.query<{ id: string }>("SELECT id FROM _jobs_occurrences WHERE scope_id=? AND state='dispatched' LIMIT 1").get(scope);
-  const pending = context.database.query<{ id: string }>(`SELECT o.id FROM _jobs_occurrences o JOIN job_schedules s ON s.id=o.schedule_id AND s.scope_id=o.scope_id
-    WHERE o.scope_id=? AND o.state='pending' AND s.control='active' AND o.generation=s.generation LIMIT 1`).get(scope);
+  // Unclaimed work from a stopped/replaced generation still needs a bounded
+  // retirement pass. Otherwise it remains misleadingly pending forever.
+  const pending = context.database.query<{ id: string }>("SELECT id FROM _jobs_occurrences WHERE scope_id=? AND state='pending' LIMIT 1").get(scope);
   const candidates = [due, claim, dispatched || pending ? now + 1000 : null].filter((at): at is number => at !== null);
   return candidates.length ? Math.min(...candidates) : null;
 }
@@ -84,11 +85,14 @@ export function dueJobSchedules(context: DatabaseReadQueryContext, input: unknow
 }
 export function pendingJobOccurrences(context: DatabaseReadQueryContext, input: unknown) {
   const r = jobRecord(input, ['scopeId', 'now', 'limit']), scope = jobScope(r.scopeId), now = jobTime(r.now), limit = jobInteger(r.limit ?? 32, 1, 100); owner(context, scope);
-  // Claims whose handoff might have committed must be reconciled even when the schedule is now paused/cancelled.
+  // Claims whose handoff might have committed must be reconciled even when the
+  // schedule is now paused/cancelled. Never-started stale pending rows are also
+  // selected so the claim command can retire them without any Torrent handoff.
   return context.database.query<{ id: string; schedule_id: string }>(`SELECT o.id,o.schedule_id FROM _jobs_occurrences o JOIN job_schedules s ON s.id=o.schedule_id AND s.scope_id=o.scope_id
     JOIN _jobs_admissions a ON a.id=o.admission_id AND a.scope_id=o.scope_id
-    WHERE o.scope_id=? AND ((o.state='claimed' AND o.lease_until<=?) OR (o.state='pending' AND s.control='active' AND s.generation=o.generation
-      AND (json_extract(a.command_json,'$.overlap')<>'queue-one' OR NOT EXISTS(SELECT 1 FROM _jobs_occurrences active WHERE active.scope_id=o.scope_id AND active.schedule_id=o.schedule_id AND active.state IN ('claimed','dispatched')))))
+    WHERE o.scope_id=? AND ((o.state='claimed' AND o.lease_until<=?) OR (o.state='pending' AND
+      (s.control<>'active' OR s.generation<>o.generation OR
+      json_extract(a.command_json,'$.overlap')<>'queue-one' OR NOT EXISTS(SELECT 1 FROM _jobs_occurrences active WHERE active.scope_id=o.scope_id AND active.schedule_id=o.schedule_id AND active.state IN ('claimed','dispatched')))))
     ORDER BY CASE o.state WHEN 'claimed' THEN 0 ELSE 1 END,o.scheduled_at,o.id LIMIT ?`).all(scope, now, limit);
 }
 export function readJobDispatchContext(context: DatabaseReadQueryContext, input: unknown) {

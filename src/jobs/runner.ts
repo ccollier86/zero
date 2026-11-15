@@ -9,7 +9,7 @@ import { JobsError } from './error';
 import { assertJobDefinitionCurrent, assertJobExecutionIdentity, jobBinding, jobDispatchKey } from './admission';
 import type { JobAdmission, JobOccurrenceRow, JobSeal } from './model';
 import type { ResolvedJobsConfig } from './config';
-import type { JobsRuntime } from './runtime';
+import type { JobsDueCursor, JobsRuntime } from './runtime';
 import { jobHash } from './validation';
 
 export function jobGateKey(scope: ServiceDataScope, id: string): string { return jobHash([serviceDataScopeKey(scope), id]); }
@@ -21,6 +21,14 @@ interface DispatchContext { occurrence: JobOccurrenceRow; admission: JobAdmissio
 export class JobsRunner {
   private state: 'ready' | 'closing' | 'closed' = 'ready';
   private tickTask: Promise<void> | null = null;
+  private discoveryCursor: JobsDueCursor | undefined;
+  private discoveryHorizon: number | undefined;
+  private closeTask: Promise<void> | null = null;
+  private readonly scopeTasks = new Map<string, Promise<void>>();
+  // Durable wake publication may be fenced by another scope write or fail.
+  // Keep this local fence too, so completion-driven refill cannot busy-loop
+  // on an unchanged due marker. Keys are bounded by the retained scope catalog.
+  private readonly retryNotBefore = new Map<string, number>();
   private readonly abort = new AbortController();
   private readonly completionCursors = new Map<string, string>();
   private readonly reported = new Set<string>();
@@ -38,22 +46,54 @@ export class JobsRunner {
   tick(): Promise<void> {
     if (this.tickTask) return this.tickTask;
     if (this.state !== 'ready') return Promise.resolve();
-    this.tickTask = (async () => {
+    let continueScan = false;
+    this.tickTask = Promise.resolve().then(() => {
+      if (this.state !== 'ready') return;
       this.options.bridge.assertRuntimeCurrent();
-      const scopes = this.options.runtime.dueScopes(this.now(), this.options.config.maxActiveDatabases);
-      await Promise.all(scopes.map(scope => this.processScope(scope)));
-    })().finally(() => { this.tickTask = null; });
+      // Scope capacity is concurrent admission, not "N scopes per second".
+      // Include a bounded look-ahead past currently running roots; completion
+      // refills a free slot without waiting for the slowest scope or next tick.
+      // Freeze one pass's horizon: continuously advancing cron wakes must not
+      // keep the cursor moving forever while newly dirty roots sit behind it.
+      const horizon = this.discoveryHorizon ??= this.now();
+      const entries = this.options.runtime.dueScopePage(horizon, 100, this.discoveryCursor);
+      let inspected = 0;
+      for (const { scope, cursor } of entries) {
+        if (this.state !== 'ready' || this.scopeTasks.size >= this.options.config.maxActiveDatabases) break;
+        this.discoveryCursor = cursor; inspected++;
+        const key = serviceDataScopeKey(scope); if (this.scopeTasks.has(key)) continue;
+        const retryAt = this.retryNotBefore.get(key);
+        if (retryAt !== undefined && retryAt > this.now()) continue;
+        this.retryNotBefore.delete(key);
+        const task = Promise.resolve().then(async () => { if (this.state === 'ready') await this.processScope(scope); })
+          .catch(error => this.report('scope', error)).finally(() => {
+            if (this.scopeTasks.get(key) === task) this.scopeTasks.delete(key); this.wake();
+          });
+        this.scopeTasks.set(key, task);
+      }
+      if (inspected === entries.length) {
+        if (entries.length < 100) { this.discoveryCursor = undefined; this.discoveryHorizon = undefined; }
+        else continueScan = this.scopeTasks.size < this.options.config.maxActiveDatabases;
+      }
+    }).finally(() => { this.tickTask = null; if (continueScan) this.wake(); });
     return this.tickTask;
   }
-  async close(): Promise<void> {
-    if (this.state === 'closed') return;
+  close(): Promise<void> {
+    if (this.closeTask) return this.closeTask;
     this.state = 'closing'; this.scheduler?.unregister('zero-durable-jobs', this.timerRun); this.scheduler = null;
-    this.abort.abort(); await this.tickTask; this.completionCursors.clear(); this.state = 'closed';
+    this.abort.abort();
+    this.closeTask = (async () => {
+      await Promise.allSettled([...(this.tickTask ? [this.tickTask] : []), ...this.scopeTasks.values()]);
+      this.scopeTasks.clear(); this.completionCursors.clear(); this.retryNotBefore.clear(); this.discoveryCursor = undefined; this.discoveryHorizon = undefined; this.state = 'closed';
+    })();
+    return this.closeTask;
   }
-  diagnostics() { return { state: this.state, ticking: this.tickTask !== null, reportedFailures: [...this.reported], suppressedFailures: this.suppressedFailures }; }
+  diagnostics() { return { state: this.state, ticking: this.tickTask !== null, activeScopes: this.scopeTasks.size, reportedFailures: [...this.reported], suppressedFailures: this.suppressedFailures }; }
   private guard = () => { this.options.bridge.assertRuntimeCurrent(); };
   private async processScope(scope: ServiceDataScope): Promise<void> {
     const scopeId = serviceDataScopeKey(scope), limit = this.options.config.batchSize;
+    let retryDeferred = false;
+    const failed = (stage: 'scope' | 'dispatch' | 'completion', error: unknown) => { retryDeferred = true; this.report(stage, error); };
     try {
       const due = await this.options.runtime.read<{ id: string; revision: number }[]>(scope, 'jobs.due', { scopeId, now: this.now(), limit }, this.guard, this.abort.signal);
       await Promise.allSettled(due.map(row => this.options.gate.run(async () => {
@@ -63,20 +103,30 @@ export class JobsRunner {
           if (code(error) === 'JOBS_CAPACITY') await this.write(scope, 'jobs.cursor.block', { scopeId, id: row.id, expectedRevision: row.revision, code: 'JOBS_CAPACITY' });
           else if (code(error) !== 'JOBS_REVISION_CONFLICT') throw error;
         }
-      }, { key: jobGateKey(scope, row.id), signal: this.abort.signal }).catch(error => this.report('scope', error))));
+      }, { key: jobGateKey(scope, row.id), signal: this.abort.signal }).catch(error => failed('scope', error))));
       const pending = await this.options.runtime.read<{ id: string; schedule_id: string }[]>(scope, 'jobs.pending', { scopeId, now: this.now(), limit }, this.guard, this.abort.signal);
       await Promise.allSettled(pending.map(row => this.options.gate.run(() => this.dispatch(scope, row.id),
-        { key: jobGateKey(scope, row.schedule_id), signal: this.abort.signal }).catch(error => this.report('dispatch', error))));
+        { key: jobGateKey(scope, row.schedule_id), signal: this.abort.signal }).catch(error => failed('dispatch', error))));
       const after = this.completionCursors.get(scopeId);
       let dispatched = await this.options.runtime.read<{ id: string; schedule_id: string }[]>(scope, 'jobs.dispatched', { scopeId, limit, ...(after ? { after } : {}) }, this.guard, this.abort.signal);
       if (!dispatched.length && after) { this.completionCursors.delete(scopeId); dispatched = await this.options.runtime.read(scope, 'jobs.dispatched', { scopeId, limit }, this.guard, this.abort.signal); }
       if (dispatched.length) this.completionCursors.set(scopeId, dispatched[dispatched.length - 1]!.id);
       await Promise.allSettled(dispatched.map(row => this.options.gate.run(() => this.reconcileCompletion(scope, row.id),
-        { key: jobGateKey(scope, row.schedule_id), signal: this.abort.signal }).catch(error => this.report('completion', error))));
+        { key: jobGateKey(scope, row.schedule_id), signal: this.abort.signal }).catch(error => failed('completion', error))));
       await this.options.runtime.refreshWake(scope, this.now(), this.guard);
+      // A full admission queue or invalid retained command must not become an
+      // immediate refill busy-loop. Keep its durable work and retry it later;
+      // another due scope may use the now-free slot in the meantime.
+      if (retryDeferred && this.state === 'ready') {
+        const retryAt = this.now() + 1000; this.retryNotBefore.set(scopeId, retryAt);
+        await this.options.runtime.deferWake(scope, retryAt, this.guard);
+      }
     } catch (error) {
       this.report('scope', error);
-      if (this.state === 'ready') try { await this.options.runtime.deferWake(scope, this.now() + 5000, this.guard); } catch { /* Retained dirty state and failure remain visible. */ }
+      if (this.state === 'ready') {
+        const retryAt = this.now() + 5000; this.retryNotBefore.set(scopeId, retryAt);
+        try { await this.options.runtime.deferWake(scope, retryAt, this.guard); } catch { /* Local backoff and retained dirty state remain; never spin on failed publication. */ }
+      }
     }
   }
   private async dispatch(scope: ServiceDataScope, id: string): Promise<void> {

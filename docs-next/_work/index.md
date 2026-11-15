@@ -17,6 +17,9 @@ publication, search, and production agent bundles.
 
 ## Available Material
 
+- [Built-in backup service follow-on](./built-in-backup-service-plan.md): native,
+  configurable backups with destination adapters; recorded for later design,
+  not part of the current worker/scheduler implementation or an available API.
 - [Shared scheduling, jobs and worker foundation](./durable-jobs-and-workers-plan.md):
   the agreed prerequisite framework upgrade: cron/durable scheduling, fair worker
   pools, Guardian/Fabric/Torrent service integration, public facades, docs and

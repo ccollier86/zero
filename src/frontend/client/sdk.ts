@@ -996,6 +996,7 @@ export function createClient(config: ClientConfig): Client {
     blog?.clear();
     messaging?.clear();
     workflows?.clear();
+    jobs?.clear();
     try {
       authClient?.invalidateAuthorization();
     } finally {
@@ -1019,6 +1020,7 @@ export function createClient(config: ClientConfig): Client {
     blog?.clear();
     messaging?.clear();
     workflows?.clear();
+    jobs?.clear();
     syncClient.beginAuthorizationScopeTransition();
     stateClient?.beginAuthorizationScopeTransition();
     ephemeralClient.beginAuthorizationScopeTransition();

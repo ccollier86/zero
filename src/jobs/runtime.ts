@@ -22,6 +22,8 @@ import { readJobCommitHint, type JobCommitHint } from './commit-hints';
 import type { JobsLoggingSource } from './logging';
 
 export interface JobsOwnerRecord { id: string; scope_id: string; owner_id: string; root_hash: string; realm_fingerprint: string; established: number; wake_at: number | null; wake_generation: number }
+export interface JobsDueCursor { readonly wakeAt: number; readonly id: string }
+export interface JobsDueScope { readonly scope: ServiceDataScope; readonly cursor: JobsDueCursor }
 export interface JobsRuntimeOptions {
   config: ResolvedJobsPersistenceConfig; system: ReactiveDB; installAllowed: boolean;
   authority: { coordinator: AuthorityCommitCoordinator; actorContext: DatabaseActorAuthorityContext | null };
@@ -88,9 +90,16 @@ export class JobsRuntime {
     });
   }
   dueScopes(now: number, limit: number): readonly ServiceDataScope[] {
+    return this.dueScopePage(now, limit).map(entry => entry.scope);
+  }
+  /** Private indexed keyset discovery; backed-off roots must not hide later due files. */
+  dueScopePage(now: number, limit: number, after?: JobsDueCursor): readonly JobsDueScope[] {
     this.assertReady(); jobTime(now); jobInteger(limit, 1, 100);
-    const records = this.options.system.prepare('SELECT * FROM _jobs_owners WHERE established=1 AND wake_at<=? ORDER BY wake_at,id LIMIT ?').all(now, limit) as JobsOwnerRecord[];
-    return records.map(record => { this.assertRetained(record); return scopeOf(record); });
+    if (after) { jobTime(after.wakeAt); jobText(after.id, 128); }
+    const records = after
+      ? this.options.system.prepare('SELECT * FROM _jobs_owners WHERE established=1 AND wake_at<=? AND (wake_at,id)>(?,?) ORDER BY wake_at,id LIMIT ?').all(now, after.wakeAt, after.id, limit) as JobsOwnerRecord[]
+      : this.options.system.prepare('SELECT * FROM _jobs_owners WHERE established=1 AND wake_at<=? ORDER BY wake_at,id LIMIT ?').all(now, limit) as JobsOwnerRecord[];
+    return records.map(record => { this.assertRetained(record); return { scope: scopeOf(record), cursor: { wakeAt: record.wake_at!, id: record.id } }; });
   }
   /** Refresh only after every in-process scope write settled. CAS fences a concurrent new dirty generation. */
   refreshWake(scope: ServiceDataScope, now: number, assertCurrent: () => void): Promise<void> {

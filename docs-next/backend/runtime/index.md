@@ -30,6 +30,8 @@ ownership, authority projection and teardown explicit.
 
 ## Build And Extend
 
+- [Local-first performance](./local-first-performance.md): platform-wide
+  file-backed performance, concurrent local execution and honest load measurement.
 - [Composition](./composition.md): an app-owned configuration and small Bun
   entry point; startup is separate from listening.
 - [Endpoints](./endpoints.md): validated inputs, explicit access and typed

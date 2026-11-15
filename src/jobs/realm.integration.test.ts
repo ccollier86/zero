@@ -17,6 +17,65 @@ const change = (action: string, revision: number, extra: Record<string, unknown>
 const receipt = { instanceId: 'synthetic-workflow-one', name: 'synthetic.report', definitionVersion: 1, createdAt: new Date(due).toISOString() };
 const cron = { kind: 'cron', pattern: '* * * * *', timezone: 'UTC', misfire: 'catch-up', maxLatenessMs: 600_000, catchUpLimit: 10 };
 
+test('stopped and replaced generations retire never-started work in bounded pages while uncertain claims remain reconcilable', async () => {
+  const f = await jobsRealmFixture();
+  try {
+    for (const action of ['pause', 'cancel', 'readmit']) {
+      const id = 'retire-' + action, admission = create(id, { timing: cron, overlap: 'queue-one' });
+      await f.command('jobs.schedule.create', admission);
+      await f.command('jobs.materialize', { scopeId: 'application', id, expectedRevision: 1, now: due });
+      const claimed = jobOccurrenceId(id, 1, due);
+      await f.command('jobs.claim', { scopeId: 'application', id: claimed, nonce: 'uncertain-' + action, leaseMs: 1000, now: due });
+      // Ten missed occurrences become nine terminal superseded rows and one
+      // pending row for queue-one. Retirement must not wait behind the old claim.
+      await f.command('jobs.materialize', { scopeId: 'application', id, expectedRevision: 1, now: due + 600_000 });
+      const pendingId = jobOccurrenceId(id, 1, due + 600_000);
+      await f.command('jobs.schedule.change', { actor, id, requestId: 'stop-' + action, expectedRevision: 1, action,
+        now: due + 600_001, ...(action === 'readmit' ? { admission: admission.admission, seal: admission.seal } : {}) });
+      const batch = (await f.query('jobs.pending', { scopeId: 'application', now: due + 600_002, limit: 1 })).value;
+      // Reconcile the original uncertain claim first, never claim it cancelled.
+      expect(batch).toEqual([{ id: claimed, schedule_id: id }]);
+      const recovered = (await f.command('jobs.claim', { scopeId: 'application', id: claimed, nonce: 'reconcile-' + action, leaseMs: 1000, now: due + 600_002 })).value;
+      expect(recovered).toMatchObject({ claimed: true, dispatchAllowed: false, leaseGeneration: 2 });
+      const wake = (await f.query('jobs.wake', { scopeId: 'application', now: due + 600_003 })).value;
+      expect(wake).not.toBeNull();
+      const unstarted = (await f.query('jobs.pending', { scopeId: 'application', now: due + 600_003, limit: 1 })).value;
+      expect(unstarted).toEqual([{ id: pendingId, schedule_id: id }]);
+      expect((await f.command('jobs.claim', { scopeId: 'application', id: pendingId, nonce: 'never-dispatch-' + action, leaseMs: 1000, now: due + 600_003 })).value)
+        .toEqual({ claimed: false, reason: 'cancelled' });
+      const history = (await f.query('jobs.occurrences', { actor, id })).value.items;
+      expect(history.find((row: any) => row.id === pendingId)).toMatchObject({ state: 'cancelled', terminalStatus: 'not-dispatched', workflowId: null });
+      expect(history.find((row: any) => row.id === claimed)).toMatchObject({ state: 'claimed', workflowId: null });
+      // Verified receipt recovery is still permitted after the control change.
+      const recoveredReceipt = { ...receipt, instanceId: 'recovered-' + action };
+      await f.command('jobs.dispatch', { scopeId: 'application', id: claimed, nonce: 'reconcile-' + action, leaseGeneration: 2, receipt: recoveredReceipt, now: due + 600_004 });
+      await f.command('jobs.complete', { scopeId: 'application', id: claimed, instanceId: recoveredReceipt.instanceId, status: 'completed', now: due + 600_005 });
+      expect((await f.query('jobs.pending', { scopeId: 'application', now: due + 600_006, limit: 1 })).value).toEqual([]);
+    }
+    const boundedId = 'retire-bounded';
+    await f.command('jobs.schedule.create', create(boundedId, { timing: cron, overlap: 'allow' }));
+    await f.command('jobs.materialize', { scopeId: 'application', id: boundedId, expectedRevision: 1, now: due + 540_000 });
+    await f.command('jobs.schedule.change', { actor, id: boundedId, requestId: 'stop-bounded', expectedRevision: 1, action: 'pause', now: due + 600_007 });
+    for (let page = 0; page < 5; page++) {
+      const pending = (await f.query('jobs.pending', { scopeId: 'application', now: due + 600_008, limit: 2 })).value;
+      expect(pending).toHaveLength(2);
+      for (const row of pending) expect((await f.command('jobs.claim', { scopeId: 'application', id: row.id, nonce: 'bounded-' + page + '-' + row.id,
+        leaseMs: 1000, now: due + 600_008 })).value).toEqual({ claimed: false, reason: 'cancelled' });
+    }
+    expect((await f.query('jobs.pending', { scopeId: 'application', now: due + 600_008, limit: 2 })).value).toEqual([]);
+    const boundedHistory = (await f.query('jobs.occurrences', { actor, id: boundedId })).value;
+    expect(boundedHistory.total).toBe(10);
+    expect(boundedHistory.items.every((row: any) => row.state === 'cancelled' && row.terminalStatus === 'not-dispatched' && row.workflowId === null)).toBe(true);
+    await f.restart();
+    for (const action of ['pause', 'cancel', 'readmit']) {
+      const history = (await f.query('jobs.occurrences', { actor, id: 'retire-' + action })).value.items;
+      expect(history.some((row: any) => row.state === 'pending' || row.state === 'claimed')).toBe(false);
+      expect(history.filter((row: any) => row.terminalStatus === 'not-dispatched')).toHaveLength(1);
+      expect(history.filter((row: any) => row.terminalStatus === 'completed')).toHaveLength(1);
+    }
+  } finally { await f.close(); }
+}, 120_000);
+
 test('private Fabric controls preserve permanent intents, ownership, revisions, input privacy and rollback through restart', async () => {
   const f = await jobsRealmFixture();
   try {

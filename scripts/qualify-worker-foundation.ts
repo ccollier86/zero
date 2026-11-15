@@ -18,12 +18,13 @@ let cleanable = false;
 try {
   await writeFile(markerPath, marker, { flag: 'wx', mode: 0o600 });
   cleanable = true;
-  await run([process.execPath, '--no-env-file', 'install', '--frozen-lockfile', '--ignore-scripts'], 180_000);
+  await run([process.execPath, '--no-env-file', 'install', '--frozen-lockfile', '--ignore-scripts', '--silent'], 180_000);
   const tests = focus.length ? focus : [
     'src/workers', 'src/jobs', 'src/scheduler', 'src/messaging/work-pool.test.ts', 'src/doctor/source-only-background-checks.test.ts',
+    'src/databases/subprocess-database-server.test.ts', 'src/databases/subprocess-database-server-imports.test.ts',
     'src/workflows/workflow-runtime-ownership.test.ts',
     'src/workflows/workflow-deferred-start-bridge.test.ts', 'src/workflows/workflow-enqueue.test.ts',
-    'src/workflows/workflow-system-start.test.ts', 'src/frontend/client/jobs-client.test.ts',
+    'src/workflows/workflow-system-start.test.ts', 'src/frontend/client/jobs-client.test.ts', 'src/frontend/client/sdk-jobs-retirement.test.ts',
     'src/frontend/server/app-workflow-execution-services.integration.test.ts',
     'src/frontend/server/workflow-execution-capability-topology.integration.test.ts',
     'src/workflows/workflow-execution-authority.integration.test.ts',
@@ -37,7 +38,7 @@ try {
     'src/workers/managed.test.ts', 'src/jobs/runtime.ts', 'src/jobs/definition.ts', 'src/jobs/definition.test.ts',
     'src/jobs/realm.integration.test.ts', 'src/jobs/runtime.integration.test.ts', 'src/jobs/persistence-config.test.ts',
     'src/jobs/config.test.ts', 'src/jobs/managed.integration.test.ts', 'src/jobs/logging.integration.test.ts',
-    'src/jobs/service.ts', 'src/jobs/stream.ts', 'src/jobs/watch.test.ts', 'src/frontend/client/jobs-client.test.ts', 'src/frontend/client/jobs-hooks.ts',
+    'src/jobs/service.ts', 'src/jobs/runner.ts', 'src/jobs/runner.test.ts', 'src/jobs/stream.ts', 'src/jobs/watch.test.ts', 'src/frontend/client/jobs-client.test.ts', 'src/frontend/client/sdk-jobs-retirement.test.ts', 'src/frontend/client/jobs-hooks.ts',
     'src/scheduler/index.ts', 'src/scheduler/scheduler-lifecycle.test.ts', 'src/doctor/source-only-background-checks.ts'], 600_000);
 } finally {
   const current = await lstat(dependencies);

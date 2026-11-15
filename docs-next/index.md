@@ -13,6 +13,11 @@ Zero is a Bun/Elysia full-stack platform with a React frontend. Compose shared
 schemas, live authority, scoped services, realtime data and reusable controls.
 Use the existing platform contracts as the foundation for an app.
 
+Standing platform requirement: [local-first performance](./backend/runtime/local-first-performance.md).
+Design for efficient normal file-backed operation across the integrated system;
+HOT mode and zero external-service hops are advantages, not substitutes for
+thoughtful performance design.
+
 This organized documentation is the primary entry point for new Zero work.
 It began with a 2.1.1 source audit and receives focused updates as contracts
 change; each feature retains its own review/version/evidence metadata. Read the

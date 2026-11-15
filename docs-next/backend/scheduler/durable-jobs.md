@@ -172,6 +172,10 @@ external delivery has been undone. Inspect/control that actual run separately.
 - Due cursors and occurrence intents commit atomically. Claims are fenced by
   nonce/generation/expiry. Stale claims reconcile their exact permanent Torrent
   key first, including after pause/cancel/revocation, before any new dispatch.
+- Never-started pending occurrences from paused, cancelled or replaced
+  generations retire in bounded batches as `not-dispatched`. They cannot stay
+  misleadingly pending or revive on resume. This does not retire an uncertain
+  claim or claim that already admitted Torrent work was undone.
 - Private receipt reconciliation after revocation is read-only. Public receipt
   reads and fresh execution retain current authorization checks. The actual
   workflow's exact graph identity/fingerprint is verified on reconciliation.
@@ -179,6 +183,10 @@ external delivery has been undone. Inspect/control that actual run separately.
   do not require opening every private actor every second. Dirty-before-write
   publication and generation-fenced wake refresh preserve recovery. Active
   claims/runs still require bounded status reconciliation.
+- Due discovery uses indexed wake/id pages. Each free scope slot refills on
+  completion rather than waiting for an unrelated slow scope or the next timer.
+  Failed roots back off locally even when durable wake publication is fenced;
+  bounded discovery continues past those roots to other eligible files.
 - `concurrency: 'max'` means a finite admission ceiling of 100, not unlimited
   providers/processes or a promise every task starts instantly. Per-schedule
   controls/handoff are ordered; unrelated schedules use shared fair capacity.

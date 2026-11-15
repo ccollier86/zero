@@ -4,20 +4,23 @@ import { join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { createApp } from '../frontend/server/app-factory';
 import { defineEndpoint } from '../frontend/server/server-extensions';
+import type { AppConfig } from '../frontend/server/types';
 import { ownedWorkerFixture } from '../workers/test-support/owned-fixture';
 import { flow, step } from '../workflows/workflow-dsl';
 import { defineJob } from './definition';
 
-async function fixture(multi = false) {
+async function fixture(multi = false, file = false) {
   const owned = await ownedWorkerFixture('jobs-managed');
   const calls: string[] = [], eligible = { value: true };
   let release!: () => void;
   const barrier = new Promise<void>(resolve => { release = resolve; });
   const definition = defineJob({ name: 'synthetic.job', version: '1', workflow: { name: 'synthetic.work', version: 1 }, access: 'user', parseInput: value => value,
     service: { principal: 'synthetic.jobs', scopes: ['application', 'tenant'], isEligible: () => eligible.value } });
-  let app: Awaited<ReturnType<typeof createApp>> | null = null;
+  const running: { app: Awaited<ReturnType<typeof createApp>> | null } = { app: null };
+  let url = '', startupRetirementConfirmed = true;
   try {
-    app = await createApp({ projectRoot: owned.root, db: { mode: 'memory' }, tables: {},
+    const config: AppConfig = { projectRoot: owned.root, db: file ? { mode: 'file', path: join(owned.root, 'application.sqlite') } : { mode: 'memory' },
+      ...(file ? { systemDb: { mode: 'file' as const, path: join(owned.root, 'system.sqlite') } } : {}), tables: {},
       auth: { ...(multi ? { tenancy: 'multi' as const } : {}), bootstrap: 'public', registration: { mode: 'public' }, accountEmails: { passwordReset: false } },
       jobs: { definitions: [definition], rootDirectory: join(owned.root, 'jobs') },
       workflows: { register(registry) {
@@ -33,12 +36,18 @@ async function fixture(multi = false) {
       serverPluginsDir: false, serverMiddlewareDir: false, serverEndpointsDir: false, serverRoutesDir: false, resourceRoutes: false,
       serverExtensions: [defineEndpoint({ method: 'POST', path: '/api/synthetic-tick', auth: 'user', async handler({ zero }) { await zero.unsafe.jobs!.tick(); return { accepted: true }; } }),
         defineEndpoint({ method: 'GET', path: '/api/synthetic-jobs', auth: 'user', handler({ zero }) { return { scoped: !!zero.jobs, diagnostics: zero.unsafe.jobs!.diagnostics() }; } })],
-    });
-    app.listen(0); const url = 'http://127.0.0.1:' + app.server!.port;
+    };
+    const start = async () => {
+      try { running.app = await createApp(config); }
+      catch (error) { if (error instanceof AggregateError) startupRetirementConfirmed = false; throw error; }
+      running.app.listen(0); url = 'http://127.0.0.1:' + running.app.server!.port;
+    };
+    await start();
     const registered = await fetch(url + '/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'jobs-owner', email: 'jobs-owner@example.test', password: 'Synthetic-Jobs-Password-94!', ...(multi ? { organizationName: 'Synthetic Alpha' } : {}) }) });
     expect(registered.status).toBe(200);
     const tokens = await registered.json() as { accessToken: string; refreshToken: string };
     return { root: owned.root, calls, eligible, tokens, release,
+      async restart() { const previous = running.app; if (previous) await previous.stop(true); running.app = null; await start(); },
       open(path: string, signal: AbortSignal) { return fetch(url + path, { headers: { Authorization: 'Bearer ' + tokens.accessToken }, signal }); },
       async request(method: string, path: string, body?: unknown, token = tokens.accessToken) {
         const response = await fetch(url + path, { method, headers: { Authorization: 'Bearer ' + token, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
@@ -46,12 +55,20 @@ async function fixture(multi = false) {
         const value = await response.json() as any;
         return { status: response.status, body: value };
       },
-      async close() { release(); await app!.stop(true); await owned.cleanup(); },
+      async close() {
+        release(); if (running.app) await running.app.stop(true);
+        if (!startupRetirementConfirmed) throw new Error('Managed startup could not confirm resource retirement; preserving ' + owned.root);
+        await owned.cleanup();
+      },
     };
-  } catch (error) { release(); if (app) await app.stop(true); await owned.cleanup(); throw error; }
+  } catch (error) {
+    release(); if (running.app) await running.app.stop(true);
+    if (!startupRetirementConfirmed) throw new AggregateError([error], 'Managed startup could not confirm resource retirement; preserving ' + owned.root);
+    await owned.cleanup(); throw error;
+  }
 }
-async function eventually(check: () => boolean, tick: () => Promise<unknown>) {
-  const deadline = Date.now() + 15_000;
+async function eventually(check: () => boolean, tick: () => Promise<unknown>, timeout = 15_000) {
+  const deadline = Date.now() + timeout;
   while (!check()) { if (Date.now() >= deadline) throw new Error('Synthetic job did not settle.'); await tick(); await Bun.sleep(5); }
 }
 test('managed enqueue uses permanent semantic receipts, public views omit secrets, and slow work does not hold unrelated admission', async () => {
@@ -153,5 +170,49 @@ test('native tenant scope partitions identical logical keys and rejects cross-te
     expect((await f.request('POST', '/jobs/schedules/' + a.body.id + '/cancel', { idempotencyKey: 'cross-tenant', expectedRevision: 1 }, token)).status).toBe(404);
     expect((await f.request('GET', '/jobs/schedules/' + a.body.id)).body.control).toBe('active');
     const status = await f.request('GET', '/api/synthetic-jobs'); expect(status.body.diagnostics.persistence.filesBound).toBe(2);
+  } finally { await f.close(); }
+}, 120_000);
+
+test('a real file-backed managed restart runs the retained future occurrence once through its native timer', async () => {
+  const f = await fixture(false, true);
+  try {
+    const command = { schedule: { definition: 'synthetic.job', input: { kind: 'after-restart' }, timing: { kind: 'once', at: new Date(Date.now() + 10_000).toISOString() } }, options: { idempotencyKey: 'restart-one' } };
+    const created = await f.request('POST', '/jobs/schedules', command); expect(created.status).toBe(202);
+    expect(f.calls).toEqual([]);
+    await f.restart();
+    // No synthetic tick endpoint: actual code-registered timer and retained wake catalog discover the occurrence.
+    await eventually(() => f.calls.includes('after-restart'), () => Bun.sleep(50), 30_000);
+    let page = (await f.request('GET', '/jobs/schedules/' + created.body.id + '/occurrences')).body;
+    await eventually(() => page.items[0]?.terminalStatus === 'completed', async () => {
+      await Bun.sleep(50); page = (await f.request('GET', '/jobs/schedules/' + created.body.id + '/occurrences')).body;
+    });
+    expect(page.total).toBe(1); expect(page.items[0]).toMatchObject({ state: 'terminal', terminalStatus: 'completed', generation: 1 });
+    expect(page.items[0].workflowId).toBeString();
+    expect(await f.request('POST', '/jobs/schedules', command)).toEqual(created);
+    await f.restart();
+    expect((await f.request('GET', '/jobs/schedules/' + created.body.id + '/occurrences')).body.items).toEqual(page.items);
+    expect(f.calls).toEqual(['after-restart']);
+  } finally { await f.close(); }
+}, 120_000);
+
+test('deliberate service jobs survive creator logout but a changed live eligibility policy prevents the next handoff', async () => {
+  const f = await fixture();
+  try {
+    const create = (kind: string, delay: number) => f.request('POST', '/jobs/schedules', { schedule: { definition: 'synthetic.job', ownership: 'service',
+      input: { kind }, timing: { kind: 'once', at: new Date(Date.now() + delay).toISOString() } }, options: { idempotencyKey: kind } });
+    const first = await create('service-lifetime', 8000); expect(first.status).toBe(202); expect(first.body.runAs).toBe('service');
+    expect((await f.request('POST', '/auth/logout', { refreshToken: f.tokens.refreshToken })).status).toBe(200);
+    const signedIn = await f.request('POST', '/auth/login', { username: 'jobs-owner', password: 'Synthetic-Jobs-Password-94!' }); expect(signedIn.status).toBe(200);
+    f.tokens.accessToken = signedIn.body.accessToken; f.tokens.refreshToken = signedIn.body.refreshToken;
+    await eventually(() => f.calls.includes('service-lifetime'), () => Bun.sleep(50));
+    const second = await create('service-retired', 2000); expect(second.status).toBe(202);
+    f.eligible.value = false;
+    let page: any = { items: [] };
+    await eventually(() => page.items[0]?.state === 'blocked', async () => {
+      await Bun.sleep(50); page = (await f.request('GET', '/jobs/schedules/' + second.body.id + '/occurrences')).body;
+    });
+    expect(page.items[0]).toMatchObject({ state: 'blocked', errorCode: 'JOBS_AUTHORITY_RETIRED', workflowId: null });
+    expect((await f.request('GET', '/jobs/schedules/' + second.body.id)).body.blockedCode).toBe('JOBS_AUTHORITY_RETIRED');
+    expect(f.calls).toEqual(['service-lifetime']);
   } finally { await f.close(); }
 }, 120_000);

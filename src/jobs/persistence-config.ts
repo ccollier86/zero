@@ -1,4 +1,4 @@
-/** Private persistence composition, not yet managed AppConfig. Pure resolution opens no feature files or actors. */
+/** Private persistence composition for opt-in managed jobs. Pure resolution opens no feature files or actors. */
 import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';

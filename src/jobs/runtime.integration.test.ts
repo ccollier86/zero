@@ -117,5 +117,14 @@ test('indexed wake discovery sleeps future/idle scopes and preserves due discove
     await f.runtime.read(scope, 'jobs.schedules', { actor: actor(scope) }, () => {});
     expect(f.runtime.dueScopes(clock + 60_000, 2)).toEqual([]);
     expect(f.system.prepare('SELECT wake_at FROM _jobs_owners').get()).toEqual({ wake_at: null });
+    const tenants = ['keyset-a', 'keyset-b'].map(tenantId => trustedSystemServiceDataScope({ scopeKind: 'tenant', tenantId }));
+    for (const target of [scope, ...tenants]) await f.runtime.write(target, 'jobs.schedule.create', create(target, 'keyset'), 'create-keyset', () => {});
+    const first = f.runtime.dueScopePage(clock + 60_000, 1), second = f.runtime.dueScopePage(clock + 60_000, 1, first[0]!.cursor);
+    const third = f.runtime.dueScopePage(clock + 60_000, 1, second[0]!.cursor);
+    expect([first, second, third].flat().map(entry => serviceDataScopeKey(entry.scope)).sort()).toEqual(['application', 'tenant:keyset-a', 'tenant:keyset-b']);
+    expect(f.runtime.dueScopePage(clock + 60_000, 1, third[0]!.cursor)).toEqual([]);
+    const plan = JSON.stringify(f.system.prepare('EXPLAIN QUERY PLAN SELECT * FROM _jobs_owners WHERE established=1 AND wake_at<=? AND (wake_at,id)>(?,?) ORDER BY wake_at,id LIMIT ?')
+      .all(clock + 60_000, first[0]!.cursor.wakeAt, first[0]!.cursor.id, 1));
+    expect(plan).toContain('jobs_owner_due'); expect(plan).not.toContain('TEMP B-TREE');
   } finally { await f.close(); }
 }, 120_000);
