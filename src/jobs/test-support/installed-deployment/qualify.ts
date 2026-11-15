@@ -9,7 +9,6 @@
  * No dependency installation, shared-cache deletion, SQL or providers here.
  */
 import { copyFile, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, unlink, writeFile } from 'node:fs/promises';
-import { createRequire } from 'node:module';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
 function assert(value: unknown, message: string): asserts value { if (!value) throw new Error(message); }
@@ -24,8 +23,9 @@ assert(process.platform === 'linux' && process.arch === 'x64', 'This qualificati
 assert(/^[a-f0-9]{40}$/.test(args.get('--commit')!), 'A complete candidate commit is required.');
 const consumer = await realpath(args.get('--consumer')!), archive = await realpath(args.get('--archive')!), reportPath = resolve(args.get('--report')!);
 assert(isAbsolute(reportPath) && !inside(consumer, reportPath), 'Evidence must be outside the disposable consumer.');
-const require = createRequire(join(consumer, 'package.json'));
-const installed = await realpath(dirname(require.resolve('@zero/framework/package.json')));
+// These public entries intentionally use import conditions, not CommonJS
+// require conditions. Resolve them through the consumer's actual Bun importer.
+const installed = await realpath(dirname(Bun.resolveSync('@zero/framework/package.json', consumer)));
 assert(installed === await realpath(join(consumer, 'node_modules/@zero/framework')), 'The consumer must resolve its independently installed package.');
 assert(inside(consumer, installed), 'The installed package must remain inside the isolated consumer.');
 // Bun's isolated linker may use an internal node_modules/.bun symlink. Its
@@ -33,7 +33,7 @@ assert(inside(consumer, installed), 'The installed package must remain inside th
 if (args.has('--installed-root')) assert(installed === await realpath(args.get('--installed-root')!), 'Installed package root mismatch.');
 const resolvers: Record<string, string> = {};
 for (const entry of ['@zero/framework/server', '@zero/framework/jobs', '@zero/framework/jobs/server', '@zero/framework/workflows', '@zero/framework/logging/actor']) {
-  const path = await realpath(require.resolve(entry)); assert(inside(installed, path), 'Public export escaped the installed package: ' + entry); resolvers[entry] = relative(installed, path);
+  const path = await realpath(Bun.resolveSync(entry, consumer)); assert(inside(installed, path), 'Public export escaped the installed package: ' + entry); resolvers[entry] = relative(installed, path);
 }
 
 const runId = crypto.randomUUID(), root = await mkdtemp(join(consumer, '.jobs-installed-')), identity = await lstat(root);

@@ -937,6 +937,14 @@ before the due instant; terminal history alone cannot establish restart recovery
 Its synthetic state and labelled local container are owned/removed in finally.
 This new probe is not yet a passed release gate merely because it is written.
 
+The first exact-archive Linux attempt at `8beea911f074e999657965ebf6255ef991b8452e`
+(`5aec2dfdc50aa15a51360be754e3e9c15f11c43a4f42a45afd4b4642e223be45`)
+completed both consumer installs, then failed fixture admission before boot:
+the probe incorrectly used CommonJS `require.resolve` for import-only public
+exports. The qualifier now uses Bun's actual consumer import resolver. This is
+a fixture correction, not a change to or relaxation of the public exports; the
+original failed diagnostic remains retained under core-workers-release.
+
 The dedicated external Colima profile was started for this qualification phase;
 it must be stopped after owned containers retire. Calendar/backups, real
 applications and production state remain untouched. The normal selected release
