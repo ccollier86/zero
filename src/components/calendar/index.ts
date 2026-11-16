@@ -1,4 +1,4 @@
-/** Prototype composition surface only. Not yet a published Zero calendar API. */
+/** Released experimental frontend composition surface; no authoritative calendar backend or booking service. */
 import './styles/calendar-tokens.css';
 export { CalendarModal, CalendarManagedForm, CalendarDismiss, CalendarPopover } from './components/calendar-surfaces';
 export { CalendarSchedule } from './components/calendar-schedule';

@@ -1,8 +1,11 @@
 # Calendar component collection
 
-Status: frontend-only, experimental. The recovered compact calendar is being
-stored as a native Zero component family before we design its backend. This is
-not yet a scheduling service, a production booking engine or a released update.
+Status: released in Zero 2.11.0 as a frontend-only, experimental native component
+family. Its focused public entries are `@zero/framework/calendar` and
+`@zero/framework/components/calendar`. The calendar backend is not implemented;
+these exports are not a scheduling service or a production booking engine. See
+the [return handoff](../../../docs-next/_work/calendar-return-handoff.md) before
+planning authoritative persistence, availability, booking or reminders.
 
 ## Organization
 

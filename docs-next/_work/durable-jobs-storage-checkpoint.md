@@ -9,7 +9,7 @@ visibility: internal
 system: scheduler
 feature: durable-jobs-and-workers
 maturity: planned
-applies_to: ["feature/core-worker-runtime-upgrades; private implementation, not a published API"]
+applies_to: ["historical November 14 storage-only checkpoint; superseded by the 2.11.0 released foundation"]
 ---
 
 # Durable Jobs — Private Storage Checkpoint
@@ -23,6 +23,11 @@ admission, dispatch, HTTP/SDK, live reads and source logging are recorded in the
 [current source contract](../backend/scheduler/durable-jobs.md) and
 [foundation evidence](./durable-jobs-and-workers-plan.md). Statements below about
 the then-missing adapter describe that earlier checkpoint, not current completion.
+The foundation subsequently shipped in Zero 2.11.0; its
+[release closure](./durable-jobs-and-workers-plan.md#release-closure--november-16)
+is the current artifact/qualification record. The historical next steps and
+pending gates below are preserved as evidence, not instructions to reimplement
+those released boundaries. Calendar backend design still needs the user's review.
 
 ## Implemented Boundaries
 
@@ -143,8 +148,9 @@ handles first, and remove their roots in finally. No production/app state is
 opened. Final Linux/amd64, bundle, installed public facade, browser-if-UI and normal
 updater qualification remain pending, as listed in the main plan.
 
-Next: integrate fixed definition admission and cryptographic Guardian/Torrent
-handoff, then managed optional config/lifecycle, native HTTP/SDK/live projection,
+Historical next gate at this checkpoint: integrate fixed definition admission
+and cryptographic Guardian/Torrent handoff, then managed optional config/lifecycle,
+native HTTP/SDK/live projection,
 semantic service adapters and the operator view. Do not restart calendar backend
 work or publish this private checkpoint as a finished scheduling feature.
 

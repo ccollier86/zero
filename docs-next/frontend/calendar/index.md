@@ -8,7 +8,7 @@ visibility: internal
 system: calendar
 feature: frontend-components
 maturity: experimental
-applies_to: ["feature/calendar-ui-components; frontend only; not in the current release"]
+applies_to: ["2.11.0 released experimental frontend components; no calendar backend"]
 modes: [browser]
 ---
 
@@ -16,15 +16,17 @@ modes: [browser]
 
 [Frontend index](../index.md) · [Reusable components](../components/index.md)
 
-This feature branch preserves the reviewed calendar UI as one fully tokenized,
-native Zero component family. **No calendar backend is enabled.** Do not infer a
-scheduling service, Fabric store, permission policy or production booking API
-from these component exports. The current released archive is unchanged.
+Zero 2.11.0 includes the reviewed calendar UI as one fully tokenized, native
+experimental component family. **No calendar backend is implemented or enabled.**
+Do not infer a scheduling service, Fabric store, permission policy or production
+booking API from these component exports. The foundation's
+[release closure](../../_work/durable-jobs-and-workers-plan.md#release-closure--november-16)
+records exact artifact identity and qualification boundaries.
 
-Calendar backend work is paused for the shared scheduling/worker expansion.
-The [return handoff](../../_work/calendar-return-handoff.md) preserves the full
-reviewed UI and integration requirements; resume from that document after the
-[foundation plan](../../_work/durable-jobs-and-workers-plan.md) is qualified.
+The shared scheduling/worker framework release gate is satisfied. Calendar
+backend work still requires plan review with the user before implementation.
+The [return handoff](../../_work/calendar-return-handoff.md) preserves the reviewed
+UI and explicit backend prerequisites; start the next design discussion there.
 
 Sources and the full composition guide are in
 [`src/components/calendar/README.md`](../../../src/components/calendar/README.md).
@@ -34,10 +36,10 @@ standalone interactive preview remain preserved separately.
 
 ## Imports and composition
 
-On this branch, `@zero/framework/calendar` and
+In the 2.11.0 archive, `@zero/framework/calendar` and
 `@zero/framework/components/calendar` resolve to the same focused entry. They
-are not added to the broad frontend barrel. Existing releases do not gain these
-exports until an independently qualified release includes this work.
+are not added to the broad frontend barrel. Older archives do not gain these
+exports without an explicitly authorized application dependency update.
 
 - `CalendarSchedule` composes multi-resource day, focused-provider week/month,
   and chronological multi-resource day-list views. Data and state are controlled.
@@ -101,8 +103,9 @@ multi-provider list, empty selection, token-driven geometry, booking entry state
 and reduced-motion mobile drawer/dialog behavior. Focused model/contract tests
 and TypeScript checks supplement—not replace—those browser checks.
 
-No full-framework release, SSR calendar contract, DST/recurrence engine,
-cross-worker slot holds, Fabric persistence, Guardian permissions, invitations,
-reminders, notifications, external calendar synchronization or telehealth backend
-is qualified here. The resource timeline/Gantt view remains future UI work.
-Plan those integrations with the user after reviewing this frontend collection.
+Inclusion in the released framework does not qualify a calendar SSR contract,
+DST/recurrence engine, cross-worker slot holds, Fabric persistence, Guardian
+permissions, invitations, reminders, notifications, external calendar
+synchronization or telehealth backend. The resource timeline/Gantt view remains
+future UI work. Plan the calendar backend with the user; do not treat UI/package
+qualification as domain acceptance or authorization to deploy an application.

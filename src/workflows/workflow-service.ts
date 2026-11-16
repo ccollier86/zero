@@ -10,6 +10,7 @@
 import type { ReactiveDB } from '../sync/reactive-db';
 import type { AuthContext } from '../auth/types';
 import { AuthError } from '../auth/types';
+import { withoutLoggingAttribution } from '../logging/logging-attribution';
 import { WorkflowDefinitionManager } from './workflow-definition-manager';
 import { workflowDefinitionScopeFromServiceDataScope } from './workflow-definition-scope';
 import { workflowAccessPrincipalFromExecutionIdentity } from './workflow-access';
@@ -699,10 +700,15 @@ export class WorkflowService {
   }
 
   private dispatchAdvance(instanceId: string, phase: WorkflowDispatchPhase): void {
-    void this.advanceTrusted(instanceId).catch((error) => {
-      this.observability.emitNow(OBS_CODES.WORKFLOW_ADVANCE_FAILED, {
-        error,
-        metadata: { instanceId, phase },
+    // Admission/publication retain the caller's attribution. The durable
+    // frontier and its failure observer own work beyond that caller's lifetime;
+    // actor execution authority remains sealed and independently revalidated.
+    withoutLoggingAttribution(() => {
+      void this.advanceTrusted(instanceId).catch((error) => {
+        this.observability.emitNow(OBS_CODES.WORKFLOW_ADVANCE_FAILED, {
+          error,
+          metadata: { instanceId, phase },
+        });
       });
     });
   }

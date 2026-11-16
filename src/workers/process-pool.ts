@@ -3,6 +3,7 @@ import { availableParallelism } from 'node:os';
 import type { DatabaseExecutor } from '../databases/database-executor';
 import { DatabaseError } from '../databases/database-error';
 import { createSubprocessDatabaseExecutorFactory, type DatabaseActorLaunch } from '../databases/subprocess-database-executor-factory';
+import { normalizeSubprocessDatabaseExecutorTimeout } from '../databases/subprocess-database-executor-config';
 import { WorkPool, type WorkPoolRunOptions } from './work-pool';
 import { WorkerTaskCatalog, type WorkerTask, type WorkerTaskInput, type WorkerTaskOutput } from './worker-task';
 import { WorkerError } from './worker-error';
@@ -47,8 +48,11 @@ export class ProcessWorkPool {
       maxQueuedPerKey: options.maxQueuedPerKey ?? Math.min(25, options.maxQueued ?? 100), maxConcurrentPerKey: options.maxConcurrentPerKey,
       queueTimeoutMs: options.queueTimeoutMs, executionTimeoutMs: this.executionTimeoutMs, shutdownGraceMs: options.shutdownGraceMs });
     try {
+      // The factory defers executor construction until acquisition. Enforce its
+      // portable timer bound now so invalid managed config fails before boot.
+      const startupTimeoutMs = normalizeSubprocessDatabaseExecutorTimeout(options.startupTimeoutMs ?? 5000, 'startupTimeoutMs');
       this.createExecutor = createSubprocessDatabaseExecutorFactory({ launch: options.launch, actorFlag: WORKER_CHILD_FLAG, env: options.env,
-        executor: { maxInFlight: 1, operationTimeoutMs: this.executionTimeoutMs, startupTimeoutMs: options.startupTimeoutMs ?? 5000,
+        executor: { maxInFlight: 1, operationTimeoutMs: this.executionTimeoutMs, startupTimeoutMs,
           shutdownAckTimeoutMs: 1000, shutdownExitTimeoutMs: 1000, sigtermTimeoutMs: 500, sigkillTimeoutMs: 1000 } });
     } catch { throw new WorkerError('WORKER_CONFIG_INVALID', 'Worker launch configuration is invalid.'); }
   }

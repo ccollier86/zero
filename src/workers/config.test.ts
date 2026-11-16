@@ -3,6 +3,8 @@ import { expect, test } from 'bun:test';
 import { resolveAuthBehaviorConfig } from '../auth/auth-config';
 import { defineWorkerTask } from './worker-task';
 import { resolveWorkersConfig } from './config';
+import { ProcessWorkPool } from './process-pool';
+import { MAX_RUNTIME_TIMER_INTERVAL_MS } from '../runtime/timer-limits';
 
 const task = defineWorkerTask({ name: 'config.synthetic', version: '1', parseInput: value => value,
   parseOutput: value => value, run: value => value });
@@ -36,4 +38,22 @@ test('scope concurrency/waiting budgets are admitted before resources open and c
     expect(() => resolveWorkersConfig({ tasks: [task], launch, processes: 2, ...policy }, process.cwd(), auth)).toThrow();
   }
   expect(resolveWorkersConfig({ tasks: [task], launch, processes: 2, maxQueued: 20, maxQueuedPerKey: 4, maxConcurrentPerKey: 1 }, process.cwd(), auth)).toMatchObject({ maxQueuedPerKey: 4, maxConcurrentPerKey: 1 });
+});
+
+test('startup deadline bounds fail at configuration admission without allocating a worker', async () => {
+  const launch = { kind: 'source' as const, entrypoint: '/synthetic/must-not-launch.ts' };
+  const auth = resolveAuthBehaviorConfig({});
+  const options = { tasks: [task], launch, processes: 1, shutdownGraceMs: 10 };
+  for (const startupTimeoutMs of [MAX_RUNTIME_TIMER_INTERVAL_MS + 1, Number.MAX_SAFE_INTEGER, 0, NaN, Infinity]) {
+    const invalid = { ...options, startupTimeoutMs };
+    expect(() => new ProcessWorkPool(invalid)).toThrow(expect.objectContaining({ code: 'WORKER_CONFIG_INVALID', outcome: 'not-started' }));
+    expect(() => resolveWorkersConfig(invalid, process.cwd(), auth)).toThrow(expect.objectContaining({ code: 'WORKER_CONFIG_INVALID', outcome: 'not-started' }));
+  }
+  const resolved = resolveWorkersConfig({ ...options, startupTimeoutMs: MAX_RUNTIME_TIMER_INTERVAL_MS }, process.cwd(), auth);
+  if (!resolved) throw new Error('Synthetic worker config was not resolved.');
+  const pool = new ProcessWorkPool(resolved);
+  // Constructor/configuration admission never starts a process or a deadline.
+  // The deliberately nonexistent entrypoint must remain completely unused.
+  try { expect(pool.status()).toMatchObject({ state: 'open', active: 0, queued: 0, processes: 0 }); }
+  finally { await pool.close(); }
 });

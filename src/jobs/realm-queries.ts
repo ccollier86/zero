@@ -70,7 +70,9 @@ export function readJobScheduleContext(context: DatabaseReadQueryContext, input:
 export function dispatchedJobOccurrences(context: DatabaseReadQueryContext, input: unknown) {
   const r = jobRecord(input, ['scopeId', 'limit', 'after']), scope = jobScope(r.scopeId), limit = jobInteger(r.limit ?? 32, 1, 100); owner(context, scope);
   const after = r.after === undefined ? '' : jobText(r.after, 128);
-  return context.database.query<{ id: string; schedule_id: string }>("SELECT id,schedule_id FROM _jobs_occurrences WHERE scope_id=? AND state='dispatched' AND id>? ORDER BY id LIMIT ?").all(scope, after, limit);
+  // Seek the live state even before SQLite has statistics. The existing index
+  // still sorts live dispatched rows for this id cursor, but never scans retained terminal history.
+  return context.database.query<{ id: string; schedule_id: string }>("SELECT id,schedule_id FROM _jobs_occurrences INDEXED BY jobs_occurrence_pending WHERE scope_id=? AND state='dispatched' AND id>? ORDER BY id LIMIT ?").all(scope, after, limit);
 }
 /** Conservative earliest wake; NULL means no future timer/pending/claim/run needs polling in this scope. */
 export function readJobWake(context: DatabaseReadQueryContext, input: unknown) {
@@ -103,12 +105,21 @@ export function pendingJobOccurrences(context: DatabaseReadQueryContext, input: 
   // Claims whose handoff might have committed must be reconciled even when the
   // schedule is now paused/cancelled. Never-started stale pending rows are also
   // selected so the claim command can retire them without any Torrent handoff.
-  return context.database.query<{ id: string; schedule_id: string }>(`SELECT o.id,o.schedule_id FROM _jobs_occurrences o JOIN job_schedules s ON s.id=o.schedule_id AND s.scope_id=o.scope_id
+  // Separate indexed probes avoid the OR/CASE plan's scope-wide history scan
+  // without relying on ANALYZE. Keep claimed-first scheduled_at/id fairness;
+  // only expired claims need sorting, never future leases or terminal history.
+  const claimed = context.database.query<{ id: string; schedule_id: string }>(`SELECT o.id,o.schedule_id FROM _jobs_occurrences o INDEXED BY jobs_occurrence_claims JOIN job_schedules s ON s.id=o.schedule_id AND s.scope_id=o.scope_id
     JOIN _jobs_admissions a ON a.id=o.admission_id AND a.scope_id=o.scope_id
-    WHERE o.scope_id=? AND ((o.state='claimed' AND o.lease_until<=?) OR (o.state='pending' AND
+    WHERE o.scope_id=? AND o.state='claimed' AND o.lease_until<=?
+    ORDER BY o.scheduled_at,o.id LIMIT ?`).all(scope, now, limit);
+  if (claimed.length === limit) return claimed;
+  const pending = context.database.query<{ id: string; schedule_id: string }>(`SELECT o.id,o.schedule_id FROM _jobs_occurrences o INDEXED BY jobs_occurrence_pending JOIN job_schedules s ON s.id=o.schedule_id AND s.scope_id=o.scope_id
+    JOIN _jobs_admissions a ON a.id=o.admission_id AND a.scope_id=o.scope_id
+    WHERE o.scope_id=? AND o.state='pending' AND
       (s.control<>'active' OR s.generation<>o.generation OR
-      json_extract(a.command_json,'$.overlap')<>'queue-one' OR NOT EXISTS(SELECT 1 FROM _jobs_occurrences active WHERE active.scope_id=o.scope_id AND active.schedule_id=o.schedule_id AND active.state IN ('claimed','dispatched')))))
-    ORDER BY CASE o.state WHEN 'claimed' THEN 0 ELSE 1 END,o.scheduled_at,o.id LIMIT ?`).all(scope, now, limit);
+      json_extract(a.command_json,'$.overlap')<>'queue-one' OR NOT EXISTS(SELECT 1 FROM _jobs_occurrences active WHERE active.scope_id=o.scope_id AND active.schedule_id=o.schedule_id AND active.state IN ('claimed','dispatched')))
+    ORDER BY o.scheduled_at,o.id LIMIT ?`).all(scope, limit - claimed.length);
+  return claimed.concat(pending);
 }
 export function readJobDispatchContext(context: DatabaseReadQueryContext, input: unknown) {
   const r = jobRecord(input, ['scopeId', 'id', 'now']), scope = jobScope(r.scopeId), now = jobTime(r.now); owner(context, scope);

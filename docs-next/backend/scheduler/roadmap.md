@@ -8,14 +8,14 @@ visibility: internal
 system: scheduler
 feature: roadmap
 maturity: supported
-applies_to: ["2.1.1 source plus reviewed uncommitted Scheduler corrections"]
+applies_to: ["2.11.0 released foundation; calendar backend and multi-host scheduling remain planned"]
 modes: ["managed Bun server", "standalone Elysia plugin/service"]
 reviewed_against:
   package: "@zero/framework"
-  version: "2.1.1"
-  commit: "a3a5f726768dac890f241a3899c0a1acb66265d9"
-  snapshot: dirty
-  date: "2026-10-05"
+  version: "2.11.0"
+  commit: "4d2eb26034783cb77622a249c0cc57f48760331e"
+  snapshot: clean
+  date: "2026-11-16"
   evidence_level: source-observed
 ---
 
@@ -26,22 +26,35 @@ reviewed_against:
 The user approved a shared scheduling/jobs/worker expansion on 2026-11-14.
 The [implementation plan](../../_work/durable-jobs-and-workers-plan.md) records
 the integration matrix, phases, authority, placement and release gates. Existing
-cron remains compatible; Torrent remains the execution/recovery engine. Calendar
-backend work is paused behind this foundation.
+cron remains compatible; Torrent remains the execution/recovery engine. The
+foundation shipped in Zero 2.11.0 on 2026-11-16. Its
+[release closure](../../_work/durable-jobs-and-workers-plan.md#release-closure--november-16)
+records exact artifact identity and qualification limits. Calendar backend work
+is not implemented; its next step is reviewing the preserved backend plan with
+the user, not treating the released UI as a booking service.
 
-## Approved Expansion, Not Yet Released
+## Released Foundation And Remaining Scope
 
-Track completion in the plan; these are not already-supported cron features:
+Durable jobs and workers are additive services, not new persistence inside the
+local cron registry. Preview/experimental maturity and application-specific
+deployment acceptance remain separate from inclusion in a framework release.
 
-- [ ] Persisted or tenant-owned schedule definitions with explicit actor authority.
-- [ ] Multi-process lease ownership and failover scheduling.
-- [ ] A reusable admin schedule/status UI if product demand warrants it.
-- [ ] Broader timezone/calendar/runtime qualification fixtures.
+| Area | Released in 2.11.0 | Still outside that release contract |
+| --- | --- | --- |
+| Local Scheduler | Compatible code-owned timers, app-bound observability and cooperative close/drain. | Durable history or multi-process coordination from the cron registry alone. |
+| Durable jobs | Opt-in private Fabric schedules, explicit actor/service ownership, permanent receipts, revision-fenced controls and pinned Torrent handoff. | Calendar booking/recurrence semantics or indefinite high-frequency retention. |
+| Workers and enqueue | Bounded fair pools, registered Bun task processes and actor-preserving short workflow enqueue. | Unlimited capacity, an OS sandbox or distributed exactly-once provider effects. |
+| Operator UI | Native current-scope `JobsWorkspace` and jobs HTTP/client/hooks. | A dashboard for controlling every app-global cron callback or a calendar backend. |
+| Ownership and recovery | One managed application with supervised children, fenced local ownership and recorded restart qualification. | Multi-host leader election/failover or a universally qualified compiled jobs application. |
+| Time qualification | Recorded cron/timezone/DST/misfire checks and exact runtime/package evidence. | Appointment recurrence/series exceptions and application-specific calendar acceptance. |
 
-The additive [worker API](../workers/index.md) and actor enqueue are in branch
-development. Durable schedule controls and full qualification remain pending.
-Do not claim cluster-wide ownership, unlimited concurrency or distributed
-exactly-once effects merely because the expansion is approved.
+See the [worker API](../workers/index.md), [durable jobs](./durable-jobs.md) and
+[JobsWorkspace](../../frontend/jobs-workspace.md) for current contracts.
+Post-release worker, workflow-dispatch, jobs query-plan and direct-dependency
+fixes are implemented on `feature/core-foundation-polish`, with focused checks
+only. They are not in the selected 2.11.0 archive. Fresh-source qualification
+and any new release decision remain pending; see the
+[review record](../../_work/durable-jobs-and-workers-plan.md#post-release-review-boundary).
 
 ## Existing Boundaries To Preserve
 

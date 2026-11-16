@@ -127,8 +127,10 @@ export class WorkPool {
         const entry: Entry = {
           key, controller, state: 'queued', finished,
           removeSignal: () => signal?.removeEventListener('abort', onAbort),
-          abort: reason => {
+          abort: AsyncLocalStorage.bind((reason: unknown) => {
             if (entry.state === 'finished' || controller.signal.aborted) return;
+            // Abort listeners run synchronously. Cancellation, shutdown and a
+            // refill-created timer must notify work in its submitter's stores.
             controller.abort(reason); settle(false, controller.signal.reason);
             clearTimeout(entry.timer); entry.timer = undefined; entry.removeSignal();
             if (entry.state === 'queued') {
@@ -136,7 +138,7 @@ export class WorkPool {
             }
             // Running work keeps its slot until the actual callback settles,
             // even if the caller has already observed cancellation/timeout.
-          },
+          }),
           start: () => {
             clearTimeout(entry.timer); entry.timer = undefined; entry.state = 'active';
             this.active.add(entry); this.activeKeys.set(key, (this.activeKeys.get(key) ?? 0) + 1);

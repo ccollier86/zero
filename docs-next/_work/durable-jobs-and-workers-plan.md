@@ -8,14 +8,35 @@ implementation_state: in-progress
 visibility: internal
 system: scheduler
 feature: durable-jobs-and-workers
-maturity: planned
-applies_to: ["feature/core-worker-runtime-upgrades; proposed contracts unless explicitly qualified"]
+maturity: preview
+applies_to: ["2.11.0 released foundation and historical execution evidence; post-release review remains open"]
 ---
 
 # Shared scheduling, jobs and worker foundation
 
 [Working evidence](./index.md) · [Scheduler](../backend/scheduler/index.md) ·
 [Calendar return handoff](./calendar-return-handoff.md)
+
+## Current state — released baseline, follow-up review open
+
+Zero 2.11.0 was released and selected for normal `zero-update` on 2026-11-16 at
+`4d2eb26034783cb77622a249c0cc57f48760331e`. The
+[release closure](#release-closure--november-16) records exact archive identity,
+approved composite evidence and deployment boundaries. Experimental calendar UI
+exports are included; no calendar backend was implemented. The next calendar
+step is reviewing the [backend prerequisites](./calendar-return-handoff.md#backend-design-still-to-do-with-the-user)
+with the user, not silently starting implementation or deploying an application.
+
+The execution brief, stocktake, checklists and dated checkpoints below are
+historical evidence. Their then-pending release gates do not override the later
+closure. Failed/interrupted receipts remain failed/interrupted. Post-release
+worker, workflow-dispatch, jobs query-plan and direct-dependency fixes are now
+implemented on `feature/core-foundation-polish`, with focused checks reported
+below. They are not in the selected 2.11.0 archive; combined/fresh-source
+qualification and any release decision remain pending. See the
+[post-release review record](#post-release-review-boundary).
+
+## Historical execution brief and checkpoints
 
 User approved implementation on 2026-11-14. Calendar backend work is paused.
 This document is the execution/decision record and must be updated as work
@@ -1345,3 +1366,139 @@ test remains unchanged. Production Select code is untouched. This fixture-only
 correction still requires the approved focused and exact-archive gates; its
 authoring alone is not a passing result. Both failed attempts retired their owned
 resources with no retained exceptions.
+
+## Release closure — November 16
+
+The framework release gate subsequently completed. Zero **2.11.0**, commit
+`4d2eb26034783cb77622a249c0cc57f48760331e`, source tree
+`87c882a37b9cb2c8da0be7530727e8d566296619`, was pushed to main and annotated
+`v2.11.0` on both remotes and selected for normal `zero-update` on 2026-11-16.
+The normal publisher produced the same raw archive as qualification:
+
+- Archive: `zero-framework.tgz`.
+- SHA-256: `5d3e7edfc063f18d00f406bddb62f74e3c99b7d878b5f43698940ca07e720290`.
+- Durable release directory:
+  `/Volumes/code-bank/artifacts/zero-platform/release/2.11.0/4d2eb26034783cb77622a249c0cc57f48760331e/f921bd05e68b03740c450e565e0e6173e546193170b2dd404ddb6f153e9b5bf3/`.
+- Its `upgrade-handoff.md` preserves the full release/adoption record. This
+  later documentation polish does not alter the published archive or its receipt.
+
+Evidence is retained under
+`/Volumes/code-bank/artifacts/zero-platform/diagnostics/core-workers-release/`:
+
+| Evidence | Exact retained record |
+| --- | --- |
+| Approved source composite | `4d2eb26034783cb77622a249c0cc57f48760331e-approved-test-docs-30d79688-971a-4aca-a4b9-6b06c7fee6f6/summary.json` |
+| Passing final continuation | `4d2eb26034783cb77622a249c0cc57f48760331e-final-matrix-456bd514-a713-45f0-b3df-eb1a1371d559.json` |
+| Passing populated saved updater | `4d2eb26034783cb77622a249c0cc57f48760331e-saved-updater-f4a4a114-7463-48c2-b271-ba4e57479f5f.json` |
+
+The final continuation SHA-256 is
+`adf51da48e1648cf37a21277b1cbae2af5e4dbcd062bc85e2da3a4cf4bb42d0e`;
+the saved-updater record SHA-256 is
+`d268710df81cee56b2e9f5ef77d61bfa17589a4a26cb87f21695a52bef005d84`.
+
+This is not a single all-green sweep. The completed `2d74820` baseline ran all
+1,476 files: 1,475 passed, one Select case timed out, zero were unrun and cleanup
+retained nothing. Its failed receipt remains failed. The owner's approved
+test/documentation-only finalization required unchanged runtime, dependencies,
+exports, packaging and nonapproved Git entries. Complete Git/archive comparison
+established that boundary. The composite freshly rechecked 31 files and reused
+1,445 unchanged baseline passes; all 19 Select cases, 26 documentation test files,
+root types, package/PDF checks, production build, documentation checker and
+dependency audit passed. The original uninstrumented Select timeout remains
+unexplained; the later instrumented initial-resize fixture correction does not
+retroactively prove its cause.
+
+Exact installed Linux/amd64 jobs passed source to official minified bundle to
+retained restart, including authority isolation, eight synthetic activity calls
+exactly once and 32 semantic events. Workers passed the Linux/arm64 default
+five-second source/bundle/compiled-worker and supervised-parent-death matrix.
+Linux/amd64 workers passed an explicit fifteen-second emulated smoke, not native
+performance/default-budget proof. The final continuation reused the three
+passing same-hash Linux stages from matrix `7c108974`; that original matrix
+remains failed for its external checker defect. Qualification-only consumer-lock,
+synthetic config and matching Chromium provisioning corrections did not change
+candidate runtime code.
+
+The final populated updater passed 2.10.5 dry-run to native `--check`, installed
+public guide/browser bundle, both native Chromium motion modes and ordinary
+frozen reinstall in the same populated cache. Archive-owned bytes/lock integrity
+and protected app state matched. UI checks used synthetic transport; they are
+not substituted for the separate managed Linux tests. This framework release
+does not authorize an application's update, migration, provider traffic or
+deployment. Jobs/workers remain optional, and retained SYSTEM state requires
+the normal explicitly approved migration preparation before jobs opt-in.
+
+Supported jobs build evidence uses Bun 1.4.4 and the source-backed CLI/official
+server or minified bundle with matching entries/dependencies retained. A complete
+compiled jobs application is not qualified; compiled Zero CLI jobs builds fail
+closed. One managed app with supervised children is not multi-host leader
+election. Provider pools remain separate budgets, workers are not an OS sandbox,
+and no universal exactly-once SMTP or throughput claim follows from these tests.
+
+Qualification fixtures, temporary dependency/build trees, owned browser/server
+processes and disposable containers were retired; the dedicated Colima VM was
+stopped. Bounded evidence, useful shared caches and the separately pinned
+calendar preview were retained. The pre-existing filesystem-integrity hold and
+internal-free warning were not cleared or claimed repaired; qualification used
+the owner's explicit task-scoped external-drive exception. No production app
+or real provider state was changed. Calendar backend integration and the built-in
+backup service remain follow-on work, not activated features.
+
+## Post-release review boundary
+
+This follow-up reconciles current documentation with the released artifact and
+preserves the chronological evidence above. It does not change or requalify
+2.11.0, move main/tags, select an updater archive, migrate applications or
+implement calendar features. The released calendar family remains experimental
+frontend composition, including its synchronous local editor/booking limitations.
+
+### Working-tree fixes and focused checks — November 16
+
+The review identified concrete boundary/performance defects. The following
+limited fixes are implemented on `feature/core-foundation-polish`
+based on released commit `4d2eb26034783cb77622a249c0cc57f48760331e`:
+
+- WorkPool abort/cancel/deadline delivery is bound to the submitting async
+  context, including synchronous abort listeners. Cancellation still does not
+  free a running callback's physical slot before it settles.
+- Portable worker configuration eagerly validates `startupTimeoutMs` before
+  launch. This is an admission/validation correction, not a changed startup
+  budget or broader deployment qualification.
+- Detached workflow `dispatchAdvance` clears a retired initiating request's
+  audit lifetime while preserving the workflow's sealed actor authorization
+  and existing current-authority checks. It does not promote actor work to
+  SYSTEM or widen its execution capabilities.
+- Jobs pending/expired-claim discovery uses separate SQLite probes against the
+  existing indexes; dispatched discovery also selects its existing state index.
+  This avoids the inspected retained-history scan plans without adding DDL,
+  migrations or indexes. Lease/recovery and claimed-first ordering remain the
+  intended contract; the rewrite is not an unlimited-throughput claim.
+- Packaging now declares the directly imported Croner dependency explicitly in
+  the root manifest/lock, rather than relying on `@elysiajs/cron` transitively.
+  It pins the already-qualified `croner` 6.0.7; its resolved tuple/integrity is
+  unchanged. A pure dependency-contract regression first exposed the missing
+  declaration. This is not a version upgrade or a replacement scheduling engine.
+
+Reported inner-loop checks are separate working-tree evidence, not a combined
+candidate or release gate:
+
+| Focused group | Reported result |
+| --- | --- |
+| Worker corrections | 29 tests / 152 assertions passed. |
+| Jobs query/behavior checks | 25 tests / 138 assertions across five files passed. |
+| Detached workflow dispatch | 2 tests / 20 assertions passed. |
+| Existing deferred workflow cases | 3 tests / 20 assertions passed. |
+
+Do not sum these into an invented full-suite pass or attach them to the old
+archive's qualification. The root agent's combined ten-file check passed: 60
+tests, zero failures and 334 assertions, including the direct-dependency test.
+Fresh frozen-source qualification is next after a committed candidate. Final
+integration review and a separate qualification/release decision remain pending.
+No main/tag/updater selection or published archive was changed by these
+working-tree fixes. No new calendar/backend,
+provider adapter, tenancy or application deployment feature was added.
+
+Return to the calendar backend plan with its explicit authority, transaction,
+time, booking, reminder and accepted/unknown-outcome prerequisites rather than
+treating foundation release or these focused fixes as proof those domain
+contracts already exist.

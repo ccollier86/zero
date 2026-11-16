@@ -84,6 +84,64 @@ test('close cancels queued callbacks without changing a running callback\'s subm
   } finally { hold.release(); await closing; await pool.close(); await outcomes; }
 });
 
+for (const owner of ['abort-owner', undefined]) for (const action of ['cancel', 'close'] as const) {
+  test(`abort notifications retain ${owner ?? 'empty'} submitter context during foreign ${action}`, async () => {
+    const local = new AsyncLocalStorage<string>(), pool = new WorkPool({ concurrency: 1, shutdownGraceMs: 10 });
+    const hold = gate(), entered = gate(), external = new AbortController();
+    const observed: (string | null)[] = [];
+    let nextEntered = false, closing: Promise<void> | undefined;
+    const work = () => pool.run(signal => {
+      signal.addEventListener('abort', () => { observed.push(local.getStore() ?? null); }, { once: true });
+      entered.release(); return hold.promise;
+    }, { signal: external.signal });
+    // An absent store is deliberate: background work cannot borrow the
+    // cancellation/close caller's active request context either.
+    const running = owner === undefined ? work() : local.run(owner, work);
+    const failure = running.catch(error => error);
+    const waiting = pool.run(() => { nextEntered = true; });
+    const outcomes = Promise.allSettled([running, waiting]);
+    try {
+      await entered.promise;
+      local.run('foreign-owner', () => {
+        if (action === 'cancel') external.abort(new Error('Synthetic foreign cancellation.'));
+        else closing = pool.close();
+        expect(local.getStore()).toBe('foreign-owner');
+      });
+      await failure;
+      expect(observed).toEqual([owner ?? null]);
+      expect(nextEntered).toBe(false);
+      expect(pool.status()).toMatchObject({ active: 1, queued: action === 'close' ? 0 : 1 });
+      hold.release(); await outcomes; await closing;
+      expect(nextEntered).toBe(action === 'cancel');
+      expect(pool.status()).toMatchObject({ active: 0, queued: 0 });
+    } finally { hold.release(); await pool.close(); await outcomes; }
+  });
+}
+
+for (const owner of ['deadline-owner', undefined]) {
+  test(`abort notifications retain ${owner ?? 'empty'} queued submitter context when execution deadline follows refill`, async () => {
+    const local = new AsyncLocalStorage<string>(), pool = new WorkPool({ concurrency: 1, shutdownGraceMs: 10 });
+    const firstHold = gate(), timedHold = gate(), entered = gate(), observed: (string | null)[] = [];
+    const first = local.run('previous-owner', () => pool.run(() => firstHold.promise));
+    const work = () => pool.run(signal => {
+      signal.addEventListener('abort', () => { observed.push(local.getStore() ?? null); }, { once: true });
+      entered.release(); return timedHold.promise;
+    }, { executionTimeoutMs: 5 });
+    const timed = owner === undefined ? work() : local.run(owner, work);
+    const failure = timed.catch(error => error), outcomes = Promise.allSettled([first, timed]);
+    try {
+      expect(pool.status()).toMatchObject({ active: 1, queued: 1 });
+      local.run('foreign-release', () => firstHold.release());
+      await entered.promise;
+      expect(await failure).toMatchObject({ code: 'WORKER_EXECUTION_TIMEOUT', outcome: 'unknown' });
+      expect(observed).toEqual([owner ?? null]);
+      // Notification context must not change physical settlement accounting.
+      expect(pool.status()).toMatchObject({ active: 1, queued: 0 });
+      timedHold.release(); await outcomes;
+    } finally { firstHold.release(); timedHold.release(); await pool.close(); await outcomes; }
+  });
+}
+
 test('queued background work cannot borrow a retired audit frame, while its own retired frame still fails closed', async () => {
   const owner = {}, pool = new WorkPool({ concurrency: 1 }), hold = gate();
   const pending: Promise<unknown>[] = [];
