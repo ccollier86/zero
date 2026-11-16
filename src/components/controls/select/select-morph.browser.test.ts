@@ -70,6 +70,11 @@ async function mount(reduced = false): Promise<Page> {
   page.once('close', () => page.off('pageerror', onError));
   await page.setContent('<!doctype html><html><body><div id="root"></div></body></html>');
   await page.addStyleTag({ content: css }); await page.addScriptTag({ content: motionDiagnosticScript + '\n' + script }); await page.getByTestId('trigger').waitFor();
+  // Chromium may deliver its initial emulated-viewport resize after mounting.
+  // Radix correctly dismisses an open Select on resize. Start keyboard actions
+  // after initial rendering, not between fixture visibility and that native event.
+  // No Select is opened/warmed here; later real resize dismissal stays tested.
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
   return page;
 }
 async function open(page: Page) {

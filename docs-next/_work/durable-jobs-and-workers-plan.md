@@ -1309,3 +1309,39 @@ original failure remains **unexplained and not reproduced**, not fixed by a
 speculative Select change or erased by the later passes. Production code is
 unchanged. Final source/archive/Linux/browser/updater qualification remains
 outstanding, with the normal complete source gate still the default.
+
+### Approved focused finalization and concrete fixture disposition
+
+The owner then explicitly approved test/diagnostic-only focused finalization
+(`call_a2d07a4193174e22a6b8a6b071ddeb9b`). Runtime, dependencies, exports,
+packaging and all nonapproved Git entries must remain identical to the completed
+`2d74820` baseline. The additional `3d4cc36` sweep was deliberately stopped after
+596 passing files, with one active case cancelled and 879 unrun; its owned
+cleanup was complete. It is interrupted supplemental evidence, never a replacement
+baseline or an all-green sweep. Exact archive/Linux/browser/updater qualification
+remains required before main or the normal archive selection changes.
+
+The first finalization attempt (`e313384b-f780-4e44-8cb1-07f13a74dd50`)
+passed all five Select files / 19 native cases, then its external count parser
+incorrectly rejected Bun's singular `Ran 1 test` summary. The parser now admits
+`test`/`tests` while preserving exact per-file counts and failure/skip rejection.
+Captured positive and zero/missing/failed/skipped negative controls passed. The
+original failed qualifier and empty-retained cleanup result remain unchanged.
+
+The following attempt (`6e2b7599-085e-4eb8-abb1-2ac7be412fe4`) reproduced
+the first-light timeout with useful diagnostics: the content had been removed,
+all seven content refs were cleaned, three requested animation frames had not
+run, and the fixture observed its initial 850-by-650 viewport resize before any
+frame. There were no page errors; the page was visible/focused with fonts loaded.
+Native Radix deliberately dismisses Select on window resize. This is a concrete
+invalid initial-render precondition, not evidence of a stuck entrance spring.
+The older baseline lacks that snapshot, so its cause is not retroactively proven.
+
+The fixture now awaits two native rendering frames after mounting, before any
+keyboard opening. It does not open/warm the Select, reopen after dismissal,
+force focus, synthesize events or change the seven-second predicate, test
+assertions or animation timings. The deliberate later window-resize dismissal
+test remains unchanged. Production Select code is untouched. This fixture-only
+correction still requires the approved focused and exact-archive gates; its
+authoring alone is not a passing result. Both failed attempts retired their owned
+resources with no retained exceptions.
