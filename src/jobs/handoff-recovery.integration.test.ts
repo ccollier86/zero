@@ -1,6 +1,7 @@
 /** Real managed recovery after an injected lost bridge return/inspection outage, not SIGKILL or IPC-death qualification. */
 import { expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
+import { lstatSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolveDatabaseFile } from '../databases/database-file';
 import { createApp } from '../frontend/server/app-factory';
@@ -165,9 +166,14 @@ test('cancelled jobs reconcile the real permanent handoff after creator revocati
     expect(cancelled.body).toMatchObject({ ownerId: creator.user.userId, control: 'cancelled', revision: 2, generation: 1 });
     expect((await request('POST', '/auth/logout', { refreshToken: creator.refreshToken }, creator.accessToken)).status).toBe(200);
     expect([401, 403]).toContain((await request('GET', '/jobs/receipts/handoff-one', undefined, creator.accessToken)).status);
-    await stop();
+    const retainedBefore = await request<OccurrencePage>('GET', '/jobs/schedules/' + accepted.body.id + '/occurrences', undefined, observer.accessToken);
+    expect(retainedBefore.status).toBe(200);
+    expect(retainedBefore.body).toEqual(before.body);
 
-    // Inspect only this proven synthetic fixture, after all app/actor handles close.
+    // Re-admit the native observer read before taking a readonly snapshot of
+    // this proven synthetic fixture's live managed binding. Close the snapshot
+    // before stopping its app; offline SQLite opening/checkpoint behavior is
+    // not the handoff-recovery contract being tested.
     // No private rows, leases, clock values or receipts are inserted or rewritten.
     const pending = retainedOccurrences(accepted.body.id);
     expect(pending).toHaveLength(1);
@@ -181,12 +187,21 @@ test('cancelled jobs reconcile the real permanent handoff after creator revocati
       definition_version: 1, status: 'completed', started_by: creator.user.userId }]);
     expect(enqueueCalls).toEqual({ initial: 1, restarted: 0, system: 0 });
     expect(Date.now()).toBeLessThan(leaseUntil);
+    await stop();
 
     // Boot overlaps the remaining normal 60-second lease; neither the lease nor
     // the framework clock is shortened/faked to fit the existing test ceiling.
     await start(false);
     expect(Date.now()).toBeLessThan(leaseUntil);
     expect([401, 403]).toContain((await request('GET', '/jobs/receipts/handoff-one', undefined, creator.accessToken)).status);
+    // The actual authorized native read reopens/verifies the retained Fabric
+    // binding. Its real claim and original lease must survive cancellation,
+    // creator revocation and complete app/actor replacement unchanged.
+    const restarted = await request<OccurrencePage>('GET', '/jobs/schedules/' + accepted.body.id + '/occurrences', undefined, observer.accessToken);
+    expect(restarted.status).toBe(200); expect(restarted.body.total).toBe(1);
+    expect(restarted.body.items[0]).toMatchObject({ id: pending[0]!.id, state: 'claimed', workflowId: null });
+    expect(retainedOccurrences(accepted.body.id)).toEqual(pending);
+    expect(Date.now()).toBeLessThan(leaseUntil);
     while (Date.now() < leaseUntil) {
       if (Date.now() >= deadline) throw new Error('Synthetic real-lease wait exceeded its bounded deadline.');
       await Bun.sleep(Math.max(1, Math.min(500, leaseUntil - Date.now())));
@@ -210,10 +225,10 @@ test('cancelled jobs reconcile the real permanent handoff after creator revocati
     expect(schedule.body).toMatchObject({ ownerId: creator.user.userId, runAs: 'actor', control: 'cancelled', revision: 2, generation: 1 });
     expect(activityStarts).toEqual([{ instanceId: original.receipt.instanceId, userId: creator.user.userId }]);
     expect(enqueueCalls).toEqual({ initial: 1, restarted: 0, system: 0 });
-    await stop();
     expect(permanentEvidence(original.key)).toEqual(durable);
     expect(retainedOccurrences(accepted.body.id)).toEqual([{ ...pending[0]!, state: 'terminal', lease_until: null,
       lease_generation: 2, workflow_id: original.receipt.instanceId, receipt_json: jobJson(original.receipt), terminal_status: 'completed' }]);
+    await stop();
   } finally {
     const failures: unknown[] = [];
     try { await stop(); } catch (error) { failures.push(error); }
@@ -242,6 +257,8 @@ async function until(check: () => Promise<boolean>, deadline: number, label: str
   }
 }
 function readOnly<T>(path: string, read: (database: Database) => T): T {
+  const entry = lstatSync(path);
+  if (!entry.isFile() || entry.isSymbolicLink()) throw new Error('Synthetic evidence database is not a regular owned file.');
   const database = new Database(path, { readonly: true });
   try { return read(database); } finally { database.close(); }
 }
