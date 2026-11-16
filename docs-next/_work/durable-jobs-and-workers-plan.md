@@ -1203,6 +1203,26 @@ No release-owner test/documentation-only finalization exception has been granted
 for this candidate. Normal selected main remains 2.10.5; calendars, backups and
 application/production changes remain out of scope.
 
+The replacement consumer fixtures were then committed at
+`7a2f4159a7ac2b583b002e9ae6632794f628684e`. A fresh frozen installation and root
+typecheck passed, followed by all four canonical installed-consumer files:
+messaging 116.674s, profile settings 120.031s, tooltip 111.822s and mail 92.897s,
+including their owned cleanup. Profile's browser/server build, complete installed
+TypeScript program and SSR phase took 71.076s within its unchanged 90s child
+budget. Messaging's installed TypeScript phase took 62.966s within its unchanged
+180s budget. Mail exercised the actual synthetic SMTP/IMAP send/receive path;
+no external provider was called. All four reported confirmed process/fixture
+retirement. The outer report
+`7a2f4159a7ac2b583b002e9ae6632794f628684e-source-focused-group-c0e3fc43-9ead-43e1-bc7e-bbfe723eb392`
+records `focused-checks-passed`, no retained disposable resources and
+`releaseQualified:false`. Both feature remotes contain this checkpoint.
+The separately retained original messaging timeout fixture was also retired
+after its complete input/content/identity provenance was established; a new
+small sibling receipt preserves that cleanup without altering either original
+failed baseline or compiler diagnostic. No runtime fix is inferred from the
+later passing consumers. The final complete source gate and exact archive
+deployment/updater gates remain outstanding.
+
 The next frozen candidate requires a fresh complete source sweep and exact final
 installed archive/browser/Linux/updater checks. Main, tags and normal archive
 selection remain unchanged until those gates and final review finish. Calendar
