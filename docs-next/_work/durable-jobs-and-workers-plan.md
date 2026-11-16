@@ -1092,9 +1092,11 @@ The failures require separate dispositions:
   tenancy. The example test is unchanged; no fence is skipped or diagnostic
   assertion relaxed.
 - The AI-agent public inference compiler test exceeded its existing 30-second
-  deadline at approximately 32 seconds. It requires an isolated recheck and an
-  explained disposition; contention is not assumed merely because the host was
-  busy, and the failed attempt is not relabeled as passing.
+  deadline at approximately 32 seconds. Its sequential isolated recheck at
+  `da6b425` passed in 26.1 seconds under that unchanged deadline. The Guardian
+  example check and full root typecheck also passed in that run. This supports
+  a contention-sensitive compiler fixture, not a production AI latency claim;
+  the original failed attempt is not relabeled as passing.
 
 The host recorded USB I/O errors and an unclean APFS remount around the native
 Bun instruction faults. A later live read-only filesystem verification did not
@@ -1112,8 +1114,25 @@ an injected lost bridge return/receipt-observation outage, schedule cancellation
 creator revocation and restart. The new regression uses existing composition
 boundaries, the actual claim lease and the existing 120-second per-test ceiling.
 It must not claim real IPC death or abrupt crash durability from a graceful
-restart fixture. It is implemented but not yet executed successfully, so it is not
-qualification evidence.
+restart fixture. The first attempt at `da6b425` reached 16 assertions, then failed
+when a read-only evidence probe opened the private SQLite file after its managed
+binding had closed. That failed result remains retained. The corrected fixture
+at `0ad8a5b` takes its closed-after-read snapshots only while the actual native
+observer has admitted the live binding. Its focused run passed all 44 assertions
+in 68.3 seconds, with a fresh frozen dependency installation and full root
+typecheck. The original claim and real lease survive restart unchanged; recovery
+finds the same single workflow with one activity invocation, no new enqueue and
+no SYSTEM receipt. This is source recovery coverage, not final archive qualification.
+
+The corresponding focused evidence is
+`0ad8a5b19f41352d20cc55360a89e8ce9dd0bd8d-source-focused-b5640e11-7e77-4477-8932-ae4c47b67471`
+in the external `core-workers-release` diagnostics. All disposable outputs were
+retired. A following full-gate attempt (`afd9edd0-bda9-4ad3-9bd0-8f9dd53e4ed6`)
+was deliberately interrupted during typecheck, before any full inventory ran,
+to correct the JobsWorkspace guide's nonexistent `@zero/framework/frontend`
+subpath to the actual public `@zero/framework` export. Its interrupted result
+is not a typecheck failure diagnosis or a completed baseline; its owned outputs
+were also retired before the next freeze.
 
 The next frozen candidate requires a fresh complete source sweep and exact final
 installed archive/browser/Linux/updater checks. Main, tags and normal archive

@@ -31,7 +31,7 @@ Place it in an AppShell content pane under the application's shared AppProvider.
 Keep that provider mounted during router navigation.
 
 ```tsx
-import { JobsWorkspace } from '@zero/framework/frontend';
+import { JobsWorkspace } from '@zero/framework';
 
 export default function JobsPage() {
   return <JobsWorkspace className="h-full" definitionLabels={{
