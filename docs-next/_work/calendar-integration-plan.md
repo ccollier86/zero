@@ -688,6 +688,14 @@ No application data or existing UI was touched. Further work proceeds through th
 remaining contracts in dependency order, including lifecycle, live authority,
 durable integration and native UI.
 
+The next slice adds explicit ownership admission and live request fencing. It is
+still not a mounted feature: scoped service tests do not replace the actual
+Fabric lifecycle, installed package and browser qualification.
+
+Current focused result: 59 tests pass. The added service boundary derives scope
+and identity, keeps stale authority from continuing, and does not replay unknown
+outcomes. This remains source evidence, not release qualification.
+
 ## 15. Documentation deliverables and open decisions
 
 Create a canonical calendar backend guide/index with configuration/defaults,
