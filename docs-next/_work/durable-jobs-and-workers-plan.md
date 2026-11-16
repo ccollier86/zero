@@ -1073,3 +1073,50 @@ The dedicated external Colima profile was started for this qualification phase;
 it must be stopped after owned containers retire. Calendar/backups, real
 applications and production state remain untouched. The normal selected release
 is still 2.10.5 until the final committed archive and updater gates pass.
+
+### Resumed qualification after the interrupted source sweep
+
+The frozen `5038b5fa1988223f6ae639761768c9d7147a4332` attempt passed the root
+TypeScript, package/export and PDF runtime gates. Its full inventory admitted
+1,475 files, but completed only **491 files: 489 passed and two failed** before
+the host storage interruption terminated Bun processes. It is an interrupted
+run, not a complete baseline or an all-green release gate. Its bounded original
+logs/provenance remain unchanged; no focused-finalization exception can turn
+those missing files into completed coverage.
+
+The failures require separate dispositions:
+
+- The Guardian example compiler found a bare `authorization:` property fragment
+  in the RBAC guide. That unchanged baseline example is now a complete typed
+  `defineAuthConfig` declaration, with the same permissions and explicit single
+  tenancy. The example test is unchanged; no fence is skipped or diagnostic
+  assertion relaxed.
+- The AI-agent public inference compiler test exceeded its existing 30-second
+  deadline at approximately 32 seconds. It requires an isolated recheck and an
+  explained disposition; contention is not assumed merely because the host was
+  busy, and the failed attempt is not relabeled as passing.
+
+The host recorded USB I/O errors and an unclean APFS remount around the native
+Bun instruction faults. A later live read-only filesystem verification did not
+produce a final verdict and its waiting client was retired. Ordinary file access
+does not certify filesystem integrity. The release owner subsequently explicitly
+overrode the storage instructions/hold for this Zero task. This scoped permission
+is recorded as an exception, not as a successful disk repair or verification;
+global maintenance and its hold remain unchanged. Source, real state, other apps,
+history and shared caches remain protected. Only this run's independently
+verified owned synthetic outputs may be retired.
+
+Final read-only review also identified worthwhile combined recovery coverage:
+the real managed runner must privately recover a genuine Torrent receipt after
+an injected lost bridge return/receipt-observation outage, schedule cancellation,
+creator revocation and restart. The new regression uses existing composition
+boundaries, the actual claim lease and the existing 120-second per-test ceiling.
+It must not claim real IPC death or abrupt crash durability from a graceful
+restart fixture. It is implemented but not yet executed successfully, so it is not
+qualification evidence.
+
+The next frozen candidate requires a fresh complete source sweep and exact final
+installed archive/browser/Linux/updater checks. Main, tags and normal archive
+selection remain unchanged until those gates and final review finish. Calendar
+backend work, backup implementation, app migrations and production remain out
+of scope.

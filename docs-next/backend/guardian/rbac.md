@@ -76,27 +76,32 @@ For an installed **empty version-1 single/simple registry** (the original
 acknowledge only the initial bindings you actually intend:
 
 ```ts
-authorization: {
-  mode: 'simple',
-  registryVersion: 2,
-  initialRoleAdoption: {
-    fromRegistryVersion: 1,
-    toRegistryVersion: 2,
-    roles: ['admin'],
-  },
-  permissions: {
-    'support:knowledge-search': { scope: 'application' },
-    'support:knowledge-ingest': { scope: 'application' },
-  },
-  roles: {
-    admin: {
-      permissions: ['support:knowledge-search', 'support:knowledge-ingest'],
+import { defineAuthConfig } from '@zero/framework/auth';
+
+export const auth = defineAuthConfig({
+  tenancy: 'single',
+  authorization: {
+    mode: 'simple',
+    registryVersion: 2,
+    initialRoleAdoption: {
+      fromRegistryVersion: 1,
+      toRegistryVersion: 2,
+      roles: ['admin'],
+    },
+    permissions: {
+      'support:knowledge-search': { scope: 'application' },
+      'support:knowledge-ingest': { scope: 'application' },
+    },
+    roles: {
+      admin: {
+        permissions: ['support:knowledge-search', 'support:knowledge-ingest'],
+      },
     },
   },
-},
+});
 ```
 
-This belongs inside trusted server `auth` configuration. It is not a browser
+Merge this into the existing trusted server `auth` configuration. It is not a browser
 request, data migration, general permission bypass or instruction to recreate
 accounts. Other existing configuration, route permission requirements and
 account registration policies remain unchanged. The example grants these two
