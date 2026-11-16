@@ -1134,6 +1134,75 @@ subpath to the actual public `@zero/framework` export. Its interrupted result
 is not a typecheck failure diagnosis or a completed baseline; its owned outputs
 were also retired before the next freeze.
 
+### Completed foundation sweep and targeted failure investigation (November 16)
+
+The frozen `93fce89ac2fb74939a0312a7eb9ee34933d1f0f4` source sweep completed
+all **1,476 files: 1,467 passed, nine failed or timed out, zero unrun, no
+inventory interruption**. This is a completed **failed** baseline, not a release
+pass. Root types, package contracts and PDF installation/status passed before
+the sweep; later build/audit/final-documentation stages did not run in that
+driver after the failed sweep. Original receipts remain unchanged under
+`93fce89ac2fb74939a0312a7eb9ee34933d1f0f4-source-gates-f556a5c5-b9bc-4425-9db0-395644f2f34d`
+in the external `core-workers-release` diagnostics. Its temporary dependencies,
+private SDK snapshot, processes and synthetic outer fixture were retired.
+
+The failures have separate dispositions, not one presumed runtime cause:
+
+- Two static guards had not admitted the deliberately additive jobs/workers
+  facade. The frontend guard now asserts the exact eleven jobs and two workflow
+  export declarations while preserving the original ordered contract digest.
+  Its type/alias check requests the same facade diagnostics directly instead of
+  checking the entire unrelated program before filtering them. The machine
+  projection guard now explicitly requires both new capabilities to remain null.
+- Four installed consumers (messaging, profile settings, tooltip and mail)
+  exceeded their existing phase or outer deadlines. Their soft-termination-only
+  child helpers and interrupted teardown did not establish prompt retirement.
+  The replacement test helpers retain Bun, compiler arguments, assertions,
+  consumer strings and all existing test/phase deadlines. They add bounded
+  process-group retirement/output, whole-root ownership/pin checks, body/startup
+  settlement fences and immediate owned dependency cleanup. They do not replace
+  a compiler timeout with a permitted failure. Their focused reruns are still
+  required; this paragraph is an implementation record, not their pass result.
+- The app-function cases returned database-unavailable on Beta's first physical
+  file acquisition/write; hot admission returned a non-JSON initial seed error
+  before its busy-auth cycles. Bounded native event diagnostics were added to
+  those test files without changing requests, policy, production settings or
+  deadlines. Neither original error code was captured, so its cause is not
+  retrospectively asserted from a later pass.
+- The installed automation/Torrent consumer crossed a recorded 1%-battery
+  low-power hibernation (03:16:57–03:34:38 local time) and its watchdog retired
+  the child. This was a managed gateway/runtime phase, not a TypeScript phase.
+  The interrupted result remains failed; the successful rerun is separate.
+
+A controlled comparison reconstructed the failed messaging consumer with its
+exact retained archive, manifest, lock and TypeScript settings. Both existing
+Bun 1.4.4 and Node using the same installed TypeScript 5.9.3 passed, in 61.359s
+and 61.310s respectively, under the original 180s compiler budget. The ordered
+pair is not a cold-cache benchmark and does not establish the old timeout's
+cause. No engine substitution is justified. Diagnostic inputs/outputs were
+owned and retired, retaining only bounded evidence and copied small inputs in
+`93fce89ac2fb74939a0312a7eb9ee34933d1f0f4-messaging-types-e6d02e8c-8913-49f0-82ed-ed9dd5efa507`.
+
+At `05fd85a849f01eceb721971e06f19754f43b23f2`, a fresh frozen installation and
+root typecheck preceded a canonical sequential focused group. All five files
+passed: frontend exports (8.419s), app functions (24.899s; both cases, 80
+assertions), populated hot auth/audit (285.774s; 153 assertions), installed
+automation/Torrent (49.856s including retirement; 13 assertions) and request
+projection (0.317s; 48 assertions). The hot case retains the original <2s
+foreground auth assertions, all 20,267 committed audit events and zero failed or
+pending audit work. Its entire backlog/recovery duration is not login latency.
+The app-function authority fence still rejects the revoked source. These passes
+do not erase the unexplained original native failures. The focused report
+`05fd85a849f01eceb721971e06f19754f43b23f2-source-focused-group-3b21d9f8-9bfd-4d83-8cca-de90dd027555`
+records `focused-only-not-release-gate` and no retained disposable resources.
+
+The production candidate remains unchanged since `bc396a9`; subsequent changes
+are test/documentation corrections. Final source qualification, the exact
+installed archive/browser/Linux matrix and the normal updater are still required.
+No release-owner test/documentation-only finalization exception has been granted
+for this candidate. Normal selected main remains 2.10.5; calendars, backups and
+application/production changes remain out of scope.
+
 The next frozen candidate requires a fresh complete source sweep and exact final
 installed archive/browser/Linux/updater checks. Main, tags and normal archive
 selection remain unchanged until those gates and final review finish. Calendar
