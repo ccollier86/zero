@@ -1,0 +1,46 @@
+/** Unmounted internal realm foundation. No managed owner, actor launch, service, HTTP route or package export. */
+import { defineDatabaseRealm } from '../databases/database-realm';
+import { CALENDAR_TABLES } from './realm-schema';
+import { bindCalendarOwner, cancelCalendarAppointment, changeCalendarGrant, createCalendarAppointment, createCalendarResource, rescheduleCalendarAppointment } from './realm-commands';
+import { listCalendarResources, queryCalendarAppointments, queryCalendarBusy, readCalendarAppointment, readCalendarReceipt } from './realm-queries';
+
+export const calendarRealm = defineDatabaseRealm({
+  name: 'zero.calendar.internal', version: '1', tables: CALENDAR_TABLES,
+  migrations: [{ version: '001', description: 'Private one-off calendar conflict domain', up(database) {
+    for (const sql of [
+      'CREATE INDEX calendar_resource_catalog ON calendar_resources(scope_id,id)',
+      'CREATE INDEX calendar_resource_owner ON calendar_resources(scope_id,owner_id,id)',
+      'CREATE UNIQUE INDEX calendar_grant_identity ON _calendar_grants(scope_id,resource_id,user_id)',
+      'CREATE INDEX calendar_grant_user ON _calendar_grants(scope_id,user_id,resource_id)',
+      'CREATE INDEX calendar_appointment_range ON calendar_appointments(scope_id,status,occupied_start_ms,id)',
+      'CREATE UNIQUE INDEX calendar_reservation_identity ON _calendar_reservations(scope_id,appointment_id,resource_id)',
+      'CREATE INDEX calendar_reservation_overlap ON _calendar_reservations(scope_id,resource_id,active,occupied_start_ms,occupied_end_ms,appointment_id)',
+      'CREATE UNIQUE INDEX calendar_receipt_identity ON _calendar_receipts(scope_id,principal,request_id)',
+      'CREATE INDEX calendar_effect_source ON _calendar_effect_intents(scope_id,target_kind,target_id,revision)',
+    ]) database.run(sql);
+    const immutable = ['_calendar_owner', '_calendar_receipts', '_calendar_effect_intents'];
+    for (const table of immutable) for (const operation of ['UPDATE', 'DELETE']) database.run(`CREATE TRIGGER ${table}_${operation.toLowerCase()} BEFORE ${operation} ON ${table} BEGIN SELECT RAISE(ABORT,'Private calendar evidence is immutable'); END`);
+    for (const table of Object.keys(CALENDAR_TABLES).filter(table => table !== '_calendar_usage')) {
+      // Guard INSERT OR REPLACE independently of recursive_triggers connection settings.
+      const duplicate = 'id=NEW.id' + (table === '_calendar_receipts' ? ' OR (scope_id=NEW.scope_id AND principal=NEW.principal AND request_id=NEW.request_id)'
+        : table === '_calendar_grants' ? ' OR (scope_id=NEW.scope_id AND resource_id=NEW.resource_id AND user_id=NEW.user_id)'
+        : table === '_calendar_reservations' ? ' OR (scope_id=NEW.scope_id AND appointment_id=NEW.appointment_id AND resource_id=NEW.resource_id)' : '');
+      database.run(`CREATE TRIGGER ${table}_no_replace BEFORE INSERT ON ${table} WHEN EXISTS(SELECT 1 FROM ${table} WHERE ${duplicate}) BEGIN SELECT RAISE(ABORT,'Private calendar identity cannot be replaced'); END`);
+      if (table === '_calendar_owner') continue;
+      database.run(`CREATE TRIGGER ${table}_scope BEFORE INSERT ON ${table} WHEN NOT EXISTS(SELECT 1 FROM _calendar_owner WHERE id='application' AND scope_id=NEW.scope_id) BEGIN SELECT RAISE(ABORT,'Private calendar scope is inconsistent'); END`);
+      database.run(`CREATE TRIGGER ${table}_identity BEFORE UPDATE OF id,scope_id ON ${table} WHEN OLD.id IS NOT NEW.id OR OLD.scope_id IS NOT NEW.scope_id BEGIN SELECT RAISE(ABORT,'Private calendar identity is immutable'); END`);
+      if (!immutable.includes(table)) database.run(`CREATE TRIGGER ${table}_retain BEFORE DELETE ON ${table} BEGIN SELECT RAISE(ABORT,'Private calendar history must be retained'); END`);
+    }
+    for (const table of ['_calendar_grants', '_calendar_reservations']) database.run(`CREATE TRIGGER ${table}_resource BEFORE INSERT ON ${table} WHEN NOT EXISTS(SELECT 1 FROM calendar_resources WHERE id=NEW.resource_id AND scope_id=NEW.scope_id) BEGIN SELECT RAISE(ABORT,'Private calendar resource is inconsistent'); END`);
+    database.run(`CREATE TRIGGER calendar_reservation_parent BEFORE INSERT ON _calendar_reservations WHEN NOT EXISTS(SELECT 1 FROM calendar_appointments WHERE id=NEW.appointment_id AND scope_id=NEW.scope_id) BEGIN SELECT RAISE(ABORT,'Private calendar appointment is inconsistent'); END`);
+    database.run(`CREATE TRIGGER calendar_effect_parent BEFORE INSERT ON _calendar_effect_intents WHEN NOT EXISTS(SELECT 1 FROM _calendar_receipts WHERE id=NEW.receipt_id AND scope_id=NEW.scope_id AND target_kind=NEW.target_kind AND target_id=NEW.target_id) BEGIN SELECT RAISE(ABORT,'Private calendar receipt is inconsistent'); END`);
+    database.run(`CREATE TRIGGER calendar_grant_identity BEFORE UPDATE OF resource_id,user_id ON _calendar_grants WHEN OLD.resource_id IS NOT NEW.resource_id OR OLD.user_id IS NOT NEW.user_id BEGIN SELECT RAISE(ABORT,'Private grant identity is immutable'); END`);
+    database.run(`CREATE TRIGGER calendar_reservation_identity BEFORE UPDATE OF appointment_id,resource_id ON _calendar_reservations WHEN OLD.appointment_id IS NOT NEW.appointment_id OR OLD.resource_id IS NOT NEW.resource_id BEGIN SELECT RAISE(ABORT,'Private reservation identity is immutable'); END`);
+    database.run(`CREATE TRIGGER calendar_resource_revision BEFORE UPDATE ON calendar_resources WHEN NEW.revision<>OLD.revision+1 OR OLD.owner_id IS NOT NEW.owner_id OR OLD.kind IS NOT NEW.kind BEGIN SELECT RAISE(ABORT,'Private resource revision is inconsistent'); END`);
+    database.run(`CREATE TRIGGER calendar_appointment_revision BEFORE UPDATE ON calendar_appointments WHEN NEW.revision<>OLD.revision+1 OR OLD.created_by IS NOT NEW.created_by OR OLD.status='cancelled' BEGIN SELECT RAISE(ABORT,'Private appointment revision is inconsistent'); END`);
+  } }],
+  commands: { 'calendar.owner.bind': bindCalendarOwner, 'calendar.resource.create': createCalendarResource, 'calendar.resource.grant': changeCalendarGrant,
+    'calendar.appointment.create': createCalendarAppointment, 'calendar.appointment.reschedule': rescheduleCalendarAppointment, 'calendar.appointment.cancel': cancelCalendarAppointment },
+  queries: { 'calendar.resources': listCalendarResources, 'calendar.busy': queryCalendarBusy, 'calendar.appointments': queryCalendarAppointments,
+    'calendar.appointment': readCalendarAppointment, 'calendar.receipt': readCalendarReceipt },
+});

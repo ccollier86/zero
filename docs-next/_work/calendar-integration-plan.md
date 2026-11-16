@@ -4,7 +4,7 @@ type: architecture
 audience: [developer, agent, maintainer]
 owner: calendar
 status: draft
-implementation_state: planned
+implementation_state: in-progress
 visibility: internal
 system: calendar
 feature: managed-calendar-integration
@@ -23,6 +23,9 @@ application. The user requested plan review before backend implementation.
 The experimental frontend ships in 2.11.0; **calendar configuration, persistence,
 booking and reminder APIs do not yet exist**. Names in backticks below describe
 proposed surfaces unless explicitly identified as existing.
+
+Implementation has begun on an isolated branch. The initial internal foundation
+is not exposed; this does not change the public API statement above.
 
 ## 1. Review outcome and baseline
 
@@ -671,6 +674,19 @@ App acceptance and rollout remain separately authorized. Existing UI, demo archi
 source history and conversation history stay preserved. External calendar sync,
 payments, telehealth/video, Gantt/timeline, site-wide theme replacement and generalized
 backup implementation remain separate work.
+
+## Implementation checkpoint
+
+The first slice now exists under `src/calendar/`: pure configuration/time/data
+admission and the private one-off realm. It remains unmounted and unexported.
+It does not yet satisfy the plan as a whole.
+
+Actual verification: 38 tests / 676 assertions passed. Broader qualification is
+still pending; do not relabel focused checks as a release gate.
+
+No application data or existing UI was touched. Further work proceeds through the
+remaining contracts in dependency order, including lifecycle, live authority,
+durable integration and native UI.
 
 ## 15. Documentation deliverables and open decisions
 
