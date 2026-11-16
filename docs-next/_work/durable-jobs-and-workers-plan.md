@@ -1255,3 +1255,37 @@ installed archive/browser/Linux/updater checks. Main, tags and normal archive
 selection remain unchanged until those gates and final review finish. Calendar
 backend work, backup implementation, app migrations and production remain out
 of scope.
+
+### Complete final sweep and isolated Select investigation (November 16)
+
+The next frozen source candidate, `2d7482055d44b1185546a1060a491b494b9762ca`,
+completed all **1,476 files: 1,475 passed, one failed, zero unrun, no inventory
+interruption**. Fresh root/payments installations, root types, package contracts
+and PDF install/status passed. All nine files from the preceding failed baseline
+passed in this complete inventory. The original failed results remain unchanged;
+later passes do not establish the unrecorded original native failure causes.
+
+The sole failure is the first light-mode case in
+`src/components/controls/select/select-morph.browser.test.ts`: the content
+became visible, but its seven-second settled predicate timed out. The other
+nine cases in that file passed. The relevant Select implementation, fixture,
+overlay code and browser lease helper are unchanged from the earlier completed
+baseline where that file passed. This does not establish a harmless failure or
+prove that the menu remained mounted/opening: native Radix also dismisses on
+window blur or resize, and the old diagnostic did not retain its final DOM state.
+
+The test now records bounded existing-frame counters, resize/focus/blur/visibility
+events, safe synthetic geometry/ref/phase observations and page errors if opening
+fails. Diagnostic reads are best-effort and bounded; the original exception,
+animation calibration, assertions and deadlines are preserved. No new frame,
+warm-up, focus override, functional retry or production Select change is added.
+Its focused investigation is pending, not claimed as a pass or release approval.
+
+Original complete evidence remains under
+`2d7482055d44b1185546a1060a491b494b9762ca-source-gates-089d19ac-884a-4673-b68e-2dd6b1a4c142`
+in the external `core-workers-release` diagnostics. The full-gate driver stopped
+before build/audit/final-documentation stages after the failed sweep and retired
+all its claimed temporary resources (`retained: []`). Main, tags and the normal
+2.10.5 updater selection remain unchanged. The release-owner finalization
+exception has not been granted; this record does not substitute focused checks
+for the required final gate or authorize application changes.

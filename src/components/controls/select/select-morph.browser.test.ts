@@ -6,6 +6,39 @@ import { acquirePlaywrightTestBrowser, playwrightTestBrowserAvailable, type Play
 
 const browserTest = playwrightTestBrowserAvailable ? test : test.skip;
 let lease: PlaywrightTestBrowserLease | undefined, script = '', css = '';
+const pageMotionErrors = new WeakMap<Page, { count: number; errors: { name: string; message: string }[] }>();
+// Runs in the existing fixture script injection; no new rAF, wait or browser round trip.
+const motionDiagnosticScript = `(() => {
+  try {
+    const request = window.requestAnimationFrame.bind(window), cancel = window.cancelAnimationFrame.bind(window);
+    const counts = { requested: 0, invoked: 0, cancelCalls: 0, pendingIdsDropped: 0 };
+    const pending = new Set(), timestamps = [], environment = [];
+    const observeEnvironment = event => {
+      environment.push({ type: event.type, at: performance.now(), width: innerWidth, height: innerHeight, visibility: document.visibilityState });
+      if (environment.length > 8) environment.shift();
+    };
+    window.addEventListener('resize', observeEnvironment, { passive: true });
+    window.addEventListener('blur', observeEnvironment, { passive: true });
+    window.addEventListener('focus', observeEnvironment, { passive: true });
+    document.addEventListener('visibilitychange', observeEnvironment);
+    const bump = key => { counts[key] = Math.min(Number.MAX_SAFE_INTEGER, counts[key] + 1); };
+    window.requestAnimationFrame = function(callback) {
+      if (typeof callback !== 'function') return request(callback);
+      const id = request(timestamp => {
+        pending.delete(id); bump('invoked');
+        timestamps.push(timestamp); if (timestamps.length > 32) timestamps.shift();
+        callback.call(window, timestamp);
+      });
+      bump('requested'); pending.add(id);
+      if (pending.size > 32) { pending.delete(pending.values().next().value); bump('pendingIdsDropped'); }
+      return id;
+    };
+    window.cancelAnimationFrame = function(id) { bump('cancelCalls'); pending.delete(id); return cancel(id); };
+    window.__zeroSelectMotionDiagnostics = () => ({
+      ...counts, timestamps: [...timestamps], pendingIds: [...pending], pendingIdsPartial: counts.pendingIdsDropped > 0, environment: [...environment],
+    });
+  } catch { /* Diagnostic installation cannot prevent the original fixture script. */ }
+})();`;
 beforeAll(async () => {
   if (!playwrightTestBrowserAvailable) return;
   const built = await Bun.build({ entrypoints: [`${import.meta.dir}/select-morph.browser-fixture.tsx`], target: 'browser', format: 'iife',
@@ -26,14 +59,68 @@ afterAll(() => lease?.release());
 async function mount(reduced = false): Promise<Page> {
   const page = await lease!.browser.newPage({ viewport: { width: 850, height: 650 }, reducedMotion: reduced ? 'reduce' : 'no-preference' });
   page.setDefaultTimeout(7000);
+  const errors = { count: 0, errors: [] as { name: string; message: string }[] };
+  pageMotionErrors.set(page, errors);
+  const onError = (error: Error) => {
+    errors.count = Math.min(Number.MAX_SAFE_INTEGER, errors.count + 1);
+    errors.errors.push({ name: error.name.slice(0, 64), message: error.message.slice(0, 240) });
+    if (errors.errors.length > 4) errors.errors.shift();
+  };
+  page.on('pageerror', onError);
+  page.once('close', () => page.off('pageerror', onError));
   await page.setContent('<!doctype html><html><body><div id="root"></div></body></html>');
-  await page.addStyleTag({ content: css }); await page.addScriptTag({ content: script }); await page.getByTestId('trigger').waitFor();
+  await page.addStyleTag({ content: css }); await page.addScriptTag({ content: motionDiagnosticScript + '\n' + script }); await page.getByTestId('trigger').waitFor();
   return page;
 }
 async function open(page: Page) {
-  await page.getByTestId('trigger').press('ArrowDown');
-  await page.getByTestId('content').waitFor();
-  await page.waitForFunction(() => document.querySelector('[data-testid="content"]')?.getAttribute('data-zero-select-motion') === 'settled');
+  try {
+    await page.getByTestId('trigger').press('ArrowDown');
+    await page.getByTestId('content').waitFor();
+    await page.waitForFunction(() => document.querySelector('[data-testid="content"]')?.getAttribute('data-zero-select-motion') === 'settled');
+  } catch (error) {
+    await captureMotionFailure(page);
+    throw error;
+  }
+}
+
+async function captureMotionFailure(page: Page): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const snapshot = page.evaluate(() => {
+      const content = document.querySelector<HTMLElement>('[data-testid="content"]');
+      const trigger = document.querySelector<HTMLElement>('[data-testid="trigger"]');
+      const style = content ? getComputedStyle(content) : null;
+      const text = (value: string | null | undefined, limit = 128) => value?.slice(0, limit) ?? null;
+      const rect = (element: Element | null) => {
+        if (!element) return null;
+        const value = element.getBoundingClientRect();
+        return Object.fromEntries(['x', 'y', 'width', 'height'].map(key => {
+          const number = value[key as keyof DOMRect];
+          return [key, typeof number === 'number' && Number.isFinite(number) ? number : null];
+        }));
+      };
+      const fixtureRefs = (window as any).__morphSelect?.refs?.();
+      const refs = Object.fromEntries(['trigger', 'content', 'viewport', 'triggerMounts', 'triggerCleanups', 'contentMounts', 'contentCleanups']
+        .map(key => [key, typeof fixtureRefs?.[key] === 'boolean' || typeof fixtureRefs?.[key] === 'number' ? fixtureRefs[key] : null]));
+      return {
+        observedAt: performance.now(), focused: document.hasFocus(),
+        exists: !!content, connected: content?.isConnected ?? false, triggerConnected: trigger?.isConnected ?? false,
+        phase: text(content?.getAttribute('data-zero-select-motion')), state: text(content?.getAttribute('data-state')),
+        side: text(content?.getAttribute('data-side')), clip: text(style?.clipPath, 512), opacity: text(style?.opacity),
+        radius: text(style?.borderTopLeftRadius), contentRect: rect(content), triggerRect: rect(trigger),
+        wrapperTransform: text(content?.parentElement ? getComputedStyle(content.parentElement).transform : null, 256),
+        timings: Object.fromEntries(['grow', 'width', 'shrink', 'width-narrow', 'glide', 'label']
+          .map(name => [name, text(style?.getPropertyValue('--zero-select-motion-' + name), 64)])),
+        visibility: document.visibilityState, reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches,
+        fonts: document.fonts.status, refs, globalRaf: (window as any).__zeroSelectMotionDiagnostics?.() ?? null,
+      };
+    }).then(value => ({ snapshot: value }), () => ({ snapshot: 'unavailable' }));
+    const result = await Promise.race([snapshot, new Promise<{ snapshot: string }>(resolve => {
+      timer = setTimeout(() => resolve({ snapshot: 'diagnostic-read-timeout' }), 250);
+    })]);
+    console.error('Synthetic Select motion failure', JSON.stringify({ ...result, pageErrors: pageMotionErrors.get(page) ?? null }));
+  } catch { /* Preserve the original press/visibility/7s settled-wait failure. */ }
+  finally { if (timer !== undefined) clearTimeout(timer); }
 }
 
 for (const mode of ['light', 'dark']) browserTest(`resting Select shares the expanded material in ${mode} mode without a strong input border`, async () => {
