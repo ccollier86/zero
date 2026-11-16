@@ -2,8 +2,9 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { ownedWorkerFixture } from '../workers/test-support/owned-fixture';
 import { afterAll, expect, test } from 'bun:test';
-import { lstat, mkdir, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { lstat, mkdir, readFile, readdir, readlink, realpath, rm, writeFile } from 'node:fs/promises';
+import { isAbsolute, join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { smtpFixture } from './test-support/smtp-fixture';
 import { imapFixture } from './test-support/imap-fixture';
 
@@ -67,10 +68,15 @@ let currentPackageFixture: PackageFixture | undefined;
 const fixtureScratch = '/Volumes/code-bank/tmp/scratch/zero-platform';
 const packagePins = new Set(['.git', '.storage-keep', '.keep', '.pin', 'PINNED']);
 async function packageFixture(label: string): Promise<PackageFixture> {
+  if (process.platform !== 'darwin' && process.platform !== 'linux') throw Error('Package fixture requires its qualified POSIX retirement boundary.');
   const requested = process.env.TMPDIR;
-  const parent = requested?.startsWith(fixtureScratch + '/') ? requested : fixtureScratch;
+  let parent = process.platform === 'linux' ? process.env.PROJECT_SCRATCH_DIR ?? tmpdir()
+    : requested?.startsWith(fixtureScratch + '/') ? requested : fixtureScratch;
+  if (!isAbsolute(parent)) throw Error('Package fixture scratch must be absolute.');
   await mkdir(parent, { recursive: true });
-  if (await realpath(parent) !== parent) throw Error('Package fixture TMPDIR must be physical and external.');
+  const physical = await realpath(parent);
+  if (process.platform === 'darwin' && physical !== parent) throw Error('Package fixture TMPDIR must be physical and external.');
+  parent = physical;
   // This allocator captures tmpdir() synchronously before its first await. Restore
   // immediately, without yielding or changing another test's ambient environment.
   const previous = process.env.TMPDIR;
@@ -124,8 +130,7 @@ async function retirePackageFixture(fixture: PackageFixture) {
           || marker.dev !== root.dev || await readFile(markerPath, 'utf8') !== fixture.marker) throw Error('Owned package root identity/marker changed.');
       };
       await requireRoot();
-      const handles = spawnSync('lsof', ['-nP', '-t', '+D', fixture.root], { encoding: 'utf8', timeout: 15_000, maxBuffer: 1024 * 1024 });
-      if (handles.error || handles.signal || ![0, 1].includes(handles.status!) || handles.stdout.trim() || handles.stderr.trim()) throw Error('Package fixture handles still open or unconfirmed.');
+      await assertPackageHandlesClosed(fixture.root);
       const dependency = fixture.dependencies;
       if (dependency) {
         const identity = await lstat(dependency.path), markerPath = join(dependency.path, '.package-test-dependencies-owner.json'), marker = await lstat(markerPath);
@@ -152,7 +157,9 @@ async function retirePackageFixture(fixture: PackageFixture) {
       }
       await fixture.cleanup(); packageFixtures.delete(fixture);
       console.info(JSON.stringify({ qualification: 'owned-package-fixture-retired', root: fixture.root, runId: fixture.runId,
-        bun: Bun.version, bunExecutable: process.execPath, handlesClosed: true, lifecycleScriptsRequested: false }));
+        bun: Bun.version, bunExecutable: process.execPath, handlesClosed: true,
+        handleProof: process.platform === 'linux' ? 'owned-groups-servers-body-and-self-fds' : 'owned-groups-servers-body-and-lsof',
+        lifecycleScriptsRequested: false }));
     } catch (error) {
       fixture.uncertain = true;
       console.error(JSON.stringify({ qualification: 'owned-package-fixture-retained', root: fixture.root, runId: fixture.runId, reason: String(error) }));
@@ -161,6 +168,23 @@ async function retirePackageFixture(fixture: PackageFixture) {
   })();
 }
 afterAll(async () => { for (const fixture of [...packageFixtures]) await retirePackageFixture(fixture); }, 120_000);
+
+/** Child groups and both servers have already settled; Linux needs no lsof dependency. */
+async function assertPackageHandlesClosed(root: string): Promise<void> {
+  if (process.platform === 'linux') {
+    for (const fd of await readdir('/proc/self/fd')) {
+      let target: string;
+      try { target = await readlink('/proc/self/fd/' + fd); }
+      catch (error: any) { if (error.code === 'ENOENT') continue; throw error; }
+      target = target.replace(/ \(deleted\)$/, '');
+      if (target === root || target.startsWith(root + '/')) throw Error('Owned parent file descriptor remains open; preserve package fixture.');
+    }
+    return;
+  }
+  if (process.platform !== 'darwin') throw Error('Package handle-retirement proof is unavailable on this platform.');
+  const handles = spawnSync('lsof', ['-nP', '-t', '+D', root], { encoding: 'utf8', timeout: 15_000, maxBuffer: 1024 * 1024 });
+  if (handles.error || handles.signal || ![0, 1].includes(handles.status!) || handles.stdout.trim() || handles.stderr.trim()) throw Error('Package fixture handles still open or unconfirmed.');
+}
 
 function packageSourceIdentity() {
   const run = (args: string[]) => {

@@ -4,7 +4,7 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
-## 2.11.0 - 2026-11-15
+## 2.11.0 - 2026-11-16
 
 Integrated local workers and optional durable schedules, with Guardian/Fabric/
 Torrent admission, native operator controls and explicit recovery boundaries.

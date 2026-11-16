@@ -1223,6 +1223,33 @@ failed baseline or compiler diagnostic. No runtime fix is inferred from the
 later passing consumers. The final complete source gate and exact archive
 deployment/updater gates remain outstanding.
 
+The following `f4b4d20` attempt passed its fresh types and all three preliminary
+regressions (Guardian examples, AI inference and real handoff recovery). It was
+deliberately retired during `test:package`, before a full inventory ran, after
+review found a new mail-test portability regression: its replacement cleanup
+helper had inherited the other consumers' Mac-only scratch path and `lsof`
+requirement. This is not a new native mail/auth failure or a completed full gate.
+Its owned outputs retired with no retained exceptions.
+
+Mail alone now preserves Linux's configurable `PROJECT_SCRATCH_DIR`/temporary
+root, while keeping the Mac's external-only allocation and `lsof` proof.
+Linux retains the same settled body/child groups/server callbacks and checks
+its own file descriptors through `/proc/self/fd`, failing on missing/unreadable
+proof or an owned open descriptor. This is owned-process/server/self-FD proof,
+not a whole-machine `lsof` equivalent. No compiler, assertion or deadline changed.
+The exact helper (`05ebf811fd69e8431b0de650cb9b6a9d8392a8ff8087db3420e066875543ea8d`)
+passed six native Linux/arm64 cases with Bun 1.4.4 and `lsof` absent: empty and
+closed-owned acceptance, open-owned rejection, unrelated-FD tolerance, and
+deleted-owned rejection until close. The container was read-only, networkless
+and privately labelled. The helper-only driver nevertheless reports **failed**
+because VZ retained host filesystem-cache descriptors after container retirement.
+The operator then stopped only the dedicated Colima profile, verified no open
+handles, and retired that exact marked host fixture. Original evidence remains
+unchanged; the small `mail-fixture-linux-7ec18136-6865-400e-ad1b-6bbca60668a7-retirement.json`
+companion records this separate successful retirement. There are no remaining
+probe containers/fixtures. These helper checks do not qualify the mail service
+or replace final package/Linux/updater gates.
+
 The next frozen candidate requires a fresh complete source sweep and exact final
 installed archive/browser/Linux/updater checks. Main, tags and normal archive
 selection remain unchanged until those gates and final review finish. Calendar
