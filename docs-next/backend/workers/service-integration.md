@@ -123,3 +123,13 @@ source drains durable facts without granting acceptance or replay authority.
 Likewise, an already accepted workflow must be reconciled before deciding a
 provider effect is safe to try again. Readiness of a process/health route alone
 does not qualify these end-to-end boundaries.
+
+The source-reviewed `feature/core-foundation-polish` follow-up separates detached
+Torrent advancement from the initiating request's retired audit binding.
+Admission/publication still retain the initiating actor, while subsequent
+framework-owned database capture has its own system provenance. This changes
+logging lifetime only: actor seals, scope and current-authority fences remain in
+force. It does not extend a user session or convert actor execution to SYSTEM.
+This correction is **not in the selected 2.11.0 archive**; the
+[review record](../../_work/durable-jobs-and-workers-plan.md#post-release-review-boundary)
+distinguishes source verification from the next archive's release qualification.

@@ -51,9 +51,10 @@ deployment acceptance remain separate from inclusion in a framework release.
 See the [worker API](../workers/index.md), [durable jobs](./durable-jobs.md) and
 [JobsWorkspace](../../frontend/jobs-workspace.md) for current contracts.
 Post-release worker, workflow-dispatch, jobs query-plan and direct-dependency
-fixes are implemented on `feature/core-foundation-polish`, with focused checks
-only. They are not in the selected 2.11.0 archive. Fresh-source qualification
-and any new release decision remain pending; see the
+fixes are source-reviewed on `feature/core-foundation-polish`. Fresh frozen
+installs, TypeScript and 19 selected canonical test files passed. They are not in
+the selected 2.11.0 archive, and separate release qualification remains pending;
+see the
 [review record](../../_work/durable-jobs-and-workers-plan.md#post-release-review-boundary).
 
 ## Existing Boundaries To Preserve

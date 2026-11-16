@@ -151,9 +151,10 @@ The shared 2.11.0 framework release gate is recorded complete. The next calendar
 step is reviewing the eight backend prerequisites with the user before
 implementation; calendar backend work remains unimplemented. Post-release worker,
 workflow-dispatch, jobs query-plan and direct-dependency fixes are implemented on
-`feature/core-foundation-polish`, with focused checks only; they are not in the
-selected 2.11.0 archive. Their combined/fresh-source qualification and any new
-release decision remain pending in the
+`feature/core-foundation-polish`. Their source review, fresh frozen installs,
+TypeScript check and 19 selected canonical test files passed; they are not in the
+selected 2.11.0 archive. A new archive's release qualification/selection remains
+separate in the
 [review record](./durable-jobs-and-workers-plan.md#post-release-review-boundary).
 Keep the scheduling docs' released versus planned matrix accurate. A rendering
 calendar UI is not an authoritative calendar service or an application's

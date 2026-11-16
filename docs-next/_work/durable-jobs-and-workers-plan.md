@@ -4,12 +4,12 @@ type: roadmap
 audience: [developer, agent, operator]
 owner: scheduler
 status: draft
-implementation_state: in-progress
+implementation_state: implemented
 visibility: internal
 system: scheduler
 feature: durable-jobs-and-workers
 maturity: preview
-applies_to: ["2.11.0 released foundation and historical execution evidence; post-release review remains open"]
+applies_to: ["2.11.0 released foundation; source-reviewed follow-up fixes await separate release qualification"]
 ---
 
 # Shared scheduling, jobs and worker foundation
@@ -17,7 +17,7 @@ applies_to: ["2.11.0 released foundation and historical execution evidence; post
 [Working evidence](./index.md) · [Scheduler](../backend/scheduler/index.md) ·
 [Calendar return handoff](./calendar-return-handoff.md)
 
-## Current state — released baseline, follow-up review open
+## Current state — released baseline, follow-up source review complete
 
 Zero 2.11.0 was released and selected for normal `zero-update` on 2026-11-16 at
 `4d2eb26034783cb77622a249c0cc57f48760331e`. The
@@ -32,8 +32,8 @@ historical evidence. Their then-pending release gates do not override the later
 closure. Failed/interrupted receipts remain failed/interrupted. Post-release
 worker, workflow-dispatch, jobs query-plan and direct-dependency fixes are now
 implemented on `feature/core-foundation-polish`, with focused checks reported
-below. They are not in the selected 2.11.0 archive; combined/fresh-source
-qualification and any release decision remain pending. See the
+below. They are not in the selected 2.11.0 archive; fresh-source verification
+is recorded below, and a new release decision remains separate. See the
 [post-release review record](#post-release-review-boundary).
 
 ## Historical execution brief and checkpoints
@@ -1472,7 +1472,9 @@ based on released commit `4d2eb26034783cb77622a249c0cc57f48760331e`:
   existing indexes; dispatched discovery also selects its existing state index.
   This avoids the inspected retained-history scan plans without adding DDL,
   migrations or indexes. Lease/recovery and claimed-first ordering remain the
-  intended contract; the rewrite is not an unlimited-throughput claim.
+  intended contract; the rewrite is not an unlimited-throughput claim. Live
+  dispatched rows still require an `id` sort, and expired claims still require a
+  scheduled-time sort; no new covering index or DDL was introduced.
 - Packaging now declares the directly imported Croner dependency explicitly in
   the root manifest/lock, rather than relying on `@elysiajs/cron` transitively.
   It pins the already-qualified `croner` 6.0.7; its resolved tuple/integrity is
@@ -1495,10 +1497,44 @@ tests, zero failures and 334 assertions, including the direct-dependency test.
 The first fresh frozen-source check at `21bc7c5` passed both frozen installs but
 rejected three typing diagnostics in the new regression fixtures (an unknown
 JSON5 result and nullable change row). Those fixture types were corrected; the
-failed record remains retained, and a fresh source/type check is required. Final
-integration review and a separate qualification/release decision remain pending.
+failed record remains retained, rather than being relabeled as passing.
+
+### Completed fresh source verification
+
+Candidate `56a52784c91d3cd1de48706df11280ef548b47e0` passed fresh frozen root and
+payments installs, the complete root TypeScript check and all 19 explicitly
+selected canonical test files (19 passed, zero failed/not-run/interrupted).
+The selected set includes actual Bun task subprocesses, managed Torrent worker
+execution, job authority/runtime, detached graph/legacy workflow capture and
+workflow authority revocation. No browser or Linux test was claimed for this
+follow-up; no frontend behavior changed. The ten-file inner loop above is
+additional evidence, not an invented full-framework pass.
+
+- Passing report:
+  `/Volumes/code-bank/artifacts/zero-platform/diagnostics/core-workers-release/56a52784c91d3cd1de48706df11280ef548b47e0-source-focused-group-7f65e1cf-39dc-4aa0-892a-6c936cf5520e/summary.json`.
+- Passing report SHA-256:
+  `015d44fc74b71ab8582a254a65cd9a3f0e68d910d6d77da8999d1ff4784fe507`.
+- Original failed type-check report:
+  `21bc7c5bc6bdd96492a3c5fc54e522821e9412be-source-focused-group-186ae014-ba33-4377-8cac-eff833d3f9d5/summary.json`
+  under the same diagnostics parent. SHA-256:
+  `190fd83623d7397feef067cc2b29d350be8190d502f7beb5ced6d2d0af1b7856`.
+
+Root and independent code review found no remaining blocker within this scoped
+polish. Subsequent source changes are documentation only; the runtime/test
+candidate identity above remains explicit. Documentation graph validation reports
+894 unique/reachable pages and no problems. This is **focused source verification,
+not new-release qualification**. The prior release's fixture-only exception does
+not qualify these runtime/dependency changes. A new archive needs the normal
+release gates or its own explicit approved exception before selection.
+
+Both runs closed and retired owned processes, synthetic state, temporary root
+and payments dependencies, and the exact extracted private SDK source. Their
+retained-resource lists are empty. Only bounded evidence was retained (about
+444 KiB combined); useful shared caches and the separately pinned calendar preview
+were preserved. The pre-existing filesystem hold remains unchanged; verification
+used the existing task-scoped external-drive exception, not a claimed disk repair.
 No main/tag/updater selection or published archive was changed by these
-working-tree fixes. No new calendar/backend,
+follow-up fixes. No new calendar/backend,
 provider adapter, tenancy or application deployment feature was added.
 
 Return to the calendar backend plan with its explicit authority, transaction,

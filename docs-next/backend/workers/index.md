@@ -58,6 +58,15 @@ caller's audit frame. This does not extend authority: if the callback's own
 request/audit lifetime has retired, its native checks still fail closed. Use a
 durable admitted handoff for work that must outlive the initiating request.
 
+The source-reviewed `feature/core-foundation-polish` follow-up also preserves
+submitter context for synchronous abort listeners, foreign cancellation/close
+and execution deadlines created during refill. It eagerly rejects startup
+deadlines outside the portable 1–2,147,483,647 ms range at configuration
+admission. These corrections are **not in the selected 2.11.0 archive**; consult
+the [review and qualification record](../../_work/durable-jobs-and-workers-plan.md#post-release-review-boundary)
+before relying on a newer package. Cancellation still retains physical capacity
+until the actual callback/process settles, and a retired audit frame stays retired.
+
 ## Fixed task catalog
 
 Example side-effect-free `server/worker-tasks.ts`, shared by parent and child:
