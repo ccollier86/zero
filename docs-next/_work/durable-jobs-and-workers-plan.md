@@ -1289,3 +1289,23 @@ all its claimed temporary resources (`retained: []`). Main, tags and the normal
 2.10.5 updater selection remain unchanged. The release-owner finalization
 exception has not been granted; this record does not substitute focused checks
 for the required final gate or authorize application changes.
+
+At diagnostic checkpoint `d07734a18a02b025ef8edd2a89a3be814098a5d6`, fresh frozen
+dependencies and the full root typecheck passed, followed by all **13 tests /
+90 expectations** across the complete Morph browser and geometry files. The
+ten browser cases retain their original assertions and animation deadlines.
+Its focused receipt is
+`d07734a18a02b025ef8edd2a89a3be814098a5d6-source-focused-group-d9068b8f-595d-40bc-b043-bb9221e107a0`.
+
+A separate bounded diagnostic then selected the original first light testcase
+in **ten independent Bun/Chromium processes**. All ten actual selected cases
+passed, with per-attempt JUnit and output receipts, no automatic retry, no
+warm-up or focus override, and unchanged 7-second settled/30-second test limits.
+This uses shared OS/install/browser caches, not ten cold caches; it is not a
+full-file or release pass. Its receipt is
+`d07734a18a02b025ef8edd2a89a3be814098a5d6-select-cold-processes-be0e9d92-6a5b-4fa6-951f-e49c838ce3f6`.
+Both diagnostic runs retired all claimed resources (`retained: []`). The
+original failure remains **unexplained and not reproduced**, not fixed by a
+speculative Select change or erased by the later passes. Production code is
+unchanged. Final source/archive/Linux/browser/updater qualification remains
+outstanding, with the normal complete source gate still the default.
