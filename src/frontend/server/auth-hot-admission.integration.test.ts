@@ -9,6 +9,12 @@ import { authenticatedOnly, defineResource, tenantRealm } from '../../resources'
 import { realm, tables } from './test-fixtures/auth-admission-hot/realm';
 import { defineZeroPlugin } from './server-extensions';
 import type { LoggingRuntime } from '../../logging/logging-runtime';
+import { MemoryEventStore, OBS_CODES } from '../../observability';
+import { DATABASE_ERROR_CODES } from '../../databases/database-error';
+import {
+  DATABASE_OBSERVABILITY_MAX_DURATION_MS, DATABASE_OBSERVABILITY_MAX_SLOT,
+  DATABASE_OBSERVABILITY_PHASES,
+} from '../../databases/database-observability-contract';
 
 test('populated hot actors and outbox work admit repeated login, refresh and protected reads without retries', async () => {
   const scratch = Bun.env.PROJECT_SCRATCH_DIR ?? tmpdir();
@@ -16,6 +22,7 @@ test('populated hot actors and outbox work admit repeated login, refresh and pro
   const root = await mkdtemp(join(scratch, 'auth-hot-admission-'));
   let app: Awaited<ReturnType<typeof createApp>> | undefined;
   let logger: LoggingRuntime | null = null;
+  const nativeDiagnostics = createNativeDiagnostics();
   const started = performance.now(), stages: unknown[] = [];
   const foregroundAuthMs: number[] = [];
   const reportPath = Bun.env.ZERO_LOGGING_QUALIFICATION_REPORT;
@@ -44,7 +51,7 @@ test('populated hot actors and outbox work admit repeated login, refresh and pro
       serverEndpointsDir: fileURLToPath(new URL('./test-fixtures/auth-admission-hot/endpoints', import.meta.url)),
       serverRoutesDir: false, serverPluginsDir: false, serverMiddlewareDir: false, serverResourcesDir: false,
       workflows: false, email: false, stateSync: false, ai: false, vector: false, pdf: false, kv: false,
-      observability: { console: false, endpoint: false },
+      observability: { console: false, endpoint: false, store: nativeDiagnostics.events },
       logging: { preset: 'activity', rootDirectory: join(root, 'logging') },
       serverExtensions: [defineZeroPlugin({ name: 'logging-qualification', setup({ zero }) { logger = zero.logging; } })],
     });
@@ -56,12 +63,22 @@ test('populated hot actors and outbox work admit repeated login, refresh and pro
     app.listen({ hostname: '127.0.0.1', port: 0, idleTimeout: 60 });
     const origin = `http://127.0.0.1:${app.server!.port}`;
     async function request(path: string, body?: unknown, token?: string) {
-      const response = await fetch(`${origin}${path}`, { method: body === undefined ? 'GET' : 'POST',
-        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        body: body === undefined ? undefined : JSON.stringify(body) });
-      const value = await response.json() as any;
-      expect(response.status, `${path}: ${JSON.stringify(value)}`).toBe(200);
-      return value;
+      const method = body === undefined ? 'GET' : 'POST';
+      nativeDiagnostics.mark('request-start', path, method);
+      let response: Response | undefined;
+      try {
+        response = await fetch(`${origin}${path}`, { method,
+          headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+          body: body === undefined ? undefined : JSON.stringify(body) });
+        nativeDiagnostics.mark('response-received', path, method, response.status);
+        const value = await response.json() as any;
+        expect(response.status, 'Native request status').toBe(200);
+        return value;
+      } catch (error) {
+        nativeDiagnostics.mark('request-failed', path, method, response?.status);
+        nativeDiagnostics.capture('request-failed');
+        throw error;
+      }
     }
     const username = 'hot-proof-owner', password = 'Hot-test-password-123';
     const owner = await request('/auth/register', { username, email: 'hot-proof@example.test', password, organizationName: 'Hot proof' });
@@ -132,12 +149,70 @@ test('populated hot actors and outbox work admit repeated login, refresh and pro
     expect(logger!.diagnostics().streams.audit).toMatchObject({ failed: 0, pendingEvents: 0 });
     expect((await logger!.page('audit', { kind: 'platform' }, { action: 'record.created', limit: 1 })).total).toBe(20_267);
   } finally {
+    nativeDiagnostics.capture('before-stop');
     mark('before-stop');
     try { await app?.stop(true); }
     finally {
+      nativeDiagnostics.capture('after-stop-attempt');
       mark('stopped');
       await reportTask;
       await rm(root, { recursive: true, force: true });
     }
   }
 }, 420_000);
+
+/** Bounded fixture-only diagnostics; never serialize a raw event or caught error. */
+function createNativeDiagnostics() {
+  const events = new MemoryEventStore({ maxEvents: 128 });
+  const stages: { stage: string; route: string; method: string; status?: number }[] = [];
+  const definitions = new Map([
+    OBS_CODES.DATABASE_COORDINATOR_STARTED, OBS_CODES.DATABASE_COORDINATOR_FAILED,
+    OBS_CODES.DATABASE_RUNTIME_OPENED, OBS_CODES.DATABASE_RUNTIME_OPEN_FAILED,
+    OBS_CODES.DATABASE_EXECUTOR_FAILED, OBS_CODES.DATABASE_QUEUE_TIMEOUT,
+    OBS_CODES.DATABASE_OPERATION_FAILED, OBS_CODES.DATABASE_OPERATION_OUTCOME_UNKNOWN,
+    OBS_CODES.DATABASE_HOT_DURABILITY_FAILED, OBS_CODES.DATABASE_AUTOMATION_DISPATCH_FAILED,
+    OBS_CODES.RESOURCE_CRUD_FAILED,
+  ].map(definition => [definition.code, definition]));
+  const errorCodes: ReadonlySet<string> = new Set(DATABASE_ERROR_CODES);
+  const phases: ReadonlySet<string> = new Set(DATABASE_OBSERVABILITY_PHASES);
+  const outcomes: ReadonlySet<string> = new Set(['not-started', 'not-committed', 'unknown']);
+  function routeFor(path: string): string {
+    if (["/auth/register","/auth/login","/auth/refresh","/proof/seed","/proof/work","/proof/counts"].includes(path)) return path;
+    if (path.startsWith("/api/resources/functions?")) return "/api/resources/functions";
+    return 'other';
+  }
+  return {
+    events,
+    mark(stage: 'request-start' | 'response-received' | 'request-failed', path: string, method: string, status?: number) {
+      stages.push({ stage, route: routeFor(path), method: ['GET', 'POST', 'PATCH'].includes(method) ? method : 'other',
+        ...(status === undefined ? {} : { status }) });
+      if (stages.length > 32) stages.shift();
+    },
+    capture(stage: 'request-failed' | 'before-stop' | 'after-stop-attempt') {
+      try {
+        const nativeEvents = events.query({ limit: 128 }).events.flatMap(event => {
+          const definition = definitions.get(event.code);
+          if (!definition) return [];
+          const input = event.metadata ?? {}, metadata: Record<string, string | number | boolean> = {};
+          for (const key of ['errorCode', 'databaseCode'] as const) {
+            const value = input[key];
+            if (typeof value === 'string' && errorCodes.has(value)) metadata[key] = value;
+          }
+          const outcome = input.outcome ?? input.databaseOutcome;
+          if (typeof outcome === 'string' && outcomes.has(outcome)) metadata.outcome = outcome;
+          if (typeof input.retryable === 'boolean') metadata.retryable = input.retryable;
+          if (typeof input.durationMs === 'number' && Number.isSafeInteger(input.durationMs)
+            && input.durationMs >= 0 && input.durationMs <= DATABASE_OBSERVABILITY_MAX_DURATION_MS) metadata.durationMs = input.durationMs;
+          if (typeof input.phase === 'string' && phases.has(input.phase)) metadata.phase = input.phase;
+          if (input.role === 'writer' || input.role === 'reader') metadata.role = input.role;
+          if (typeof input.slot === 'number' && Number.isSafeInteger(input.slot)
+            && input.slot >= 0 && input.slot <= DATABASE_OBSERVABILITY_MAX_SLOT) metadata.slot = input.slot;
+          return [{ name: definition.prefix, code: definition.code, metadata }];
+        });
+        console.error('Synthetic native database diagnostics', JSON.stringify({
+          fixture: 'auth-hot-admission', stage, stages, events: nativeEvents,
+        }));
+      } catch { /* Diagnostics must not replace the original failure or cleanup. */ }
+    },
+  };
+}

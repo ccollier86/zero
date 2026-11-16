@@ -121,7 +121,38 @@ test('curated facades preserve every original ordered named/type/star source con
     { name: 'PopoverAnchor', local: 'PopoverAnchor', type: false, declarationType: false },
     { name: 'PopoverAnchorProps', local: 'PopoverAnchorProps', type: false, declarationType: true },
   ]);
-  const preserved = result.records.filter(record => record.target !== additiveTarget && !menuPart(record) && !documentPart(record)
+  const namedAddition = (target: string, type: boolean, names: string[]): ExportRecord => ({
+    target, type, clause: names.map(name => ({ name, local: name, type: false })),
+  });
+  const expectedJobsAdditions: ExportRecord[] = [
+    namedAddition('src/frontend/client/jobs-hooks', false, ['useJobSchedules']),
+    namedAddition('src/frontend/client/jobs-hooks', true, ['UseJobSchedulesResult']),
+    namedAddition('src/frontend/client/jobs-client', true, ['JobsClient', 'ClientJobScheduleInput']),
+    namedAddition('src/frontend/client/jobs-mutation', false, ['JobsMutationError']),
+    namedAddition('src/jobs/failure-contract', true, ['JobOperationOutcome', 'JobsErrorCode']),
+    namedAddition('src/jobs/contracts', true, ['JobControlOptions', 'JobEnqueueOptions', 'JobOccurrenceView', 'JobPageOptions', 'JobRequestOptions',
+      'JobScheduleDetail', 'JobSchedulePage', 'JobScheduleView', 'JobWatchOptions']),
+    namedAddition('src/jobs/contracts', true, ['JobDefinitionView', 'JobDefinitionPage', 'JobBlockedCode', 'JobActionUnavailableReason',
+      'JobActionAvailability', 'JobScheduleActions', 'JobScheduleSummary']),
+    namedAddition('src/jobs/contracts', true, ['JobWatchUpdate']),
+    namedAddition('src/jobs/schedule-time', true, ['ScheduleTiming', 'MisfirePolicy']),
+    namedAddition('src/components/jobs/jobs-workspace', false, ['JobsWorkspace']),
+    namedAddition('src/components/jobs/jobs-workspace', true, ['JobsWorkspaceProps']),
+  ];
+  const jobsTargets = new Set(expectedJobsAdditions.map(record => record.target));
+  const jobsAdditive = result.records.filter(record => jobsTargets.has(record.target));
+  expect(jobsAdditive).toEqual(expectedJobsAdditions);
+  const expectedWorkflowAdditions: ExportRecord[] = [
+    namedAddition('src/frontend/client/workflow-client', true, ['WorkflowClient', 'WorkflowEnqueueOptions']),
+    namedAddition('src/workflows/workflow-actor-start-contract', true, ['WorkflowActorStartResult']),
+  ];
+  const workflowTargets = new Set(expectedWorkflowAdditions.map(record => record.target));
+  const workflowAdditive = result.records.filter(record => workflowTargets.has(record.target));
+  expect(workflowAdditive).toEqual(expectedWorkflowAdditions);
+  // Only the just-asserted exact declarations are additive; every old record,
+  // ordering, alias, declaration/item type marker and frozen digest stays checked.
+  const admittedAdditions = new Set([...jobsAdditive, ...workflowAdditive]);
+  const preserved = result.records.filter(record => !admittedAdditions.has(record) && record.target !== additiveTarget && !menuPart(record) && !documentPart(record)
     && !loggingTargets.has(record.target) && !feedbackTargets.has(record.target) && !domainPart(record) && !drawerPart(record) && !blogPart(record) && !palettePart(record))
     .map(record => Array.isArray(record.clause) && (record.target === popoverTarget || record.target === appShellTarget)
       ? { ...record, clause: record.clause.filter(item => record.target === popoverTarget ? !anchorNames.has(item.name) : item.name !== 'AppShellLinkProps') } : record);
@@ -147,7 +178,7 @@ test('curated facades preserve every original ordered named/type/star source con
     'JsonDocumentEdit', 'JsonDocumentEditor', 'JsonDocumentEditorHandle', 'JsonDocumentEditorProps', 'JsonDocumentMode',
     'JsonDocumentParseResult', 'JsonDocumentPatch', 'JsonDocumentPath', 'JsonDocumentSaveContext', 'JsonDocumentValue', 'diffJsonDocument', 'parseDocumentSource', 'parseJsonDocument',
   ]);
-  expect(result.files).toHaveLength(41);
+  expect(result.files).toHaveLength(42);
   expect(preserved).toHaveLength(296);
   expect(preserved.reduce((count, record) => count + (Array.isArray(record.clause) ? record.clause.length : 0), 0)).toBe(1455);
   expect(preserved.filter(record => record.clause === null)).toHaveLength(14);
@@ -177,7 +208,11 @@ test('the forwarding facade keeps the original public type and implementation sy
   const canonical = (symbol: ts.Symbol) => symbol.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(symbol) : symbol;
   const changed = current.filter(symbol => canonical(symbol) !== canonical(baselineByName.get(symbol.name)!)).map(symbol => symbol.name);
   expect(changed).toEqual([]);
-  const facadeDiagnostics = program.getSemanticDiagnostics().filter(diagnostic => diagnostic.file
+  const facadeDiagnostics = [ENTRY, BASELINE, ...result.files].flatMap(path => {
+    const source = program.getSourceFile(path);
+    if (!source) throw new Error(`Facade source was not admitted: ${relative(ROOT, path)}`);
+    return program.getSemanticDiagnostics(source);
+  }).filter(diagnostic => diagnostic.file
     && (diagnostic.file.fileName === ENTRY || diagnostic.file.fileName === BASELINE || result.files.includes(diagnostic.file.fileName)));
   expect(facadeDiagnostics.map(diagnostic => ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'))).toEqual([]);
 }, 60_000);

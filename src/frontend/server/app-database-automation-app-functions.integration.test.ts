@@ -8,6 +8,12 @@ import { Database } from 'bun:sqlite';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { MemoryEventStore, OBS_CODES } from '../../observability';
+import { DATABASE_ERROR_CODES } from '../../databases/database-error';
+import {
+  DATABASE_OBSERVABILITY_MAX_DURATION_MS, DATABASE_OBSERVABILITY_MAX_SLOT,
+  DATABASE_OBSERVABILITY_PHASES,
+} from '../../databases/database-observability-contract';
 import {
   authenticatedOnly, createApp, defineResource, tenantRealm,
   type DatabaseSerializableValue,
@@ -21,16 +27,23 @@ import {
 
 type App = Awaited<ReturnType<typeof createApp>>;
 interface Principal { accessToken: string; tenant: { tenantId: string } }
-interface Fixture { app: App; root: string; base: string; owner: Principal; alpha: Principal; beta: Principal }
+interface Fixture { app: App; root: string; base: string; diagnostics: ReturnType<typeof createNativeDiagnostics>; owner: Principal; alpha: Principal; beta: Principal }
 const apps = new Set<App>();
 const roots = new Set<string>();
+const diagnosticFixtures = new Set<ReturnType<typeof createNativeDiagnostics>>();
 
 afterEach(async () => {
-  await Promise.all([...apps].map((app) => app.stop(true)));
-  apps.clear();
-  resetAppFunctionFixture();
-  await Promise.all([...roots].map((root) => rm(root, { recursive: true, force: true })));
-  roots.clear();
+  for (const diagnostics of diagnosticFixtures) diagnostics.capture('before-stop');
+  try {
+    await Promise.all([...apps].map((app) => app.stop(true)));
+    apps.clear();
+    resetAppFunctionFixture();
+    await Promise.all([...roots].map((root) => rm(root, { recursive: true, force: true })));
+    roots.clear();
+  } finally {
+    for (const diagnostics of diagnosticFixtures) diagnostics.capture('after-stop-attempt');
+    diagnosticFixtures.clear();
+  }
 }, 30_000);
 
 describe('parameterized app functions from Fabric database changes', () => {
@@ -135,6 +148,8 @@ async function createFixture(): Promise<Fixture> {
   await mkdir(scratch, { recursive: true });
   const root = await mkdtemp(join(scratch, 'automation-app-functions-'));
   roots.add(root);
+  const diagnostics = createNativeDiagnostics();
+  diagnosticFixtures.add(diagnostics);
   await mkdir(join(root, 'app'));
   const app = await createApp({
     db: { mode: 'file', path: join(root, 'application.db') },
@@ -158,12 +173,12 @@ async function createFixture(): Promise<Fixture> {
     )), serverPluginsDir: false,
     serverMiddlewareDir: false, serverResourcesDir: false,
     workflows: false, email: false, stateSync: false, ai: false, vector: false, pdf: false, kv: false,
-    sitemap: false, observability: { console: false, endpoint: false },
+    sitemap: false, observability: { console: false, endpoint: false, store: diagnostics.events },
   });
   apps.add(app);
   app.listen({ hostname: '127.0.0.1', port: 0 });
   const base = `http://127.0.0.1:${app.server!.port}`;
-  const seed = { app, root, base } as Fixture;
+  const seed = { app, root, base, diagnostics } as Fixture;
   async function register(label: string): Promise<Principal> {
     const name = `${label}-${crypto.randomUUID()}`;
     const result = await request(seed, '/auth/register', undefined, 'POST', {
@@ -173,7 +188,7 @@ async function createFixture(): Promise<Fixture> {
     expect(result.tenant.tenantId).toBeString();
     return result as Principal;
   }
-  return { app, root, base, owner: await register('owner'), alpha: await register('alpha'), beta: await register('beta') };
+  return { app, root, base, diagnostics, owner: await register('owner'), alpha: await register('alpha'), beta: await register('beta') };
 }
 
 function argumentsFor(recordId: string, behavior: FixtureFunctionArguments['behavior'], requestedTenantId: string): FixtureFunctionArguments {
@@ -188,18 +203,27 @@ async function createJob(fixture: Fixture, principal: Principal, id: string, par
 }
 
 async function request(
-  fixture: Pick<Fixture, 'base'>, path: string, principal?: Principal,
+  fixture: Pick<Fixture, 'base' | 'diagnostics'>, path: string, principal?: Principal,
   method = 'GET', body?: DatabaseSerializableValue, status = 200,
 ): Promise<Record<string, any>> {
-  const response = await fetch(`${fixture.base}${path}`, {
-    method, headers: {
-      ...(principal ? { Authorization: `Bearer ${principal.accessToken}` } : {}),
-      ...(body === undefined ? {} : { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() }),
-    }, ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  });
-  const value = await response.json() as Record<string, any>;
-  expect(response.status, `${method} ${path}: ${JSON.stringify(value)}`).toBe(status);
-  return value;
+  fixture.diagnostics.mark('request-start', path, method);
+  let response: Response | undefined;
+  try {
+    response = await fetch(`${fixture.base}${path}`, {
+      method, headers: {
+        ...(principal ? { Authorization: `Bearer ${principal.accessToken}` } : {}),
+        ...(body === undefined ? {} : { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() }),
+      }, ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    fixture.diagnostics.mark('response-received', path, method, response.status);
+    const value = await response.json() as Record<string, any>;
+    expect(response.status, 'Native request status').toBe(status);
+    return value;
+  } catch (error) {
+    fixture.diagnostics.mark('request-failed', path, method, response?.status);
+    fixture.diagnostics.capture('request-failed');
+    throw error;
+  }
 }
 
 async function eventually<T>(read: () => Promise<T>, ready: (value: T) => boolean, description: string): Promise<T> {
@@ -217,4 +241,63 @@ function bounded<T>(operation: Promise<T>, description: string): Promise<T> {
   return Promise.race([operation, new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => reject(new Error(`Timed out waiting for ${description}.`)), 15_000);
   })]).finally(() => clearTimeout(timer));
+}
+
+/** Bounded fixture-only diagnostics; never serialize a raw event or caught error. */
+function createNativeDiagnostics() {
+  const events = new MemoryEventStore({ maxEvents: 128 });
+  const stages: { stage: string; route: string; method: string; status?: number }[] = [];
+  const definitions = new Map([
+    OBS_CODES.DATABASE_COORDINATOR_STARTED, OBS_CODES.DATABASE_COORDINATOR_FAILED,
+    OBS_CODES.DATABASE_RUNTIME_OPENED, OBS_CODES.DATABASE_RUNTIME_OPEN_FAILED,
+    OBS_CODES.DATABASE_EXECUTOR_FAILED, OBS_CODES.DATABASE_QUEUE_TIMEOUT,
+    OBS_CODES.DATABASE_OPERATION_FAILED, OBS_CODES.DATABASE_OPERATION_OUTCOME_UNKNOWN,
+    OBS_CODES.DATABASE_HOT_DURABILITY_FAILED, OBS_CODES.DATABASE_AUTOMATION_DISPATCH_FAILED,
+    OBS_CODES.RESOURCE_CRUD_FAILED,
+  ].map(definition => [definition.code, definition]));
+  const errorCodes: ReadonlySet<string> = new Set(DATABASE_ERROR_CODES);
+  const phases: ReadonlySet<string> = new Set(DATABASE_OBSERVABILITY_PHASES);
+  const outcomes: ReadonlySet<string> = new Set(['not-started', 'not-committed', 'unknown']);
+  function routeFor(path: string): string {
+    if (["/auth/register","/api/resources/function_jobs","/api/resources/published_documents"].includes(path)) return path;
+    if (path.startsWith("/auth/platform/tenants/")) return "/auth/platform/tenants/:tenantId";
+    if (path.startsWith("/api/resources/function_jobs/")) return "/api/resources/function_jobs/:id";
+    if (path.startsWith("/api/resources/published_documents/")) return "/api/resources/published_documents/:id";
+    if (path.startsWith("/proof/function-jobs/")) return "/proof/function-jobs/:id";
+    return 'other';
+  }
+  return {
+    events,
+    mark(stage: 'request-start' | 'response-received' | 'request-failed', path: string, method: string, status?: number) {
+      stages.push({ stage, route: routeFor(path), method: ['GET', 'POST', 'PATCH'].includes(method) ? method : 'other',
+        ...(status === undefined ? {} : { status }) });
+      if (stages.length > 32) stages.shift();
+    },
+    capture(stage: 'request-failed' | 'before-stop' | 'after-stop-attempt') {
+      try {
+        const nativeEvents = events.query({ limit: 128 }).events.flatMap(event => {
+          const definition = definitions.get(event.code);
+          if (!definition) return [];
+          const input = event.metadata ?? {}, metadata: Record<string, string | number | boolean> = {};
+          for (const key of ['errorCode', 'databaseCode'] as const) {
+            const value = input[key];
+            if (typeof value === 'string' && errorCodes.has(value)) metadata[key] = value;
+          }
+          const outcome = input.outcome ?? input.databaseOutcome;
+          if (typeof outcome === 'string' && outcomes.has(outcome)) metadata.outcome = outcome;
+          if (typeof input.retryable === 'boolean') metadata.retryable = input.retryable;
+          if (typeof input.durationMs === 'number' && Number.isSafeInteger(input.durationMs)
+            && input.durationMs >= 0 && input.durationMs <= DATABASE_OBSERVABILITY_MAX_DURATION_MS) metadata.durationMs = input.durationMs;
+          if (typeof input.phase === 'string' && phases.has(input.phase)) metadata.phase = input.phase;
+          if (input.role === 'writer' || input.role === 'reader') metadata.role = input.role;
+          if (typeof input.slot === 'number' && Number.isSafeInteger(input.slot)
+            && input.slot >= 0 && input.slot <= DATABASE_OBSERVABILITY_MAX_SLOT) metadata.slot = input.slot;
+          return [{ name: definition.prefix, code: definition.code, metadata }];
+        });
+        console.error('Synthetic native database diagnostics', JSON.stringify({
+          fixture: 'automation-app-functions', stage, stages, events: nativeEvents,
+        }));
+      } catch { /* Diagnostics must not replace the original failure or cleanup. */ }
+    },
+  };
 }
