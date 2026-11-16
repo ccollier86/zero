@@ -1492,7 +1492,10 @@ candidate or release gate:
 Do not sum these into an invented full-suite pass or attach them to the old
 archive's qualification. The root agent's combined ten-file check passed: 60
 tests, zero failures and 334 assertions, including the direct-dependency test.
-Fresh frozen-source qualification is next after a committed candidate. Final
+The first fresh frozen-source check at `21bc7c5` passed both frozen installs but
+rejected three typing diagnostics in the new regression fixtures (an unknown
+JSON5 result and nullable change row). Those fixture types were corrected; the
+failed record remains retained, and a fresh source/type check is required. Final
 integration review and a separate qualification/release decision remain pending.
 No main/tag/updater selection or published archive was changed by these
 working-tree fixes. No new calendar/backend,

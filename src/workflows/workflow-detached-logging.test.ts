@@ -64,7 +64,7 @@ for (const format of ['graph', 'legacy'] as const) {
 
       let instanceId: string | undefined;
       unsubscribe = f.db.onChange(change => {
-        if (change.table === 'workflow_instances' && change.row?.instance_id === instanceId && change.row.status === 'completed') completed.release();
+        if (change.table === 'workflow_instances' && change.row?.instance_id === instanceId && change.row?.status === 'completed') completed.release();
       });
       const receipt = await within(attributed(() => f.service.enqueueAsActorOnce(
         format === 'graph' ? 'detached-graph' : 'detached-legacy', {}, f.context, { idempotencyKey: 'detached:one' },
