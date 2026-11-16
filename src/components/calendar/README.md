@@ -6,6 +6,9 @@ family. Its focused public entries are `@zero/framework/calendar` and
 these exports are not a scheduling service or a production booking engine. See
 the [return handoff](../../../docs-next/_work/calendar-return-handoff.md) before
 planning authoritative persistence, availability, booking or reminders.
+The [managed integration plan](../../../docs-next/_work/calendar-integration-plan.md)
+defines the proposed backend/async UI contract and remaining core integration
+gates; it is not an implemented service or a replacement for these local UI APIs.
 
 ## Organization
 

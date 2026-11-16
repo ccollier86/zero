@@ -393,17 +393,20 @@ the linked documentation.
 
 ## Collaboration and communications
 
-- [ ] **Calendar and scheduling** — Native tokenized UI is preserved on the
-  calendar feature branch, not yet released. The shared
+- [ ] **Calendar and scheduling** — Native tokenized experimental UI and the shared
   [jobs/worker foundation](../docs-next/_work/durable-jobs-and-workers-plan.md)
-  is approved and in progress before calendar backend integration; preserve
-  the [return handoff](../docs-next/_work/calendar-return-handoff.md).
+  shipped in 2.11.0. Authoritative calendar backend work remains planned; follow
+  the [managed integration plan](../docs-next/_work/calendar-integration-plan.md)
+  and preserve the [return handoff](../docs-next/_work/calendar-return-handoff.md).
+  The plan distinguishes source-reviewed foundation follow-ups from the selected
+  archive and identifies required source/Jobs eligibility/capacity integration.
   - Support an internal Google Calendar-like experience with realtime events,
     recurrence, availability, resources, time zones, reminders, and permission
     policy.
-  - Evaluate an optional public Calendly-like booking experience.
-  - Decide through design work whether internal calendar and public scheduling
-    are two modes of one plugin or cooperating packages.
+  - Provide optional public Calendly-like booking through the same domain,
+    with a separate narrow proof/privacy boundary and server-owned policy.
+  - Integrate as an opt-in native system, preserving small/simple configurations
+    and independently composable UI rather than requiring external services.
 
 - [ ] **Tenant-aware chat** — **Official plugin**. Build a complete messaging
   product on Zero's existing rooms, presence, typing, notifications, storage,

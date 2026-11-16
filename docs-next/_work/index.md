@@ -29,6 +29,11 @@ publication, search, and production agent bundles.
     handoffs, bounded overlap/recovery and explicit remaining managed integration.
   - [Calendar return handoff](./calendar-return-handoff.md): preserved UI and
     backend requirements to resume only after the shared foundation is qualified.
+  - [Calendar managed integration plan](./calendar-integration-plan.md): reviewed
+    configuration-to-UI/backend design, private Fabric placement, Guardian,
+    authoritative booking/recurrence, Jobs/Torrent integration gaps, capacity,
+    live updates, async native UI, adoption and staged qualification. Proposed,
+    not an implemented calendar backend.
 
 - [Logging and auditing replacement](./logging-auditing-replacement-plan.md):
   the current generic product plan replacing transport-centered activity with

@@ -24,6 +24,13 @@ The foundation and experimental frontend exports shipped in Zero 2.11.0 on
 2026-11-16. This satisfies that framework release gate, not calendar backend
 acceptance or permission to begin implementation without the user's plan review.
 
+The 2026-11-16 review expanded this handoff into the
+[end-to-end managed integration plan](./calendar-integration-plan.md). Use that
+plan for contracts, dependency order and acceptance; this document remains the
+preserved visual/requirement handoff. The plan explicitly identifies the still-new
+source/service Jobs bridge, synchronous eligibility boundary and retained-capacity
+design needed for production reminders. Its API/configuration names are proposals.
+
 ## Checkpoints and places to resume
 
 - Historical starting baseline: `05344d46a5d0178cdb5df3ab02bbe763ef6aa3cd`, Zero 2.10.5.

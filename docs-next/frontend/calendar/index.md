@@ -27,6 +27,9 @@ The shared scheduling/worker framework release gate is satisfied. Calendar
 backend work still requires plan review with the user before implementation.
 The [return handoff](../../_work/calendar-return-handoff.md) preserves the reviewed
 UI and explicit backend prerequisites; start the next design discussion there.
+The [managed integration plan](../../_work/calendar-integration-plan.md) now
+expands those requirements into proposed configuration, domain/service, async UI
+and qualification contracts. It does not add backend APIs to the released UI.
 
 Sources and the full composition guide are in
 [`src/components/calendar/README.md`](../../../src/components/calendar/README.md).
