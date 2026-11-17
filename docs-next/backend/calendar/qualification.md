@@ -42,6 +42,67 @@ part of every overlap lookup. This is not a wall-clock throughput benchmark or
 an assertion that arbitrary future recurrence rules have the same duration bound.
 Changing the admitted interval invariant must update both validation and lookup.
 
+## November 17 appointment-type and typed-booking stage
+
+The next source checkpoint adds versioned type catalogs, scope-managed resource
+type policies, historical appointment/hold bindings and native server/HTTP/SDK/live
+hook composition. New bookings and hold confirmation check the active exact
+catalog generation, resource-policy intersection, duration/buffers, availability
+and conflicts in the canonical source transaction. Catalog edits do not relabel
+or reshape existing appointments. Timezone-only/no-op grandfathering, explicit
+reschedule preserve/switch/clear semantics and historical binding replay remain
+separate from current admission.
+
+Selected-resource catalogs authorize every resource before applying active-type
+intersection and limits. Busy-only access cannot query type selectors. Omitted
+selection is a manager setup catalog; explicit empty selection is empty, including
+in SDK DTO admission. Catalog and resource-policy editing are scope-manager-only.
+Type/detail/policy hooks use the existing known-commit and current-scope retirement
+path; SDK reset, tenant switch and disconnect retire all three stream families.
+
+The independent review identified and corrected two concrete defects:
+
+- A rejected type reference could distinguish existing/missing/unavailable
+  generations through different errors/default normalization. Typed v1 intents
+  now normalize from wire fields alone before receipt lookup. New callback policy
+  checks precede every client-selected catalog lookup, including missing/revoked
+  type, default-overflow and reschedule probes. Accepted replay still checks the
+  original digest and current rights without fresh policy readmission. Legacy
+  untyped intent hashes remain exact, even after a later first typed binding.
+- A policy could otherwise be appended to a resource revision completed by a
+  different operation. Additive `005` now seals policy history/member/pointer
+  generation against every same-resource effect intent. Binding guards also seal
+  accepted appointment/hold generations, enforce nullable-pair/interval consistency
+  and require exact typed-hold transfer in both directions.
+
+Native-memory populated `004 → 005` migration tests preserve all preceding rows,
+trigger SQL, ledgers, true receipt kinds and untyped history without backfill. All
+four old function checksums and the full `004` declaration remain pinned. Actual
+registered selector SQL plans after 1,000 retained policy revisions use indexed
+current-pointer/history/member identities, with all-resource intersection before
+pagination. This is not a disk throughput or latency benchmark.
+
+| Type-stage evidence | Result | Boundary |
+| --- | --- | --- |
+| Final integrated calendar domain/runtime/native HTTP/SDK/hooks/presentation/readable-audit set | 441 tests, 8,935 assertions, 53 files; passed on pinned Bun 1.4.4 | Memory-only; physical coordinator seams remain explicitly simulated |
+| Scoped source and regression-fixture no-emit TypeScript | 193 root files, zero diagnostics; passed | Includes the prepared physical definitions, not their execution |
+| Pure migration build-transform tests | 4 tests, 15 assertions; passed | Not an executed bundle, actor or installed archive |
+| Documentation structural graph | 899 pages, 899 reachable, zero problems | Canonical IDs, links and anchors |
+
+Source-atomic type/policy/typed-booking evidence contains opaque identity and bounded
+revision/count/mode/active facts only. Replay/no-op emits no false change. Late audit
+pressure rolls back parents, reservations, bindings, pointers, usage and receipts.
+Owned memory/query/logging/stream handles close in `finally`; no physical fixtures,
+actors, builds, dependency trees or release artifacts were created.
+
+Eleven native file/actor test definitions are now prepared, including typed
+catalog/policy/booking/hold history across full actor/SYSTEM restart. They and the
+two managed variants are unexecuted under the unchanged filesystem-integrity hold.
+The connected editor/type-management UI, recurrence, participants, Jobs/Torrent
+effects and physical/browser/Linux/archive/updater qualification remain unfinished.
+The hosted demo and selected updater release are unchanged. This is not full
+calendar completion or application deployment authorization.
+
 ## November 17 location-directory and reactive-resource stage
 
 The source branch adds scope-owned versioned locations, resource assignments,
@@ -103,7 +164,7 @@ direct/detail/assignment withdrawal after domain grant loss and bounded direct
 retry under continuous mutation. An independent source review found no remaining
 concrete location-stage defect after the recorded corrections.
 
-The prepared file-backed suite now contains ten tests, including location-first
+At the location checkpoint, the prepared file-backed suite contained ten tests, including location-first
 provisioning, catalog/assignment persistence and original receipt replay across
 full SYSTEM/actor restart. The existing two managed-compliance variants remain
 prepared. None of these physical definitions, real-browser flows, Linux bundles
@@ -317,7 +378,7 @@ repository's applicable suite, artifact hashing and updater selection. A compile
 executable with the default source actor remains deliberately unavailable.
 
 Recurring working-hours/holiday expansion, offer/slot generation, public booking proofs,
-participants/appointment-type catalogs, effective-dated location eligibility and
+participants, connected type-selection/management controls, effective-dated location eligibility and
 appointment visit locations, recurrence, clinical transitions,
 source-bound Jobs/Torrent effects, reminders,
 outbound channels, public self-booking and AI remain later stages of the approved
@@ -325,7 +386,7 @@ integration plan. The hosted local-state UI is not evidence that these backend
 features are implemented. Keep the independent core useful without silently
 enabling optional services or treating this checkpoint as full calendar completion.
 
-The additive migrations and scheduling/block/authenticated-hold/location paths also need physical
+The additive migrations and scheduling/block/authenticated-hold/location/type paths also need physical
 existing-file upgrade/recovery, actor restart/contention, managed compliance and
 real-browser acceptance alongside the earlier core gates. Passing source/memory
 checks is not evidence those scenarios have run or that a production domain may

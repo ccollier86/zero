@@ -69,7 +69,7 @@ lives in its own file-backed Fabric domain. An opaque owner identity and root/
 realm fingerprints prevent reinterpreting unrelated or missing retained files as
 a fresh calendar. Established files are opened existing-only. First writes may
 provision only through a currently permitted resource creator or a scope-manager
-location creation; reads never
+location/type creation; reads never
 create a domain. Owner catalog installation requires the ordinary explicit
 migration permission (or ephemeral test storage). Incompatible metadata is not
 rewritten, dropped or relabeled.
@@ -106,6 +106,9 @@ deployment and custom actor launch are not qualified public managed options.
 5. Create real resources through the scoped facade and assign grants deliberately.
    Owners/grantees are opaque existing identity references; this core does not
    expose a user-directory discovery or invite API and never creates accounts.
+   Optional appointment types/policies use the same managed scope. Catalog/policy
+   editing requires scope management; restrictive policy does not cancel existing
+   appointments or let a provider owner bypass type requirements.
 6. Add the connected workspace inside existing Client/AppProvider and native
    modal/tooltip providers. Test permissions, conflicts, hard refresh/reconnect,
    revocation and unknown outcomes on the actual installed archive.

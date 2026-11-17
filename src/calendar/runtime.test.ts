@@ -110,10 +110,14 @@ test('native empty-scope broker reads allocate no owner, lease, file or fake res
   try {
     expect(await f.runtime.read<{ items: unknown[]; truncated: boolean; nextAfter: null }>(scope, 'calendar.resources', { actor }, noop)).toEqual({ items: [], truncated: false, nextAfter: null });
     expect(await f.runtime.read<{ items: unknown[]; truncated: boolean; nextAfter: null }>(scope, 'calendar.locations', { actor }, noop)).toEqual({ items: [], truncated: false, nextAfter: null });
+    expect(await f.runtime.read<{ items: unknown[]; truncated: boolean; nextAfter: null }>(scope, 'calendar.types', { actor }, noop)).toEqual({ items: [], truncated: false, nextAfter: null });
+    expect(await f.runtime.read<{ items: unknown[]; truncated: boolean; nextAfter: null }>(scope, 'calendar.types', { actor, resourceIds: [] }, noop)).toEqual({ items: [], truncated: false, nextAfter: null });
+    await expect(f.runtime.read(scope, 'calendar.types', { actor, resourceIds: ['missing'] }, noop)).rejects.toMatchObject({ code: 'CALENDAR_NOT_FOUND' });
+    await expect(f.runtime.read(scope, 'calendar.type', { actor: { ...actor, manageAll: false }, id: 'missing' }, noop)).rejects.toMatchObject({ code: 'CALENDAR_FORBIDDEN' });
     expect(await f.runtime.read<{ items: unknown[]; truncated: boolean; nextAfter: null }>(scope, 'calendar.resources', { actor, locationIds: ['missing'], regions: ['US-IN'] }, noop)).toEqual({ items: [], truncated: false, nextAfter: null });
     for (const name of ['calendar.busy', 'calendar.appointments', 'calendar.blocks']) expect(await f.runtime.read<{ items: unknown[]; truncated: boolean }>(scope, name, { actor, resourceIds: [], ...range }, noop)).toEqual({ items: [], truncated: false });
     expect(await f.runtime.read(scope, 'calendar.receipt', { actor, requestId: 'missing' }, noop)).toBeNull();
-    for (const name of ['calendar.appointment', 'calendar.block', 'calendar.availability', 'calendar.location', 'calendar.resourceLocations']) {
+    for (const name of ['calendar.appointment', 'calendar.block', 'calendar.availability', 'calendar.location', 'calendar.resourceLocations', 'calendar.type', 'calendar.resourceTypes']) {
       await expect(f.runtime.read(scope, name, { actor, id: 'missing' }, noop)).rejects.toMatchObject({ code: 'CALENDAR_NOT_FOUND' });
     }
     await expect(f.runtime.read(scope, 'calendar.busy', { actor, resourceIds: ['missing'], ...range }, noop)).rejects.toMatchObject({ code: 'CALENDAR_NOT_FOUND' });
@@ -131,6 +135,9 @@ test('empty projections reject malformed inputs, forged physical scope and async
     for (const filters of [{ locationIds: ['duplicate', 'duplicate'] }, { regions: ['US IN'] }, { regions: [null] }, { locationIds: Array.from({ length: 17 }, (_, i) => 'location-' + i) }]) {
       expect(() => emptyCalendarRead('calendar.resources', { actor, ...filters })).toThrow(CalendarError);
     }
+    for (const query of [{ resourceIds: ['duplicate', 'duplicate'] }, { resourceIds: [], limit: 0 }, { resourceIds: [], actorId: 'forged' }]) {
+      expect(() => emptyCalendarRead('calendar.types', { actor, ...query })).toThrow(CalendarError);
+    }
     await expect(f.runtime.read(trustedSystemServiceDataScope({ scopeKind: 'tenant', tenantId: 'other' }), 'calendar.resources', { actor }, noop)).rejects.toMatchObject({ code: 'CALENDAR_FORBIDDEN' });
     await expect(f.runtime.read(scope, 'calendar.resources', { actor }, async () => {})).rejects.toMatchObject({ code: 'CALENDAR_CONFIG_INVALID' });
     expect(f.stats().acquisitions).toBe(0);
@@ -145,6 +152,9 @@ test('only a fully admitted own/manager resource creation may provision a never-
     }
     await expect(f.runtime.write(scope, 'calendar.appointment.create', { actor, requestId: 'missing', resourceIds: ['missing'] }, 'missing', noop)).rejects.toMatchObject({ code: 'CALENDAR_NOT_FOUND' });
     await expect(f.runtime.write(scope, 'calendar.resource.create', { ...resource, timeZone: 'invalid' }, resource.requestId, noop)).rejects.toMatchObject({ code: 'CALENDAR_INPUT_INVALID' });
+    const type = { actor, requestId: 'type', id: 'type', label: 'Synthetic type', durationMinutes: 30 };
+    await expect(f.runtime.write(scope, 'calendar.type.create', { ...type, actor: { ...actor, manageAll: false } }, type.requestId, noop)).rejects.toMatchObject({ code: 'CALENDAR_FORBIDDEN' });
+    await expect(f.runtime.write(scope, 'calendar.type.create', { ...type, durationMinutes: 0 }, type.requestId, noop)).rejects.toMatchObject({ code: 'CALENDAR_INPUT_INVALID' });
     expect(f.stats().acquisitions).toBe(0);
     expect(f.system.prepare('SELECT count(*) AS count FROM _calendar_owners').get()).toEqual({ count: 0 });
   } finally { await f.close(); }

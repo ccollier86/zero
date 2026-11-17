@@ -8,6 +8,8 @@ test('calendar HTTP failures preserve stable domain codes and truthful operation
   for (const [code, status, outcome] of [
     ['CALENDAR_BOOKING_CONFLICT', 409, 'not-committed'],
     ['CALENDAR_REVISION_CONFLICT', 409, 'not-committed'],
+    ['CALENDAR_TYPE_STALE', 409, 'not-committed'],
+    ['CALENDAR_TYPE_CONFLICT', 409, 'not-committed'],
     ['CALENDAR_NOT_FOUND', 404, 'not-started'],
     ['CALENDAR_INPUT_INVALID', 400, 'not-started'],
     ['CALENDAR_OUTCOME_UNKNOWN', 503, 'unknown'],

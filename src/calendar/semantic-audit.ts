@@ -11,6 +11,8 @@ interface CalendarAuditMetadata {
   readonly revision: number;
   readonly resourceCount?: number;
   readonly locationCount?: number;
+  readonly typeCount?: number;
+  readonly mode?: 'unrestricted' | 'optional' | 'required';
   readonly active?: boolean;
   readonly status?: 'confirmed' | 'cancelled' | 'active' | 'held' | 'released';
 }
@@ -22,6 +24,8 @@ export function appendCalendarSemanticAudit(context: DatabaseWriteCommandContext
   const values: Record<string, LoggingScalar> = { sequence: change.seq, revision: metadata.revision };
   if (metadata.resourceCount !== undefined) values.resourceCount = metadata.resourceCount;
   if (metadata.locationCount !== undefined) values.locationCount = metadata.locationCount;
+  if (metadata.typeCount !== undefined) values.typeCount = metadata.typeCount;
+  if (metadata.mode !== undefined) values.mode = metadata.mode;
   if (metadata.active !== undefined) values.active = metadata.active;
   if (metadata.status !== undefined) values.status = metadata.status;
   const action = 'calendar.' + operation;
@@ -29,7 +33,7 @@ export function appendCalendarSemanticAudit(context: DatabaseWriteCommandContext
     // A real mutation sequence identifies A -> B -> A transitions independently of transport retries.
     id: 'calendar:' + calendarHash([action, change.table, change.rowId, change.seq]),
     family: 'workflow', action, outcome: 'succeeded', occurredAt: change.ts,
-    target: { type: operation.startsWith('location.') ? 'calendar.location' : operation.startsWith('resource.') ? 'calendar.resource' : operation.startsWith('block.') ? 'calendar.block'
+    target: { type: operation.startsWith('type.') ? 'calendar.appointment-type' : operation.startsWith('location.') ? 'calendar.location' : operation.startsWith('resource.') ? 'calendar.resource' : operation.startsWith('block.') ? 'calendar.block'
       : operation.startsWith('hold.') ? 'calendar.hold' : 'calendar.appointment', id: change.rowId },
     metadata: values,
   });

@@ -5,7 +5,8 @@ import { useClientMaybe, shouldUseSsrFallback } from './client-context';
 import { AuthorizationScopeBoundaryFence, useAuthorizationScopeBoundary, readAuthorizationScopeBoundaryKey,
   isAuthorizationDataReady, isAuthorizationScopeReady } from './authorization-scope-hooks';
 import type { Client, InternalClient } from './sdk';
-import type { CalendarAppointmentPage, CalendarAppointmentView, CalendarLocationPage, CalendarLocationPageQuery, CalendarLocationView, CalendarResourceLocationsView,
+import type { CalendarAppointmentPage, CalendarAppointmentView, CalendarAppointmentTypePage, CalendarAppointmentTypePageQuery, CalendarAppointmentTypeView, CalendarResourceTypesView,
+  CalendarLocationPage, CalendarLocationPageQuery, CalendarLocationView, CalendarResourceLocationsView,
   CalendarRangeQuery, CalendarResourcePage, CalendarResourcePageQuery, CalendarWatchOptions, CalendarWatchUpdate } from '../../calendar/contracts';
 import { CalendarReadError } from './calendar-mutation';
 export interface CalendarReadResult<T> {
@@ -26,6 +27,18 @@ export function useCalendarResources(query: CalendarResourcePageQuery = {}): Cal
 export function useCalendarLocations(query: CalendarLocationPageQuery = {}): CalendarReadResult<CalendarLocationPage> {
   return useCalendarLive<CalendarLocationPage>(JSON.stringify(['locations', query.limit ?? null, query.after ?? null]),
     (client, listener, options) => client.calendar.locations.watch(query, listener, options));
+}
+export function useCalendarAppointmentTypes(query: CalendarAppointmentTypePageQuery = {}): CalendarReadResult<CalendarAppointmentTypePage> {
+  return useCalendarLive<CalendarAppointmentTypePage>(JSON.stringify(['appointment-types', query.resourceIds ?? null, query.limit ?? null, query.after ?? null]),
+    (client, listener, options) => client.calendar.types.watch(query, listener, options));
+}
+export function useCalendarAppointmentType(id: string | null, readRevision?: string | number): CalendarReadResult<CalendarAppointmentTypeView> {
+  return useCalendarLive<CalendarAppointmentTypeView>(id === null ? null : JSON.stringify(['appointment-type', id, readRevision ?? null]),
+    (client, listener, options) => client.calendar.types.watchType(id!, listener, options));
+}
+export function useCalendarResourceTypes(id: string | null, readRevision?: string | number): CalendarReadResult<CalendarResourceTypesView> {
+  return useCalendarLive<CalendarResourceTypesView>(id === null ? null : JSON.stringify(['resource-types', id, readRevision ?? null]),
+    (client, listener, options) => client.calendar.types.watchForResource(id!, listener, options));
 }
 export function useCalendarLocation(id: string | null, readRevision?: string | number): CalendarReadResult<CalendarLocationView> {
   return useCalendarLive<CalendarLocationView>(id === null ? null : JSON.stringify(['location', id, readRevision ?? null]),

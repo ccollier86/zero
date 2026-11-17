@@ -124,6 +124,47 @@ test('source audit pressure rolls back location revision history and resource as
   } finally { f.close(); }
 });
 
+test('type catalog, resource policy and typed bookings emit private canonical facts without duplicating replay evidence', () => {
+  const f = fixture();
+  try {
+    f.resource();
+    const create = { actor, id: 'type', requestId: 'type', label: 'NEVER_LOG_CALENDAR_TYPE', durationMinutes: 30,
+      bufferBeforeMinutes: 2, bufferAfterMinutes: 3, colorKey: 'NEVER_LOG_CALENDAR_COLOR' };
+    f.command('type.create', create); f.command('type.create', create);
+    f.command('resource.types', { actor, id: 'person', requestId: 'policy', expectedRevision: 1, mode: 'required', typeIds: ['type'] });
+    const booking = { actor, id: 'typed', requestId: 'typed', resourceIds: ['person'], title: 'NEVER_LOG_CALENDAR_APPOINTMENT',
+      startAt: interval.startAt, endAt: '2026-12-01T10:30:00.000Z', timeZone: 'UTC', appointmentType: { id: 'type', revision: 1 } };
+    f.command('appointment.create', booking);
+    const replacement = { ...create, requestId: 'type-replacement', expectedRevision: 1, label: 'NEVER_LOG_CALENDAR_RENAMED_TYPE', active: false };
+    f.command('type.replace', replacement);
+    f.command('appointment.create', booking);
+    f.command('type.replace', { ...replacement, requestId: 'type-noop', expectedRevision: 2 });
+    const events = f.source!.control({}).rows.map(row => row.event);
+    expect(events.map(event => event.action)).toEqual(['calendar.resource.created', 'calendar.type.created',
+      'calendar.resource.types-changed', 'calendar.appointment.created', 'calendar.type.updated']);
+    expect(events[1]!.target).toEqual({ type: 'calendar.appointment-type', id: 'type' });
+    expect(events[2]!.metadata).toMatchObject({ typeCount: 1, mode: 'required', revision: 2 });
+    expect(events.every(event => event.actor.id === actor.userId && event.outcome === 'succeeded' && event.evidence === 'server-confirmed')).toBe(true);
+    expect(JSON.stringify(events)).not.toContain('NEVER_LOG_CALENDAR');
+    expect(JSON.stringify(events)).not.toContain(booking.startAt);
+    expect(new Set(events.map(event => event.id)).size).toBe(5);
+  } finally { f.close(); }
+});
+
+test('late audit pressure rolls back a typed booking together with its type history pointer and reservations', () => {
+  const f = fixture('enabled', 2);
+  try {
+    f.resource(); f.command('type.create', { actor, id: 'type', requestId: 'type', label: 'Private type', durationMinutes: 60 });
+    expect(() => f.command('appointment.create', { actor, id: 'typed', requestId: 'typed', resourceIds: ['person'], title: 'Private',
+      ...interval, appointmentType: { id: 'type', revision: 1 } }))
+      .toThrow(expect.objectContaining({ code: 'DATABASE_BACKPRESSURE', outcome: 'not-committed' }));
+    expect(f.db.get('calendar_appointments', 'typed')).toBeNull(); expect(f.db.list('_calendar_reservations')).toEqual([]);
+    expect(f.db.list('_calendar_appointment_type_bindings')).toEqual([]); expect(f.db.list('_calendar_appointment_type_current')).toEqual([]);
+    expect(f.db.get('_calendar_usage', 'appointmentTypeHistory')).toBeNull(); expect(f.db.get('_calendar_usage', 'appointments')).toBeNull();
+    expect(f.db.get('_calendar_usage', 'receipts')!.count).toBe(2); expect(f.source!.control({}).queued).toBe(2);
+  } finally { f.close(); }
+});
+
 test('disabled logging and disabled workflow capture create no semantic calendar evidence', () => {
   for (const mode of ['disabled', 'workflow-disabled'] as const) {
     const f = fixture(mode);

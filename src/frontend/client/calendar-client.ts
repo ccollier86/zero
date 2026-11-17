@@ -2,6 +2,8 @@
 import type { CalendarAppointmentInput, CalendarAppointmentPage, CalendarAppointmentView, CalendarBusyPage, CalendarCommandReceipt,
   CalendarAvailabilityInput, CalendarAvailabilityView, CalendarAvailabilityWindow, CalendarBlockInput, CalendarBlockPage, CalendarBlockRescheduleInput, CalendarBlockView,
   CalendarHoldInput, CalendarHoldView, CalendarHoldPage, CalendarHoldConfirmationInput,
+  CalendarAppointmentTypeInput, CalendarAppointmentTypeReplacement, CalendarAppointmentTypeReference, CalendarAppointmentTypeSnapshot,
+  CalendarAppointmentTypeView, CalendarAppointmentTypePageQuery, CalendarAppointmentTypePage, CalendarResourceTypesInput, CalendarResourceTypesView,
   CalendarLocationInput, CalendarLocationReplacement, CalendarLocationView, CalendarLocationPageQuery, CalendarLocationPage, CalendarResourceLocationsView,
   CalendarControlOptions, CalendarGrant, CalendarRangeQuery, CalendarReadOptions, CalendarRequestOptions, CalendarRescheduleInput, CalendarResourceInput,
   CalendarResourcePage, CalendarResourcePageQuery, CalendarResourceView, CalendarWatchOptions, CalendarWatchUpdate, ScopedCalendar } from '../../calendar/contracts';
@@ -49,6 +51,47 @@ export function createCalendarClient(fetch: <T = unknown>(path: string, init?: F
     return watch('/' + kind + '/live?' + params, parse, listener, supplied);
   }
   return Object.freeze({
+    types: Object.freeze({
+      list(supplied?: CalendarAppointmentTypePageQuery, readOptions?: CalendarReadOptions) {
+        const page = typePageRequest(supplied);
+        return read('/types' + page.search, value => typePage(value, page.query), 'GET', undefined, readSignal(readOptions));
+      },
+      get(id: string, readOptions?: CalendarReadOptions) {
+        const targetId = requestKey(id);
+        return read('/types/' + encodeURIComponent(targetId), value => {
+          const accepted = typeView(value); if (accepted.id !== targetId) throw invalid(); return accepted;
+        }, 'GET', undefined, readSignal(readOptions));
+      },
+      create(input: CalendarAppointmentTypeInput, supplied: CalendarRequestOptions) {
+        return mutation('/types', { type: typeInput(input), options: options(supplied) }, supplied, 'type.created');
+      },
+      replace(id: string, input: CalendarAppointmentTypeReplacement, supplied: CalendarControlOptions) {
+        return mutation('/types/' + encodeURIComponent(requestKey(id)),
+          { type: typeInput(input, true), options: options(supplied, true) }, supplied, 'type.updated', id, undefined, 'PUT');
+      },
+      forResource(id: string, readOptions?: CalendarReadOptions) {
+        const resourceId = requestKey(id);
+        return read('/resources/' + encodeURIComponent(resourceId) + '/types', value => {
+          const accepted = resourceTypesView(value); if (accepted.resourceId !== resourceId) throw invalid(); return accepted;
+        }, 'GET', undefined, readSignal(readOptions));
+      },
+      watch(query: CalendarAppointmentTypePageQuery, listener: (page: CalendarAppointmentTypePage, update?: CalendarWatchUpdate) => void, supplied: CalendarWatchOptions = {}) {
+        const page = typePageRequest(query);
+        return watch('/types/live' + page.search, value => typePage(value, page.query), listener, supplied);
+      },
+      watchType(id: string, listener: (type: CalendarAppointmentTypeView, update?: CalendarWatchUpdate) => void, supplied: CalendarWatchOptions = {}) {
+        const targetId = requestKey(id);
+        return watch('/types/' + encodeURIComponent(targetId) + '/live', value => {
+          const accepted = typeView(value); if (accepted.id !== targetId) throw invalid(); return accepted;
+        }, listener, supplied);
+      },
+      watchForResource(id: string, listener: (types: CalendarResourceTypesView, update?: CalendarWatchUpdate) => void, supplied: CalendarWatchOptions = {}) {
+        const resourceId = requestKey(id);
+        return watch('/resources/' + encodeURIComponent(resourceId) + '/types/live', value => {
+          const accepted = resourceTypesView(value); if (accepted.resourceId !== resourceId) throw invalid(); return accepted;
+        }, listener, supplied);
+      },
+    }),
     locations: Object.freeze({
       list(supplied?: CalendarLocationPageQuery, readOptions?: CalendarReadOptions) {
         const page = pageRequest(supplied);
@@ -111,6 +154,10 @@ export function createCalendarClient(fetch: <T = unknown>(path: string, init?: F
       setLocations(id: string, locationIds: readonly string[], supplied: CalendarControlOptions) {
         return mutation('/resources/' + encodeURIComponent(requestKey(id)) + '/locations',
           { locationIds: ids(locationIds, true).sort(), options: options(supplied, true) }, supplied, 'resource.locations-changed', id, undefined, 'PUT');
+      },
+      setAppointmentTypes(id: string, input: CalendarResourceTypesInput, supplied: CalendarControlOptions) {
+        return mutation('/resources/' + encodeURIComponent(requestKey(id)) + '/types',
+          { ...resourceTypesInput(input), options: options(supplied, true) }, supplied, 'resource.types-changed', id, undefined, 'PUT');
       },
       watch(query: CalendarResourcePageQuery, listener: (page: CalendarResourcePage, update?: CalendarWatchUpdate) => void, supplied: CalendarWatchOptions = {}) {
         const page = pageRequest(query, true);
@@ -239,6 +286,67 @@ function pageRequest(value: unknown, resource = false): { search: string; query:
   return { search: params.size ? '?' + params : '', query: Object.freeze({ ...(r.limit === undefined ? {} : { limit: r.limit as number }),
     ...(r.after === undefined ? {} : { after: r.after as string }) }) };
 }
+function typePageRequest(value: unknown): { search: string; query: CalendarAppointmentTypePageQuery } {
+  const r = record(value ?? {}, ['limit', 'after', 'resourceIds']), params = new URLSearchParams();
+  const limit = r.limit === undefined ? undefined : integer(r.limit, 1, 100);
+  const after = r.after === undefined ? undefined : requestKey(r.after);
+  const resourceIds = r.resourceIds === undefined ? undefined : Object.freeze(ids(r.resourceIds, true).sort());
+  if (limit !== undefined) params.set('limit', String(limit));
+  if (after !== undefined) params.set('after', after);
+  if (resourceIds !== undefined) params.set('resourceIds', resourceIds.join(','));
+  return { search: params.size ? '?' + params : '', query: Object.freeze({ ...(limit === undefined ? {} : { limit }),
+    ...(after === undefined ? {} : { after }), ...(resourceIds === undefined ? {} : { resourceIds }) }) };
+}
+function typeInput(value: unknown, replacement = false): Record<string, unknown> {
+  const fields = ['label', 'durationMinutes', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'colorKey', 'active'];
+  const r = record(value, fields); identifier(r.label, 256); integer(r.durationMinutes, 1, 44_640);
+  if (replacement && fields.some(field => !Object.hasOwn(r, field) || r[field] === undefined)) throw invalid();
+  for (const key of ['bufferBeforeMinutes', 'bufferAfterMinutes']) if (r[key] !== undefined) integer(r[key], 0, 1440);
+  if (r.colorKey !== undefined && r.colorKey !== null) region(r.colorKey);
+  if (r.active !== undefined && typeof r.active !== 'boolean') throw invalid();
+  return r;
+}
+function typeReference(value: unknown): CalendarAppointmentTypeReference {
+  const r = record(value, ['id', 'revision']);
+  if (Object.keys(r).length !== 2) throw invalid();
+  return Object.freeze({ id: requestKey(r.id), revision: integer(r.revision, 1) });
+}
+function typeSnapshot(value: unknown, view = false): CalendarAppointmentTypeSnapshot {
+  const r = record(value, ['id', 'revision', 'label', 'durationMinutes', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'colorKey', ...(view ? ['active'] : [])]);
+  if (Object.keys(r).length !== (view ? 8 : 7) || r.colorKey === undefined || view && typeof r.active !== 'boolean') throw invalid();
+  requestKey(r.id); integer(r.revision, 1); identifier(r.label, 256); integer(r.durationMinutes, 1, 44_640);
+  integer(r.bufferBeforeMinutes, 0, 1440); integer(r.bufferAfterMinutes, 0, 1440); if (r.colorKey !== null) region(r.colorKey);
+  return Object.freeze(r) as unknown as CalendarAppointmentTypeSnapshot;
+}
+function typeView(value: unknown): CalendarAppointmentTypeView { return typeSnapshot(value, true) as CalendarAppointmentTypeView; }
+function typePage(value: unknown, query: CalendarAppointmentTypePageQuery): CalendarAppointmentTypePage {
+  const r = record(value, ['items', 'truncated', 'nextAfter']);
+  if (Object.keys(r).length !== 3 || typeof r.truncated !== 'boolean') throw invalid();
+  if (r.nextAfter !== null) requestKey(r.nextAfter);
+  const items = values(r.items, 100).map(typeView); unique(items.map(item => item.id));
+  if (query.resourceIds !== undefined) {
+    if (query.resourceIds.length === 0 && (items.length !== 0 || r.truncated || r.nextAfter !== null)) throw invalid();
+    if (query.resourceIds.length > 0 && items.some(item => !item.active)) throw invalid();
+  }
+  pageBoundary(items, r.truncated, r.nextAfter, query);
+  return Object.freeze({ items: Object.freeze(items), truncated: r.truncated, nextAfter: r.nextAfter as string | null });
+}
+function resourceTypesInput(value: unknown): CalendarResourceTypesInput {
+  const r = record(value, ['mode', 'typeIds']);
+  if (Object.keys(r).length !== 2 || r.mode !== 'unrestricted' && r.mode !== 'optional' && r.mode !== 'required') throw invalid();
+  const typeIds = ids(r.typeIds, true).sort();
+  if (r.mode === 'unrestricted' && typeIds.length !== 0) throw invalid();
+  return Object.freeze({ mode: r.mode, typeIds: Object.freeze(typeIds) });
+}
+function resourceTypesView(value: unknown): CalendarResourceTypesView {
+  const r = record(value, ['resourceId', 'resourceRevision', 'mode', 'typeIds']);
+  if (Object.keys(r).length !== 4) throw invalid();
+  const resourceId = requestKey(r.resourceId), resourceRevision = integer(r.resourceRevision, 1);
+  const policy = resourceTypesInput({ mode: r.mode, typeIds: r.typeIds });
+  const original = values(r.typeIds, 16);
+  if (original.some((id, index) => id !== policy.typeIds[index])) throw invalid();
+  return Object.freeze({ resourceId, resourceRevision, ...policy });
+}
 function locationInput(value: unknown, replacement = false): Record<string, unknown> {
   const r = record(value, ['label', 'region', 'active']); identifier(r.label, 256);
   if (replacement && (Object.keys(r).length !== 3 || r.region === undefined || typeof r.active !== 'boolean')) throw invalid();
@@ -267,14 +375,15 @@ function resourceLocationsView(value: unknown): CalendarResourceLocationsView {
   return Object.freeze({ resourceId: r.resourceId as string, resourceRevision: r.resourceRevision as number, locationIds: Object.freeze(locationIds) });
 }
 function appointmentInput(value: unknown, create: boolean): Record<string, unknown> {
-  const r = record(value, ['startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', ...(create ? ['resourceIds', 'title'] : [])]);
+  const r = record(value, ['startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'appointmentType', ...(create ? ['resourceIds', 'title'] : [])]);
   const resourceIds = create ? ids(r.resourceIds) : undefined;
   if (create) identifier(r.title, 512);
   instant(r.startAt); instant(r.endAt);
   const duration = Date.parse(String(r.endAt)) - Date.parse(String(r.startAt));
   if (duration <= 0 || duration > 31 * 86400_000) throw invalid(); zone(r.timeZone);
   for (const key of ['bufferBeforeMinutes', 'bufferAfterMinutes']) if (!create || r[key] !== undefined) integer(r[key], 0, 1440);
-  return { ...r, ...(resourceIds === undefined ? {} : { resourceIds }) };
+  const appointmentType = Object.hasOwn(r, 'appointmentType') ? r.appointmentType === null && !create ? null : typeReference(r.appointmentType) : undefined;
+  return { ...r, ...(resourceIds === undefined ? {} : { resourceIds }), ...(appointmentType === undefined ? {} : { appointmentType }) };
 }
 function blockInput(value: unknown, create: boolean): Record<string, unknown> {
   const r = record(value, ['startAt', 'endAt', 'timeZone', ...(create ? ['resourceIds', 'title'] : [])]);
@@ -284,12 +393,13 @@ function blockInput(value: unknown, create: boolean): Record<string, unknown> {
   return { ...r, ...(resourceIds === undefined ? {} : { resourceIds }) };
 }
 function holdInput(value: unknown): Record<string, unknown> {
-  const r = record(value, ['resourceIds', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'ttlSeconds']);
+  const r = record(value, ['resourceIds', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'ttlSeconds', 'appointmentType']);
   const resourceIds = ids(r.resourceIds);
   interval(r.startAt, r.endAt); zone(r.timeZone);
   for (const key of ['bufferBeforeMinutes', 'bufferAfterMinutes']) if (r[key] !== undefined) integer(r[key], 0, 1440);
   if (r.ttlSeconds !== undefined) integer(r.ttlSeconds, 1, 900);
-  return { ...r, resourceIds };
+  const appointmentType = Object.hasOwn(r, 'appointmentType') ? typeReference(r.appointmentType) : undefined;
+  return { ...r, resourceIds, ...(appointmentType === undefined ? {} : { appointmentType }) };
 }
 function availabilityInput(value: unknown): CalendarAvailabilityInput {
   const r = record(value, ['mode', 'windows']);
@@ -348,12 +458,13 @@ function resourceView(value: unknown): CalendarResourceView {
   return Object.freeze(r) as unknown as CalendarResourceView;
 }
 function appointmentView(value: unknown): CalendarAppointmentView {
-  const r = record(value, ['id', 'revision', 'resourceIds', 'title', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'status', 'createdBy']);
-  if (Object.keys(r).length !== 11 || r.status !== 'confirmed' && r.status !== 'cancelled') throw invalid();
+  const r = record(value, ['id', 'revision', 'resourceIds', 'title', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'status', 'createdBy', 'appointmentType']);
+  if (Object.keys(r).length !== (Object.hasOwn(r, 'appointmentType') ? 12 : 11) || r.status !== 'confirmed' && r.status !== 'cancelled') throw invalid();
   requestKey(r.id); integer(r.revision, 1); const resourceIds = ids(r.resourceIds); identifier(r.title, 512); requestKey(r.createdBy);
   instant(r.startAt); instant(r.endAt); if (Date.parse(String(r.endAt)) <= Date.parse(String(r.startAt))) throw invalid(); zone(r.timeZone);
   integer(r.bufferBeforeMinutes, 0, 1440); integer(r.bufferAfterMinutes, 0, 1440);
-  return Object.freeze({ ...r, resourceIds: Object.freeze(resourceIds) }) as unknown as CalendarAppointmentView;
+  const binding = bookingTypeSnapshot(r);
+  return Object.freeze({ ...r, resourceIds: Object.freeze(resourceIds), ...binding }) as unknown as CalendarAppointmentView;
 }
 function blockView(value: unknown): CalendarBlockView {
   const r = record(value, ['id', 'revision', 'resourceIds', 'title', 'startAt', 'endAt', 'timeZone', 'status', 'createdBy']);
@@ -370,15 +481,23 @@ function blockPage(value: unknown): CalendarBlockPage {
 }
 function holdView(value: unknown): CalendarHoldView {
   const r = record(value, ['id', 'revision', 'resourceIds', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes',
-    'status', 'expiresAt', 'createdBy', 'appointmentId']);
-  if (Object.keys(r).length !== 12 || !['held', 'expired', 'released', 'confirmed'].includes(r.status as string)) throw invalid();
+    'status', 'expiresAt', 'createdBy', 'appointmentId', 'appointmentType']);
+  if (Object.keys(r).length !== (Object.hasOwn(r, 'appointmentType') ? 13 : 12) || !['held', 'expired', 'released', 'confirmed'].includes(r.status as string)) throw invalid();
   requestKey(r.id); integer(r.revision, 1); const resourceIds = ids(r.resourceIds); requestKey(r.createdBy);
   interval(r.startAt, r.endAt); instant(r.expiresAt); zone(r.timeZone);
   integer(r.bufferBeforeMinutes, 0, 1440); integer(r.bufferAfterMinutes, 0, 1440);
   if (Date.parse(String(r.expiresAt)) > Date.parse(String(r.startAt))) throw invalid();
   if (r.status === 'confirmed') requestKey(r.appointmentId);
   else if (r.appointmentId !== null) throw invalid();
-  return Object.freeze({ ...r, resourceIds: Object.freeze(resourceIds) }) as unknown as CalendarHoldView;
+  const binding = bookingTypeSnapshot(r);
+  return Object.freeze({ ...r, resourceIds: Object.freeze(resourceIds), ...binding }) as unknown as CalendarHoldView;
+}
+function bookingTypeSnapshot(r: Record<string, unknown>): { readonly appointmentType?: CalendarAppointmentTypeSnapshot } {
+  if (!Object.hasOwn(r, 'appointmentType')) return {};
+  const appointmentType = typeSnapshot(r.appointmentType);
+  if (Date.parse(String(r.endAt)) - Date.parse(String(r.startAt)) !== appointmentType.durationMinutes * 60_000
+    || r.bufferBeforeMinutes !== appointmentType.bufferBeforeMinutes || r.bufferAfterMinutes !== appointmentType.bufferAfterMinutes) throw invalid();
+  return { appointmentType };
 }
 function holdPage(value: unknown): CalendarHoldPage {
   const r = record(value, ['items', 'truncated']);
@@ -406,6 +525,7 @@ function calendarReceipt(value: unknown): CalendarCommandReceipt {
   const r = record(value, ['requestId', 'operation', 'id', 'revision', 'changed']);
   if (Object.keys(r).length !== 5 || typeof r.operation !== 'string' || !['resource.created', 'resource.grant-changed', 'resource.availability-changed', 'resource.locations-changed',
     'location.created', 'location.updated',
+    'type.created', 'type.updated', 'resource.types-changed',
     'block.created', 'block.rescheduled', 'block.cancelled', 'hold.acquired', 'hold.released',
     'appointment.created', 'appointment.rescheduled', 'appointment.cancelled'].includes(r.operation) || typeof r.changed !== 'boolean') throw invalid();
   requestKey(r.requestId); requestKey(r.id); integer(r.revision, 1); return Object.freeze(r) as unknown as CalendarCommandReceipt;

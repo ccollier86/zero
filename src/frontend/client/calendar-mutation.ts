@@ -3,7 +3,7 @@ export type CalendarOperationOutcome = 'not-started' | 'not-committed' | 'unknow
 const codes = new Set(['CALENDAR_INPUT_INVALID', 'CALENDAR_FORBIDDEN', 'CALENDAR_NOT_FOUND', 'CALENDAR_REVISION_CONFLICT',
   'CALENDAR_BOOKING_CONFLICT', 'CALENDAR_INTENT_CONFLICT', 'CALENDAR_CAPACITY', 'CALENDAR_STATE_INVALID',
   'CALENDAR_CONFIG_INVALID', 'CALENDAR_NOT_READY', 'CALENDAR_OUTCOME_UNKNOWN', 'CALENDAR_AVAILABILITY_CONFLICT',
-  'CALENDAR_HOLD_EXPIRED', 'CALENDAR_HOLD_STALE']);
+  'CALENDAR_HOLD_EXPIRED', 'CALENDAR_HOLD_STALE', 'CALENDAR_TYPE_STALE', 'CALENDAR_TYPE_CONFLICT']);
 export class CalendarMutationError extends Error {
   readonly requiresReconciliation: boolean;
   readonly requiresSameIdempotencyKey: boolean;

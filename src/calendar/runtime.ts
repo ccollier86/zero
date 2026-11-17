@@ -22,7 +22,7 @@ import type { ResolvedCalendarPersistenceConfig } from './persistence-config';
 import { calendarRealm } from './realm';
 import { calendarActor, calendarSelection, CALENDAR_LIMITS } from './realm-model';
 import type { CalendarServiceBroker } from './service';
-import { calendarLocationInput, calendarPageQuery, calendarRange, calendarResourcePageQuery } from './service-validation';
+import { calendarAppointmentTypeInput, calendarAppointmentTypePageQuery, calendarLocationInput, calendarPageQuery, calendarRange, calendarResourcePageQuery } from './service-validation';
 import { normalizeCalendarInstant, normalizeCalendarTimeZone } from './time';
 import { calendarHash, calendarInteger, calendarKey, calendarRecord, calendarScope, calendarText, calendarValue } from './validation';
 
@@ -42,9 +42,11 @@ export interface CalendarRuntimeOptions {
 }
 const QUERIES = new Set(['calendar.resources', 'calendar.busy', 'calendar.appointments', 'calendar.appointment',
   'calendar.locations', 'calendar.location', 'calendar.resourceLocations', 'calendar.locationAssignmentWitnesses',
+  'calendar.types', 'calendar.type', 'calendar.resourceTypes',
   'calendar.availability', 'calendar.blocks', 'calendar.block', 'calendar.holds', 'calendar.hold', 'calendar.receipt']);
 const COMMANDS = new Set(['calendar.resource.create', 'calendar.resource.grant', 'calendar.resource.availability',
   'calendar.location.create', 'calendar.location.replace', 'calendar.resource.locations',
+  'calendar.type.create', 'calendar.type.replace', 'calendar.resource.types',
   'calendar.block.create', 'calendar.block.reschedule', 'calendar.block.cancel',
   'calendar.hold.acquire', 'calendar.hold.release', 'calendar.hold.confirm',
   'calendar.appointment.create', 'calendar.appointment.reschedule', 'calendar.appointment.cancel']);
@@ -215,6 +217,7 @@ export class CalendarRuntime implements CalendarServiceBroker {
     const { actor: _actor, ...query } = body;
     if (name === 'calendar.resources') return { ...calendarResourcePageQuery(query, this.options.config), actor };
     if (name === 'calendar.locations') return { ...calendarPageQuery(query, this.options.config), actor };
+    if (name === 'calendar.types') return { ...calendarAppointmentTypePageQuery(query, this.options.config), actor };
     if (name === 'calendar.busy' || name === 'calendar.appointments' || name === 'calendar.blocks' || name === 'calendar.holds') return { ...calendarRange(query, this.options.config), actor };
     if ((name === 'calendar.appointment.create' || name === 'calendar.block.create' || name === 'calendar.hold.acquire')
       && (!Array.isArray(body.resourceIds) || body.resourceIds.length > this.options.config.maxResources)) throw new CalendarError('CALENDAR_INPUT_INVALID');
@@ -340,11 +343,18 @@ export function assertCalendarOwnerRecord(record: CalendarOwnerRecord, rootHash:
 export function emptyCalendarRead(name: string, input: unknown): unknown {
   const fields = name === 'calendar.resources' ? ['actor', 'limit', 'after', 'locationIds', 'regions']
     : name === 'calendar.locations' ? ['actor', 'limit', 'after']
+    : name === 'calendar.types' ? ['actor', 'limit', 'after', 'resourceIds']
     : name === 'calendar.locationAssignmentWitnesses' ? ['actor', 'locationIds']
-    : name === 'calendar.receipt' ? ['actor', 'requestId'] : ['calendar.appointment', 'calendar.block', 'calendar.hold', 'calendar.availability', 'calendar.location', 'calendar.resourceLocations'].includes(name) ? ['actor', 'id']
+    : name === 'calendar.receipt' ? ['actor', 'requestId'] : ['calendar.appointment', 'calendar.block', 'calendar.hold', 'calendar.availability', 'calendar.location', 'calendar.resourceLocations', 'calendar.type', 'calendar.resourceTypes'].includes(name) ? ['actor', 'id']
     : name === 'calendar.busy' || name === 'calendar.appointments' || name === 'calendar.blocks' || name === 'calendar.holds' ? ['actor', 'resourceIds', 'startAt', 'endAt', 'limit'] : null;
   if (!fields) throw new CalendarError('CALENDAR_INPUT_INVALID');
   const r = calendarRecord(input, fields); calendarActor(r.actor);
+  if (name === 'calendar.types') {
+    const { actor: _actor, ...query } = r;
+    const accepted = calendarAppointmentTypePageQuery(query, { maxPageSize: CALENDAR_LIMITS.page, maxResources: CALENDAR_LIMITS.selection });
+    if (accepted.resourceIds?.length) throw new CalendarError('CALENDAR_NOT_FOUND');
+    return { items: [], truncated: false, nextAfter: null };
+  }
   if (name === 'calendar.resources' || name === 'calendar.locations') {
     calendarInteger(r.limit ?? 25, 1, CALENDAR_LIMITS.page); if (r.after !== undefined) calendarKey(r.after);
     if (name === 'calendar.resources') {
@@ -360,7 +370,12 @@ export function emptyCalendarRead(name: string, input: unknown): unknown {
     if (calendarSelection(r.locationIds).length) throw new CalendarError('CALENDAR_NOT_FOUND');
     return [];
   }
-  if (['calendar.appointment', 'calendar.block', 'calendar.hold', 'calendar.availability', 'calendar.location', 'calendar.resourceLocations'].includes(name)) { calendarKey(r.id); throw new CalendarError('CALENDAR_NOT_FOUND'); }
+  if (name === 'calendar.type') {
+    calendarKey(r.id);
+    if (!calendarActor(r.actor).manageAll) throw new CalendarError('CALENDAR_FORBIDDEN');
+    throw new CalendarError('CALENDAR_NOT_FOUND');
+  }
+  if (['calendar.appointment', 'calendar.block', 'calendar.hold', 'calendar.availability', 'calendar.location', 'calendar.resourceLocations', 'calendar.resourceTypes'].includes(name)) { calendarKey(r.id); throw new CalendarError('CALENDAR_NOT_FOUND'); }
   const ids = calendarSelection(r.resourceIds);
   const start = Date.parse(normalizeCalendarInstant(r.startAt)), end = Date.parse(normalizeCalendarInstant(r.endAt));
   calendarInteger(end - start, 1, CALENDAR_LIMITS.rangeMs); calendarInteger(r.limit ?? 100, 1, CALENDAR_LIMITS.page);
@@ -368,6 +383,14 @@ export function emptyCalendarRead(name: string, input: unknown): unknown {
   return { items: [], truncated: false };
 }
 function assertCalendarProvisionAllowed(name: string, input: Record<string, unknown>): void {
+  if (name === 'calendar.type.create') {
+    const r = calendarRecord(input, ['actor', 'requestId', 'id', 'label', 'durationMinutes', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'colorKey', 'active']), actor = calendarActor(r.actor);
+    calendarKey(r.requestId); calendarKey(r.id);
+    const { actor: _actor, requestId: _requestId, id: _id, ...appointmentType } = r;
+    calendarAppointmentTypeInput(appointmentType);
+    if (!actor.manageAll) throw new CalendarError('CALENDAR_FORBIDDEN');
+    return;
+  }
   if (name === 'calendar.location.create') {
     const r = calendarRecord(input, ['actor', 'requestId', 'id', 'label', 'region', 'active']), actor = calendarActor(r.actor);
     calendarKey(r.requestId); calendarKey(r.id);

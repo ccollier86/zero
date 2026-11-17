@@ -6,7 +6,8 @@ import { CalendarError } from './error';
 import { calendarHash, calendarInteger, calendarKey, calendarRecord, calendarValue } from './validation';
 import { admitCalendarRequest, type CalendarAuthority } from './authority';
 import type { ResolvedCalendarConfig } from './config';
-import { calendarLocationIds, calendarLocationInput, calendarPageQuery, calendarResourcePageQuery, calendarRange, calendarReceipt } from './service-validation';
+import { calendarLocationIds, calendarLocationInput, calendarPageQuery, calendarResourcePageQuery, calendarRange, calendarReceipt,
+  calendarAppointmentTypePageQuery, calendarAppointmentTypeInput, calendarTypeReference, calendarResourceTypesInput } from './service-validation';
 import { watchCalendarPage } from './watch';
 
 export interface CalendarServiceBroker {
@@ -32,6 +33,28 @@ export class CalendarService {
     const createResource = (input: unknown, options: CalendarRequestOptions) => this.write(request, 'resource.create', input, options);
     const createAppointment = (input: unknown, options: CalendarRequestOptions) => this.write(request, 'appointment.create', input, options);
     return Object.freeze({
+      types: Object.freeze({
+        list: (query = {}, options?: CalendarReadOptions) => this.read(request, 'types', () => calendarAppointmentTypePageQuery(query, this.config), options),
+        get: (id, options) => this.read(request, 'type', () => ({ id: calendarKey(id) }), options),
+        create: (input, options) => this.write(request, 'type.create', input, options),
+        replace: (id, input, options) => this.write(request, 'type.replace', input, options, id),
+        forResource: (id, options) => this.read(request, 'resourceTypes', () => ({ id: calendarKey(id) }), options),
+        watch: (query, listener, options: CalendarWatchOptions = {}) => {
+          const detached = calendarAppointmentTypePageQuery(query, this.config); this.ready();
+          return watchCalendarPage({ request, broker: this.broker, config: this.config, closing: this.signal,
+            queryName: 'calendar.types', query: detached, listener, options, track: task => this.track(task) });
+        },
+        watchType: (id, listener, options: CalendarWatchOptions = {}) => {
+          const query = Object.freeze({ id: calendarKey(id) }); this.ready();
+          return watchCalendarPage({ request, broker: this.broker, config: this.config, closing: this.signal,
+            queryName: 'calendar.type', query, listener, options, track: task => this.track(task) });
+        },
+        watchForResource: (id, listener, options: CalendarWatchOptions = {}) => {
+          const query = Object.freeze({ id: calendarKey(id) }); this.ready();
+          return watchCalendarPage({ request, broker: this.broker, config: this.config, closing: this.signal,
+            queryName: 'calendar.resourceTypes', query, listener, options, track: task => this.track(task) });
+        },
+      }),
       locations: Object.freeze({
         list: (query = {}, options?: CalendarReadOptions) => this.read(request, 'locations', () => calendarPageQuery(query, this.config), options),
         get: (id, options) => this.read(request, 'location', () => ({ id: calendarKey(id) }), options),
@@ -60,6 +83,7 @@ export class CalendarService {
         setGrants: (id: string, userId: string, grants: readonly string[], options: CalendarControlOptions) =>
           this.write(request, 'resource.grant', { userId, grants }, options, id),
         setLocations: (id, locationIds, options) => this.write(request, 'resource.locations', { locationIds }, options, id),
+        setAppointmentTypes: (id, input, options) => this.write(request, 'resource.types', input, options, id),
         watch: (query, listener, options: CalendarWatchOptions = {}) => {
           const detached = calendarResourcePageQuery(query, this.config); this.ready();
           return watchCalendarPage({ request, broker: this.broker, config: this.config, closing: this.signal,
@@ -159,21 +183,29 @@ export class CalendarService {
     return this.track((async () => {
       this.ready();
       const fields = operation === 'resource.create' ? ['label', 'kind', 'ownerId', 'timeZone']
+        : operation === 'type.create' || operation === 'type.replace' ? ['label', 'durationMinutes', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'colorKey', 'active']
+        : operation === 'resource.types' ? ['mode', 'typeIds']
         : operation === 'location.create' || operation === 'location.replace' ? ['label', 'region', 'active']
         : operation === 'resource.locations' ? ['locationIds']
         : operation === 'resource.grant' ? ['userId', 'grants']
         : operation === 'resource.availability' ? ['mode', 'windows']
         : operation === 'block.cancel' || operation === 'appointment.cancel' || operation === 'hold.release' ? []
         : operation === 'hold.confirm' ? ['title']
-        : operation === 'hold.acquire' ? ['resourceIds', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'ttlSeconds']
+        : operation === 'hold.acquire' ? ['resourceIds', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'ttlSeconds', 'appointmentType']
         : operation === 'block.reschedule' ? ['startAt', 'endAt', 'timeZone']
         : operation === 'block.create' ? ['resourceIds', 'title', 'startAt', 'endAt', 'timeZone']
-        : operation === 'appointment.reschedule' ? ['startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes']
-        : ['resourceIds', 'title', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes'];
+        : operation === 'appointment.reschedule' ? ['startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'appointmentType']
+        : ['resourceIds', 'title', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'appointmentType'];
       // Detach before the first await; authored mutation cannot alter an admitted command.
       const body = calendarValue(calendarRecord(input, fields)) as Record<string, unknown>;
       if (operation === 'location.create' || operation === 'location.replace') calendarLocationInput(body, operation === 'location.replace');
       if (operation === 'resource.locations') body.locationIds = calendarLocationIds(body.locationIds);
+      if (operation === 'type.create' || operation === 'type.replace') calendarAppointmentTypeInput(body, operation === 'type.replace');
+      if (operation === 'resource.types') Object.assign(body, calendarResourceTypesInput(body));
+      if (Object.hasOwn(body, 'appointmentType')) {
+        if (body.appointmentType === null) { if (operation !== 'appointment.reschedule') throw new CalendarError('CALENDAR_INPUT_INVALID'); }
+        else body.appointmentType = calendarTypeReference(body.appointmentType);
+      }
       const opts = calendarRecord(options, target === undefined ? ['idempotencyKey', 'signal'] : ['idempotencyKey', 'signal', 'expectedRevision']);
       const key = calendarKey(opts.idempotencyKey), id = target === undefined ? null : calendarKey(target);
       const expectedRevision = id === null ? undefined : calendarInteger(opts.expectedRevision, 1);

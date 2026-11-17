@@ -28,7 +28,8 @@ working on an application; do not assume this branch is available through update
 - [Configuration and adoption](./configuration.md): enable/disable, placement,
   permissions, actor lifecycle and the existing-project boundary.
 - [Facade and booking semantics](./facade.md): resources, grants, appointments,
-  authenticated holds, locations/resource facets, bounded queries, live projections and uncertain outcomes.
+  authenticated holds, locations/resource facets, appointment types/policies,
+  bounded queries, live projections and uncertain outcomes.
 - [Qualification and remaining gates](./qualification.md): current source review,
   completed memory checks and explicitly unexecuted physical/deployment scenarios.
 - [Frontend composition](../../frontend/calendar/index.md): connected core versus
@@ -79,8 +80,16 @@ currently visible locations. Historical labels/assignments remain retained.
 Directory and location-detail hooks update reactively and retire revoked data.
 The richer demo's filter/management controls are not yet wired to these APIs.
 
+Versioned appointment types now supply exact duration/buffer defaults and per-resource
+unrestricted/optional/required policies. Typed appointments/holds retain their
+historical catalog generation. New/time-changed bookings and hold confirmation
+freshly check policy; older accepted records are not relabelled or cancelled.
+Catalog and policy editing requires scope management, not provider ownership.
+The native facade/hooks are available on this branch; type-management and
+type-selection UI are not yet connected.
+
 Recurrence, all-day and floating dates, recurring working-hours/holiday expansion,
-public booking proofs/offers, appointment-type catalogs, participant invitations,
+public booking proofs/offers, participant invitations,
 effective-dated location eligibility and appointment visit locations,
 configurable clinical statuses, delivery channels, public self-booking and AI
 adapters remain future stages. Local UI fields/previews do not implement those
@@ -91,7 +100,8 @@ Native/mobile and API-key calendar admission are not supported yet.
 ## Reactive and audit boundaries
 
 The scoped facade supports authorized live appointment, block and hold ranges,
-resource/location catalogs and details, plus resource availability policies. They share the native commit-invalidation,
+resource/location/type catalogs and details, plus resource availability and type
+policies. They share the native commit-invalidation,
 bounded quiet authority checks, private SSE/backpressure and SDK-retirement
 machinery. The connected workspace still exposes only its documented appointment
 controls; adding live backend APIs does not silently enable the richer demo's

@@ -59,7 +59,7 @@ function fixture() {
     };
     const legacy = () => Object.fromEntries(Object.keys(CALENDAR_HOLD_TABLES).map(table => [table, raw.query(`SELECT * FROM ${table} ORDER BY id`).all()]));
     const upgrade = () => {
-      for (const [table, schema] of Object.entries(CALENDAR_LOCATION_TABLES)) if (!(table in CALENDAR_HOLD_TABLES)) db.defineTable(table, schema);
+      for (const [table, schema] of Object.entries(calendarRealm.tables)) if (!(table in CALENDAR_HOLD_TABLES)) db.defineTable(table, schema);
       const current = new Migrator({ database: raw, dbPath: ':memory:', migrations: calendarRealm.migrations, createBackups: false, log() {} });
       try { const applied = current.run(); expect(current.status().every(entry => entry.checksumMatches)).toBe(true); return applied; } finally { current.dispose(); }
     };
@@ -68,11 +68,11 @@ function fixture() {
 }
 
 test('all three historical functions and the complete 003 schema retain original pinned identities', () => {
-  expect(calendarRealm.migrations.map(migration => migration.version)).toEqual(['001', '002', '003', '004']);
+  expect(calendarRealm.migrations.map(migration => migration.version)).toEqual(['001', '002', '003', '004', '005']);
   expect(calendarRealm.migrations.slice(0, 3).map(hashMigration)).toEqual(HISTORICAL_CHECKSUMS);
   expect(hashSchemaSnapshot(snapshotDeclaredTables(CALENDAR_HOLD_TABLES))).toBe(ORIGINAL_003_TABLES);
   for (const [table, schema] of Object.entries(CALENDAR_HOLD_TABLES)) expect(CALENDAR_LOCATION_TABLES[table]).toEqual(schema);
-  expect(calendarRealm.tables).toEqual(CALENDAR_LOCATION_TABLES);
+  for (const [table, schema] of Object.entries(CALENDAR_LOCATION_TABLES)) expect(calendarRealm.tables[table]).toEqual(schema);
 });
 
 test('real 003 upgrade preserves every row, old trigger and receipt, and leaves the directory genuinely empty', () => {
@@ -80,8 +80,8 @@ test('real 003 upgrade preserves every row, old trigger and receipt, and leaves 
   try {
     const before = f.legacy(), seq = f.db.currentSeq, ledger = f.raw.query('SELECT * FROM _migrations ORDER BY version').all();
     const triggers = f.raw.query<{ name: string; sql: string }, []>("SELECT name,sql FROM sqlite_master WHERE type='trigger' ORDER BY name").all();
-    expect(f.upgrade()).toEqual(['004']); expect(f.legacy()).toEqual(before); expect(f.db.currentSeq).toBe(seq);
-    expect(f.raw.query("SELECT * FROM _migrations WHERE version<>'004' ORDER BY version").all()).toEqual(ledger);
+    expect(f.upgrade()).toEqual(['004', '005']); expect(f.legacy()).toEqual(before); expect(f.db.currentSeq).toBe(seq);
+    expect(f.raw.query("SELECT * FROM _migrations WHERE version IN ('001','002','003') ORDER BY version").all()).toEqual(ledger);
     for (const trigger of triggers) expect(f.raw.query("SELECT name,sql FROM sqlite_master WHERE type='trigger' AND name=?").get(trigger.name)).toEqual(trigger);
     for (const [requestId, receipt] of f.saved) expect(f.query('receipt', { actor, requestId })).toEqual(receipt);
     expect(f.command('hold.acquire', { actor, id: 'legacy-hold', requestId: 'hold', resourceIds: ['person'], ...timed })).toEqual(f.saved.get('hold'));

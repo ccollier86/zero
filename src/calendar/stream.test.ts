@@ -1,7 +1,8 @@
 /** Memory streams only. No server, child, database files or generated fixtures. */
 import { expect, test } from 'bun:test';
-import type { CalendarAppointmentPage, CalendarAvailabilityView, CalendarBlockPage, CalendarHoldPage, CalendarLocationPage, CalendarResourcePage, CalendarReadOptions, CalendarWatchOptions, ScopedCalendar } from './contracts';
-import { calendarAppointmentStream, calendarAvailabilityStream, calendarBlockStream, calendarHoldStream, calendarLocationStream, calendarResourceStream } from './stream';
+import type { CalendarAppointmentPage, CalendarAppointmentTypePage, CalendarAppointmentTypeView, CalendarAvailabilityView, CalendarBlockPage, CalendarHoldPage, CalendarLocationPage, CalendarResourceTypesView, CalendarResourcePage, CalendarReadOptions, CalendarWatchOptions, ScopedCalendar } from './contracts';
+import { calendarAppointmentStream, calendarAvailabilityStream, calendarBlockStream, calendarHoldStream, calendarLocationStream, calendarResourceStream,
+  calendarTypeStream, calendarTypeDetailStream, calendarResourceTypesStream } from './stream';
 const query = { resourceIds: ['synthetic'], startAt: '2026-11-16T00:00:00.000Z', endAt: '2026-11-17T00:00:00.000Z' };
 const empty: CalendarAppointmentPage = { items: [], truncated: false };
 function fixture() {
@@ -81,12 +82,18 @@ test('terminal watch denial fences a late in-flight refresh even when its physic
   } finally { release(); await refresh; f.abort.abort(); await f.reader.cancel(); f.reader.releaseLock(); }
 });
 
-function schedulingFixture(kind: 'blocks' | 'holds' | 'availability' | 'locations' | 'resources') {
-  type Snapshot = CalendarBlockPage | CalendarHoldPage | CalendarAvailabilityView | CalendarLocationPage | CalendarResourcePage;
-  const directory = kind === 'locations' || kind === 'resources';
-  const initial: Snapshot = kind !== 'availability' ? { items: [], truncated: false, ...(directory ? { nextAfter: null } : {}) }
+function schedulingFixture(kind: 'blocks' | 'holds' | 'availability' | 'locations' | 'resources' | 'types' | 'type' | 'resourceTypes') {
+  type Snapshot = CalendarBlockPage | CalendarHoldPage | CalendarAvailabilityView | CalendarLocationPage | CalendarResourcePage
+    | CalendarAppointmentTypePage | CalendarAppointmentTypeView | CalendarResourceTypesView;
+  const directory = kind === 'locations' || kind === 'resources' || kind === 'types';
+  const initial: Snapshot = kind === 'type' ? { id: 'synthetic', revision: 1, label: 'Synthetic type', durationMinutes: 30,
+    bufferBeforeMinutes: 0, bufferAfterMinutes: 0, colorKey: null, active: true }
+    : kind === 'resourceTypes' ? { resourceId: 'synthetic', resourceRevision: 1, mode: 'unrestricted', typeIds: [] }
+    : kind !== 'availability' ? { items: [], truncated: false, ...(directory ? { nextAfter: null } : {}) }
     : { resourceId: 'synthetic', resourceRevision: 1, timeZone: 'UTC', mode: 'windows', windows: [] };
-  const deferred: Snapshot = kind !== 'availability' ? { items: [], truncated: true, ...(directory ? { nextAfter: 'synthetic' } : {}) }
+  const deferred: Snapshot = kind === 'type' ? { ...initial as CalendarAppointmentTypeView, revision: 2, label: 'Private changed type' }
+    : kind === 'resourceTypes' ? { resourceId: 'synthetic', resourceRevision: 2, mode: 'required', typeIds: ['private-type'] }
+    : kind !== 'availability' ? { items: [], truncated: true, ...(directory ? { nextAfter: 'synthetic' } : {}) }
     : { resourceId: 'synthetic', resourceRevision: 2, timeZone: 'UTC', mode: 'windows', windows: [{ startAt: query.startAt, endAt: query.endAt }] };
   let notify!: (value: Snapshot, update?: { invalidated: boolean }) => void;
   let options!: CalendarWatchOptions, calls = 0, removals = 0;
@@ -96,18 +103,22 @@ function schedulingFixture(kind: 'blocks' | 'holds' | 'availability' | 'location
   };
   const refresh = async (_query: unknown, supplied?: CalendarReadOptions) => { calls++; return read(supplied); };
   const calendar = { blocks: { watch, query: refresh }, holds: { watch, query: refresh }, availability: { watch, get: refresh },
-    locations: { watch, list: refresh }, resources: { watch, list: refresh } } as unknown as ScopedCalendar;
+    locations: { watch, list: refresh }, resources: { watch, list: refresh },
+    types: { watch, list: refresh, watchType: watch, get: refresh, watchForResource: watch, forResource: refresh } } as unknown as ScopedCalendar;
   const abort = new AbortController(), stream = kind === 'blocks' ? calendarBlockStream(calendar, query, abort.signal)
     : kind === 'holds' ? calendarHoldStream(calendar, query, abort.signal)
     : kind === 'locations' ? calendarLocationStream(calendar, {}, abort.signal)
     : kind === 'resources' ? calendarResourceStream(calendar, {}, abort.signal)
+    : kind === 'types' ? calendarTypeStream(calendar, {}, abort.signal)
+    : kind === 'type' ? calendarTypeDetailStream(calendar, 'synthetic', abort.signal)
+    : kind === 'resourceTypes' ? calendarResourceTypesStream(calendar, 'synthetic', abort.signal)
     : calendarAvailabilityStream(calendar, 'synthetic', abort.signal), reader = stream.getReader();
   return { initial, deferred, notify: (value = initial) => notify(value, { invalidated: true }),
     fail: () => options.onError?.(new Error('SYNTHETIC_PRIVATE_FAILURE')), setRead(next: typeof read) { read = next; },
     abort, reader, get calls() { return calls; }, get removals() { return removals; } };
 }
 
-for (const kind of ['blocks', 'holds', 'availability', 'locations', 'resources'] as const) {
+for (const kind of ['blocks', 'holds', 'availability', 'locations', 'resources', 'types', 'type', 'resourceTypes'] as const) {
   test(`${kind} backpressure retains only dirty hints and requires another current authorized read`, async () => {
     const f = schedulingFixture(kind);
     try {

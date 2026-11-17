@@ -62,6 +62,15 @@ identity are rejected, not normalized away.
 | `locations.watch(query, listener, options?)` | Authorized live location catalog pages |
 | `locations.watchLocation(id, listener, options?)` | Live detail; losing the last visible assignment retires the detail |
 | `locations.watchForResource(resourceId, listener, options?)` | Live assignments; losing resource access retires the detail |
+| `types.list({resourceIds?, limit?, after?}?, options?)` | Authorized active-type intersection for selected resources; manager omission lists the full catalog |
+| `types.get(id, options?)` | Current catalog revision; scope calendar manager only |
+| `types.create(input, options)` | Create a versioned type; scope calendar manager only |
+| `types.replace(id, fullType, control)` | Full replacement at the exact type revision; scope calendar manager only |
+| `types.forResource(resourceId, options?)` | `{resourceId, resourceRevision, mode, typeIds}`; current book/details/manage |
+| `types.watch(query, listener, options?)` | Live authorized type-selector catalog |
+| `types.watchType(id, listener, options?)` | Live manager-only catalog detail |
+| `types.watchForResource(id, listener, options?)` | Live current resource type policy |
+| `resources.setAppointmentTypes(id, {mode, typeIds}, control)` | Versioned resource policy; scope calendar manager only |
 | `availability.get(resourceId, {signal?}?)` | Current explicit policy and resource revision; book or details right |
 | `availability.replace(resourceId, policy, control)` | Replace bounded windows/unrestricted policy; current manage right |
 | `availability.watch(resourceId, listener, {signal?, onError?}?)` | Current authorized policy snapshots; returns unsubscribe |
@@ -165,6 +174,97 @@ retire late callbacks. `refresh()` retries the authorized read, not a mutation.
 The connected workspace's resource directory now uses that live path. The rich
 demo's geographic filters and the new catalog management editor are not silently
 connected by adding these backend APIs.
+
+## Appointment types and booking policy
+
+Types are optional, scope-owned catalogs. A create input requires `label` and
+`durationMinutes`; optional `bufferBeforeMinutes`/`bufferAfterMinutes` default to
+zero, `colorKey` to null and `active` to true. Duration is an integer 1–44,640
+minutes (31 days); each buffer is an integer 0–1,440 minutes. `colorKey` is a nullable
+opaque token with the same ASCII syntax as region keys, not arbitrary CSS or an
+instruction to change the application theme. Full replacement explicitly supplies
+all six fields. IDs/revisions are stable and every changed catalog generation is
+retained; there is no delete/relabel-history shortcut.
+
+Only the scope calendar manager edits types or resource type policies. Owning a
+provider resource is not permission to weaken its type policy. Resource policy
+uses the current **resource** revision, not a catalog type revision:
+
+| Mode | New untyped bookings | New typed bookings |
+| --- | --- | --- |
+| `unrestricted` with `typeIds:[]` | Allowed | Any active current scope type |
+| `optional` | Allowed | Only the explicitly listed types |
+| `required` | Rejected | Only the explicitly listed types |
+
+No policy means unrestricted. Policies accept at most 16 distinct type IDs, sorted
+to a canonical set. `required` with `[]` deliberately closes the resource to new
+bookings; `optional` with `[]` allows only untyped bookings. Unrestricted mode with
+a nonempty list is invalid, not silently normalized. Newly assigned types must be
+active; a retained inactive member can remain or be removed. Changes advance the
+resource revision, fencing older holds, but never cancel accepted appointments.
+
+`types.list({resourceIds:[...]})` first requires current book or details rights on
+**every** selected resource, then intersects their current policies before limits
+and truncation. Busy-only access is insufficient. Only active types are returned
+for selectors. An explicit `resourceIds:[]` is empty for everyone. Omitting the
+selection gives a scope manager the complete catalog, including inactive setup
+entries; for other users omission is empty, not a global directory. A standalone
+`types.get`/`watchType` is manager-only. Existing appointment/hold detail rights
+instead authorize the historical type snapshot embedded in that record.
+
+Appointment creation and hold acquisition accept an optional
+`appointmentType:{id,revision}`. UTC start/end instants remain explicit; the server
+does not guess a wall time or derive an end time. When a type is selected, omitted
+buffers come from that exact retained type generation. Explicit buffers and exact
+UTC duration must match the selected policy. Every resource must currently permit
+the type, and the catalog version must still be active/current at the final short
+writer transaction. Untyped input retains all earlier wire and command-digest
+semantics; it is rejected only when a current resource policy requires a type.
+
+Authorized typed appointment/hold views add `appointmentType` containing
+`{id,revision,label,durationMinutes,bufferBeforeMinutes,bufferAfterMinutes,colorKey}`.
+Untyped views omit the property. These facts come from immutable catalog history,
+not today's label/defaults. Updating/deactivating a type does not reshape an
+accepted appointment or rewrite its old receipt. A hold retains the selected
+generation and cannot confirm against a stale/deactivated type or silently become
+an untyped appointment.
+
+Rescheduling still explicitly supplies both buffers. Omitted `appointmentType`
+preserves the appointment's accepted binding; a reference deliberately switches
+to that current generation; null deliberately clears it only if current resource
+policies permit untyped bookings. Time/buffer changes or a binding change require
+fresh type/policy admission. A genuine no-op or timezone-only correction with
+unchanged occupancy/binding remains grandfathered, including an old inactive type.
+Binding changes append immutable appointment-revision history; cancellation retains
+it. Replaying an earlier reschedule normalizes against its expected revision, not
+the later binding, and still checks the original command digest and current rights.
+
+`CALENDAR_TYPE_STALE` and `CALENDAR_TYPE_CONFLICT` are safe 409 known non-commits,
+not permission for automatic resend. Re-read the current policy and deliberately
+prepare a new logical request if input must change. Lost acknowledgments still
+require the original key's receipt reconciliation. A new default or revision is
+never substituted behind the user's back.
+
+Typed commands use a versioned catalog-free wire intent, so current resource
+policy is checked before resolving a newly requested type or its defaults.
+Omitted and explicitly supplied buffers remain distinct typed request inputs;
+after an uncertain outcome, preserve the exact original fields as well as its
+key. Do not fill omitted defaults into a replay request. Untyped legacy command
+digests remain unchanged. This admission order also prevents a rejected request
+from distinguishing an unavailable existing type from a missing ID/version.
+
+Types have a 10,000-row retained ceiling; catalog, resource-policy and appointment
+binding histories each have a 100,000-generation lifetime ceiling. Typed hold
+bindings are one per retained hold, bounded by the existing hold budget. The fifth
+receipt family joins the same 200,000 global request budget and cross-family
+namespace. Migration `005` preserves the first four migration/schema identities.
+
+Native hooks `useCalendarAppointmentTypes`, `useCalendarAppointmentType` and
+`useCalendarResourceTypes` use the existing current-scope watch/retirement path.
+This stage does not yet add type-management or type-selection controls to the
+connected one-off editor or wire the rich demo's local type picker. Those UI
+surfaces must preserve historical selections, handle rejected current revisions,
+and use these APIs rather than copying the booking rules into browser code.
 
 ## Explicit availability and one-off blocks
 

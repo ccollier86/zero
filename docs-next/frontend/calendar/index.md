@@ -61,6 +61,14 @@ grant revocation. Filter replacement withdraws the old page before effect cleanu
 This does not yet wire the rich demo's geographic controls or expose a catalog
 management editor. See [directory semantics](../../backend/calendar/facade.md#locations-regions-and-authorized-resource-filters).
 
+The next unreleased backend stage adds live `useCalendarAppointmentTypes`,
+manager-only `useCalendarAppointmentType`, and `useCalendarResourceTypes` hooks.
+Selected-resource type catalogs intersect current authorized policy, and old
+pages retire on selection, client, scope or domain denial. Typed record DTOs
+retain historical labels/defaults; untyped DTOs omit the optional binding. The
+connected editor and rich demo's local type picker are not yet wired to those
+catalogs/policies; see [type semantics](../../backend/calendar/facade.md#appointment-types-and-booking-policy).
+
 Sources and the full composition guide are in
 [`src/components/calendar/README.md`](../../../src/components/calendar/README.md).
 The family has its own `components`, `models`, `hooks`, `recovered`, `styles`

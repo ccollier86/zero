@@ -1,5 +1,17 @@
 /** One coalesced authorized page under backpressure. No permanent streams or raw change payloads. */
-import type { CalendarLocationPageQuery, CalendarRangeQuery, CalendarResourcePageQuery, CalendarReadOptions, CalendarWatchOptions, CalendarWatchUpdate, ScopedCalendar } from './contracts';
+import type { CalendarAppointmentTypePageQuery, CalendarLocationPageQuery, CalendarRangeQuery, CalendarResourcePageQuery, CalendarReadOptions, CalendarWatchOptions, CalendarWatchUpdate, ScopedCalendar } from './contracts';
+export function calendarTypeStream(calendar: ScopedCalendar, query: CalendarAppointmentTypePageQuery, signal: AbortSignal): ReadableStream<Uint8Array> {
+  return calendarSnapshotStream({ read: options => calendar.types.list(query, options),
+    watch: (listener, options) => calendar.types.watch(query, listener, options) }, signal);
+}
+export function calendarTypeDetailStream(calendar: ScopedCalendar, id: string, signal: AbortSignal): ReadableStream<Uint8Array> {
+  return calendarSnapshotStream({ read: options => calendar.types.get(id, options),
+    watch: (listener, options) => calendar.types.watchType(id, listener, options) }, signal);
+}
+export function calendarResourceTypesStream(calendar: ScopedCalendar, id: string, signal: AbortSignal): ReadableStream<Uint8Array> {
+  return calendarSnapshotStream({ read: options => calendar.types.forResource(id, options),
+    watch: (listener, options) => calendar.types.watchForResource(id, listener, options) }, signal);
+}
 export function calendarResourceStream(calendar: ScopedCalendar, query: CalendarResourcePageQuery, signal: AbortSignal): ReadableStream<Uint8Array> {
   return calendarSnapshotStream({ read: options => calendar.resources.list(query, options),
     watch: (listener, options) => calendar.resources.watch(query, listener, options) }, signal);

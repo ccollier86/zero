@@ -1,6 +1,6 @@
 /** Admission limits match the immutable realm ceilings; configuration may narrow, never advertise more. */
 import type { ResolvedCalendarConfig } from './config';
-import type { CalendarCommandReceipt, CalendarLocationPageQuery, CalendarRangeQuery, CalendarResourcePageQuery } from './contracts';
+import type { CalendarAppointmentTypePageQuery, CalendarCommandReceipt, CalendarLocationPageQuery, CalendarRangeQuery, CalendarResourcePageQuery } from './contracts';
 import { CalendarError } from './error';
 import { normalizeCalendarInstant } from './time';
 import { calendarInteger, calendarKey, calendarRecord, calendarText, calendarValue } from './validation';
@@ -32,6 +32,40 @@ export function calendarResourcePageQuery(input: unknown, config: Pick<ResolvedC
   return Object.freeze({ ...base, ...(r.locationIds === undefined ? {} : { locationIds: calendarLocationIds(r.locationIds) }),
     ...(acceptedRegions === undefined ? {} : { regions: Object.freeze(acceptedRegions) }) });
 }
+export function calendarAppointmentTypePageQuery(input: unknown, config: Pick<ResolvedCalendarConfig, 'maxPageSize' | 'maxResources'>): CalendarAppointmentTypePageQuery {
+  const r = calendarRecord(input, ['after', 'limit', 'resourceIds']);
+  const base = calendarPageQuery({ ...(r.after === undefined ? {} : { after: r.after }), ...(r.limit === undefined ? {} : { limit: r.limit }) }, config);
+  if (r.resourceIds === undefined) return Object.freeze(base);
+  const values = calendarValue(r.resourceIds);
+  if (!Array.isArray(values) || values.length > config.maxResources) throw new CalendarError('CALENDAR_INPUT_INVALID');
+  const resourceIds = values.map(value => calendarKey(value)).sort();
+  if (new Set(resourceIds).size !== resourceIds.length) throw new CalendarError('CALENDAR_INPUT_INVALID');
+  return Object.freeze({ ...base, resourceIds: Object.freeze(resourceIds) });
+}
+export function calendarAppointmentTypeInput(input: unknown, replacement = false): Record<string, unknown> {
+  const fields = ['label', 'durationMinutes', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'colorKey', 'active'];
+  const r = calendarRecord(input, fields);
+  calendarText(r.label, 256); calendarInteger(r.durationMinutes, 1, 44_640);
+  if (replacement && fields.some(field => !Object.hasOwn(r, field) || r[field] === undefined)) throw new CalendarError('CALENDAR_INPUT_INVALID');
+  for (const key of ['bufferBeforeMinutes', 'bufferAfterMinutes']) if (r[key] !== undefined) calendarInteger(r[key], 0, 1440);
+  if (r.colorKey !== undefined && r.colorKey !== null) region(r.colorKey);
+  if (r.active !== undefined && typeof r.active !== 'boolean') throw new CalendarError('CALENDAR_INPUT_INVALID');
+  return calendarValue(r) as Record<string, unknown>;
+}
+export function calendarTypeReference(input: unknown): Record<string, unknown> {
+  const r = calendarRecord(input, ['id', 'revision']);
+  calendarKey(r.id); calendarInteger(r.revision, 1);
+  return calendarValue(r) as Record<string, unknown>;
+}
+export function calendarResourceTypesInput(input: unknown): Record<string, unknown> {
+  const r = calendarRecord(input, ['mode', 'typeIds']);
+  if (!['unrestricted', 'optional', 'required'].includes(r.mode as string)) throw new CalendarError('CALENDAR_INPUT_INVALID');
+  const values = calendarValue(r.typeIds);
+  if (!Array.isArray(values) || values.length > 16) throw new CalendarError('CALENDAR_INPUT_INVALID');
+  const typeIds = values.map(value => calendarKey(value)).sort();
+  if (new Set(typeIds).size !== typeIds.length || r.mode === 'unrestricted' && typeIds.length !== 0) throw new CalendarError('CALENDAR_INPUT_INVALID');
+  return { mode: r.mode, typeIds: Object.freeze(typeIds) };
+}
 /** Create defaults belong to the realm; replacement must explicitly supply every retained catalog field. */
 export function calendarLocationInput(input: unknown, replacement = false): Record<string, unknown> {
   const r = calendarRecord(input, ['label', 'region', 'active']);
@@ -58,6 +92,7 @@ export function calendarReceipt(input: unknown, requestId: string, operation: st
   const expected = { 'resource.create': 'resource.created', 'resource.grant': 'resource.grant-changed',
     'resource.availability': 'resource.availability-changed',
     'resource.locations': 'resource.locations-changed', 'location.create': 'location.created', 'location.replace': 'location.updated',
+    'type.create': 'type.created', 'type.replace': 'type.updated', 'resource.types': 'resource.types-changed',
     'block.create': 'block.created', 'block.reschedule': 'block.rescheduled', 'block.cancel': 'block.cancelled',
     'hold.acquire': 'hold.acquired', 'hold.release': 'hold.released', 'hold.confirm': 'appointment.created',
     'appointment.create': 'appointment.created', 'appointment.reschedule': 'appointment.rescheduled', 'appointment.cancel': 'appointment.cancelled' }[operation];

@@ -15,6 +15,7 @@ export {
 } from './client-context';
 export type { ClientProviderProps } from './client-context';
 export { useCalendarResources, useCalendarAppointment, useCalendarAppointments, useCalendarLocations, useCalendarLocation, useCalendarResourceLocations } from './calendar-hooks';
+export { useCalendarAppointmentTypes, useCalendarAppointmentType, useCalendarResourceTypes } from './calendar-hooks';
 export type { CalendarReadResult, UseCalendarAppointmentsResult } from './calendar-hooks';
 
 export {

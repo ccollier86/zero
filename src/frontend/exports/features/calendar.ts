@@ -1,10 +1,13 @@
 /** Browser-safe core calendar entry. Private actor/runtime/storage ownership is not exposed here. */
 export { useCalendarResources, useCalendarAppointment, useCalendarAppointments, useCalendarLocations, useCalendarLocation, useCalendarResourceLocations } from '../../client/calendar-hooks';
+export { useCalendarAppointmentTypes, useCalendarAppointmentType, useCalendarResourceTypes } from '../../client/calendar-hooks';
 export type { CalendarReadResult, UseCalendarAppointmentsResult } from '../../client/calendar-hooks';
 export type { CalendarClient } from '../../client/calendar-client';
 export { CalendarMutationError, CalendarReadError } from '../../client/calendar-mutation';
 export type { CalendarOperationOutcome } from '../../client/calendar-mutation';
 export type { CalendarResourceKind, CalendarResourceView, CalendarResourceInput, CalendarGrant,
+  CalendarAppointmentTypeReference, CalendarAppointmentTypeSnapshot, CalendarAppointmentTypeInput, CalendarAppointmentTypeReplacement,
+  CalendarAppointmentTypeView, CalendarAppointmentTypePageQuery, CalendarAppointmentTypePage, CalendarResourceTypesInput, CalendarResourceTypesView,
   CalendarLocationInput, CalendarLocationReplacement, CalendarLocationView, CalendarLocationPageQuery, CalendarLocationPage, CalendarResourceLocationsView,
   CalendarAppointmentView, CalendarAppointmentInput, CalendarRescheduleInput, CalendarCommandReceipt,
   CalendarAvailabilityWindow, CalendarAvailabilityInput, CalendarAvailabilityView,

@@ -909,6 +909,45 @@ The standalone demo is unchanged, and backend support is not a new geographic
 management editor or a qualified released package. Final evidence is recorded in
 the [qualification guide](../backend/calendar/qualification.md).
 
+### November 17 appointment-type catalogs and typed booking policy
+
+This source stage adds versioned appointment types, scope-managed per-resource
+unrestricted/optional/required type policy, selected-resource catalog intersections,
+historical record bindings and server/HTTP/SDK/live-hook facades. Catalog and policy
+management require the scope calendar manager, not mere resource ownership.
+Selected resources require current book/details authority before pagination.
+Explicit empty selection remains empty; manager omission is a separate full-catalog
+setup operation. Inactive type history stays retained, not silently substituted.
+
+Typed booking/hold input pins a type ID/revision. The final source transaction
+checks current per-resource policy, active type version, exact UTC duration/buffers,
+availability and conflicts. Omitted creation/acquisition buffers use the pinned
+generation's defaults only after policy admission. Versioned typed wire intents
+normalize without reading an unavailable catalog; missing/old/hidden type probes
+cannot reveal catalog existence through different policy rejections. Earlier
+untyped command digests remain exact. Accepted replay checks original identity and
+current object rights without re-admitting the old command against new policy.
+
+Types never rename or reshape accepted appointments. Reschedule omission preserves
+the accepted binding at the expected revision; explicit reference switches it and
+null clears only when permitted. Time/buffer or type changes freshly admit type
+policy. Unchanged occupancy remains grandfathered for availability; genuine no-op
+and timezone-only corrections retain the old type even if retired. Typed holds
+cannot confirm against a stale catalog generation or transfer to a mismatched
+appointment type. Parent/type/binding changes share one tracked transaction.
+
+Additive `005` preserves all four earlier migration/schema identities and true
+receipt target kinds. Immutable binding/policy history is sealed against late
+attachment to a resource generation completed by another operation. Accepted
+semantic audits include no labels/default values; late source-audit failure rolls
+back parent, reservations, bindings, usage and receipts together.
+
+The native connected editor has not yet acquired type selection/management UI.
+The hosted demo remains unchanged. Source/memory evidence and prepared physical
+restart coverage are documented in the [qualification guide](../backend/calendar/qualification.md);
+this is not a newly selected updater archive, production qualification or completion
+of the participant/status/recurrence/Jobs/Torrent stages.
+
 ## 15. Documentation deliverables and open decisions
 
 Create a canonical calendar backend guide/index with configuration/defaults,

@@ -23,7 +23,7 @@ import { databaseActorFactoryLaunch, type DatabaseActorExecutorFactoryContext, t
 import { createReactiveDB } from '../sync/reactive-db';
 import { allocateSyntheticFixture } from '../test-support/synthetic-fixture';
 import { resolveCalendarConfig, type ResolvedCalendarConfig } from './config';
-import type { CalendarActor, CalendarAppointmentPage, CalendarAppointmentView, CalendarAvailabilityView, CalendarBlockPage, CalendarBusyPage, CalendarCommandReceipt, CalendarHoldPage, CalendarHoldView, CalendarLocationPage, CalendarLocationView, CalendarResourceLocationsView, CalendarResourcePage } from './contracts';
+import type { CalendarActor, CalendarAppointmentPage, CalendarAppointmentView, CalendarAppointmentTypeView, CalendarAvailabilityView, CalendarBlockPage, CalendarBusyPage, CalendarCommandReceipt, CalendarHoldPage, CalendarHoldView, CalendarLocationPage, CalendarLocationView, CalendarResourceLocationsView, CalendarResourcePage } from './contracts';
 import { CalendarError } from './error';
 import { inspectCalendarOwnerSchema } from './owner-schema';
 import { resolveCalendarPersistenceConfig, type ResolvedCalendarPersistenceConfig } from './persistence-config';
@@ -479,6 +479,55 @@ test('native coordinator replaces an exact owned killed writer and recovers the 
     expect(await f.runtime.write<CalendarCommandReceipt>(scope, 'calendar.resource.create', input, input.requestId, guard)).toEqual(accepted);
     expect(f.actors.some(entry => entry.context.role === 'writer'
       && entry.executor.diagnostics().state === 'ready' && entry.executor.diagnostics().generation > generation)).toBe(true);
+  } finally { await f.close(); }
+}, 120_000);
+
+test('native typed bookings preserve original labels, hold policy and binding history across full actor/SYSTEM restart', async () => {
+  const f = await fixture(), scope = applicationServiceDataScope(), manager = actor(scope), now = Date.now();
+  const instant = (minutes: number) => new Date(now + minutes * 60_000).toISOString();
+  try {
+    const type = { actor: manager, id: 'type', requestId: 'type', label: 'PRIVATE_SYNTHETIC_TYPE', durationMinutes: 30,
+      bufferBeforeMinutes: 2, bufferAfterMinutes: 3 };
+    await f.runtime.write(scope, 'calendar.type.create', type, type.requestId, guard);
+    const provider = resource(scope); await f.runtime.write(scope, 'calendar.resource.create', provider, provider.requestId, guard);
+    const policy = { actor: manager, id: provider.id, requestId: 'type-policy', expectedRevision: 1, mode: 'required', typeIds: ['type'] };
+    await f.runtime.write(scope, 'calendar.resource.types', policy, policy.requestId, guard);
+    const booking = { actor: manager, id: 'typed', requestId: 'typed', resourceIds: [provider.id], title: 'PRIVATE_SYNTHETIC_TYPED_BOOKING',
+      startAt: instant(60), endAt: instant(90), timeZone: 'UTC', appointmentType: { id: type.id, revision: 1 } };
+    const accepted = await f.runtime.write<CalendarCommandReceipt>(scope, 'calendar.appointment.create', booking, booking.requestId, guard);
+    const hold = { actor: manager, id: 'typed-hold', requestId: 'typed-hold', resourceIds: [provider.id],
+      startAt: instant(120), endAt: instant(150), timeZone: 'UTC', ttlSeconds: 900, appointmentType: { id: type.id, revision: 1 } };
+    await f.runtime.write(scope, 'calendar.hold.acquire', hold, hold.requestId, guard);
+    const replacement = { ...type, requestId: 'type-replace', expectedRevision: 1, label: 'PRIVATE_SYNTHETIC_RENAMED_TYPE', durationMinutes: 45, colorKey: null, active: true };
+    await f.runtime.write(scope, 'calendar.type.replace', replacement, replacement.requestId, guard);
+    await f.restart(false);
+    expect(await f.runtime.read<CalendarAppointmentTypeView>(scope, 'calendar.type', { actor: manager, id: type.id }, guard))
+      .toMatchObject({ revision: 2, label: replacement.label, durationMinutes: 45 });
+    expect(await f.runtime.read<CalendarAppointmentView>(scope, 'calendar.appointment', { actor: manager, id: booking.id }, guard))
+      .toMatchObject({ revision: 1, bufferBeforeMinutes: 2, bufferAfterMinutes: 3,
+        appointmentType: { id: type.id, revision: 1, label: type.label, durationMinutes: 30 } });
+    expect(await f.runtime.read<CalendarHoldView>(scope, 'calendar.hold', { actor: manager, id: hold.id }, guard))
+      .toMatchObject({ status: 'held', appointmentType: { id: type.id, revision: 1, label: type.label } });
+    await expect(f.runtime.write(scope, 'calendar.hold.confirm', { actor: manager, id: hold.id, appointmentId: 'stale-confirm',
+      requestId: 'stale-confirm', expectedRevision: 1, title: 'Rejected' }, 'stale-confirm', guard))
+      .rejects.toMatchObject({ code: 'CALENDAR_TYPE_STALE', outcome: 'not-committed' });
+    expect(await f.runtime.read<CalendarCommandReceipt | null>(scope, 'calendar.receipt', { actor: manager, requestId: 'stale-confirm' }, guard)).toBeNull();
+    const move = { actor: manager, id: booking.id, requestId: 'move-typed', expectedRevision: 1, startAt: instant(60), endAt: instant(105),
+      timeZone: 'UTC', bufferBeforeMinutes: 2, bufferAfterMinutes: 3, appointmentType: { id: type.id, revision: 2 } };
+    const moved = await f.runtime.write<CalendarCommandReceipt>(scope, 'calendar.appointment.reschedule', move, move.requestId, guard);
+    expect(moved).toMatchObject({ revision: 2, changed: true });
+    expect(await f.runtime.write<CalendarCommandReceipt>(scope, 'calendar.appointment.create', booking, booking.requestId, guard)).toEqual(accepted);
+    await f.restart(false);
+    expect(await f.runtime.write<CalendarCommandReceipt>(scope, 'calendar.appointment.reschedule', move, move.requestId, guard)).toEqual(moved);
+    expect(await f.runtime.read<CalendarAppointmentView>(scope, 'calendar.appointment', { actor: manager, id: booking.id }, guard))
+      .toMatchObject({ revision: 2, appointmentType: { id: type.id, revision: 2, label: replacement.label, durationMinutes: 45 } });
+    await f.stop();
+    inspect(f.path(scope), database => {
+      expect(database.query('SELECT appointment_revision,type_revision FROM _calendar_appointment_type_bindings ORDER BY appointment_revision').all())
+        .toEqual([{ appointment_revision: 1, type_revision: 1 }, { appointment_revision: 2, type_revision: 2 }]);
+      expect(database.query('SELECT type_revision FROM _calendar_hold_type_bindings').all()).toEqual([{ type_revision: 1 }]);
+      expect(database.query('PRAGMA foreign_key_check').all()).toEqual([]);
+    });
   } finally { await f.close(); }
 }, 120_000);
 

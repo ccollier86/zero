@@ -1,5 +1,6 @@
 /** Internal private conflict-domain state. None of these tables is a public Sync/API surface. */
 import type { TableSchema } from '../sync/types';
+import { CALENDAR_TYPE_BINDING_TABLES } from './realm-type-bindings-migration';
 
 export const CALENDAR_TABLES: Record<string, TableSchema> = {
   _calendar_owner: { id: "TEXT PRIMARY KEY CHECK(id='application')", owner_id: 'TEXT NOT NULL', scope_id: 'TEXT NOT NULL' },
@@ -85,4 +86,27 @@ export const CALENDAR_LOCATION_TABLES: Record<string, TableSchema> = {
     target_kind: "TEXT NOT NULL CHECK(target_kind='location')", target_id: 'TEXT NOT NULL REFERENCES calendar_locations(id)', required_right: "TEXT NOT NULL CHECK(required_right='manage')" },
   _calendar_location_effect_intents: { id: 'TEXT PRIMARY KEY', scope_id: 'TEXT NOT NULL', receipt_id: 'TEXT NOT NULL REFERENCES _calendar_location_receipts(id)',
     operation: 'TEXT NOT NULL', target_kind: "TEXT NOT NULL CHECK(target_kind='location')", target_id: 'TEXT NOT NULL', revision: 'INTEGER NOT NULL CHECK(revision>0)' },
+};
+
+/** Generation 005 is additive. Earlier maps remain immutable migration inputs. */
+export const CALENDAR_TYPE_TABLES: Record<string, TableSchema> = {
+  ...CALENDAR_LOCATION_TABLES,
+  ...CALENDAR_TYPE_BINDING_TABLES,
+  calendar_types: { id: 'TEXT PRIMARY KEY', scope_id: 'TEXT NOT NULL', revision: 'INTEGER NOT NULL CHECK(revision>0)' },
+  _calendar_type_history: { id: 'TEXT PRIMARY KEY', scope_id: 'TEXT NOT NULL', type_id: 'TEXT NOT NULL', type_revision: 'INTEGER NOT NULL CHECK(type_revision>0)',
+    label: 'TEXT NOT NULL CHECK(length(label) BETWEEN 1 AND 256)', duration_minutes: "INTEGER NOT NULL CHECK(typeof(duration_minutes)='integer' AND duration_minutes BETWEEN 1 AND 44640)",
+    buffer_before: "INTEGER NOT NULL CHECK(typeof(buffer_before)='integer' AND buffer_before BETWEEN 0 AND 1440)", buffer_after: "INTEGER NOT NULL CHECK(typeof(buffer_after)='integer' AND buffer_after BETWEEN 0 AND 1440)",
+    color_key: "TEXT CHECK(color_key IS NULL OR (length(color_key) BETWEEN 1 AND 64 AND color_key NOT GLOB '*[^A-Za-z0-9_.:-]*' AND substr(color_key,1,1) GLOB '[A-Za-z0-9]'))",
+    active: 'INTEGER NOT NULL CHECK(active IN (0,1))' },
+  _calendar_resource_type_history: { id: 'TEXT PRIMARY KEY', scope_id: 'TEXT NOT NULL', resource_id: 'TEXT NOT NULL REFERENCES calendar_resources(id)',
+    resource_revision: 'INTEGER NOT NULL CHECK(resource_revision>1)', mode: "TEXT NOT NULL CHECK(mode IN ('unrestricted','optional','required'))",
+    type_ids_json: "TEXT NOT NULL CHECK(json_valid(type_ids_json) AND json_type(type_ids_json)='array' AND json_array_length(type_ids_json)<=16 AND (mode<>'unrestricted' OR json_array_length(type_ids_json)=0))" },
+  _calendar_resource_type_members: { id: 'TEXT PRIMARY KEY', scope_id: 'TEXT NOT NULL', resource_id: 'TEXT NOT NULL REFERENCES calendar_resources(id)',
+    resource_revision: 'INTEGER NOT NULL CHECK(resource_revision>1)', type_id: 'TEXT NOT NULL REFERENCES calendar_types(id)' },
+  _calendar_resource_types: { id: 'TEXT PRIMARY KEY', scope_id: 'TEXT NOT NULL', resource_id: 'TEXT NOT NULL REFERENCES calendar_resources(id) CHECK(id=resource_id)',
+    resource_revision: 'INTEGER NOT NULL CHECK(resource_revision>1)' },
+  _calendar_type_receipts: { id: 'TEXT PRIMARY KEY', scope_id: 'TEXT NOT NULL', principal: 'TEXT NOT NULL', request_id: 'TEXT NOT NULL', digest: 'TEXT NOT NULL', result_json: 'TEXT NOT NULL',
+    target_kind: "TEXT NOT NULL CHECK(target_kind='type')", target_id: 'TEXT NOT NULL REFERENCES calendar_types(id)', required_right: "TEXT NOT NULL CHECK(required_right='manage')" },
+  _calendar_type_effect_intents: { id: 'TEXT PRIMARY KEY', scope_id: 'TEXT NOT NULL', receipt_id: 'TEXT NOT NULL REFERENCES _calendar_type_receipts(id)',
+    operation: 'TEXT NOT NULL', target_kind: "TEXT NOT NULL CHECK(target_kind='type')", target_id: 'TEXT NOT NULL', revision: 'INTEGER NOT NULL CHECK(revision>0)' },
 };

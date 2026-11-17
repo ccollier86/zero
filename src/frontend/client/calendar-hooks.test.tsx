@@ -2,11 +2,13 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { act, createElement } from 'react';
 import type { Root } from 'react-dom/client';
-import type { CalendarAppointmentPage, CalendarAppointmentView, CalendarLocationPage, CalendarLocationPageQuery, CalendarRangeQuery, CalendarReadOptions, CalendarResourcePage, CalendarResourcePageQuery, CalendarWatchOptions, CalendarWatchUpdate } from '../../calendar/contracts';
+import type { CalendarAppointmentPage, CalendarAppointmentView, CalendarAppointmentTypePage, CalendarAppointmentTypePageQuery, CalendarAppointmentTypeView,
+  CalendarResourceTypesView, CalendarLocationPage, CalendarLocationPageQuery, CalendarRangeQuery, CalendarReadOptions, CalendarResourcePage, CalendarResourcePageQuery, CalendarWatchOptions, CalendarWatchUpdate } from '../../calendar/contracts';
 import { ClientProvider } from './client-context';
 import type { Client } from './sdk';
 import { CalendarReadError } from './calendar-mutation';
-import { useCalendarAppointment, useCalendarAppointments, useCalendarResources, useCalendarLocations, type CalendarReadResult, type UseCalendarAppointmentsResult } from './calendar-hooks';
+import { useCalendarAppointment, useCalendarAppointments, useCalendarResources, useCalendarLocations, useCalendarAppointmentTypes,
+  useCalendarAppointmentType, useCalendarResourceTypes, type CalendarReadResult, type UseCalendarAppointmentsResult } from './calendar-hooks';
 import { createHookContainer, installMinimalHookDom } from './test-fixtures/react-hook-dom';
 const roots = new Set<Root>(); let restore: () => void;
 beforeEach(() => { restore = installMinimalHookDom(); });
@@ -135,6 +137,42 @@ test('synchronous directory watch failure retires its subsequently returned unsu
   expect(current).toMatchObject({ status: 'error', value: null, code: 'CALENDAR_NOT_FOUND' }); expect(removals).toBe(1);
   await act(async () => { root.unmount(); }); roots.delete(root); expect(removals).toBe(1);
 });
+test('type-selector omission and explicit empty resource selection never share an accepted private page', async () => {
+  const f = fixture(), { createRoot } = await import('react-dom/client'), root = createRoot(createHookContainer()); roots.add(root);
+  let query: CalendarAppointmentTypePageQuery = {}, current!: CalendarReadResult<CalendarAppointmentTypePage>;
+  const renders: { selection: string; value: CalendarReadResult<CalendarAppointmentTypePage> }[] = [];
+  function Capture() { current = useCalendarAppointmentTypes(query); renders.push({ selection: JSON.stringify(query.resourceIds ?? null), value: current }); return null; }
+  const render = () => root.render(createElement(ClientProvider, { client: f.client, children: createElement(Capture) }));
+  await act(async () => { render(); });
+  const catalog = { items: [], truncated: true, nextAfter: 'type' };
+  await act(async () => { f.types[0]!.resolve(catalog); }); expect(current.value).toBe(catalog);
+  query = { resourceIds: [] }; await act(async () => { render(); });
+  expect(renders.find(render => render.selection === '[]')!.value).toMatchObject({ status: 'loading', value: null });
+  expect(f.types[1]!.query).toEqual({ resourceIds: [] }); expect(f.types[0]!.removals).toBe(1);
+  await act(async () => { f.types[0]!.resolve(catalog); }); expect(current.value).toBeNull();
+  await act(async () => { f.types[1]!.resolve({ items: [], truncated: false, nextAfter: null }); }); expect(current.status).toBe('ready');
+  await act(async () => { f.types[1]!.options.onError?.(new CalendarReadError('CALENDAR_NOT_FOUND', 404)); });
+  expect(current).toMatchObject({ status: 'error', value: null, code: 'CALENDAR_NOT_FOUND' });
+});
+test('type and resource-policy detail hooks withdraw independently on domain denial and retire on scope replacement', async () => {
+  const f = fixture(), { createRoot } = await import('react-dom/client'), root = createRoot(createHookContainer()); roots.add(root);
+  let current!: { type: CalendarReadResult<CalendarAppointmentTypeView>; policy: CalendarReadResult<CalendarResourceTypesView> };
+  function Capture() { current = { type: useCalendarAppointmentType('type'), policy: useCalendarResourceTypes('resource') }; return null; }
+  await act(async () => { root.render(createElement(ClientProvider, { client: f.client, children: createElement(Capture) })); });
+  const type: CalendarAppointmentTypeView = { id: 'type', revision: 1, label: 'Synthetic type', durationMinutes: 30,
+    bufferBeforeMinutes: 0, bufferAfterMinutes: 0, colorKey: null, active: true };
+  const policy: CalendarResourceTypesView = { resourceId: 'resource', resourceRevision: 2, mode: 'required', typeIds: ['type'] };
+  await act(async () => { f.typeDetails[0]!.resolve(type); f.typePolicies[0]!.resolve(policy); });
+  expect(current.type.value).toBe(type); expect(current.policy.value).toBe(policy);
+  await act(async () => { f.typePolicies[0]!.options.onError?.(new CalendarReadError('CALENDAR_NOT_FOUND', 404)); });
+  expect(current.policy).toMatchObject({ status: 'error', value: null }); expect(current.type.value).toBe(type);
+  await act(async () => { f.typePolicies[0]!.resolve(policy); }); expect(current.policy.value).toBeNull();
+  f.auth.authorizationScopeKey = 'new-scope'; await act(async () => { f.notify(); });
+  expect(current.type.value).toBeNull(); expect(current.policy.value).toBeNull();
+  await act(async () => { f.typeDetails[0]!.resolve(type); f.typePolicies[0]!.resolve(policy); });
+  expect(current.type.value).toBeNull(); expect(current.policy.value).toBeNull();
+  expect(f.typeDetails[0]!.options.signal!.aborted).toBe(true); expect(f.typePolicies[0]!.options.signal!.aborted).toBe(true);
+});
 function fixture() {
   const observers = new Set<() => void>(), subscribe = (observer: () => void) => { observers.add(observer); return () => { observers.delete(observer); }; };
   const auth = { authorizationScopeKey: 'original-scope', user: { userId: 'synthetic-user' }, activeTenant: { tenantId: 'synthetic-tenant' }, isLoading: false,
@@ -142,15 +180,24 @@ function fixture() {
   const subscriptions: { query: CalendarRangeQuery; listener(page: CalendarAppointmentPage, update?: CalendarWatchUpdate): void; options: CalendarWatchOptions }[] = [];
   const resources: { query: CalendarResourcePageQuery; options: CalendarWatchOptions; resolve(value: CalendarResourcePage): void; removals: number }[] = [];
   const locations: { query: CalendarLocationPageQuery; options: CalendarWatchOptions; resolve(value: CalendarLocationPage): void; removals: number }[] = [];
+  const types: { query: CalendarAppointmentTypePageQuery; options: CalendarWatchOptions; resolve(value: CalendarAppointmentTypePage): void; removals: number }[] = [];
+  const typeDetails: { id: string; options: CalendarWatchOptions; resolve(value: CalendarAppointmentTypeView): void }[] = [];
+  const typePolicies: { id: string; options: CalendarWatchOptions; resolve(value: CalendarResourceTypesView): void }[] = [];
   const details: { options: CalendarReadOptions; resolve(value: CalendarAppointmentView): void; reject(error: unknown): void }[] = [];
   const client = { auth, calendar: { resources: { watch(query: CalendarResourcePageQuery, listener: (value: CalendarResourcePage) => void, options: CalendarWatchOptions) {
     const item = { query, options, resolve: listener, removals: 0 }; resources.push(item); return () => { item.removals++; };
   } }, locations: { watch(query: CalendarLocationPageQuery, listener: (value: CalendarLocationPage) => void, options: CalendarWatchOptions) {
     const item = { query, options, resolve: listener, removals: 0 }; locations.push(item); return () => { item.removals++; };
+  } }, types: { watch(query: CalendarAppointmentTypePageQuery, listener: (value: CalendarAppointmentTypePage) => void, options: CalendarWatchOptions) {
+    const item = { query, options, resolve: listener, removals: 0 }; types.push(item); return () => { item.removals++; };
+  }, watchType(id: string, listener: (value: CalendarAppointmentTypeView) => void, options: CalendarWatchOptions) {
+    typeDetails.push({ id, options, resolve: listener }); return () => {};
+  }, watchForResource(id: string, listener: (value: CalendarResourceTypesView) => void, options: CalendarWatchOptions) {
+    typePolicies.push({ id, options, resolve: listener }); return () => {};
   } }, appointments: { get(_id: string, options: CalendarReadOptions) { return new Promise<CalendarAppointmentView>((resolve, reject) => details.push({ options, resolve, reject })); }, watch(query: CalendarRangeQuery, listener: (page: CalendarAppointmentPage, update?: CalendarWatchUpdate) => void, options: CalendarWatchOptions) {
     subscriptions.push({ query, listener, options }); return () => {};
   } } } } as unknown as Client;
-  return { client, auth, subscriptions, resources, locations, details, notify() { for (const observer of observers) observer(); } };
+  return { client, auth, subscriptions, resources, locations, types, typeDetails, typePolicies, details, notify() { for (const observer of observers) observer(); } };
 }
 async function renderReads(client: Client) {
   const { createRoot } = await import('react-dom/client'), root = createRoot(createHookContainer()); roots.add(root);

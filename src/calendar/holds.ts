@@ -14,6 +14,8 @@ import { assertCalendarOwner, calendarActor, calendarBudget, calendarIntent, cal
 import { appendCalendarSemanticAudit } from './semantic-audit';
 import { calendarOverlapSearchStart, normalizeCalendarInstant, normalizeCalendarTimedInterval, type CalendarTimedInterval } from './time';
 import { calendarInteger, calendarKey, calendarRecord, calendarText } from './validation';
+import { assertCalendarBookingType, bindCalendarHoldType, calendarAppointmentTypeReference, calendarHoldAppointmentType,
+  normalizeCalendarTypedBooking, normalizeCalendarTypedIntentInterval, readCalendarHoldTypeSnapshot } from './appointment-type-bindings';
 
 function receipt(requestId: string, operation: CalendarCommandReceipt['operation'], id: string, revision: number, changed = true): CalendarCommandReceipt {
   return { requestId, operation, id, revision, changed };
@@ -37,32 +39,40 @@ function assertLiveQuota(context: DatabaseWriteCommandContext, actor: CalendarAc
 
 export function acquireCalendarHold(context: DatabaseWriteCommandContext, input: unknown) {
   return calendarCommand(() => {
-    const r = calendarRecord(input, ['actor', 'requestId', 'id', 'resourceIds', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'ttlSeconds']);
+    const r = calendarRecord(input, ['actor', 'requestId', 'id', 'resourceIds', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'ttlSeconds', 'appointmentType']);
     const actor = calendarActor(r.actor); assertCalendarOwner(context, actor.scopeId);
-    const id = calendarKey(r.id), resourceIds = calendarSelection(r.resourceIds), interval = timed(r);
+    const id = calendarKey(r.id), resourceIds = calendarSelection(r.resourceIds);
     const ttl = calendarInteger(r.ttlSeconds === undefined ? CALENDAR_HOLD_LIMITS.ttl : r.ttlSeconds, 1, CALENDAR_HOLD_LIMITS.maxTtl);
     if (!resourceIds.length) throw new CalendarError('CALENDAR_INPUT_INVALID');
     for (const resourceId of resourceIds) {
       const resource = calendarResource(context, actor, resourceId); requireCalendarRight(context, actor, resource, 'book');
       if (!resource.active) throw new CalendarError('CALENDAR_FORBIDDEN');
     }
-    return calendarIntent(context, actor, r.requestId, ['hold.acquire', id, resourceIds, interval, ttl], 'hold', 'book', requestId => {
+    const typeRef = calendarAppointmentTypeReference(r.appointmentType);
+    const interval = typeRef ? undefined : timed(r);
+    const intent: unknown[] = typeRef ? ['hold.acquire.typed.v1', id, resourceIds, normalizeCalendarTypedIntentInterval(r), ttl, typeRef]
+      : ['hold.acquire', id, resourceIds, interval, ttl];
+    return calendarIntent(context, actor, r.requestId, intent, 'hold', 'book', requestId => {
       if (context.db.get('calendar_holds', id)) {
         calendarHold(context, actor, id); throw new CalendarError('CALENDAR_INTENT_CONFLICT');
       }
+      const booking = typeRef ? normalizeCalendarTypedBooking(context, actor, resourceIds, r, typeRef) : { interval: interval!, appointmentType: undefined };
+      const { interval: acceptedInterval, appointmentType } = booking;
       const now = calendarNow();
-      if (interval.startMs <= now) throw new CalendarError('CALENDAR_INPUT_INVALID');
+      if (acceptedInterval.startMs <= now) throw new CalendarError('CALENDAR_INPUT_INVALID');
+      assertCalendarBookingType(context, actor, resourceIds, acceptedInterval, appointmentType);
       assertLiveQuota(context, actor, now);
-      assertCalendarAvailability(context, actor.scopeId, resourceIds, interval);
-      assertCalendarResourcesAvailable(context, actor.scopeId, resourceIds, interval, undefined, now);
+      assertCalendarAvailability(context, actor.scopeId, resourceIds, acceptedInterval);
+      assertCalendarResourcesAvailable(context, actor.scopeId, resourceIds, acceptedInterval, undefined, now);
       calendarBudget(context, 'holds');
-      const expiresMs = Math.min(now + ttl * 1_000, interval.startMs);
+      const expiresMs = Math.min(now + ttl * 1_000, acceptedInterval.startMs);
       const change = context.db.createStrict('calendar_holds', { id, scope_id: actor.scopeId, principal: actor.principal,
-        created_by: actor.userId, created_ms: now, revision: 1, ...intervalFields(interval), status: 'held', expires_ms: expiresMs, appointment_id: null });
+        created_by: actor.userId, created_ms: now, revision: 1, ...intervalFields(acceptedInterval), status: 'held', expires_ms: expiresMs, appointment_id: null });
+      if (appointmentType) bindCalendarHoldType(context, actor.scopeId, id, appointmentType);
       for (const resourceId of resourceIds) context.db.createStrict('_calendar_hold_reservations', {
         id: holdReservationId(actor.scopeId, id, resourceId), scope_id: actor.scopeId, hold_id: id, resource_id: resourceId,
         resource_revision: calendarResource(context, actor, resourceId).revision,
-        occupied_start_ms: interval.occupiedStartMs, occupied_end_ms: interval.occupiedEndMs, expires_ms: expiresMs, active: 1,
+        occupied_start_ms: acceptedInterval.occupiedStartMs, occupied_end_ms: acceptedInterval.occupiedEndMs, expires_ms: expiresMs, active: 1,
       });
       appendCalendarSemanticAudit(context, 'hold.acquired', change, { revision: 1, resourceCount: resourceIds.length, status: 'held' });
       return receipt(requestId, 'hold.acquired', id, 1);
@@ -107,7 +117,8 @@ export function confirmCalendarHold(context: DatabaseWriteCommandContext, input:
       const interval = timed({ startAt: row.start_at, endAt: row.end_at, timeZone: row.time_zone,
         bufferBeforeMinutes: row.buffer_before, bufferAfterMinutes: row.buffer_after });
       // The trusted exception is only this hold. The appointment helper still freshly checks every book/active/policy/conflict boundary.
-      commitCalendarAppointment(context, actor, appointmentId, title, resourceIds, interval, { now, exceptHoldId: row.id });
+      commitCalendarAppointment(context, actor, appointmentId, title, resourceIds, interval,
+        { now, exceptHoldId: row.id, appointmentType: calendarHoldAppointmentType(context, actor.scopeId, row.id) });
       const revision = nextCalendarRevision(row.revision), change = context.db.update('calendar_holds', row.id, { status: 'confirmed', revision, appointment_id: appointmentId });
       for (const reservation of reservations) context.db.update('_calendar_hold_reservations', reservation.id, { active: 0 });
       appendCalendarSemanticAudit(context, 'hold.confirmed', change, { revision, resourceCount: resourceIds.length, status: 'confirmed' });
@@ -123,7 +134,7 @@ function readOwner(context: DatabaseReadQueryContext, scopeId: string): void {
 export function readCalendarHold(context: DatabaseReadQueryContext, input: unknown) {
   const r = calendarRecord(input, ['actor', 'id']), actor = calendarActor(r.actor); readOwner(context, actor.scopeId);
   const { row, resourceIds } = readCalendarHoldTarget(context, actor, calendarKey(r.id));
-  return holdView(row, resourceIds, calendarNow());
+  return holdView(row, resourceIds, calendarNow(), readCalendarHoldTypeSnapshot(context, actor.scopeId, row.id));
 }
 function rightSql(actor: CalendarActor, right: 'book' | 'manage'): { sql: string; params: string[] } {
   if (actor.manageAll) return { sql: '1=1', params: [] };
@@ -151,5 +162,6 @@ export function queryCalendarHolds(context: DatabaseReadQueryContext, input: unk
     AND ((h.principal=? AND h.created_by=? AND NOT ${unauthorized(book.sql)}) OR NOT ${unauthorized(manage.sql)})
     ORDER BY h.occupied_start_ms,h.id LIMIT ?`).all(actor.scopeId, now, calendarOverlapSearchStart(startMs), endMs, startMs,
     ...ids, actor.principal, actor.userId, ...book.params, ...manage.params, limit + 1);
-  return { items: rows.slice(0, limit).map(row => holdView(row, readCalendarHoldResourceIds(context, actor.scopeId, row.id), now)), truncated: rows.length > limit };
+  return { items: rows.slice(0, limit).map(row => holdView(row, readCalendarHoldResourceIds(context, actor.scopeId, row.id), now,
+    readCalendarHoldTypeSnapshot(context, actor.scopeId, row.id))), truncated: rows.length > limit };
 }
