@@ -65,6 +65,7 @@ import type { PdfService } from '../../pdf';
 import { getPdfService } from '../../pdf';
 import type { ZeroAppRuntime } from '../../runtime/zero-app-runtime';
 import type { LoggingRuntime } from '../../logging/logging-runtime';
+import type { CalendarService } from '../../calendar/service';
 import { ZERO_BLOG, type BlogService } from '../../blog/service';
 import { ZERO_MESSAGING, type MessagingService } from '../../messaging/service';
 import type { PaymentsBackend } from '../../payments/contracts';
@@ -89,6 +90,7 @@ import {
   ZERO_SCHEDULER_SERVICE,
   ZERO_WORKER_SERVICE,
   ZERO_JOBS_SERVICE,
+  ZERO_CALENDAR_SERVICE,
   ZERO_SQLITE_SERVICE,
   ZERO_STORAGE_SERVICE,
   ZERO_SYNC_DB,
@@ -171,6 +173,8 @@ export interface ServerSystemDatabaseServices {
 
 /** Platform services exposed under `zero` in app-owned server route handlers. */
 export interface ServerRouteServices {
+  /** Trusted setup owner; admitted browser requests receive only a current-authority facade. */
+  readonly calendar: CalendarService | null;
   readonly jobs: import('../../jobs/service').JobsService | null;
   /** Trusted process owner; requests receive only current-authority task execution. */
   readonly workers: import('../../workers/service').WorkerService | null;
@@ -262,6 +266,7 @@ export function createLazyServerRouteServices(runtime?: ZeroAppRuntime): ServerR
 
 function createServerRouteServices(runtime?: ZeroAppRuntime): ServerRouteServices {
   return {
+    get calendar() { return runtime?.get(ZERO_CALENDAR_SERVICE) ?? null; },
     get jobs() { return runtime?.get(ZERO_JOBS_SERVICE) ?? null; },
     get workers() { return runtime?.get(ZERO_WORKER_SERVICE) ?? null; },
     get blog() { return runtime?.get(ZERO_BLOG) ?? null; },

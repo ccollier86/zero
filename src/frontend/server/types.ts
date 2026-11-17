@@ -23,6 +23,8 @@ import { resolveWorkersConfig, type WorkersConfig, type ResolvedWorkersConfig } 
 import { resolveJobsConfig, type JobsConfig, type ResolvedJobsConfig } from '../../jobs/config';
 import { assertJobsDirectoryIsolation } from '../../jobs/isolation';
 import { assertMessagingDirectoryIsolation } from '../../messaging/isolation';
+import { resolveCalendarConfig, type CalendarConfig, type ResolvedCalendarConfig } from '../../calendar/config';
+import { assertCalendarDirectoryIsolation, calendarOtherFeatureRoots } from '../../calendar/isolation';
 import { resolveSeoConfig } from '../../seo/runtime';
 import type { EphemeralTopicPolicy } from '../../sync/ephemeral-policy';
 import type { ObservabilityConfig } from '../../observability/types';
@@ -95,6 +97,7 @@ import {
 
 export type { SystemDatabaseConfig } from './system-database-config';
 export type { AppThemeFoundation } from './style-foundation';
+export type { CalendarConfig, ResolvedCalendarConfig } from '../../calendar/config';
 export type {
   AppStorageConfig,
   ResolvedAppStorageConfig,
@@ -280,6 +283,8 @@ export interface AppWorkflowsConfig {
  * building a full-stack app with the platform.
  */
 export interface AppConfig {
+  /** Optional private one-off scheduling. Browser-session access only; deferred capabilities remain disabled. */
+  calendar?: boolean | CalendarConfig;
   /** Optional durable schedules and actor-preserving Torrent jobs in private Fabric storage. */
   jobs?: boolean | JobsConfig;
   /** Optional registered Bun task processes. Disabled unless configured; never inherits provider environment. */
@@ -608,6 +613,7 @@ export function defineZeroConfig<const TConfig extends AppConfig>(config: TConfi
 
 /** Resolved config with defaults filled in. */
 export interface ResolvedConfig {
+  readonly calendar: ResolvedCalendarConfig | false;
   readonly jobs: ResolvedJobsConfig | false;
   readonly workers: ResolvedWorkersConfig | false;
   readonly messaging: ResolvedMessagingConfig | false;
@@ -689,7 +695,7 @@ export function resolveConfig(
   const themeFoundation = resolveAppThemeFoundation(config.themeFoundation);
   const projectRoot = resolveAppProjectRoot(config);
   const logging = resolveManagedLoggingConfig(config.logging, projectRoot);
-  const inputAuth = config.auth === undefined && (blogEnabled(config.blog) || config.messaging !== undefined && config.messaging !== false || config.workers !== undefined && config.workers !== false || config.jobs !== undefined && config.jobs !== false) ? true : config.auth;
+  const inputAuth = config.auth === undefined && (blogEnabled(config.blog) || config.messaging !== undefined && config.messaging !== false || config.workers !== undefined && config.workers !== false || config.jobs !== undefined && config.jobs !== false || config.calendar !== undefined && config.calendar !== false) ? true : config.auth;
   const originalAuth = inputAuth === true
     ? {}
     : inputAuth === false || inputAuth === undefined
@@ -700,6 +706,7 @@ export function resolveConfig(
   const blog = resolveBlogConfig(config.blog, authBehavior);
   const blogContent = blog.enabled ? resolveBlogContentConfig(blog.content, projectRoot) : false;
   const messaging = resolveMessagingConfig(config.messaging, projectRoot, authBehavior);
+  const calendar = resolveCalendarConfig(config.calendar, projectRoot, authBehavior);
   const workers = resolveWorkersConfig(config.workers, projectRoot, authBehavior);
   if (logging) for (const permission of Object.values(logging.access)) {
     if (permission && (!authBehavior || !Object.hasOwn(authBehavior.authorization.permissions, permission))) {
@@ -821,6 +828,11 @@ export function resolveConfig(
   const outDir = resolveAppOwnedPath(projectRoot, config.outDir ?? './.build');
   const generatedDir = resolveAppOwnedPath(projectRoot, config.generatedDir ?? './.zero/generated');
   const appDir = resolveAppOwnedPath(projectRoot, config.appDir ?? './app');
+  if (calendar) assertCalendarDirectoryIsolation({ rootDirectory: calendar.rootDirectory, outDir, storageDir, generatedDir, appDir,
+    controlDatabasePaths: [...resolveControlDatabasePaths(config.db), ...resolveSystemDatabaseOwnedPaths(systemDb)],
+    featureRoots: calendarOtherFeatureRoots(projectRoot, [logging && logging.rootDirectory, blogContent && blogContent.rootDirectory, messaging && messaging.rootDirectory, jobs && jobs.rootDirectory]),
+    ...(databaseTopology.mode === 'multiple' ? { applicationFabricRoot: databaseTopology.rootDirectory } : {}),
+  });
   if (jobs) assertJobsDirectoryIsolation({ rootDirectory: jobs.rootDirectory, outDir, storageDir, generatedDir, appDir,
     controlDatabasePaths: [...resolveControlDatabasePaths(config.db), ...resolveSystemDatabaseOwnedPaths(systemDb)],
     featureRoots: [logging && logging.rootDirectory, blogContent && blogContent.rootDirectory, messaging && messaging.rootDirectory].filter((root): root is string => typeof root === 'string'),
@@ -897,6 +909,7 @@ export function resolveConfig(
     blog,
     blogContent,
     messaging,
+    calendar,
     workers,
     jobs,
     tables: normalized,

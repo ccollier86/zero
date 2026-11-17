@@ -19,6 +19,7 @@ export type {
   ScopedWorkflowService,
 } from './server-request-services/scoped-workflow-service';
 export type { ScopedNotificationService } from './server-request-services/scoped-notification-service';
+export type { ScopedCalendar } from '../../calendar/contracts';
 export type {
   ScopedPdfService,
   ScopedPdfStorageTarget,

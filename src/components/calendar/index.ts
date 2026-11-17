@@ -1,8 +1,10 @@
-/** Released experimental frontend composition surface; no authoritative calendar backend or booking service. */
+/** Experimental presentation family plus the opt-in connected one-off core workspace. Server authority is separate. */
 import './styles/calendar-tokens.css';
 export { CalendarModal, CalendarManagedForm, CalendarDismiss, CalendarPopover } from './components/calendar-surfaces';
 export { CalendarSchedule } from './components/calendar-schedule';
 export type { CalendarScheduleProps } from './components/calendar-schedule';
+export { ConnectedCalendarWorkspace } from './components/calendar-workspace';
+export type { ConnectedCalendarWorkspaceProps } from './components/calendar-workspace';
 export { CalendarGrid } from './components/calendar-grid';
 export { CalendarMonthGrid } from './components/calendar-month-grid';
 export { CalendarAgenda } from './components/calendar-agenda';

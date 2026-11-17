@@ -18,6 +18,15 @@ test('app-authored labels do not rewrite original identities and work for retain
   expect(loggingTableLabel({ type: 'table.clinical-notes', names: ['clinical_notes', 'clinical-notes'] })).toBe('Clinical notes / Clinical notes');
   expect(loggingActivityCode('plan.reviewed').label).toBe('Plan reviewed');
 });
+test('calendar controls have readable semantic labels without claiming delivery or leaking private changes', () => {
+  expect(loggingActivityCode('calendar.resource.created').label).toBe('Created a calendar');
+  expect(loggingActivityCode('calendar.resource.grant-changed').label).toBe('Changed calendar permissions');
+  expect(loggingActivityCode('calendar.appointment.created').label).toBe('Booked an appointment');
+  expect(loggingActivityCode('calendar.appointment.rescheduled').label).toBe('Rescheduled an appointment');
+  expect(loggingActivityCode('calendar.appointment.cancelled').label).toBe('Cancelled an appointment');
+  expect(loggingActivityCode('calendar.appointment.created').description).toContain('does not confirm');
+  expect(loggingResourceLabel({ target: { type: 'calendar.appointment', id: 'opaque' } }, [])).toBe('Calendar appointment');
+});
 
 test('typed table identity disambiguates colliding legacy slugs instead of borrowing a current label', () => {
   const event: Pick<LoggingEvent, 'target' | 'detail'> = { target: { type: 'table.work-items', id: 'record-a' },

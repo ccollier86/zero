@@ -55,6 +55,8 @@
       "@zero/framework/logging/actor": ["./src/logging/logging-actor-bootstrap.ts"],
       "@zero/framework/blog": ["./src/components/blog"],
       "@zero/framework/calendar": ["./src/components/calendar"],
+      "@zero/framework/calendar/server": ["./src/calendar/index.ts"],
+      "@zero/framework/calendar/client": ["./src/calendar/contracts.ts"],
       "@zero/framework/components/calendar": ["./src/components/calendar"],
       "@zero/framework/components/blog": ["./src/components/blog"],
       "@zero/framework/components/command-palette": ["./src/components/command-palette"],

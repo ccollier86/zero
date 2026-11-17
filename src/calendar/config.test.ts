@@ -35,7 +35,7 @@ test('enabled shorthand has private bounded defaults but does not claim runtime 
   const config = enabled();
   expect(config).toEqual({
     rootDirectory: PROJECT + '/data/zero.calendar', timezone: null, readiness: 'setup-required',
-    createOwn: 'user', manage: 'admin', maxRangeDays: 62, maxPageSize: 200, maxResources: 100,
+    createOwn: 'user', manage: 'admin', maxRangeDays: 31, maxPageSize: 100, maxResources: 16,
     maxParticipants: 100, maxActiveDatabases: 4, maxDatabaseFiles: 1000,
     recurrence: false, reminders: false, selfBooking: false,
   });
@@ -65,7 +65,7 @@ test('private root resolution is lexical and does not provision or inspect a fut
 
 test('query and actor/database ceilings are finite integers and explicitly bounded', () => {
   const bounds = [
-    ['maxRangeDays', 1, 366], ['maxPageSize', 1, 1000], ['maxResources', 1, 1000],
+    ['maxRangeDays', 1, 31], ['maxPageSize', 1, 100], ['maxResources', 1, 16],
     ['maxParticipants', 1, 100], ['maxActiveDatabases', 1, 64], ['maxDatabaseFiles', 4, 10_000],
   ] as const;
   for (const [key, min, max] of bounds) {

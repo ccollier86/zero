@@ -86,6 +86,10 @@ families are listed in the [backend index](./backend/index.md).
   [worker foundation](./backend/workers/index.md) and
   [shared jobs plan](./_work/durable-jobs-and-workers-plan.md) are feature-branch
   development, not APIs in the current stable archive.
+- **Calendar:** the [frontend family](./frontend/calendar/index.md) ships in
+  2.11.0. The [managed one-off core](./backend/calendar/index.md) is implemented
+  on its feature branch but still awaits installed/browser/Linux release
+  qualification; do not assume it is in the selected update archive.
 - **Markdown documentation:** install and declare the optional
   [docs plugin](./plugins/docs/index.md); its public reader includes
   [passage-aware search](./plugins/docs/search.md) and uses the shared

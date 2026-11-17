@@ -4,7 +4,7 @@ type: reference
 audience: [developer, agent]
 owner: calendar
 status: draft
-implementation_state: paused
+implementation_state: in-progress
 visibility: internal
 system: calendar
 feature: integration-return-notes
@@ -31,6 +31,13 @@ preserved visual/requirement handoff. The plan explicitly identifies the still-n
 source/service Jobs bridge, synchronous eligibility boundary and retained-capacity
 design needed for production reminders. Its API/configuration names are proposals.
 
+The user subsequently approved implementation. The active branch now connects
+the one-off core, managed lifecycle, scoped APIs, source audit and native workspace.
+Use the [managed core guide](../backend/calendar/index.md) for implemented source
+contracts and the [current checkpoint](./calendar-integration-plan.md#implementation-checkpoint)
+for remaining work. This is not yet selected by normal update; the historical
+UI requirements below remain preserved, not all implemented by that core.
+
 ## Checkpoints and places to resume
 
 - Historical starting baseline: `05344d46a5d0178cdb5df3ab02bbe763ef6aa3cd`, Zero 2.10.5.
@@ -52,6 +59,12 @@ design needed for production reminders. Its API/configuration names are proposal
   `/Volumes/code-bank/tmp/scratch/zero-platform/calendar-demos-v2-preview`,
   `http://127.0.0.1:4318`. Its `.storage-keep` describes ownership and retention.
   Check the owned process before restarting; do not create duplicate previews.
+- The same approved standalone UI is published at https://cal.collabmd.net in an
+  isolated Coolify demo application. It uses fictional browser-local state and
+  resets on reload; no unfinished calendar backend, application database or
+  production scheduling service is connected. Publishing it did not select a
+  Zero framework update. Its local deployment notes are in the retained preview
+  README; leave that independently hosted demo unchanged during backend work.
 - [Shared jobs/scheduling record](./durable-jobs-and-workers-plan.md) preserves
   the released foundation's evidence. Calendar reminders and background adapters
   still need their own domain design and qualification.
@@ -154,9 +167,12 @@ remain separate scope, not implied by returning to this backend plan.
 
 ## Return gate
 
-The shared 2.11.0 framework release gate is recorded complete. The next calendar
-step is reviewing the eight backend prerequisites with the user before
-implementation; calendar backend work remains unimplemented. Post-release worker,
+The shared 2.11.0 framework release gate is recorded complete. The user subsequently
+approved the backend plan and implementation; that review gate is no longer a
+request to pause. The managed core is in progress, with the current source and
+qualification boundary recorded in the [backend guide](../backend/calendar/index.md)
+and [review checkpoint](../backend/calendar/qualification.md). It is not a released
+calendar backend or completion of the later booking/reminder stages. Post-release worker,
 workflow-dispatch, jobs query-plan and direct-dependency fixes are implemented on
 `feature/core-foundation-polish`. Their source review, fresh frozen installs,
 TypeScript check and 19 selected canonical test files passed; they are not in the

@@ -1,4 +1,4 @@
-/** Local prototype contracts. These are not Zero scheduling or authorization APIs. */
+/** Calendar presentation contracts, not domain scheduling or authorization APIs. */
 import type { CalendarUser } from './recovered/calendar/types/index';
 import type { AppointmentAttendee } from './models/attendee-model';
 import type { RepeatRule } from './models/recurrence-model';
@@ -21,7 +21,7 @@ export interface ScheduleEvent {
   end: number;
   kind: 'appointment' | 'block';
   status: AppointmentStatus;
-  location: 'Telehealth' | 'In-person' | 'Phone';
+  location: 'Telehealth' | 'In-person' | 'Phone' | 'Unspecified';
   notes: string;
   patientId: string | null;
   attendees: AppointmentAttendee[];
@@ -39,7 +39,11 @@ export interface ScheduleEvent {
   cancellationReason?: string;
 }
 export type EventDraft = Omit<ScheduleEvent, 'id'>;
-export interface EventPresentation { busyOnly?: boolean; siteLabel?: string; colorBy?: CalendarUiOptions['colorBy']; clinical?: boolean }
+export interface EventPresentation {
+  busyOnly?: boolean; siteLabel?: string; colorBy?: CalendarUiOptions['colorBy']; clinical?: boolean;
+  /** Core managed records have no visit mode, clinical workflow, attendee or location contract. */
+  coreOnly?: boolean;
+}
 export interface SlotTarget { resourceId: string; date: string; minute: number; siteId?: string }
 export type MenuTarget = { kind: 'slot'; slot: SlotTarget } | { kind: 'event'; eventId: string };
 export interface ContextTarget { key: number; target: MenuTarget; x: number; y: number; trigger: HTMLElement }

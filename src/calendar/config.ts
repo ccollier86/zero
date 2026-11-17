@@ -85,9 +85,9 @@ export function resolveCalendarConfig(
     const maxActiveDatabases = calendarInteger(record.maxActiveDatabases === undefined ? 4 : record.maxActiveDatabases, 1, 64);
     const config: ResolvedCalendarConfig = {
       rootDirectory, timezone, readiness: timezone === null ? 'setup-required' : 'configured', createOwn, manage,
-      maxRangeDays: calendarInteger(record.maxRangeDays === undefined ? 62 : record.maxRangeDays, 1, 366),
-      maxPageSize: calendarInteger(record.maxPageSize === undefined ? 200 : record.maxPageSize, 1, 1000),
-      maxResources: calendarInteger(record.maxResources === undefined ? 100 : record.maxResources, 1, 1000),
+      maxRangeDays: calendarInteger(record.maxRangeDays === undefined ? 31 : record.maxRangeDays, 1, 31),
+      maxPageSize: calendarInteger(record.maxPageSize === undefined ? 100 : record.maxPageSize, 1, 100),
+      maxResources: calendarInteger(record.maxResources === undefined ? 16 : record.maxResources, 1, 16),
       maxParticipants: calendarInteger(record.maxParticipants === undefined ? 100 : record.maxParticipants, 1, 100),
       maxActiveDatabases, maxDatabaseFiles: calendarInteger(record.maxDatabaseFiles === undefined ? 1000 : record.maxDatabaseFiles, maxActiveDatabases, 10_000),
       recurrence: false, reminders: false, selfBooking: false,

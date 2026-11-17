@@ -4,9 +4,10 @@ import type { CalendarCommandReceipt, CalendarGrant } from './contracts';
 import { CalendarError, calendarCommand } from './error';
 import { appointmentResources, calendarActor, calendarAppointment, calendarBudget, calendarIntent, calendarResource, calendarRevision,
   eq, grantId, nextCalendarRevision, requireCalendarRight, reservationId } from './realm-model';
-import { normalizeCalendarTimedInterval, normalizeCalendarTimeZone, type CalendarTimedInterval } from './time';
+import { calendarOverlapSearchStart, normalizeCalendarTimedInterval, normalizeCalendarTimeZone, type CalendarTimedInterval } from './time';
 import { calendarInteger, calendarKey, calendarRecord, calendarScope, calendarText, calendarValue } from './validation';
 import { calendarSelection } from './realm-model';
+import { appendCalendarSemanticAudit } from './semantic-audit';
 
 function owner(context: DatabaseWriteCommandContext, scopeId: string): void {
   if (context.db.get('_calendar_owner', 'application')?.scope_id !== scopeId) throw new CalendarError('CALENDAR_STATE_INVALID');
@@ -21,6 +22,7 @@ function intervalFields(interval: CalendarTimedInterval) {
 function assertAvailable(context: DatabaseWriteCommandContext, scopeId: string, resourceIds: string[], interval: CalendarTimedInterval, exceptId = ''): void {
   for (const resourceId of resourceIds) {
     const conflicts = context.db.find('_calendar_reservations', { select: ['id'], filters: [eq('scope_id', scopeId), eq('resource_id', resourceId), eq('active', 1),
+      { type: 'field', field: 'occupied_start_ms', operator: 'gte', value: calendarOverlapSearchStart(interval.occupiedStartMs) },
       { type: 'field', field: 'occupied_start_ms', operator: 'lt', value: interval.occupiedEndMs },
       { type: 'field', field: 'occupied_end_ms', operator: 'gt', value: interval.occupiedStartMs },
       { type: 'field', field: 'appointment_id', operator: 'ne', value: exceptId }], limit: 1 });
@@ -50,7 +52,8 @@ export function createCalendarResource(context: DatabaseWriteCommandContext, inp
         throw new CalendarError('CALENDAR_INTENT_CONFLICT');
       }
       calendarBudget(context, 'resources');
-      context.db.createStrict('calendar_resources', { id, scope_id: actor.scopeId, label, kind: String(r.kind), owner_id: ownerId, time_zone: timeZone, revision: 1, active: 1 });
+      const change = context.db.createStrict('calendar_resources', { id, scope_id: actor.scopeId, label, kind: String(r.kind), owner_id: ownerId, time_zone: timeZone, revision: 1, active: 1 });
+      appendCalendarSemanticAudit(context, 'resource.created', change, { revision: 1 });
       return receipt(requestId, 'resource.created', id, 1);
     });
   });
@@ -70,7 +73,8 @@ export function changeCalendarGrant(context: DatabaseWriteCommandContext, input:
       if (Object.entries(next).every(([key, value]) => (prior?.[key] ?? 0) === value)) return receipt(requestId, 'resource.grant-changed', row.id, row.revision, false);
       if (prior) context.db.update('_calendar_grants', id, next);
       else context.db.createStrict('_calendar_grants', { id, scope_id: actor.scopeId, resource_id: row.id, user_id: userId, ...next });
-      const revision = nextCalendarRevision(row.revision); context.db.update('calendar_resources', row.id, { revision });
+      const revision = nextCalendarRevision(row.revision), change = context.db.update('calendar_resources', row.id, { revision });
+      appendCalendarSemanticAudit(context, 'resource.grant-changed', change, { revision });
       return receipt(requestId, 'resource.grant-changed', row.id, revision);
     });
   });
@@ -93,9 +97,10 @@ export function createCalendarAppointment(context: DatabaseWriteCommandContext, 
         throw new CalendarError('CALENDAR_INTENT_CONFLICT');
       }
       assertAvailable(context, actor.scopeId, resourceIds, interval); calendarBudget(context, 'appointments');
-      context.db.createStrict('calendar_appointments', { id, scope_id: actor.scopeId, title, ...intervalFields(interval), status: 'confirmed', revision: 1, created_by: actor.userId });
+      const change = context.db.createStrict('calendar_appointments', { id, scope_id: actor.scopeId, title, ...intervalFields(interval), status: 'confirmed', revision: 1, created_by: actor.userId });
       for (const resourceId of resourceIds) context.db.createStrict('_calendar_reservations', { id: reservationId(actor.scopeId, id, resourceId), scope_id: actor.scopeId,
         appointment_id: id, resource_id: resourceId, occupied_start_ms: interval.occupiedStartMs, occupied_end_ms: interval.occupiedEndMs, active: 1 });
+      appendCalendarSemanticAudit(context, 'appointment.created', change, { revision: 1, resourceCount: resourceIds.length, status: 'confirmed' });
       return receipt(requestId, 'appointment.created', id, 1);
     });
   });
@@ -113,8 +118,9 @@ export function rescheduleCalendarAppointment(context: DatabaseWriteCommandConte
       if (Object.entries(intervalFields(interval)).every(([key, value]) => row[key] === value)) return receipt(requestId, 'appointment.rescheduled', row.id, row.revision, false);
       for (const id of resourceIds) if (!calendarResource(context, actor, id).active) throw new CalendarError('CALENDAR_FORBIDDEN');
       assertAvailable(context, actor.scopeId, resourceIds, interval, row.id);
-      const revision = nextCalendarRevision(row.revision); context.db.update('calendar_appointments', row.id, { ...intervalFields(interval), revision });
+      const revision = nextCalendarRevision(row.revision), change = context.db.update('calendar_appointments', row.id, { ...intervalFields(interval), revision });
       for (const id of resourceIds) context.db.update('_calendar_reservations', reservationId(actor.scopeId, row.id, id), { occupied_start_ms: interval.occupiedStartMs, occupied_end_ms: interval.occupiedEndMs });
+      appendCalendarSemanticAudit(context, 'appointment.rescheduled', change, { revision, resourceCount: resourceIds.length, status: 'confirmed' });
       return receipt(requestId, 'appointment.rescheduled', row.id, revision);
     });
   });
@@ -129,8 +135,9 @@ export function cancelCalendarAppointment(context: DatabaseWriteCommandContext, 
     return calendarIntent(context, actor, r.requestId, ['appointment.cancel', row.id, expectedRevision], 'appointment', 'manage', requestId => {
       calendarRevision(row, expectedRevision);
       if (row.status === 'cancelled') return receipt(requestId, 'appointment.cancelled', row.id, row.revision, false);
-      const revision = nextCalendarRevision(row.revision); context.db.update('calendar_appointments', row.id, { status: 'cancelled', revision });
+      const revision = nextCalendarRevision(row.revision), change = context.db.update('calendar_appointments', row.id, { status: 'cancelled', revision });
       for (const id of appointmentResources(context, actor, row.id)) context.db.update('_calendar_reservations', reservationId(actor.scopeId, row.id, id), { active: 0 });
+      appendCalendarSemanticAudit(context, 'appointment.cancelled', change, { revision, status: 'cancelled' });
       return receipt(requestId, 'appointment.cancelled', row.id, revision);
     });
   });

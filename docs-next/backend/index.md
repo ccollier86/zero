@@ -68,6 +68,9 @@ than importing implementation files or reconstructing authentication in routes.
 
 ## Background Coordination
 
+- [Calendar](./calendar/index.md): unreleased managed one-off core, private Fabric,
+  Guardian grants, atomic bookings and connected UI; not yet selected for update.
+
 - [Workers](./workers/index.md): feature-preview shared pools, registered Bun
   task processes and current-Guardian execution; not a durable queue.
 - [Scheduler](./scheduler/index.md): process-local cron and immediate jobs,

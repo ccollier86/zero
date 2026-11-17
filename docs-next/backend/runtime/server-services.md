@@ -108,6 +108,14 @@ accepted mutations with fire-and-forget optimistic success.
 
 ## Raw Access Is Deliberate
 
+The unreleased [calendar core](../calendar/index.md) adds nullable `zero.calendar`
+for admitted ordinary browser-session requests. It is the same typed facade as
+`client.calendar`: no raw actor, file selection or caller-supplied authority.
+Native/API-key, anonymous/uncommitted scopes and sealed background/workflow
+projections get null, not a fabricated session. Use resource grants and current
+Guardian policy; `unsafe` is not a calendar permission or reminder-service bridge.
+These members are not in the selected 2.11.0 archive yet.
+
 Multi-tenant requests block unscoped `db`, `syncDB`, `databases`,
 `sql`, `sqlite`, `system`, `tokens`, `kv`, `counter`, `limiter`,
 `vector`, `vectors`, `emailRuntime`, `mailbox`, `scheduler` and

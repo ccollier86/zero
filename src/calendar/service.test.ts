@@ -8,12 +8,13 @@ import { requireRequestServiceDataScope, type ServiceDataScope } from '../auth/s
 import { AuthError, type AuthContext } from '../auth/types';
 import type { CalendarAuthority } from './authority';
 import { resolveCalendarConfig, type ResolvedCalendarConfig } from './config';
-import type { CalendarActor, CalendarCommandReceipt } from './contracts';
+import type { CalendarActor, CalendarAppointmentPage, CalendarCommandReceipt } from './contracts';
 import { CalendarError } from './error';
 import { CalendarService, type CalendarServiceBroker } from './service';
 import { calendarHash } from './validation';
 
-type WriteCall = { scope: ServiceDataScope; name: string; input: Record<string, unknown>; requestId: string; guard: () => void };
+type WriteCall = { scope: ServiceDataScope; name: string; input: Record<string, unknown>; requestId: string; guard: () => void; signal?: AbortSignal };
+type ReadCall = Omit<WriteCall, 'requestId'>;
 const resource = () => ({ label: 'Synthetic person', kind: 'person', ownerId: 'calendar-user', timeZone: 'UTC' });
 const appointment = () => ({ resourceIds: ['synthetic-resource'], title: 'Synthetic appointment',
   startAt: '2026-11-16T10:00:00.000Z', endAt: '2026-11-16T11:00:00.000Z', timeZone: 'UTC',
@@ -50,24 +51,35 @@ function fixture(tenancy: 'single' | 'multi' = 'single', overrides: Partial<Auth
   const closing = new AbortController();
   const calls: WriteCall[] = [];
   let onWrite: ((call: WriteCall) => Promise<CalendarCommandReceipt>) | undefined;
+  let onRead: ((call: ReadCall) => Promise<unknown>) | undefined;
+  let onSubscribe: (() => void) | undefined;
   let readCalls = 0;
+  const listeners = new Set<() => void>();
   const receipt = (call: WriteCall): CalendarCommandReceipt => ({ requestId: call.requestId,
     operation: call.name === 'calendar.resource.create' ? 'resource.created' : 'appointment.created',
     id: call.input.id as string, revision: 1, changed: true });
   const broker: CalendarServiceBroker = {
-    async read<T>() { readCalls++; throw new Error('Boundary fixture must never read or reconcile automatically.'); },
-    async write<T>(scope, name, input, requestId, guard): Promise<T> {
-      const call = { scope, name, input: input as Record<string, unknown>, requestId, guard };
+    async read<T>(scope, name, input, guard, signal): Promise<T> {
+      readCalls++; guard();
+      if (!onRead) throw new Error('Boundary fixture must never read or reconcile automatically.');
+      return await onRead({ scope, name, input: input as Record<string, unknown>, guard, signal }) as T;
+    },
+    async write<T>(scope, name, input, requestId, guard, signal): Promise<T> {
+      const call = { scope, name, input: input as Record<string, unknown>, requestId, guard, signal };
       calls.push(call);
       guard();
       return (onWrite ? await onWrite(call) : receipt(call)) as T;
     },
+    subscribe(_scope, listener) { listeners.add(listener); onSubscribe?.(); return () => { listeners.delete(listener); }; },
   };
   const service = new CalendarService(broker, config, closing.signal);
   return { request, config, closing, calls, service, receipt, get readCalls() { return readCalls; },
     get syncChecks() { return syncChecks; }, get asyncChecks() { return asyncChecks; },
     setBeforeCurrent(callback: () => Promise<void>) { beforeCurrent = callback; },
     setOnWrite(callback: (call: WriteCall) => Promise<CalendarCommandReceipt>) { onWrite = callback; },
+    setOnRead(callback: (call: ReadCall) => Promise<unknown>) { onRead = callback; },
+    setOnSubscribe(callback: () => void) { onSubscribe = callback; },
+    get subscriptions() { return listeners.size; },
     revoke() { live = null; },
   };
 }
@@ -76,7 +88,7 @@ describe('calendar internal service boundary (in-memory broker, not Fabric)', ()
   test('only fixed commands are exposed, and reserved authority/routing/identity fields cannot be client-selected', async () => {
     const f = fixture(), api = f.service.forAuthority(f.request);
     expect(Object.isFrozen(api)).toBe(true);
-    expect(Object.keys(api).sort()).toEqual(['createAppointment', 'createResource']);
+    expect(Object.keys(api).sort()).toEqual(['appointments', 'busy', 'createAppointment', 'createResource', 'receipts', 'resources']);
     const baselineChecks = f.syncChecks;
     for (const field of ['actor', 'scope', 'scopeId', 'tenantId', 'userId', 'principal', 'manageAll', 'createOwn',
       'operation', 'name', 'id', 'requestId', 'createdBy', 'revision']) {
@@ -189,5 +201,117 @@ describe('calendar internal service boundary (in-memory broker, not Fabric)', ()
     }
     expect(f.asyncChecks).toBe(0);
     expect(f.calls).toHaveLength(0);
+  });
+
+  test('all Promise-returning reads reject malformed input/options without synchronous throws', async () => {
+    const f = fixture(), api = f.service.forAuthority(f.request);
+    try {
+      const range = { resourceIds: [], startAt: '2026-11-16T00:00:00.000Z', endAt: '2026-11-17T00:00:00.000Z' };
+      for (const run of [
+        () => api.resources.list({ limit: 0 }),
+        () => api.appointments.query({ ...range, resourceIds: ['duplicate', 'duplicate'] }),
+        () => api.appointments.get('bad id'),
+        () => api.busy.query({ ...range, endAt: range.startAt }),
+        () => api.receipts.get('bad key'),
+        () => api.resources.list({}, { signal: {} as AbortSignal }),
+      ]) {
+        let pending: Promise<unknown> | undefined;
+        expect(() => { pending = run(); }).not.toThrow();
+        expect(pending).toBeInstanceOf(Promise);
+        await expect(pending!).rejects.toMatchObject({ code: 'CALENDAR_INPUT_INVALID' });
+      }
+      expect(f.readCalls).toBe(0); expect(f.calls).toHaveLength(0);
+    } finally { await f.service.close(); }
+  });
+
+  test('read selection is detached before the first await and its combined cancellation signal reaches the broker', async () => {
+    const f = fixture(), cancel = new AbortController();
+    let release!: () => void, captured!: ReadCall;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    f.setBeforeCurrent(() => gate);
+    f.setOnRead(async call => { captured = call; return { items: [], truncated: false }; });
+    const query = { resourceIds: ['original'], startAt: '2026-11-16T00:00:00.000Z', endAt: '2026-11-17T00:00:00.000Z' };
+    try {
+      const pending = f.service.forAuthority(f.request).appointments.query(query, { signal: cancel.signal });
+      query.resourceIds[0] = 'retargeted'; release(); await pending;
+      expect(captured.input.resourceIds).toEqual(['original']);
+      expect(captured.signal).toBeInstanceOf(AbortSignal); expect(captured.signal!.aborted).toBe(false);
+      cancel.abort(); expect(captured.signal!.aborted).toBe(true);
+    } finally { release(); await f.service.close(); }
+  });
+
+  test('queued read/write cancellation reaches the broker and close drains an owned blocked read', async () => {
+    for (const kind of ['read', 'write', 'close'] as const) {
+      const f = fixture(), cancel = new AbortController(), reason = new Error('Synthetic queued cancellation');
+      let entered!: (signal: AbortSignal) => void;
+      const admitted = new Promise<AbortSignal>(resolve => { entered = resolve; });
+      const queued = (call: ReadCall) => new Promise<never>((_resolve, reject) => {
+        const signal = call.signal!;
+        const abort = () => { clearTimeout(deadline); signal.removeEventListener('abort', abort); reject(signal.reason); };
+        const deadline = setTimeout(() => {
+          signal.removeEventListener('abort', abort); reject(new Error('Synthetic queue cancellation deadline exceeded.'));
+        }, 1_000);
+        signal.addEventListener('abort', abort, { once: true });
+        if (signal.aborted) abort();
+        entered(signal);
+      });
+      f.setOnRead(queued); f.setOnWrite(queued);
+      try {
+        const api = f.service.forAuthority(f.request);
+        const pending = kind === 'write' ? api.resources.create(resource() as never, { idempotencyKey: 'queued', signal: cancel.signal })
+          : api.resources.list({}, { signal: cancel.signal });
+        const signal = await Promise.race([admitted, pending.then(() => { throw new Error('Expected a queued broker operation.'); })]);
+        expect(signal).toBeInstanceOf(AbortSignal);
+        // Observe with a normal Promise before triggering cancellation. Bun's
+        // rejection matcher may wait immediately, before the next statement can
+        // release the fixture's deliberately blocked broker operation.
+        const settled = pending.then(() => { throw new Error('Expected a cancelled broker operation.'); }, error => error);
+        if (kind === 'close') {
+          const closing = f.service.close();
+          expect(signal.aborted).toBe(true);
+          await closing; expect(await settled).toBeDefined();
+        } else {
+          cancel.abort(reason); expect(await settled).toBe(reason); expect(signal.aborted).toBe(true);
+        }
+      } finally { cancel.abort(reason); await f.service.close(); }
+    }
+  });
+
+  test('request abort immediately unsubscribes a direct watch and aborts its owned queued read', async () => {
+    const f = fixture(), requestLifetime = new AbortController();
+    let entered!: (signal: AbortSignal) => void;
+    const reading = new Promise<AbortSignal>(resolve => { entered = resolve; });
+    const pages: CalendarAppointmentPage[] = [];
+    f.setOnRead(call => new Promise<never>((_resolve, reject) => {
+      const signal = call.signal!;
+      const abort = () => { clearTimeout(deadline); signal.removeEventListener('abort', abort); reject(signal.reason); };
+      const deadline = setTimeout(() => {
+        signal.removeEventListener('abort', abort); reject(new Error('Synthetic watch queue cancellation deadline exceeded.'));
+      }, 1_000);
+      signal.addEventListener('abort', abort, { once: true }); if (signal.aborted) abort();
+      entered(signal);
+    }));
+    let stop = () => {};
+    try {
+      const request = { ...f.request, signal: requestLifetime.signal };
+      stop = f.service.forAuthority(request).appointments.watch({ resourceIds: [], startAt: '2026-11-16T00:00:00.000Z', endAt: '2026-11-17T00:00:00.000Z' }, page => pages.push(page));
+      const signal = await reading; expect(f.subscriptions).toBe(1);
+      requestLifetime.abort(); expect(signal.aborted).toBe(true); expect(f.subscriptions).toBe(0);
+      await f.service.close(); expect(pages).toEqual([]); expect(f.readCalls).toBe(1);
+    } finally { requestLifetime.abort(); stop(); await f.service.close(); }
+  });
+
+  test('request abort during subscription installation still retires the returned subscription', async () => {
+    const f = fixture(), requestLifetime = new AbortController();
+    let entered!: () => void;
+    const subscribed = new Promise<void>(resolve => { entered = resolve; });
+    f.setOnSubscribe(() => { requestLifetime.abort(); entered(); });
+    let stop = () => {};
+    try {
+      stop = f.service.forAuthority({ ...f.request, signal: requestLifetime.signal }).appointments.watch({ resourceIds: [],
+        startAt: '2026-11-16T00:00:00.000Z', endAt: '2026-11-17T00:00:00.000Z' }, () => { throw new Error('Retired watch must not publish.'); });
+      await subscribed; await f.service.close();
+      expect(f.subscriptions).toBe(0); expect(f.readCalls).toBe(0);
+    } finally { requestLifetime.abort(); stop(); await f.service.close(); }
   });
 });

@@ -38,9 +38,26 @@ export function calendarCommand<T>(run: () => T): { ok: true; value: T } {
   }
 }
 
+/** Read failures also cross the native actor error envelope, without claiming a mutation rolled back. */
+export function calendarRead<T>(run: () => T): T {
+  try { return run(); }
+  catch (error) {
+    if (error instanceof CalendarError) {
+      const index = CALENDAR_REJECTIONS.indexOf(error.code as typeof CALENDAR_REJECTIONS[number]);
+      if (index >= 0) throw new DatabaseError('DATABASE_CONFLICT', 'Calendar query was rejected.', {
+        outcome: 'not-started', retryable: false, details: { domainCode: index + 1, calendarRead: true },
+      });
+    }
+    throw error;
+  }
+}
+
 export function readCalendarRejection(error: unknown): CalendarError | null {
-  if (!(error instanceof DatabaseError) || error.code !== 'DATABASE_CONFLICT' || error.outcome !== 'not-committed') return null;
+  if (!(error instanceof DatabaseError) || error.code !== 'DATABASE_CONFLICT') return null;
+  const read = error.details.calendarRead === true && error.outcome === 'not-started';
+  const command = error.details.calendarRead === undefined && error.outcome === 'not-committed';
+  if (!read && !command) return null;
   const index = error.details.domainCode;
   return typeof index === 'number' && Number.isInteger(index) && index > 0 && index <= CALENDAR_REJECTIONS.length
-    ? new CalendarError(CALENDAR_REJECTIONS[index - 1]!, 'not-committed') : null;
+    ? new CalendarError(CALENDAR_REJECTIONS[index - 1]!, read ? 'not-started' : 'not-committed') : null;
 }

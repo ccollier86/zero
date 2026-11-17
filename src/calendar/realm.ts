@@ -1,8 +1,14 @@
-/** Unmounted internal realm foundation. No managed owner, actor launch, service, HTTP route or package export. */
-import { defineDatabaseRealm } from '../databases/database-realm';
+/** Fixed private realm, imported independently by the managed parent and dedicated calendar actors. */
+import { defineDatabaseRealm, type DatabaseReadQueryHandler } from '../databases/database-realm';
 import { CALENDAR_TABLES } from './realm-schema';
 import { bindCalendarOwner, cancelCalendarAppointment, changeCalendarGrant, createCalendarAppointment, createCalendarResource, rescheduleCalendarAppointment } from './realm-commands';
 import { listCalendarResources, queryCalendarAppointments, queryCalendarBusy, readCalendarAppointment, readCalendarReceipt } from './realm-queries';
+import { calendarRead } from './error';
+
+function query(handler: (context: Parameters<DatabaseReadQueryHandler>[0], input: unknown) => unknown): DatabaseReadQueryHandler {
+  // Native runDatabaseRealmQuery validates/clones the returned value at its boundary.
+  return (context, input) => calendarRead(() => handler(context, input)) as never;
+}
 
 export const calendarRealm = defineDatabaseRealm({
   name: 'zero.calendar.internal', version: '1', tables: CALENDAR_TABLES,
@@ -41,6 +47,6 @@ export const calendarRealm = defineDatabaseRealm({
   } }],
   commands: { 'calendar.owner.bind': bindCalendarOwner, 'calendar.resource.create': createCalendarResource, 'calendar.resource.grant': changeCalendarGrant,
     'calendar.appointment.create': createCalendarAppointment, 'calendar.appointment.reschedule': rescheduleCalendarAppointment, 'calendar.appointment.cancel': cancelCalendarAppointment },
-  queries: { 'calendar.resources': listCalendarResources, 'calendar.busy': queryCalendarBusy, 'calendar.appointments': queryCalendarAppointments,
-    'calendar.appointment': readCalendarAppointment, 'calendar.receipt': readCalendarReceipt },
+  queries: { 'calendar.resources': query(listCalendarResources), 'calendar.busy': query(queryCalendarBusy), 'calendar.appointments': query(queryCalendarAppointments),
+    'calendar.appointment': query(readCalendarAppointment), 'calendar.receipt': query(readCalendarReceipt) },
 });

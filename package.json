@@ -261,6 +261,14 @@
       "types": "./src/components/calendar/index.ts",
       "import": "./src/components/calendar/index.ts"
     },
+    "./calendar/server": {
+      "types": "./src/calendar/index.ts",
+      "import": "./src/calendar/index.ts"
+    },
+    "./calendar/client": {
+      "types": "./src/calendar/contracts.ts",
+      "import": "./src/calendar/contracts.ts"
+    },
     "./components/calendar": {
       "types": "./src/components/calendar/index.ts",
       "import": "./src/components/calendar/index.ts"

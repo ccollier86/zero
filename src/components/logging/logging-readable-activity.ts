@@ -43,6 +43,11 @@ export const LOGGING_ACTIVITY_LABELS: Readonly<Record<string, LoggingActivityLab
   'account.profile-updated': { label: 'Updated personal profile', description: 'The native profile writer committed these field changes. Only field names and the accepted revision are retained, not profile values.' },
   'account.property-updated': { label: 'Updated account settings', description: 'The native own-account writer committed a changed setting. The affected account and configured field are recorded without the property value.' },
   'account.property-deleted': { label: 'Removed an account setting', description: 'The native own-account writer removed an existing editable property.' },
+  'calendar.resource.created': { label: 'Created a calendar', description: 'The private calendar domain committed a new scheduling resource.' },
+  'calendar.resource.grant-changed': { label: 'Changed calendar permissions', description: 'The calendar committed a changed permission set. Grantee and private values are not copied into this event.' },
+  'calendar.appointment.created': { label: 'Booked an appointment', description: 'All selected resource reservations committed together. This does not confirm notification delivery.' },
+  'calendar.appointment.rescheduled': { label: 'Rescheduled an appointment', description: 'The requested revision and all affected reservations committed together.' },
+  'calendar.appointment.cancelled': { label: 'Cancelled an appointment', description: 'The calendar committed cancellation and released its resource reservations. This does not imply a notification was delivered.' },
 });
 const own = <T,>(map: Readonly<Record<string, T>> | undefined, code: string): T | undefined => map && Object.hasOwn(map, code) ? map[code] : undefined;
 export function loggingWords(code: string): string {

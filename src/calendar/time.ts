@@ -5,6 +5,9 @@ import { calendarInteger, calendarRecord, calendarText } from './validation';
 const DATE_LIMIT_MS = 8_640_000_000_000_000;
 const MAX_DURATION_MS = 31 * 24 * 60 * 60 * 1_000;
 const MINUTE_MS = 60_000;
+const MAX_BUFFER_MINUTES = 1_440;
+/** Every admitted occupied interval is bounded by the same writer invariant. */
+const MAX_OCCUPIED_DURATION_MS = MAX_DURATION_MS + 2 * MAX_BUFFER_MINUTES * MINUTE_MS;
 const CANONICAL_UTC = /^(?:\d{4}|[+-]\d{6})-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
 export interface CalendarTimedInterval {
@@ -50,8 +53,8 @@ export function normalizeCalendarTimedInterval(input: unknown): CalendarTimedInt
   const startMs = Date.parse(startAt);
   const endMs = Date.parse(endAt);
   calendarInteger(endMs - startMs, 1, MAX_DURATION_MS);
-  const bufferBeforeMinutes = record.bufferBeforeMinutes === undefined ? 0 : calendarInteger(record.bufferBeforeMinutes, 0, 1_440);
-  const bufferAfterMinutes = record.bufferAfterMinutes === undefined ? 0 : calendarInteger(record.bufferAfterMinutes, 0, 1_440);
+  const bufferBeforeMinutes = record.bufferBeforeMinutes === undefined ? 0 : calendarInteger(record.bufferBeforeMinutes, 0, MAX_BUFFER_MINUTES);
+  const bufferAfterMinutes = record.bufferAfterMinutes === undefined ? 0 : calendarInteger(record.bufferAfterMinutes, 0, MAX_BUFFER_MINUTES);
   const occupiedStartMs = calendarInteger(startMs - bufferBeforeMinutes * MINUTE_MS, -DATE_LIMIT_MS, DATE_LIMIT_MS);
   const occupiedEndMs = calendarInteger(endMs + bufferAfterMinutes * MINUTE_MS, -DATE_LIMIT_MS, DATE_LIMIT_MS);
   return Object.freeze({
@@ -63,4 +66,14 @@ export function normalizeCalendarTimedInterval(input: unknown): CalendarTimedInt
 /** Compare normalized intervals only. Half-open occupancy permits exact adjacency, including declared buffers. */
 export function calendarIntervalsConflict(left: CalendarTimedInterval, right: CalendarTimedInterval): boolean {
   return left.occupiedStartMs < right.occupiedEndMs && right.occupiedStartMs < left.occupiedEndMs;
+}
+
+/**
+ * An interval older than this bound cannot overlap startMs: commands admit at
+ * most 31 days plus two one-day buffers. Pair this lower bound with the exact
+ * half-open overlap predicates so indexed lookups never scan all older history.
+ * This is deliberately conservative at the boundary and changes no conflicts.
+ */
+export function calendarOverlapSearchStart(startMs: number): number {
+  return Math.max(-DATE_LIMIT_MS, calendarInteger(startMs, -DATE_LIMIT_MS, DATE_LIMIT_MS) - MAX_OCCUPIED_DURATION_MS);
 }

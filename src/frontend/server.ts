@@ -22,6 +22,8 @@ export type { JobSchedulePage, JobWatchOptions, JobWatchUpdate, JobScheduleSumma
   JobActionAvailability, JobActionUnavailableReason, JobBlockedCode, JobScheduleActions } from '../jobs';
 export { defineWorkerTask, runWorkerIfRequested, WorkerError } from '../workers';
 export type { WorkersConfig, ScopedWorkers, ScopedWorkerRunOptions, WorkerTask, WorkerTaskDefinition, WorkerValue } from '../workers';
+export type { CalendarConfig, ResolvedCalendarConfig } from '../calendar/config';
+export type { ScopedCalendar } from '../calendar/contracts';
 export type { ManagedLoggingConfig, ResolvedManagedLoggingConfig } from '../logging/logging-managed-config';
 export type { ScopedLogging, LoggingObservation, LoggingHoldInput, LoggingReviewInput } from '../logging/logging-api-contracts';
 export type { LoggingContext, LoggingEventInput, LoggingQuery, LoggingReceipt, LoggingStream } from '../logging/logging-contracts';

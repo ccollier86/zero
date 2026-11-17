@@ -32,8 +32,8 @@ interface Props {
   clinical?: boolean;
   colorBy?: 'calendar' | 'type';
 }
-const locationValues = { Telehealth: 'telehealth', 'In-person': 'in-person', Phone: 'phone' } as const;
-const locationLabels = { telehealth: 'Telehealth', 'in-person': 'In-person', phone: 'Phone' } as const;
+const locationValues = { Telehealth: 'telehealth', 'In-person': 'in-person', Phone: 'phone', Unspecified: 'unspecified' } as const;
+const locationLabels = { telehealth: 'Telehealth', 'in-person': 'In-person', phone: 'Phone', unspecified: 'Unspecified' } as const;
 const times = Array.from({ length: (DAY_END - DAY_START) / SLOT_MINUTES + 1 }, (_, i) => DAY_START + i * SLOT_MINUTES);
 function valuesOf(draft: EventDraft, locations: readonly CalendarLocation[]): AppointmentFormValues {
   return { title: draft.title, date: draft.date, providerId: draft.resourceId, patientId: draft.patientId, visitType: draft.visitType, recurrence: draft.recurrence ? 'custom' : 'none', location: locationValues[draft.location], notes: draft.notes, reminder: draft.reminder, sendReminder: draft.sendReminder, status: draft.status, siteId: draft.kind === 'block' ? null : draft.siteId === undefined ? locations[0]?.id ?? null : draft.siteId };

@@ -1,6 +1,7 @@
 /** Synthetic in-memory native ReactiveDB + real realm transaction/query sessions; no disk fixtures or actors. */
 import { Database } from 'bun:sqlite';
 import { expect, test } from 'bun:test';
+import { DatabaseError, deserializeDatabaseError, serializeDatabaseError } from '../databases/database-error';
 import type { DatabaseSerializableValue } from '../databases/database-operations';
 import { createDatabaseReadQuerySession, withDatabaseReadQuerySession } from '../databases/database-read-query-capability';
 import { runDatabaseRealmCommand, runDatabaseRealmQuery } from '../databases/database-realm';
@@ -52,6 +53,34 @@ test('empty native realm is real empty state; owner binding is fixed and mismatc
     rejects(() => f.command('owner.bind', { ownerId: 'another', scopeId: actor.scopeId }), 'CALENDAR_STATE_INVALID');
     rejects(() => f.query('resources', { actor: { ...actor, scopeId: 'tenant:other' } }), 'CALENDAR_STATE_INVALID');
     rejects(() => f.command('resource.create', { actor: { ...manager, scopeId: 'application' }, requestId: 'bad', id: 'bad', label: 'bad', kind: 'room', ownerId: null, timeZone: 'UTC' }), 'CALENDAR_STATE_INVALID');
+  } finally { f.close(); }
+});
+
+test('native query rejections survive the exact actor serialization contract without private data or a rollback claim', () => {
+  const f = fixture();
+  try {
+    f.resource(); f.appointment();
+    for (const [run, code] of [
+      [() => f.query('appointment', { actor, id: 'missing' }), 'CALENDAR_NOT_FOUND'],
+      [() => f.query('appointment', { actor: reader, id: 'private' }), 'CALENDAR_NOT_FOUND'],
+      [() => f.query('resources', { actor, limit: 0 }), 'CALENDAR_INPUT_INVALID'],
+      [() => f.query('resources', { actor: { ...actor, scopeId: 'tenant:other' } }), 'CALENDAR_STATE_INVALID'],
+    ] as const) {
+      let failure: unknown; try { run(); } catch (error) { failure = error; }
+      expect(failure).toBeInstanceOf(DatabaseError);
+      const envelope = serializeDatabaseError(failure), restored = deserializeDatabaseError(envelope);
+      expect(readCalendarRejection(restored)).toMatchObject({ code, outcome: 'not-started' });
+      expect(envelope.details).toEqual({ domainCode: expect.any(Number), calendarRead: true });
+      expect(JSON.stringify(envelope)).not.toContain('PRIVATE_TITLE');
+      expect(JSON.stringify(envelope)).not.toContain('tenant:other');
+    }
+    const fabricated = new DatabaseError('DATABASE_CONFLICT', 'Synthetic invalid discriminator.', {
+      outcome: 'unknown', retryable: false, details: { domainCode: 3, calendarRead: true },
+    });
+    expect(readCalendarRejection(fabricated)).toBeNull();
+    expect(readCalendarRejection(new DatabaseError('DATABASE_CONFLICT', 'Synthetic invalid outcome.', {
+      outcome: 'not-committed', details: { domainCode: 3, calendarRead: true },
+    }))).toBeNull();
   } finally { f.close(); }
 });
 test('capacity-one multi-resource collisions roll back receipt/usage and never partially reserve another resource', () => {

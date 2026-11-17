@@ -148,6 +148,7 @@ import type { BlogClient } from '../../blog/client-contracts';
 import { createMessagingClient } from './messaging-client';
 import { createWorkflowClient, type WorkflowClient } from './workflow-client';
 import { createJobsClient, type JobsClient } from './jobs-client';
+import { createCalendarClient, type CalendarClient } from './calendar-client';
 import type { MessagingClient } from '../../messaging/client-contracts';
 import type { LoggingClient } from '../../logging/logging-api-contracts';
 
@@ -772,6 +773,7 @@ export interface Client extends AuthAdminSdkSurface {
   /** Commit-acknowledged, actor-owned workflow starts and receipt reconciliation. */
   readonly workflows: WorkflowClient;
   readonly jobs: JobsClient;
+  readonly calendar: CalendarClient;
 
   // ─── Data ────────────────────────────────────────────────────────
 
@@ -970,6 +972,7 @@ export function createClient(config: ClientConfig): Client {
   let messaging!: MessagingClient;
   let workflows!: WorkflowClient;
   let jobs!: JobsClient;
+  let calendar!: CalendarClient;
   let syncStarted = autoConnect;
   const authorizationDataBoundary = new AuthorizationDataBoundaryController();
 
@@ -997,6 +1000,7 @@ export function createClient(config: ClientConfig): Client {
     messaging?.clear();
     workflows?.clear();
     jobs?.clear();
+    calendar?.clear();
     try {
       authClient?.invalidateAuthorization();
     } finally {
@@ -1021,6 +1025,7 @@ export function createClient(config: ClientConfig): Client {
     messaging?.clear();
     workflows?.clear();
     jobs?.clear();
+    calendar?.clear();
     syncClient.beginAuthorizationScopeTransition();
     stateClient?.beginAuthorizationScopeTransition();
     ephemeralClient.beginAuthorizationScopeTransition();
@@ -1249,6 +1254,7 @@ export function createClient(config: ClientConfig): Client {
   messaging = createMessagingClient(clientFetch, (path, init) => authClient ? authClient.fetchWithAuth(`${url}${path}`, init) : fetch(`${url}${path}`, init));
   workflows = createWorkflowClient(clientFetch);
   jobs = createJobsClient(clientFetch, (path, init) => authClient ? authClient.fetchWithAuth(`${url}${path}`, init) : fetch(`${url}${path}`, init));
+  calendar = createCalendarClient(clientFetch, (path, init) => authClient ? authClient.fetchWithAuth(`${url}${path}`, init) : fetch(`${url}${path}`, init));
   const presenceClient = createSdkPresence(presenceEnabled, url, authClient, authorizationDataBoundary, syncClient, ephemeralClient);
 
   let previousAuthToken = currentAuthToken();
@@ -1277,6 +1283,7 @@ export function createClient(config: ClientConfig): Client {
       messaging.clear();
       workflows.clear();
       jobs.clear();
+      calendar.clear();
       syncClient.beginAuthorizationScopeTransition();
       stateClient?.beginAuthorizationScopeTransition();
       ephemeralClient.beginAuthorizationScopeTransition();
@@ -1417,6 +1424,7 @@ export function createClient(config: ClientConfig): Client {
     get messaging() { return messaging; },
     get workflows() { return workflows; },
     get jobs() { return jobs; },
+    get calendar() { return calendar; },
     get presence() { return presenceClient; },
     vectorVisualization,
     vectorVisualizationFor,
@@ -1668,6 +1676,7 @@ export function createClient(config: ClientConfig): Client {
       messaging.clear();
       workflows.clear();
       jobs.clear();
+      calendar.clear();
       _instance = null;
     },
   };

@@ -7,6 +7,7 @@ import { AuthError } from '../../auth/types';
 import { WorkflowError } from '../../workflows/workflow-error';
 import { WorkerError } from '../../workers/worker-error';
 import { JobsError } from '../../jobs/error';
+import { CalendarError } from '../../calendar/error';
 import { LoggingError } from '../../logging/logging-error';
 import { projectLoggingHttpFailure } from '../../logging/logging-http-error';
 
@@ -26,7 +27,7 @@ export function applyServerExtensionErrorHandler(app: AnyElysia): AnyElysia {
       set: { status?: number };
     }) => unknown): AnyElysia;
   }).onError(function mapZeroExtensionError({ code, error, set }) {
-    if (error instanceof JobsError) {
+    if (error instanceof JobsError || error instanceof CalendarError) {
       set.status = error.status;
       return { error: error.message, code: error.code, outcome: error.outcome };
     }

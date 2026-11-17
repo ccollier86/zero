@@ -1,5 +1,6 @@
 import type { RequestAuthorizationAccess } from '../../../auth/authorization-access';
 import type { ScopedPayments } from '../../../payments/contracts';
+import type { ScopedCalendar } from '../../../calendar/contracts';
 import type { ServiceDataScope } from '../../../auth/service-data-scope';
 import type { AsyncDatabaseClient } from '../../../databases/database-operations';
 import type {
@@ -32,12 +33,15 @@ export interface ServerRequestServices extends Omit<
   | 'workflows'
   | 'workers'
   | 'jobs'
+  | 'calendar'
 > {
   /** The same live authorization facade exposed on the Elysia request. */
   readonly access: RequestAuthorizationAccess;
   readonly blog: ScopedBlog | null;
   readonly messaging: MessagingApi | null;
   readonly payments: ScopedPayments | null;
+  /** Browser-session calendar facade; native, API-key and uncommitted scopes are not admitted. */
+  readonly calendar: ScopedCalendar | null;
   readonly logging: ScopedLogging | null;
   /** Validated data boundary, or null for a multi-tenant selection/anonymous session. */
   readonly scope: ServiceDataScope | null;
@@ -113,6 +117,8 @@ export type AuthorityScopedObservabilityServices = Pick<
  * absent from this public contract because strict projections reject them.
  */
 export interface AuthorityScopedServerServices {
+  /** Deferred for sealed machine/background work; no calendar authority is implied by this projection. */
+  readonly calendar: ScopedCalendar | null;
   readonly jobs: import('../../../jobs/contracts').ScopedJobs | null;
   readonly workers: import('../../../workers/service').ScopedWorkers | null;
   readonly messaging: MessagingApi | null;

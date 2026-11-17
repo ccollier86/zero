@@ -24,8 +24,12 @@ The experimental frontend ships in 2.11.0; **calendar configuration, persistence
 booking and reminder APIs do not yet exist**. Names in backticks below describe
 proposed surfaces unless explicitly identified as existing.
 
-Implementation has begun on an isolated branch. The initial internal foundation
-is not exposed; this does not change the public API statement above.
+Implementation has begun on `feature/calendar-backend-foundation`. The
+[managed core source guide](../backend/calendar/index.md) now documents the
+connected one-off implementation. It is not yet released or updater-selected;
+statements above about the selected 2.11.0 archive remain unchanged. Core API
+names in that guide are implemented on the branch; later-stage names below are
+still proposals.
 
 ## 1. Review outcome and baseline
 
@@ -677,24 +681,46 @@ backup implementation remain separate work.
 
 ## Implementation checkpoint
 
-The first slice now exists under `src/calendar/`: pure configuration/time/data
-admission and the private one-off realm. It remains unmounted and unexported.
-It does not yet satisfy the plan as a whole.
+The initial private realm/admission/ownership foundation is now connected into
+a larger managed core vertical path: optional AppConfig, canonical root isolation,
+dedicated bounded Fabric runtime, Guardian-scoped namespaces, native private
+`/api/calendar` HTTP, SDK retirement, hooks, semantic source-transaction logging,
+and `ConnectedCalendarWorkspace` using the preserved UI. Creation, separate
+resource grants, redacted busy reads, details, query, reschedule, cancel and safe
+receipt reconciliation are implemented. Source migration identity is preserved
+by the official JS build plugin; compiled default actor launch fails closed.
 
-Actual verification: 38 tests / 676 assertions passed. Broader qualification is
-still pending; do not relabel focused checks as a release gate.
+Review corrected mismatched config/query ceilings (31 days / 100 rows / 16
+resources), raw query errors losing domain codes across worker IPC, native
+transport replay after realm upgrades, owner-bind/live-query races and private
+snapshot retention behind SSE backpressure. Existing-only file acquisition,
+live target reauthorization on receipt replay and unknown-outcome fences remain.
 
-No application data or existing UI was touched. Further work proceeds through the
-remaining contracts in dependency order, including lifecycle, live authority,
-durable integration and native UI.
+Evidence includes real in-memory native writer/realm transactions, Guardian
+service-to-runtime integration, source-audit rollback/replay, transport, hook,
+SDK boundary and pure UI-model checks. The physical coordinator/file process
+seams are explicitly simulated where used. They do not replace file-backed
+worker death/recovery, actual managed compliance, browser, installed Linux/amd64,
+bundle and updater acceptance. No qualified calendar artifact is selected yet.
 
-The next slice adds explicit ownership admission and live request fencing. It is
-still not a mounted feature: scoped service tests do not replace the actual
-Fabric lifecycle, installed package and browser qualification.
+Working-hours availability, blocks, holds, participant/catalog/location models,
+recurrence, clinical statuses, source-to-Jobs/Torrent effects, notifications,
+self-booking and AI are still future stages. Unsupported feature enablement
+rejects instead of claiming partial readiness. Existing standalone rich editors
+and self-booking previews remain local UI; the connected core never silently
+persists their unsupported fields. The default app/public theme is unchanged.
 
-Current focused result: 59 tests pass. The added service boundary derives scope
-and identity, keeps stale authority from continuing, and does not replay unknown
-outcomes. This remains source evidence, not release qualification.
+No application or production state was touched. The active filesystem-integrity
+hold is unchanged; source edits and memory-only checks continue, but fresh heavy
+qualification and packaging remain blocked until storage recovery is verified.
+
+The [November 17 review checkpoint](../backend/calendar/qualification.md) records
+the subsequent lifecycle cancellation/close-retry, subscription retirement,
+scope-owned reconciliation and bounded interval-index corrections. It separates
+passing memory/HTTP/UI/type checks from the eight physical actor/file and two
+managed-compliance scenario definitions that are prepared but unexecuted. These
+changes do not make the richer standalone UI, reminders or public booking into
+implemented backend capabilities.
 
 ## 15. Documentation deliverables and open decisions
 
@@ -745,7 +771,9 @@ retirement, reminder lateness, downstream cancellation cutoffs, dependency order
 and restore/drain uncertainty. These are planned requirements, not passed runtime
 tests or new framework capabilities.
 
-This change is documentation only. Validate document reachability/links and
-whitespace; do not rerun unrelated framework runtime/release tests or publish a
-new archive merely for this plan. Implementation and its full qualification must
-follow a separately approved contract/stage decision.
+The original plan-review change was documentation only. Its instruction not to
+publish an archive merely for planning still applies to documentation-only edits.
+The user has since approved implementation; current source changes and their
+actual qualification are tracked above and in the backend guide. Follow the
+repository's release gates for an implementation artifact, not the historical
+planning-only validation instruction.

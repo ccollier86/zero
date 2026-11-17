@@ -32,8 +32,9 @@ publication, search, and production agent bundles.
   - [Calendar managed integration plan](./calendar-integration-plan.md): reviewed
     configuration-to-UI/backend design, private Fabric placement, Guardian,
     authoritative booking/recurrence, Jobs/Torrent integration gaps, capacity,
-    live updates, async native UI, adoption and staged qualification. Proposed,
-    not an implemented calendar backend.
+    live updates, async native UI, adoption and staged qualification. Its
+    [managed one-off core](../backend/calendar/index.md) is now connected on the
+    implementation branch; later stages and release qualification remain open.
 
 - [Logging and auditing replacement](./logging-auditing-replacement-plan.md):
   the current generic product plan replacing transport-centered activity with

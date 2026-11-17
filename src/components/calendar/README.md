@@ -10,6 +10,31 @@ The [managed integration plan](../../../docs-next/_work/calendar-integration-pla
 defines the proposed backend/async UI contract and remaining core integration
 gates; it is not an implemented service or a replacement for these local UI APIs.
 
+## Unreleased connected implementation
+
+On `feature/calendar-backend-foundation`, the additive `ConnectedCalendarWorkspace`
+now connects this family to `Client.calendar` and the native managed core. The
+selected 2.11.0 archive remains frontend-only. See the
+[backend guide](../../../docs-next/backend/calendar/index.md) for the exact source
+capabilities, configuration and still-required release gates.
+
+```tsx
+import { ConnectedCalendarWorkspace } from '@zero/framework/calendar';
+<ConnectedCalendarWorkspace displayTimeZone="America/New_York" />
+```
+
+Use existing App/ClientProvider and native modal/tooltip providers. The connected
+core supports real resources, current authorized live data and controlled
+one-off creation/reschedule/cancel. Its supported-field editor is separate from
+the richer synchronous `AppointmentEditor` below; unsupported fields are clearly
+unavailable, not silently dropped. Exact-instant records that do not fit the
+existing grid remain accessible in a companion list. Server API and UI resource
+administration are different capabilities; optional setup navigation is app-owned.
+
+Do not infer that the full integration plan, recurring appointments, working
+hours, invitations, reminders, public booking or clinical workflows are finished.
+No site-wide theme switch or automatic provider configuration occurs.
+
 ## Organization
 
 - `index.ts` is the composition entrance; it deliberately excludes the demo controller.

@@ -6,13 +6,12 @@ import { eventLanes } from '../models/overlap-layout';
 import { CalendarEventCard } from './calendar-event';
 import type { EventDraft } from '../types';
 import { DAY_END, DAY_START, HOUR_HEIGHT, SLOT_MINUTES, type CalendarResource, type EventPresentation, type GridColumn, type MenuTarget, type ScheduleEvent } from '../types';
-interface Props { columns: readonly GridColumn[]; events: readonly ScheduleEvent[]; resources: readonly CalendarResource[]; view: 'day' | 'week'; currentMinute: number; onMenu(target: MenuTarget, trigger: HTMLElement, point?: { x: number; y: number }): void; onEdit(event: ScheduleEvent): void; eventPresentation?(event: ScheduleEvent): EventPresentation; onUpdate?(id: string, change: Partial<EventDraft>): void; onDetails?(event: ScheduleEvent): void }
-export function CalendarGrid({ columns, events, resources, view, currentMinute, onMenu, onEdit, eventPresentation, onUpdate, onDetails }: Props) {
+interface Props { columns: readonly GridColumn[]; events: readonly ScheduleEvent[]; resources: readonly CalendarResource[]; view: 'day' | 'week'; currentMinute: number; today?: string; onMenu(target: MenuTarget, trigger: HTMLElement, point?: { x: number; y: number }): void; onEdit(event: ScheduleEvent): void; eventPresentation?(event: ScheduleEvent): EventPresentation; onUpdate?(id: string, change: Partial<EventDraft>): void; onDetails?(event: ScheduleEvent): void }
+export function CalendarGrid({ columns, events, resources, view, currentMinute, today = dateKey(new Date()), onMenu, onEdit, eventPresentation, onUpdate, onDetails }: Props) {
   const [active, setActive] = useState({ columnId: columns[0]?.id ?? '', minute: 9 * 60 });
   const slots = useRef(new Map<string, HTMLButtonElement>());
   const activeColumn = columns.some(column => column.id === active.columnId) ? active.columnId : columns[0]?.id;
   const minutes = Array.from({ length: (DAY_END - DAY_START) / SLOT_MINUTES }, (_, i) => DAY_START + i * SLOT_MINUTES);
-  const today = dateKey(new Date());
   function keyboard(e: KeyboardEvent<HTMLButtonElement>, columnIndex: number, minute: number) {
     const column = columns[columnIndex]!;
     if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) { e.preventDefault(); onMenu({ kind: 'slot', slot: { resourceId: column.resourceId ?? resources[0]!.id, date: column.date, minute } }, e.currentTarget); return; }

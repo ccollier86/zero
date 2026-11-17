@@ -4,7 +4,7 @@ import type { CalendarActor, CalendarGrant } from './contracts';
 import { CalendarError } from './error';
 import { appointmentView, calendarActor, calendarSelection, CALENDAR_LIMITS, grantId, hasCalendarRight, parseCalendarReceipt, resourceView,
   type CalendarAppointmentRow, type CalendarReceiptRow, type CalendarResourceRow } from './realm-model';
-import { normalizeCalendarInstant } from './time';
+import { calendarOverlapSearchStart, normalizeCalendarInstant } from './time';
 import { calendarHash, calendarInteger, calendarKey, calendarRecord } from './validation';
 
 function owner(context: DatabaseReadQueryContext, scopeId: string): void {
@@ -56,8 +56,8 @@ export function queryCalendarBusy(context: DatabaseReadQueryContext, input: unkn
   if (!r.ids.length) return { items: [], truncated: false };
   const placeholders = r.ids.map(() => '?').join(',');
   const rows = context.database.query<{ resource_id: string; occupied_start_ms: number; occupied_end_ms: number }>(
-    `SELECT resource_id,occupied_start_ms,occupied_end_ms FROM _calendar_reservations WHERE scope_id=? AND resource_id IN (${placeholders}) AND active=1 AND occupied_start_ms<? AND occupied_end_ms>? ORDER BY occupied_start_ms,resource_id,id LIMIT ?`)
-    .all(r.actor.scopeId, ...r.ids, r.endMs, r.startMs, r.limit + 1);
+    `SELECT resource_id,occupied_start_ms,occupied_end_ms FROM _calendar_reservations WHERE scope_id=? AND resource_id IN (${placeholders}) AND active=1 AND occupied_start_ms>=? AND occupied_start_ms<? AND occupied_end_ms>? ORDER BY occupied_start_ms,resource_id,id LIMIT ?`)
+    .all(r.actor.scopeId, ...r.ids, calendarOverlapSearchStart(r.startMs), r.endMs, r.startMs, r.limit + 1);
   return { items: rows.slice(0, r.limit).map(row => ({ resourceId: row.resource_id, startAt: new Date(row.occupied_start_ms).toISOString(), endAt: new Date(row.occupied_end_ms).toISOString() })), truncated: rows.length > r.limit };
 }
 export function queryCalendarAppointments(context: DatabaseReadQueryContext, input: unknown) {
@@ -65,10 +65,10 @@ export function queryCalendarAppointments(context: DatabaseReadQueryContext, inp
   if (!r.ids.length) return { items: [], truncated: false };
   const placeholders = r.ids.map(() => '?').join(','), right = rightSql(r.actor, 'resource', 'details');
   // Complete authorization, including unselected co-resources, is filtered before LIMIT/truncation.
-  const rows = context.database.query<CalendarAppointmentRow>(`SELECT a.* FROM calendar_appointments a WHERE a.scope_id=? AND a.status='confirmed' AND a.occupied_start_ms<? AND a.occupied_end_ms>?
+  const rows = context.database.query<CalendarAppointmentRow>(`SELECT a.* FROM calendar_appointments a WHERE a.scope_id=? AND a.status='confirmed' AND a.occupied_start_ms>=? AND a.occupied_start_ms<? AND a.occupied_end_ms>?
     AND EXISTS(SELECT 1 FROM _calendar_reservations selected WHERE selected.scope_id=a.scope_id AND selected.appointment_id=a.id AND selected.resource_id IN (${placeholders}))
     AND NOT EXISTS(SELECT 1 FROM _calendar_reservations rr JOIN calendar_resources resource ON resource.id=rr.resource_id AND resource.scope_id=rr.scope_id WHERE rr.scope_id=a.scope_id AND rr.appointment_id=a.id AND NOT ${right.sql})
-    ORDER BY a.occupied_start_ms,a.id LIMIT ?`).all(r.actor.scopeId, r.endMs, r.startMs, ...r.ids, ...right.params, r.limit + 1);
+    ORDER BY a.occupied_start_ms,a.id LIMIT ?`).all(r.actor.scopeId, calendarOverlapSearchStart(r.startMs), r.endMs, r.startMs, ...r.ids, ...right.params, r.limit + 1);
   return { items: rows.slice(0, r.limit).map(row => appointmentView(row, resourceIds(context, r.actor.scopeId, row.id))), truncated: rows.length > r.limit };
 }
 export function readCalendarAppointment(context: DatabaseReadQueryContext, input: unknown) {

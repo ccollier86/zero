@@ -31,6 +31,27 @@ The [managed integration plan](../../_work/calendar-integration-plan.md) now
 expands those requirements into proposed configuration, domain/service, async UI
 and qualification contracts. It does not add backend APIs to the released UI.
 
+## Unreleased connected core
+
+The current feature branch now adds `ConnectedCalendarWorkspace`, `client.calendar`
+and the native calendar hooks backed by the [managed core](../../backend/calendar/index.md).
+It has **not** been added to the selected updater archive. The released-version
+statements above still apply to 2.11.0; source and memory checks are not installed
+browser/Linux/package qualification.
+
+The connected workspace accepts an explicit `displayTimeZone`, uses current
+Guardian-scoped resources, and composes real core create/reschedule/cancel,
+receipt reconciliation and authorized live pages. It preserves existing native
+modal ownership, token anatomy and shared animations. It never loads demo users
+or silently saves unavailable recurrence/clinical/invitee fields. The original
+rich local `AppointmentEditor` stays synchronous; do not wire a Promise into it.
+See the [facade and exact UI limits](../../backend/calendar/facade.md#browser-composition).
+
+The new feature barrel exports browser-safe hooks/contracts/errors only; private
+actors and Fabric ownership remain in the server implementation. The focused
+calendar UI entry still owns `ConnectedCalendarWorkspace` and calendar CSS. The
+optional site-wide theme candidate is not applied automatically.
+
 Sources and the full composition guide are in
 [`src/components/calendar/README.md`](../../../src/components/calendar/README.md).
 The family has its own `components`, `models`, `hooks`, `recovered`, `styles`

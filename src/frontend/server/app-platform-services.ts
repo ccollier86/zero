@@ -56,6 +56,7 @@ import { composeManagedUserAvatars } from './app-user-avatars';
 import { mountManagedBlog } from './app-blog';
 import { mountManagedMessaging } from './app-messaging';
 import { mountManagedJobs } from './app-jobs';
+import { mountManagedCalendar } from './app-calendar';
 import { ZERO_MESSAGING_JOBS } from '../../messaging/jobs';
 import { registerMessagingJobWorkflow } from '../../messaging/jobs-workflow';
 import { trustedSystemServiceDataScope } from '../../auth/service-data-scope';
@@ -306,6 +307,7 @@ export async function mountPlatformServices({
   await Promise.all(managedInitializers.map((initialize) => initialize()));
   await mountManagedBlog({ app, runtime, systemDB, config, authorization, startAuth: async () => { await managedStartup.auth?.start(); } });
   await mountManagedMessaging({ app, runtime, systemDB, config, authorization, startAuth: async () => { await managedStartup.auth?.start(); } });
+  await mountManagedCalendar({ app, runtime, config, startAuth: async () => { await managedStartup.auth?.start(); } });
   // Recovered activities may immediately use Storage/private messaging. Settle
   // those providers first; do not make them wait on the recovery they unblock.
   // Register a distinct dependant teardown before recovery can start work.

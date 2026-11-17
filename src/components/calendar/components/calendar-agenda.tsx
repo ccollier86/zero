@@ -29,11 +29,11 @@ export function CalendarAgenda({ date, events, resources, eventPresentation, onM
           onClick={e => onMenu({ kind: 'event', eventId: event.id }, e.currentTarget, e.detail ? { x: e.clientX, y: e.clientY } : undefined)}
           onContextMenu={e => { e.preventDefault(); onMenu({ kind: 'event', eventId: event.id }, e.currentTarget, { x: e.clientX, y: e.clientY }); }}
           onKeyDown={e => { if (e.key === 'ContextMenu' || e.shiftKey && e.key === 'F10') { e.preventDefault(); onMenu({ kind: 'event', eventId: event.id }, e.currentTarget); } }}>
-          <b>{event.title}</b><small><VisitIcon event={event} clinical={presentation.clinical} size="var(--calendar-size-11)" />{event.kind === 'block' ? 'Time blocked' : progressLabel(event, presentation.clinical)}{attention && <span className="calendar-agenda-attention">{attention}</span>}</small>
-          {event.kind !== 'block' && <small><PinIcon size="var(--calendar-size-11)" />{event.location}{presentation.siteLabel && ` · ${presentation.siteLabel}`}</small>}
+          <b>{event.title}</b><small>{!presentation.coreOnly && <VisitIcon event={event} clinical={presentation.clinical} size="var(--calendar-size-11)" />}{event.kind === 'block' ? 'Time blocked' : progressLabel(event, presentation.clinical)}{attention && <span className="calendar-agenda-attention">{attention}</span>}</small>
+          {!presentation.coreOnly && event.kind !== 'block' && <small><PinIcon size="var(--calendar-size-11)" />{event.location}{presentation.siteLabel && ` · ${presentation.siteLabel}`}</small>}
         </button>
         <div className="calendar-agenda-provider"><Avatar size="var(--calendar-size-28)" radius="xl" src={resource.avatar} color={resource.color}>{resource.initials}</Avatar><span>{resource.name}</span></div>
-        {event.kind === 'appointment' && <AppointmentStatusPopover event={event} clinical={presentation.clinical ?? true} onChange={onUpdate ? change => onUpdate(event.id, change) : undefined} onDetails={onDetails ? () => onDetails(event) : undefined} />}
+        {!presentation.coreOnly && event.kind === 'appointment' && <AppointmentStatusPopover event={event} clinical={presentation.clinical ?? true} onChange={onUpdate ? change => onUpdate(event.id, change) : undefined} onDetails={onDetails ? () => onDetails(event) : undefined} />}
       </li>;
     })}</ol>}
   </section>;
