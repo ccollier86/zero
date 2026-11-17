@@ -6,6 +6,7 @@ import { appointmentView, calendarActor, calendarSelection, CALENDAR_LIMITS, gra
   type CalendarAppointmentRow, type CalendarReceiptRow, type CalendarResourceRow } from './realm-model';
 import { calendarOverlapSearchStart, normalizeCalendarInstant } from './time';
 import { calendarHash, calendarInteger, calendarKey, calendarRecord } from './validation';
+import { readCalendarBlockTarget } from './blocks-model';
 
 function owner(context: DatabaseReadQueryContext, scopeId: string): void {
   const row = context.database.query<{ scope_id: string }>("SELECT scope_id FROM _calendar_owner WHERE id='application'").get();
@@ -54,10 +55,22 @@ function range(context: DatabaseReadQueryContext, input: unknown, right: 'busy' 
 export function queryCalendarBusy(context: DatabaseReadQueryContext, input: unknown) {
   const r = range(context, input, 'busy');
   if (!r.ids.length) return { items: [], truncated: false };
-  const placeholders = r.ids.map(() => '?').join(',');
-  const rows = context.database.query<{ resource_id: string; occupied_start_ms: number; occupied_end_ms: number }>(
-    `SELECT resource_id,occupied_start_ms,occupied_end_ms FROM _calendar_reservations WHERE scope_id=? AND resource_id IN (${placeholders}) AND active=1 AND occupied_start_ms>=? AND occupied_start_ms<? AND occupied_end_ms>? ORDER BY occupied_start_ms,resource_id,id LIMIT ?`)
-    .all(r.actor.scopeId, ...r.ids, calendarOverlapSearchStart(r.startMs), r.endMs, r.startMs, r.limit + 1);
+  type BusyRow = { id: string; resource_id: string; occupied_start_ms: number; occupied_end_ms: number };
+  const rows: (BusyRow & { kind: number })[] = [], lower = calendarOverlapSearchStart(r.startMs);
+  // The global first L+1 must be contained in the first L+1 of every sorted
+  // resource/store partition. Avoid sorting the entire selected date range in
+  // SQLite: at most 2 * 16 * (L+1) rows cross this actor-local read boundary.
+  for (const resourceId of r.ids) for (const [table, kind] of [['_calendar_reservations', 0], ['_calendar_block_reservations', 1]] as const) {
+    const selected = context.database.query<BusyRow>(`SELECT resource_id,occupied_start_ms,occupied_end_ms,id FROM ${table}
+      WHERE scope_id=? AND resource_id=? AND active=1 AND occupied_start_ms>=? AND occupied_start_ms<? AND occupied_end_ms>?
+      ORDER BY occupied_start_ms,id LIMIT ?`).all(r.actor.scopeId, resourceId, lower, r.endMs, r.startMs, r.limit + 1);
+    for (const row of selected) rows.push({ ...row, kind });
+  }
+  // Canonical IDs are ASCII. Relational comparison matches SQLite BINARY;
+  // localeCompare would change the existing private tie-break order.
+  const compareId = (left: string, right: string) => left < right ? -1 : left > right ? 1 : 0;
+  rows.sort((left, right) => left.occupied_start_ms - right.occupied_start_ms || compareId(left.resource_id, right.resource_id)
+    || left.kind - right.kind || compareId(left.id, right.id));
   return { items: rows.slice(0, r.limit).map(row => ({ resourceId: row.resource_id, startAt: new Date(row.occupied_start_ms).toISOString(), endAt: new Date(row.occupied_end_ms).toISOString() })), truncated: rows.length > r.limit };
 }
 export function queryCalendarAppointments(context: DatabaseReadQueryContext, input: unknown) {
@@ -79,9 +92,13 @@ export function readCalendarAppointment(context: DatabaseReadQueryContext, input
 export function readCalendarReceipt(context: DatabaseReadQueryContext, input: unknown) {
   const r = calendarRecord(input, ['actor', 'requestId']), actor = calendarActor(r.actor), requestId = calendarKey(r.requestId); owner(context, actor.scopeId);
   const id = calendarHash([actor.scopeId, actor.principal, requestId]);
-  const row = context.database.query<CalendarReceiptRow>('SELECT * FROM _calendar_receipts WHERE id=? AND scope_id=? AND principal=?').get(id, actor.scopeId, actor.principal);
+  const rows = context.database.query<CalendarReceiptRow>(`SELECT * FROM _calendar_receipts WHERE id=? AND scope_id=? AND principal=?
+    UNION ALL SELECT * FROM _calendar_block_receipts WHERE id=? AND scope_id=? AND principal=?`).all(id, actor.scopeId, actor.principal, id, actor.scopeId, actor.principal);
+  if (rows.length > 1) throw new CalendarError('CALENDAR_STATE_INVALID');
+  const row = rows[0];
   if (!row) return null;
   if (row.target_kind === 'resource') resource(context, actor, row.target_id, row.required_right);
+  else if (row.target_kind === 'block') readCalendarBlockTarget(context, actor, row.target_id, row.required_right);
   else appointment(context, actor, row.target_id, row.required_right);
   return parseCalendarReceipt(row);
 }

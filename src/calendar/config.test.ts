@@ -1,7 +1,7 @@
 /** Pure, memory-only admission: no fixture roots, files, actors, providers or dependency installation. */
 import { expect, test } from 'bun:test';
 import { resolveAuthBehaviorConfig } from '../auth/auth-config';
-import { createAuthorizationKernel, type AuthorizationSubjectSnapshot } from '../auth/authorization-kernel';
+import { createAuthorizationKernel, type AccessRequirement, type AuthorizationSubjectSnapshot } from '../auth/authorization-kernel';
 import type { AuthBehaviorConfig, NormalizedAuthBehaviorConfig } from '../auth/types';
 import { resolveCalendarConfig, type CalendarConfig, type ResolvedCalendarConfig } from './config';
 import { CalendarError, type CalendarErrorCode } from './error';
@@ -102,7 +102,8 @@ test('only known own enumerable data settings are admitted, without invoking acc
 
 test('createOwn can be deliberately disabled, but never widened to unauthenticated access', () => {
   expect(enabled({ createOwn: false }).createOwn).toBe(false);
-  for (const createOwn of ['user', 'required', true, { user: 'required' }, { credentials: ['session'] }]) {
+  const choices: AccessRequirement[] = ['user', 'required', true, { user: 'required' }, { credentials: ['session'] }];
+  for (const createOwn of choices) {
     expect(enabled({ createOwn }).createOwn).toEqual(createOwn);
   }
   for (const createOwn of [null, 'optional', {}, { user: 'optional' }, { user: 'optional', credentials: ['session'] }]) rejects({ createOwn });

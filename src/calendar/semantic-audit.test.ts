@@ -5,7 +5,6 @@ import type { DatabaseSerializableValue } from '../databases/database-operations
 import { LoggingActorSource, normalizeLoggingActorSourceBinding } from '../logging/logging-actor-source';
 import { loggingContext } from '../logging/test-support/logging-fixture';
 import { createReactiveDB } from '../sync/reactive-db';
-import { CALENDAR_TABLES } from './realm-schema';
 import { calendarRealm } from './realm';
 
 const actor = { scopeId: 'tenant:tenant-a', userId: 'fixture-user', principal: 'fixture-session', manageAll: true, createOwn: true };
@@ -14,7 +13,7 @@ function fixture(logging: 'enabled' | 'disabled' | 'workflow-disabled' = 'enable
   const db = createReactiveDB({ mode: 'memory' });
   let source: LoggingActorSource | null = null;
   try {
-    for (const [table, schema] of Object.entries(CALENDAR_TABLES)) db.defineTable(table, schema);
+    for (const [table, schema] of Object.entries(calendarRealm.tables)) db.defineTable(table, schema);
     for (const migration of calendarRealm.migrations) migration.up(db.getRawDatabase());
     source = logging === 'disabled' ? null : new LoggingActorSource(db, normalizeLoggingActorSourceBinding({ records: false,
       workflow: logging !== 'workflow-disabled', policyVersion: 'calendar-semantic-policy', scope: { kind: 'tenant', tenantId: 'tenant-a' }, sourceQueue: { maxEvents } }));

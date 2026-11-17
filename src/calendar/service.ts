@@ -38,6 +38,27 @@ export class CalendarService {
         setGrants: (id: string, userId: string, grants: readonly string[], options: CalendarControlOptions) =>
           this.write(request, 'resource.grant', { userId, grants }, options, id),
       }),
+      availability: Object.freeze({
+        get: (id, options) => this.read(request, 'availability', () => ({ id: calendarKey(id) }), options),
+        replace: (id, input, options) => this.write(request, 'resource.availability', input, options, id),
+        watch: (id, listener, options: CalendarWatchOptions = {}) => {
+          const query = Object.freeze({ id: calendarKey(id) }); this.ready();
+          return watchCalendarPage({ request, broker: this.broker, config: this.config, closing: this.signal,
+            queryName: 'calendar.availability', query, listener, options, track: task => this.track(task) });
+        },
+      }),
+      blocks: Object.freeze({
+        query: (query, options) => this.read(request, 'blocks', () => calendarRange(query, this.config), options),
+        get: (id, options) => this.read(request, 'block', () => ({ id: calendarKey(id) }), options),
+        create: (input, options) => this.write(request, 'block.create', input, options),
+        reschedule: (id, input, options) => this.write(request, 'block.reschedule', input, options, id),
+        cancel: (id, options) => this.write(request, 'block.cancel', {}, options, id),
+        watch: (query, listener, options: CalendarWatchOptions = {}) => {
+          const detached = calendarRange(query, this.config); this.ready();
+          return watchCalendarPage({ request, broker: this.broker, config: this.config, closing: this.signal,
+            queryName: 'calendar.blocks', query: detached, listener, options, track: task => this.track(task) });
+        },
+      }),
       appointments: Object.freeze({
         query: (query, options) => this.read(request, 'appointments', () => calendarRange(query, this.config), options),
         get: (id, options) => this.read(request, 'appointment', () => ({ id: calendarKey(id) }), options),
@@ -86,7 +107,11 @@ export class CalendarService {
     return this.track((async () => {
       this.ready();
       const fields = operation === 'resource.create' ? ['label', 'kind', 'ownerId', 'timeZone']
-        : operation === 'resource.grant' ? ['userId', 'grants'] : operation === 'appointment.cancel' ? []
+        : operation === 'resource.grant' ? ['userId', 'grants']
+        : operation === 'resource.availability' ? ['mode', 'windows']
+        : operation === 'block.cancel' || operation === 'appointment.cancel' ? []
+        : operation === 'block.reschedule' ? ['startAt', 'endAt', 'timeZone']
+        : operation === 'block.create' ? ['resourceIds', 'title', 'startAt', 'endAt', 'timeZone']
         : operation === 'appointment.reschedule' ? ['startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes']
         : ['resourceIds', 'title', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes'];
       // Detach before the first await; authored mutation cannot alter an admitted command.
@@ -94,7 +119,8 @@ export class CalendarService {
       const opts = calendarRecord(options, target === undefined ? ['idempotencyKey', 'signal'] : ['idempotencyKey', 'signal', 'expectedRevision']);
       const key = calendarKey(opts.idempotencyKey), id = target === undefined ? null : calendarKey(target);
       const expectedRevision = id === null ? undefined : calendarInteger(opts.expectedRevision, 1);
-      if (operation === 'appointment.create' && (!Array.isArray(body.resourceIds) || body.resourceIds.length > this.config.maxResources)) throw new CalendarError('CALENDAR_INPUT_INVALID');
+      if ((operation === 'appointment.create' || operation === 'block.create')
+        && (!Array.isArray(body.resourceIds) || body.resourceIds.length > this.config.maxResources)) throw new CalendarError('CALENDAR_INPUT_INVALID');
       const authority = await admitCalendarRequest(request, this.config, this.signal, opts.signal as AbortSignal | undefined);
       authority.guard();
       const resolvedId = id ?? calendarHash([authority.actor.scopeId, authority.actor.principal, key]);
@@ -102,7 +128,7 @@ export class CalendarService {
       const result = await this.broker.write<CalendarCommandReceipt>(authority.scope, 'calendar.' + operation,
         { ...body, actor: authority.actor, requestId: key, id: resolvedId,
           ...(expectedRevision === undefined ? {} : { expectedRevision }),
-          ...(operation === 'appointment.cancel' ? { confirmed: true } : {}) }, key, authority.guard, authority.signal);
+          ...(operation === 'appointment.cancel' || operation === 'block.cancel' ? { confirmed: true } : {}) }, key, authority.guard, authority.signal);
       try { await authority.confirm(); authority.guard(); return calendarReceipt(result, key, operation, resolvedId); }
       catch { throw new CalendarError('CALENDAR_OUTCOME_UNKNOWN'); }
     })());

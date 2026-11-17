@@ -18,6 +18,37 @@ export interface CalendarResourceView {
   readonly active: boolean;
 }
 export type CalendarGrant = 'busy' | 'details' | 'book' | 'manage';
+/** Explicit UTC windows, not recurring working-hours rules. Empty windows mode is closed. */
+export interface CalendarAvailabilityWindow { readonly startAt: string; readonly endAt: string }
+export interface CalendarAvailabilityInput {
+  readonly mode: 'unrestricted' | 'windows';
+  readonly windows: readonly CalendarAvailabilityWindow[];
+}
+export interface CalendarAvailabilityView extends CalendarAvailabilityInput {
+  readonly resourceId: string;
+  /** Current resource revision, including intervening permission changes. */
+  readonly resourceRevision: number;
+  readonly timeZone: string;
+}
+export interface CalendarBlockInput {
+  readonly resourceIds: readonly string[];
+  readonly title: string;
+  readonly startAt: string;
+  readonly endAt: string;
+  readonly timeZone: string;
+}
+export interface CalendarBlockRescheduleInput {
+  readonly startAt: string;
+  readonly endAt: string;
+  readonly timeZone: string;
+}
+export interface CalendarBlockView extends CalendarBlockInput {
+  readonly id: string;
+  readonly revision: number;
+  readonly status: 'active' | 'cancelled';
+  readonly createdBy: string;
+}
+export interface CalendarBlockPage { readonly items: readonly CalendarBlockView[]; readonly truncated: boolean }
 export interface CalendarAppointmentView {
   readonly id: string;
   readonly revision: number;
@@ -34,7 +65,9 @@ export interface CalendarAppointmentView {
 /** Safe operation outcome only. Reconciliation must not replay an old private appointment snapshot. */
 export interface CalendarCommandReceipt {
   readonly requestId: string;
-  readonly operation: 'resource.created' | 'resource.grant-changed' | 'appointment.created' | 'appointment.rescheduled' | 'appointment.cancelled';
+  readonly operation: 'resource.created' | 'resource.grant-changed' | 'resource.availability-changed'
+    | 'appointment.created' | 'appointment.rescheduled' | 'appointment.cancelled'
+    | 'block.created' | 'block.rescheduled' | 'block.cancelled';
   readonly id: string;
   readonly revision: number;
   readonly changed: boolean;
@@ -109,6 +142,21 @@ export interface ScopedCalendar {
     list(query?: CalendarResourcePageQuery, options?: CalendarReadOptions): Promise<CalendarResourcePage>;
     create(input: CalendarResourceInput, options: CalendarRequestOptions): Promise<CalendarCommandReceipt>;
     setGrants(id: string, userId: string, grants: readonly CalendarGrant[], options: CalendarControlOptions): Promise<CalendarCommandReceipt>;
+  };
+  readonly availability: {
+    get(resourceId: string, options?: CalendarReadOptions): Promise<CalendarAvailabilityView>;
+    replace(resourceId: string, availability: CalendarAvailabilityInput, options: CalendarControlOptions): Promise<CalendarCommandReceipt>;
+    watch(resourceId: string, listener: (availability: CalendarAvailabilityView, update?: CalendarWatchUpdate) => void,
+      options?: CalendarWatchOptions): () => void;
+  };
+  readonly blocks: {
+    query(query: CalendarRangeQuery, options?: CalendarReadOptions): Promise<CalendarBlockPage>;
+    get(id: string, options?: CalendarReadOptions): Promise<CalendarBlockView>;
+    create(block: CalendarBlockInput, options: CalendarRequestOptions): Promise<CalendarCommandReceipt>;
+    reschedule(id: string, block: CalendarBlockRescheduleInput, options: CalendarControlOptions): Promise<CalendarCommandReceipt>;
+    cancel(id: string, options: CalendarControlOptions): Promise<CalendarCommandReceipt>;
+    watch(query: CalendarRangeQuery, listener: (page: CalendarBlockPage, update?: CalendarWatchUpdate) => void,
+      options?: CalendarWatchOptions): () => void;
   };
   readonly appointments: {
     query(query: CalendarRangeQuery, options?: CalendarReadOptions): Promise<CalendarAppointmentPage>;

@@ -6,7 +6,7 @@ import type { FetchInit } from './sdk';
 const appointment = { resourceIds: ['resource-a'], title: 'Private synthetic appointment', startAt: '2026-11-16T15:00:00.000Z', endAt: '2026-11-16T16:00:00.000Z', timeZone: 'America/New_York' };
 const range = { resourceIds: appointment.resourceIds, startAt: appointment.startAt, endAt: appointment.endAt };
 const view = { ...appointment, id: 'appointment-a', revision: 1, bufferBeforeMinutes: 0, bufferAfterMinutes: 0, status: 'confirmed', createdBy: 'user-a' };
-const receipt = { requestId: 'original-key', operation: 'appointment.created', id: 'appointment-a', revision: 1, changed: true };
+const receipt = { requestId: 'original-key', operation: 'appointment.created' as const, id: 'appointment-a', revision: 1, changed: true };
 test('calendar commands use native fetch paths and detach authored inputs/options before awaiting', async () => {
   const calls: { path: string; init?: FetchInit }[] = [];
   const client = createCalendarClient(async <T>(path: string, init?: FetchInit) => { calls.push({ path, init }); return receipt as T; });
@@ -46,6 +46,104 @@ test('all core endpoints match the mounted HTTP envelopes, preserve revisions, a
   expect(calls[7]!.init!.body).toEqual({ options: { idempotencyKey: 'original-key', expectedRevision: 1 } });
   for (const call of calls) expect(call.init?.signal).toBeInstanceOf(AbortSignal); client.clear();
 });
+test('blocks and availability use fixed native envelopes, detach inputs and retain exact control identities', async () => {
+  const calls: { path: string; init?: FetchInit }[] = [], signal = new AbortController().signal;
+  const block = { ...appointment, id: 'block-a', revision: 2, status: 'active' as const, createdBy: 'user-a' };
+  const availability = { resourceId: 'resource-a', resourceRevision: 3, timeZone: 'UTC', mode: 'windows' as const,
+    windows: [{ startAt: appointment.startAt, endAt: appointment.endAt }] };
+  const client = createCalendarClient(async <T>(path: string, init?: FetchInit) => {
+    calls.push({ path, init });
+    if (init?.method === 'POST' && !path.endsWith('/query')) {
+      const operation = path.includes('/availability/') ? 'resource.availability-changed'
+        : path.endsWith('/reschedule') ? 'block.rescheduled' : path.endsWith('/cancel') ? 'block.cancelled' : 'block.created';
+      return { ...receipt, operation, id: path.includes('/availability/') ? 'resource-a' : 'block-a' } as T;
+    }
+    if (path.includes('/availability/')) return availability as T;
+    return (path.endsWith('/query') ? { items: [block], truncated: false } : block) as T;
+  });
+  try {
+    const input = structuredClone(appointment), supplied = { idempotencyKey: 'original-key', signal };
+    const creating = client.blocks.create(input, supplied); input.resourceIds[0] = 'retargeted'; input.title = 'changed';
+    await creating;
+    const windows = structuredClone(availability.windows), control = { idempotencyKey: 'original-key', expectedRevision: 3, signal };
+    const replacing = client.availability.replace('resource-a', { mode: 'windows', windows }, control);
+    windows[0]!.startAt = '2026-01-01T00:00:00.000Z'; control.expectedRevision = 99; await replacing;
+    const current = await client.availability.get('resource-a', { signal });
+    expect(current).toEqual(availability); expect(Object.isFrozen(current.windows[0])).toBe(true);
+    expect(await client.blocks.get('block-a', { signal })).toEqual(block);
+    expect(await client.blocks.query(range, { signal })).toEqual({ items: [block], truncated: false });
+    const move = { startAt: appointment.startAt, endAt: appointment.endAt, timeZone: appointment.timeZone };
+    await client.blocks.reschedule('block-a', move, { idempotencyKey: 'original-key', expectedRevision: 2, signal });
+    await client.blocks.cancel('block-a', { idempotencyKey: 'original-key', expectedRevision: 3, signal });
+    expect(calls.map(call => call.path)).toEqual(['/api/calendar/blocks', '/api/calendar/availability/resource-a',
+      '/api/calendar/availability/resource-a', '/api/calendar/blocks/block-a', '/api/calendar/blocks/query',
+      '/api/calendar/blocks/block-a/reschedule', '/api/calendar/blocks/block-a/cancel']);
+    expect(calls[0]!.init!.body).toEqual({ block: appointment, options: { idempotencyKey: 'original-key' } });
+    expect(calls[1]!.init!.body).toEqual({ availability: { mode: 'windows', windows: availability.windows }, options: { idempotencyKey: 'original-key', expectedRevision: 3 } });
+    expect(calls[5]!.init!.body).toEqual({ block: move, options: { idempotencyKey: 'original-key', expectedRevision: 2 } });
+    expect(calls[6]!.init!.body).toEqual({ options: { idempotencyKey: 'original-key', expectedRevision: 3 } });
+    for (const call of calls) expect(call.init!.signal).toBeInstanceOf(AbortSignal);
+  } finally { client.clear(); }
+});
+test('availability admits unsorted overlapping inputs and long merged windows round-trip without an occupied-interval duration cap', async () => {
+  const windows = [{ startAt: '2026-01-15T00:00:00.000Z', endAt: '2026-02-15T00:00:00.000Z' },
+    { startAt: '2026-01-01T00:00:00.000Z', endAt: '2026-01-31T00:00:00.000Z' }];
+  const current = { resourceId: 'resource-a', resourceRevision: 2, timeZone: 'UTC', mode: 'windows' as const,
+    windows: [{ startAt: windows[1]!.startAt, endAt: windows[0]!.endAt }] };
+  const client = createCalendarClient(async <T>(_path: string, init?: FetchInit) => (init?.method === 'POST'
+    ? { ...receipt, operation: 'resource.availability-changed', id: 'resource-a' } : current) as T);
+  try {
+    await client.availability.replace('resource-a', { mode: 'windows', windows }, { idempotencyKey: 'original-key', expectedRevision: 1 });
+    expect(await client.availability.get('resource-a')).toEqual(current);
+    await client.availability.replace('resource-a', { mode: 'windows', windows: current.windows }, { idempotencyKey: 'original-key', expectedRevision: 2 });
+  } finally { client.clear(); }
+});
+test('new calendar inputs reject routing fields, buffers, accessors, absent controls and exceeded bounds before dispatch', async () => {
+  let calls = 0, touched = 0;
+  const client = createCalendarClient(async <T>() => { calls++; return receipt as T; });
+  try {
+    for (const input of [{ ...appointment, actor: {} }, { ...appointment, bufferBeforeMinutes: 0 },
+      { ...appointment, resourceIds: Array.from({ length: 17 }, (_, i) => 'resource-' + i) }]) {
+      expect(() => client.blocks.create(input, { idempotencyKey: 'original-key' })).toThrow();
+    }
+    const window = { startAt: appointment.startAt, get endAt() { touched++; return appointment.endAt; } };
+    for (const input of [{ mode: 'windows', windows: [window] }, { mode: 'unrestricted', windows: [{ startAt: appointment.startAt, endAt: appointment.endAt }] },
+      { mode: 'windows', windows: Array(101).fill({ startAt: appointment.startAt, endAt: appointment.endAt }) },
+      { mode: 'windows', windows: [], timeZone: 'UTC' }]) {
+      expect(() => client.availability.replace('resource-a', input as never, { idempotencyKey: 'original-key', expectedRevision: 1 })).toThrow();
+    }
+    expect(() => client.blocks.cancel('block-a', { idempotencyKey: 'original-key' } as never)).toThrow();
+    expect(() => client.availability.replace('resource-a', { mode: 'windows', windows: [] }, { idempotencyKey: 'original-key' } as never)).toThrow();
+    expect(calls).toBe(0); expect(touched).toBe(0);
+  } finally { client.clear(); }
+});
+test('block and availability readers fail closed on malformed private DTOs and mismatched target identities', async () => {
+  const block = { ...appointment, id: 'block-a', revision: 1, status: 'active', createdBy: 'user-a' };
+  const availability = { resourceId: 'resource-a', resourceRevision: 1, timeZone: 'UTC', mode: 'windows',
+    windows: [{ startAt: appointment.startAt, endAt: appointment.endAt }] };
+  for (const wire of [{ ...block, bufferBeforeMinutes: 5 }, { ...block, status: 'confirmed' }, { ...block, id: 'another-block' }]) {
+    const client = createCalendarClient(async <T>() => wire as T);
+    try { await expect(client.blocks.get('block-a')).rejects.toThrow('Calendar data could not be loaded'); } finally { client.clear(); }
+  }
+  for (const wire of [{ ...availability, private: 'hidden' }, { ...availability, resourceId: 'another-resource' },
+    { ...availability, windows: [availability.windows[0], availability.windows[0]] }, { ...availability, mode: 'unrestricted' }]) {
+    const client = createCalendarClient(async <T>() => wire as T);
+    try { await expect(client.availability.get('resource-a')).rejects.toThrow('Calendar data could not be loaded'); } finally { client.clear(); }
+  }
+});
+test('new mutations keep unknown outcomes and authority retirement bound to the original idempotency key', async () => {
+  for (const kind of ['block', 'availability'] as const) {
+    let resolve!: (value: unknown) => void, calls = 0;
+    const client = createCalendarClient(<T>() => { calls++; return new Promise<T>(done => { resolve = done as (value: unknown) => void; }); });
+    try {
+      const pending = (kind === 'block' ? client.blocks.create(appointment, { idempotencyKey: 'original-key' })
+        : client.availability.replace('resource-a', { mode: 'windows', windows: [] }, { idempotencyKey: 'original-key', expectedRevision: 1 })).catch(error => error);
+      client.clear(); resolve({ ...receipt, operation: kind === 'block' ? 'block.created' : 'resource.availability-changed', id: kind === 'block' ? 'block-a' : 'resource-a' });
+      expect(await pending).toMatchObject({ name: 'AbortError', outcome: 'unknown', idempotencyKey: 'original-key', requiresSameIdempotencyKey: true });
+      expect(calls).toBe(1);
+    } finally { client.clear(); }
+  }
+});
 test('array accessors, holes and executable iterators are rejected without executing authored code', async () => {
   let touched = 0, calls = 0;
   const client = createCalendarClient(async <T>() => { calls++; return receipt as T; });
@@ -74,6 +172,14 @@ test('explicit known rejection retains safe outcome without leaking body or prov
   const client = createCalendarClient(async () => { throw { status: 409, message: 'PRIVATE', body: { code: 'CALENDAR_BOOKING_CONFLICT', outcome: 'not-committed', detail: 'PRIVATE' } }; });
   const error = await client.appointments.create(appointment, { idempotencyKey: 'original-key' }).catch(error => error);
   expect(error).toMatchObject({ outcome: 'not-committed', code: 'CALENDAR_BOOKING_CONFLICT', requiresReconciliation: false }); expect(String(error)).not.toContain('PRIVATE'); client.clear();
+});
+test('availability conflicts remain known non-commits without leaking private provider bodies', async () => {
+  const client = createCalendarClient(async () => { throw { status: 409, body: { code: 'CALENDAR_AVAILABILITY_CONFLICT', outcome: 'not-committed', detail: 'PRIVATE' } }; });
+  try {
+    const error = await client.blocks.create(appointment, { idempotencyKey: 'original-key' }).catch(error => error);
+    expect(error).toMatchObject({ code: 'CALENDAR_AVAILABILITY_CONFLICT', outcome: 'not-committed', requiresReconciliation: false, idempotencyKey: 'original-key' });
+    expect(String(error)).not.toContain('PRIVATE');
+  } finally { client.clear(); }
 });
 test('malformed or mismatched acknowledgments remain unknown, not success or safe rollback', async () => {
   for (const supplied of [{ ...receipt, requestId: 'other-key' }, { ...receipt, operation: 'appointment.cancelled' }, { ...receipt, private: 'do not expose' }]) {
@@ -137,7 +243,62 @@ test('reported transport errors are terminal as the public watch contract promis
   try { await settle(() => error !== undefined); expect(error).toMatchObject({ terminal: true }); expect(String(error)).not.toContain('PRIVATE_'); expect(opens).toBe(1); }
   finally { stop(); client.clear(); }
 });
-async function settle(predicate: () => boolean): Promise<void> {
-  for (let i = 0; i < 100; i++) { if (predicate()) return; await new Promise<void>(resolve => setTimeout(resolve, 0)); }
+test('appointment and receipt detail reads reject correctly shaped acknowledgments for another requested identity', async () => {
+  const client = createCalendarClient(async <T>(path: string) => (path.includes('/receipts/') ? { receipt: { ...receipt, requestId: 'other-key' } }
+    : { ...view, id: 'other-appointment' }) as T);
+  try {
+    await expect(client.appointments.get(view.id)).rejects.toThrow('Calendar data could not be loaded');
+    await expect(client.receipts.get('original-key')).rejects.toThrow('Calendar data could not be loaded');
+  } finally { client.clear(); }
+});
+
+for (const kind of ['blocks', 'availability'] as const) {
+  const snapshot = kind === 'blocks' ? { items: [{ ...appointment, id: 'block-a', revision: 1, status: 'active', createdBy: 'user-a' }], truncated: false }
+    : { resourceId: 'resource-a', resourceRevision: 1, timeZone: 'UTC', mode: 'windows', windows: [{ startAt: appointment.startAt, endAt: appointment.endAt }] };
+  const livePath = kind === 'blocks' ? '/api/calendar/blocks/live?' : '/api/calendar/availability/resource-a/live';
+  const frame = (value: unknown) => new TextEncoder().encode('event: snapshot\ndata: ' + JSON.stringify({ version: 1, value, invalidated: true }) + '\n\n');
+  test(`${kind} watch uses its fixed endpoint, parses immutable DTOs and releases the reader on SDK retirement`, async () => {
+    let opens = 0, cancelled = 0, errors = 0, published: unknown, update: unknown;
+    const client = createCalendarClient(async <T>() => ({}) as T, async (path, init) => {
+      opens++; expect(path.startsWith(livePath)).toBe(true); expect(init.signal).toBeInstanceOf(AbortSignal);
+      return new Response(new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(frame(snapshot)); }, cancel() { cancelled++; } }), { headers: { 'Content-Type': 'text/event-stream' } });
+    });
+    const listener = (value: unknown, next?: unknown) => { published = value; update = next; }, options = { onError() { errors++; } };
+    const stop = kind === 'blocks' ? client.blocks.watch(range, listener, options) : client.availability.watch('resource-a', listener, options);
+    try {
+      await settle(() => published !== undefined); expect(published).toEqual(snapshot); expect(update).toEqual({ invalidated: true }); expect(Object.isFrozen(published)).toBe(true);
+      client.clear(); await settle(() => cancelled === 1); expect(opens).toBe(1); expect(errors).toBe(0);
+    } finally { stop(); client.clear(); }
+  });
+  test(`${kind} watch terminal denial or malformed private DTO withdraws once without reconnecting`, async () => {
+    for (const malformed of [false, true]) {
+      let opens = 0, cancelled = 0, errors = 0, delivered = 0;
+      const value = kind === 'blocks' ? { ...snapshot, private: 'PRIVATE' } : { ...snapshot, resourceId: 'other-resource' };
+      const client = createCalendarClient(async <T>() => ({}) as T, async () => {
+        opens++; return new Response(new ReadableStream<Uint8Array>({ start(controller) {
+          controller.enqueue(malformed ? frame(value) : new TextEncoder().encode('event: invalidated\ndata: {"version":1,"error":true}\n\n'));
+        }, cancel() { cancelled++; } }), { headers: { 'Content-Type': 'text/event-stream' } });
+      });
+      const listener = () => { delivered++; }, options = { onError(error: unknown) { errors++; expect(String(error)).not.toContain('PRIVATE'); } };
+      const stop = kind === 'blocks' ? client.blocks.watch(range, listener, options) : client.availability.watch('resource-a', listener, options);
+      try { await settle(() => errors === 1 && cancelled === 1); expect(opens).toBe(1); expect(delivered).toBe(0); }
+      finally { stop(); client.clear(); }
+    }
+  });
+  test(`${kind} reconnect marks fresh snapshots separately and caller abort retires future reconnects`, async () => {
+    let opens = 0; const updates: unknown[] = [], abort = new AbortController();
+    const client = createCalendarClient(async <T>() => ({}) as T, async () => {
+      opens++; return new Response(frame(snapshot), { headers: { 'Content-Type': 'text/event-stream' } });
+    });
+    const listener = (_value: unknown, update?: unknown) => { updates.push(update); if (updates.length === 2) abort.abort(); }, options = { signal: abort.signal };
+    const stop = kind === 'blocks' ? client.blocks.watch(range, listener, options) : client.availability.watch('resource-a', listener, options);
+    try {
+      await settle(() => updates.length === 2, 1_000);
+      expect(updates).toEqual([{ invalidated: true }, { invalidated: true, reconnected: true }]); expect(opens).toBe(2);
+    } finally { abort.abort(); stop(); client.clear(); }
+  });
+}
+async function settle(predicate: () => boolean, attempts = 100): Promise<void> {
+  for (let i = 0; i < attempts; i++) { if (predicate()) return; await new Promise<void>(resolve => setTimeout(resolve, 0)); }
   throw new Error('In-memory calendar transport did not settle.');
 }

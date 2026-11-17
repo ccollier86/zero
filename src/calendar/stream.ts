@@ -1,6 +1,22 @@
 /** One coalesced authorized page under backpressure. No permanent streams or raw change payloads. */
-import type { CalendarAppointmentPage, CalendarRangeQuery, ScopedCalendar } from './contracts';
+import type { CalendarRangeQuery, CalendarReadOptions, CalendarWatchOptions, CalendarWatchUpdate, ScopedCalendar } from './contracts';
 export function calendarAppointmentStream(calendar: ScopedCalendar, query: CalendarRangeQuery, signal: AbortSignal): ReadableStream<Uint8Array> {
+  return calendarSnapshotStream({ read: options => calendar.appointments.query(query, options),
+    watch: (listener, options) => calendar.appointments.watch(query, listener, options) }, signal);
+}
+export function calendarBlockStream(calendar: ScopedCalendar, query: CalendarRangeQuery, signal: AbortSignal): ReadableStream<Uint8Array> {
+  return calendarSnapshotStream({ read: options => calendar.blocks.query(query, options),
+    watch: (listener, options) => calendar.blocks.watch(query, listener, options) }, signal);
+}
+export function calendarAvailabilityStream(calendar: ScopedCalendar, id: string, signal: AbortSignal): ReadableStream<Uint8Array> {
+  return calendarSnapshotStream({ read: options => calendar.availability.get(id, options),
+    watch: (listener, options) => calendar.availability.watch(id, listener, options) }, signal);
+}
+/** Trusted fixed-operation closures only; deferred publication always performs another current-authority read. */
+function calendarSnapshotStream<T>(source: {
+  read(options: CalendarReadOptions): Promise<T>;
+  watch(listener: (value: T, update?: CalendarWatchUpdate) => void, options: CalendarWatchOptions): () => void;
+}, signal: AbortSignal): ReadableStream<Uint8Array> {
   const stop = new AbortController(), operationSignal = AbortSignal.any([signal, stop.signal]);
   let controller: ReadableStreamDefaultController<Uint8Array>, closed = false;
   // Do not retain a private page for a later pull: publication may happen after revocation.
@@ -11,7 +27,7 @@ export function calendarAppointmentStream(calendar: ScopedCalendar, query: Calen
     try { remove?.(); } finally { clearTimeout(lifetime); signal.removeEventListener('abort', close); }
   };
   const close = () => { if (!closed) { cleanup(); controller.close(); } };
-  const publish = (value: CalendarAppointmentPage) => {
+  const publish = (value: T) => {
     const frame = { value, invalidated }; invalidated = false;
     controller.enqueue(new TextEncoder().encode('event: snapshot\ndata: ' + JSON.stringify({ version: 1, ...frame }) + '\n\n'));
   };
@@ -26,7 +42,7 @@ export function calendarAppointmentStream(calendar: ScopedCalendar, query: Calen
     try {
       while (!closed && dirty && (controller.desiredSize ?? 0) > 0) {
         dirty = false;
-        const page = await calendar.appointments.query(query, { signal: operationSignal });
+        const page = await source.read({ signal: operationSignal });
         if (closed) return;
         // A commit arrived during the wait; query again instead of publishing an older accepted page.
         if (!dirty) publish(page);
@@ -40,7 +56,7 @@ export function calendarAppointmentStream(calendar: ScopedCalendar, query: Calen
       if (signal.aborted) { close(); return; }
       signal.addEventListener('abort', close, { once: true });
       try {
-        remove = calendar.appointments.watch(query, (page, update) => {
+        remove = source.watch((page, update) => {
           if (closed) return;
           invalidated ||= update?.invalidated === true;
           if (!reading && (controller.desiredSize ?? 0) > 0) { dirty = false; publish(page); }

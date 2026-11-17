@@ -109,9 +109,11 @@ test('native empty-scope broker reads allocate no owner, lease, file or fake res
   const f = fixture();
   try {
     expect(await f.runtime.read<{ items: unknown[]; truncated: boolean; nextAfter: null }>(scope, 'calendar.resources', { actor }, noop)).toEqual({ items: [], truncated: false, nextAfter: null });
-    for (const name of ['calendar.busy', 'calendar.appointments']) expect(await f.runtime.read<{ items: unknown[]; truncated: boolean }>(scope, name, { actor, resourceIds: [], ...range }, noop)).toEqual({ items: [], truncated: false });
+    for (const name of ['calendar.busy', 'calendar.appointments', 'calendar.blocks']) expect(await f.runtime.read<{ items: unknown[]; truncated: boolean }>(scope, name, { actor, resourceIds: [], ...range }, noop)).toEqual({ items: [], truncated: false });
     expect(await f.runtime.read(scope, 'calendar.receipt', { actor, requestId: 'missing' }, noop)).toBeNull();
-    await expect(f.runtime.read(scope, 'calendar.appointment', { actor, id: 'missing' }, noop)).rejects.toMatchObject({ code: 'CALENDAR_NOT_FOUND' });
+    for (const name of ['calendar.appointment', 'calendar.block', 'calendar.availability']) {
+      await expect(f.runtime.read(scope, name, { actor, id: 'missing' }, noop)).rejects.toMatchObject({ code: 'CALENDAR_NOT_FOUND' });
+    }
     await expect(f.runtime.read(scope, 'calendar.busy', { actor, resourceIds: ['missing'], ...range }, noop)).rejects.toMatchObject({ code: 'CALENDAR_NOT_FOUND' });
     expect(f.system.prepare('SELECT count(*) AS count FROM _calendar_owners').get()).toEqual({ count: 0 });
     expect(f.stats().acquisitions).toBe(0);

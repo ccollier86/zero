@@ -6,6 +6,8 @@ export { CalendarMutationError, CalendarReadError } from '../../client/calendar-
 export type { CalendarOperationOutcome } from '../../client/calendar-mutation';
 export type { CalendarResourceKind, CalendarResourceView, CalendarResourceInput, CalendarGrant,
   CalendarAppointmentView, CalendarAppointmentInput, CalendarRescheduleInput, CalendarCommandReceipt,
+  CalendarAvailabilityWindow, CalendarAvailabilityInput, CalendarAvailabilityView,
+  CalendarBlockView, CalendarBlockInput, CalendarBlockRescheduleInput, CalendarBlockPage,
   CalendarRangeQuery, CalendarRequestOptions, CalendarControlOptions, CalendarReadOptions,
   CalendarResourcePageQuery, CalendarResourcePage, CalendarAppointmentPage, CalendarBusyPage,
   CalendarWatchUpdate, CalendarWatchOptions, ScopedCalendar } from '../../../calendar/contracts';

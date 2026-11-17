@@ -703,8 +703,9 @@ seams are explicitly simulated where used. They do not replace file-backed
 worker death/recovery, actual managed compliance, browser, installed Linux/amd64,
 bundle and updater acceptance. No qualified calendar artifact is selected yet.
 
-Working-hours availability, blocks, holds, participant/catalog/location models,
-recurrence, clinical statuses, source-to-Jobs/Torrent effects, notifications,
+Recurring working-hours/holiday expansion, offer/slot generation, holds,
+participant/catalog/location models, recurrence, clinical statuses,
+source-to-Jobs/Torrent effects, notifications,
 self-booking and AI are still future stages. Unsupported feature enablement
 rejects instead of claiming partial readiness. Existing standalone rich editors
 and self-booking previews remain local UI; the connected core never silently
@@ -721,6 +722,56 @@ passing memory/HTTP/UI/type checks from the eight physical actor/file and two
 managed-compliance scenario definitions that are prepared but unexecuted. These
 changes do not make the richer standalone UI, reminders or public booking into
 implemented backend capabilities.
+
+### November 17 explicit availability and one-off blocks
+
+The next approved source stage now implements explicit per-resource UTC windows
+or unrestricted policy, with bounded normalized windows, immutable policy history
+and a resource-revision-controlled current pointer. An explicit empty window set
+is closed. New appointment creation and UTC-occupancy changes must fit each
+resource's current policy, including buffers. Restrictive policy changes never
+cancel or move accepted appointments; unchanged occupancy and zone-only corrections
+remain grandfathered. This is not recurring local working hours, holiday/DST
+expansion, presence inference or an authoritative slot-offer API.
+
+Appointment, block and availability watches share the current-authority native
+subscription/SSE machinery, bounded quiet checks and SDK retirement. Busy reads
+bound each resource/store partition before merging a global redacted page rather
+than sorting all retained matching rows. The current integrated checkpoint is
+279 memory/HTTP/SDK/UI/readable-label tests plus four pure migration-transform
+tests, with no-emit source/regression compilation; see the qualification guide
+for exact counts and the physical scenarios that remain unexecuted.
+
+Private one-off blocks have canonical instants, an explicit zone, title, creator,
+revision, fixed resource membership and active/cancelled history. They have no
+buffers and are bounded to 31 days. Appointment and block reservations share one
+atomic capacity-one conflict domain; creating/rescheduling a block rejects both
+reservation kinds rather than cancelling anything. Cancellation releases all
+owned block reservations. Current manage on every resource is required for
+writes and replay; all-co-resource details authorization occurs before read
+membership/truncation. Redacted busy reads combine both stores under one global
+limit/order without exposing private record identity or titles.
+
+The additive `002` migration preserves the existing `001` migration source and
+receipt constraints. Separate block receipt/effect tables retain true block target
+identity while sharing the stable scope/principal/request-key namespace with old
+commands; reusing a key across families conflicts. Canonical accepted availability
+and block changes append source-atomic opaque semantic facts once; no-op, replay
+and rollback produce no false audit change. Effect-reference intents still do not
+dispatch work or enable Jobs, Torrent, reminders or notifications.
+
+The block suite passes 16 native-memory tests / 164 assertions on pinned Bun 1.4.4,
+using real tracked writer transactions and copied bounded read sessions, including
+late-create/update rollback, current-grant replay revocation, mixed busy truncation
+and the maximum interval boundary. Final combined scheduling-stage counts remain
+pending the primary agent's integrated verification and are recorded in the
+[qualification guide](../backend/calendar/qualification.md). No physical fixture,
+worker process, build, dependency install or release output was created by this
+stage. The storage-integrity hold remains unchanged. Physical additive upgrade,
+recovery/contention, managed compliance, browser, bundle, installed Linux/amd64 and
+normal updater acceptance still gate release. No production-qualified result,
+application migration, hosted-demo change, richer editor persistence or complete
+calendar-plan implementation is implied.
 
 ## 15. Documentation deliverables and open decisions
 

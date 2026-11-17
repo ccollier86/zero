@@ -19,3 +19,27 @@ export const CALENDAR_TABLES: Record<string, TableSchema> = {
     operation: 'TEXT NOT NULL', target_kind: "TEXT NOT NULL CHECK(target_kind IN ('resource','appointment'))", target_id: 'TEXT NOT NULL', revision: 'INTEGER NOT NULL CHECK(revision>0)' },
   _calendar_usage: { id: 'TEXT PRIMARY KEY', count: 'INTEGER NOT NULL CHECK(count>=0)' },
 };
+
+/**
+ * Current declaration. Keep CALENDAR_TABLES above frozen at the 001 generation:
+ * that migration closes over its exact keys when installing identity guards.
+ * An absent availability pointer means unrestricted; no default policy is seeded.
+ */
+export const CALENDAR_SCHEDULING_TABLES: Record<string, TableSchema> = {
+  ...CALENDAR_TABLES,
+  _calendar_availability_history: { id: 'TEXT PRIMARY KEY', scope_id: 'TEXT NOT NULL', resource_id: 'TEXT NOT NULL REFERENCES calendar_resources(id)',
+    policy_revision: 'INTEGER NOT NULL CHECK(policy_revision>0)', mode: "TEXT NOT NULL CHECK(mode IN ('unrestricted','windows'))", windows_json: 'TEXT NOT NULL' },
+  _calendar_availability: { id: 'TEXT PRIMARY KEY', scope_id: 'TEXT NOT NULL', resource_id: 'TEXT NOT NULL REFERENCES calendar_resources(id) CHECK(id=resource_id)',
+    policy_revision: 'INTEGER NOT NULL CHECK(policy_revision>0)' },
+  calendar_blocks: { id: 'TEXT PRIMARY KEY', scope_id: 'TEXT NOT NULL', title: 'TEXT NOT NULL', start_at: 'TEXT NOT NULL', end_at: 'TEXT NOT NULL', start_ms: 'INTEGER NOT NULL',
+    end_ms: 'INTEGER NOT NULL CHECK(end_ms>start_ms AND end_ms-start_ms<=2678400000)', time_zone: 'TEXT NOT NULL', status: "TEXT NOT NULL CHECK(status IN ('active','cancelled'))",
+    revision: 'INTEGER NOT NULL CHECK(revision>0)', created_by: 'TEXT NOT NULL' },
+  _calendar_block_reservations: { id: 'TEXT PRIMARY KEY', scope_id: 'TEXT NOT NULL', block_id: 'TEXT NOT NULL REFERENCES calendar_blocks(id)', resource_id: 'TEXT NOT NULL REFERENCES calendar_resources(id)',
+    occupied_start_ms: 'INTEGER NOT NULL', occupied_end_ms: 'INTEGER NOT NULL CHECK(occupied_end_ms>occupied_start_ms AND occupied_end_ms-occupied_start_ms<=2678400000)',
+    active: 'INTEGER NOT NULL CHECK(active IN (0,1))' },
+  // Separate evidence preserves 001 receipt constraints and true block target identity.
+  _calendar_block_receipts: { id: 'TEXT PRIMARY KEY', scope_id: 'TEXT NOT NULL', principal: 'TEXT NOT NULL', request_id: 'TEXT NOT NULL', digest: 'TEXT NOT NULL', result_json: 'TEXT NOT NULL',
+    target_kind: "TEXT NOT NULL CHECK(target_kind='block')", target_id: 'TEXT NOT NULL', required_right: "TEXT NOT NULL CHECK(required_right='manage')" },
+  _calendar_block_effect_intents: { id: 'TEXT PRIMARY KEY', scope_id: 'TEXT NOT NULL', receipt_id: 'TEXT NOT NULL REFERENCES _calendar_block_receipts(id)',
+    operation: 'TEXT NOT NULL', target_kind: "TEXT NOT NULL CHECK(target_kind='block')", target_id: 'TEXT NOT NULL', revision: 'INTEGER NOT NULL CHECK(revision>0)' },
+};

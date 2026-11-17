@@ -42,7 +42,62 @@ part of every overlap lookup. This is not a wall-clock throughput benchmark or
 an assertion that arbitrary future recurrence rules have the same duration bound.
 Changing the admitted interval invariant must update both validation and lookup.
 
-## Checks completed
+## November 17 explicit-window and block stage
+
+This source stage adds bounded, versioned explicit UTC availability policies and
+private one-off blocks. Unrestricted availability is the backward-compatible
+default; an explicit empty window policy is closed. Appointment creation and
+UTC-occupancy changes check the full buffered interval against current policy on
+every resource. Restricting a policy preserves accepted appointments; unchanged
+occupancy and a zone-only correction are grandfathered. Recurring local working
+hours, holidays, DST expansion and bookable-slot generation are not implemented.
+
+Active blocks share the appointment conflict domain and half-open overlap
+invariant, without buffers. They cannot displace appointments or other blocks.
+Writes require current manage on all resources; details require all co-resource
+rights before membership/truncation. Cancellation releases every reservation and
+retains history. Busy projections use one global bounded order across appointment
+and block occupancy, with no target kind, record ID or title.
+
+The additive `002` migration preserves `001` source identity and retained receipt
+constraints rather than rebuilding old evidence. Block receipts/effect references
+use separate private tables but the same scope/principal/request-key namespace;
+cross-family key reuse conflicts. Safe replay and receipt reads reauthorize current
+target rights. Accepted transitions use the existing source-atomic semantic audit;
+no-op/replay and rolled-back mutations emit no false changes. Private effect
+references are still not a dispatch or reminder pipeline.
+
+The standalone hosted demo is unchanged. The connected workspace remains an
+appointment interface; the new management capabilities are scoped server/client
+facades, not implied new working-hours or block editor surfaces.
+
+Availability and block watches now share the native appointment watch boundary:
+commit hints cause fresh authorized reads, quiet checks do not manufacture events,
+private SSE retains dirty flags under backpressure, and account/scope retirement
+closes old readers. Exact replay is silent. A new-key no-op can still append a
+private receipt and invalidate the source without emitting semantic-change audit.
+
+Mixed busy queries bound each authorized resource/store partition before merging
+the global page. At the fixed 16-resource/100-result ceiling this materializes at
+most 3,232 candidates, rather than collecting every matching active interval for
+a global sort. Tests compare the exact old SQL order against dense synthetic
+current data and verify the executed per-partition index plans. This is a bounded
+algorithm/query-plan qualification, not a disk-latency or throughput benchmark.
+
+| Scheduling-stage evidence | Result | Boundary |
+| --- | --- | --- |
+| One-off block native-memory suite | 16 tests, 164 assertions, 1 file; passed on pinned Bun 1.4.4 | Real ReactiveDB writer/read sessions, both-kind conflicts, co-resource privacy, key reuse/revocation, atomic rollback, cancellation, audit/no-op truth, global busy truncation and bounded interval admission |
+| Final integrated calendar backend/HTTP/SDK/hooks/presentation/readable-audit set | 279 tests, 5,765 assertions, 35 files; passed on pinned Bun 1.4.4 | Includes availability, blocks, populated migration, live watches/denial/reconnect, dense bounded busy queries and prior core regressions; physical coordinator seams remain explicitly simulated |
+| Pure source migration-transform checks | 4 tests, 15 assertions, 1 file; passed | Legacy method and additive named-function migration identities remain independent; not a real bundle/build test |
+| Calendar source and regression-fixture no-emit TypeScript | Passed, 164 root files, zero diagnostics | Includes new and existing source, browser-model fixtures and prepared physical/managed tests; compilation is not execution |
+| Documentation structural graph | 899 pages, 899 reachable, zero problems | Canonical guide links/IDs/anchors remain valid |
+
+All owned memory database/read/logging handles close in `finally`, including
+setup failures. These runs create no file-backed fixtures, actors, dependency
+trees, builds or packaged output. The external filesystem-integrity hold is
+unchanged; this evidence does not bypass its physical-test/cleanup/build gates.
+
+## Earlier core checkpoint, before the scheduling stage
 
 | Evidence | Result | What it establishes |
 | --- | --- | --- |
@@ -75,6 +130,13 @@ conflict/no-op truth, semantic source evidence reaching the native investigator,
 privacy, and admission retirement/recovery. No live provider or clinical data is
 needed. These are test definitions and type-check evidence, not successful runs.
 
+Those same eight file-runtime and two managed definitions now also exercise
+availability/history and block receipt persistence across full restart, a real
+appointment-versus-block race, complete block control/replay/no-op handling and
+the new semantic evidence categories reaching the investigator. Their allocator
+and exact-owned shutdown/cleanup requirements are unchanged. They have not been
+executed under the current storage-integrity hold.
+
 The canonical allocator records exact synthetic ownership. Each fixture closes
 its app, actors, coordinator and database handles before cleanup; unconfirmed
 shutdown preserves the precise owned path instead of deleting state underneath a
@@ -95,9 +157,16 @@ Then complete performance measurements, package exports/Doctor/adoption, the
 repository's applicable suite, artifact hashing and updater selection. A compiled
 executable with the default source actor remains deliberately unavailable.
 
-Working-hours availability, blocks, holds, participants/catalogs/locations,
-recurrence, clinical transitions, source-bound Jobs/Torrent effects, reminders,
+Recurring working-hours/holiday expansion, offer/slot generation, holds,
+participants/catalogs/locations, recurrence, clinical transitions,
+source-bound Jobs/Torrent effects, reminders,
 outbound channels, public self-booking and AI remain later stages of the approved
 integration plan. The hosted local-state UI is not evidence that these backend
 features are implemented. Keep the independent core useful without silently
 enabling optional services or treating this checkpoint as full calendar completion.
+
+The new additive migration and scheduling/block paths also need physical
+existing-file upgrade/recovery, actor restart/contention, managed compliance and
+real-browser acceptance alongside the earlier core gates. Passing source/memory
+checks is not evidence those scenarios have run or that a production domain may
+be migrated.

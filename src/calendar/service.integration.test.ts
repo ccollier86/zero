@@ -1,7 +1,8 @@
 /** Real canonical facade + Guardian + runtime + native memory realm. Not file, actor or installed-package qualification. */
 import { expect, test } from 'bun:test';
 import { trustedSystemServiceDataScope } from '../auth/service-data-scope';
-import type { CalendarAppointmentInput, CalendarAppointmentPage, CalendarRescheduleInput, CalendarWatchUpdate } from './contracts';
+import type { CalendarAppointmentInput, CalendarAppointmentPage, CalendarAvailabilityView, CalendarBlockPage, CalendarRescheduleInput, CalendarWatchUpdate } from './contracts';
+import type { CalendarServiceBroker } from './service';
 import { eventuallyCalendar, memoryCalendarServiceFixture } from './test-support/memory-service-fixture';
 
 const range = { startAt: '2026-11-16T00:00:00.000Z', endAt: '2026-11-17T00:00:00.000Z' };
@@ -242,3 +243,90 @@ test('an unchanged watch revalidates quietly and a real grant revocation retires
     expect((await owner.api.appointments.get(created.id)).title).toBe('PRIVATE_INTEGRATION_TITLE');
   } finally { stop(); await f.close(); }
 }, 15_000);
+
+test('real block commits publish current snapshots while exact replay adds no invalidation', async () => {
+  const f = memoryCalendarServiceFixture(), owner = f.session('owner'); let stop = () => {};
+  try {
+    const resource = await owner.api.resources.create({ label: 'Watched blocks', kind: 'person', timeZone: 'UTC' }, { idempotencyKey: 'resource' });
+    const pages: CalendarBlockPage[] = [], updates: (CalendarWatchUpdate | undefined)[] = [], errors: unknown[] = [];
+    stop = owner.api.blocks.watch({ resourceIds: [resource.id], ...range }, (page, update) => { pages.push(page); updates.push(update); }, { onError: error => errors.push(error) });
+    await eventuallyCalendar(() => pages.length === 1); expect(pages[0]!.items).toEqual([]); expect(updates[0]!.invalidated).toBe(false);
+    const input = { resourceIds: [resource.id], title: 'PRIVATE_WATCHED_BLOCK', startAt: appointment([]).startAt, endAt: appointment([]).endAt, timeZone: 'UTC' };
+    const created = await owner.api.blocks.create(input, { idempotencyKey: 'block' });
+    await eventuallyCalendar(() => pages.length === 2); expect(pages[1]!.items[0]).toMatchObject({ id: created.id, revision: 1 }); expect(updates[1]!.invalidated).toBe(true);
+    await owner.api.blocks.create(input, { idempotencyKey: 'block' }); expect(pages).toHaveLength(2);
+    const moved = { startAt: move.startAt, endAt: move.endAt, timeZone: move.timeZone };
+    await owner.api.blocks.reschedule(created.id, moved, { idempotencyKey: 'move-block', expectedRevision: 1 });
+    await eventuallyCalendar(() => pages.length === 3); expect(pages[2]!.items[0]).toMatchObject({ revision: 2, startAt: move.startAt });
+    await owner.api.blocks.cancel(created.id, { idempotencyKey: 'cancel-block', expectedRevision: 2 });
+    await eventuallyCalendar(() => pages.length === 4); expect(pages[3]!.items).toEqual([]);
+    await owner.api.blocks.cancel(created.id, { idempotencyKey: 'cancel-block', expectedRevision: 2 });
+    expect(pages).toHaveLength(4); expect(errors).toEqual([]); stop(); expect(f.stats().subscriptions).toBe(0);
+  } finally { stop(); await f.close(); }
+});
+
+test('availability watches publish current resource revisions and normalized policy while exact replay adds no invalidation', async () => {
+  const f = memoryCalendarServiceFixture(), owner = f.session('owner'); let stop = () => {};
+  try {
+    const resource = await owner.api.resources.create({ label: 'Watched availability', kind: 'person', timeZone: 'UTC' }, { idempotencyKey: 'resource' });
+    const values: CalendarAvailabilityView[] = [], updates: (CalendarWatchUpdate | undefined)[] = [], errors: unknown[] = [];
+    stop = owner.api.availability.watch(resource.id, (value, update) => { values.push(value); updates.push(update); }, { onError: error => errors.push(error) });
+    await eventuallyCalendar(() => values.length === 1); expect(values[0]).toMatchObject({ resourceId: resource.id, resourceRevision: 1, mode: 'unrestricted', windows: [] });
+    expect(updates[0]!.invalidated).toBe(false);
+    const policy = { mode: 'windows' as const, windows: [{ startAt: '2026-11-16T12:00:00.000Z', endAt: '2026-11-16T14:00:00.000Z' },
+      { startAt: '2026-11-16T10:00:00.000Z', endAt: '2026-11-16T12:00:00.000Z' }] };
+    await owner.api.availability.replace(resource.id, policy, { idempotencyKey: 'policy', expectedRevision: 1 });
+    await eventuallyCalendar(() => values.length === 2); expect(values[1]).toMatchObject({ resourceRevision: 2, mode: 'windows',
+      windows: [{ startAt: '2026-11-16T10:00:00.000Z', endAt: '2026-11-16T14:00:00.000Z' }] }); expect(updates[1]!.invalidated).toBe(true);
+    await owner.api.availability.replace(resource.id, policy, { idempotencyKey: 'policy', expectedRevision: 1 });
+    expect(values).toHaveLength(2);
+    await owner.api.availability.replace(resource.id, { mode: 'windows', windows: [] }, { idempotencyKey: 'closed', expectedRevision: 2 });
+    await eventuallyCalendar(() => values.length === 3); expect(values[2]).toMatchObject({ resourceRevision: 3, mode: 'windows', windows: [] });
+    expect(errors).toEqual([]); stop(); expect(f.stats().subscriptions).toBe(0);
+  } finally { stop(); await f.close(); }
+});
+
+test('both new watch families quietly revalidate on the bounded cadence and retire after current grant revocation', async () => {
+  const f = memoryCalendarServiceFixture(), owner = f.session('owner'), reader = f.session('reader');
+  let stopBlocks = () => {}, stopAvailability = () => {};
+  const counts = { 'calendar.blocks': 0, 'calendar.availability': 0 }, originalRead = f.runtime.read.bind(f.runtime);
+  f.runtime.read = <T>(...args: Parameters<CalendarServiceBroker['read']>): Promise<T> => {
+    const name = args[1]; if (name === 'calendar.blocks' || name === 'calendar.availability') counts[name]++;
+    return originalRead<T>(...args);
+  };
+  try {
+    const resource = await owner.api.resources.create({ label: 'Private scheduling watch', kind: 'person', timeZone: 'UTC' }, { idempotencyKey: 'resource' });
+    const block = await owner.api.blocks.create({ resourceIds: [resource.id], title: 'PRIVATE_WATCHED_BLOCK', startAt: appointment([]).startAt, endAt: appointment([]).endAt, timeZone: 'UTC' }, { idempotencyKey: 'block' });
+    await owner.api.resources.setGrants(resource.id, reader.userId, ['details'], { idempotencyKey: 'grant', expectedRevision: 1 });
+    const pages: CalendarBlockPage[] = [], values: CalendarAvailabilityView[] = [], blockErrors: unknown[] = [], availabilityErrors: unknown[] = [];
+    stopBlocks = reader.api.blocks.watch({ resourceIds: [resource.id], ...range }, page => pages.push(page), { onError: error => blockErrors.push(error) });
+    stopAvailability = reader.api.availability.watch(resource.id, value => values.push(value), { onError: error => availabilityErrors.push(error) });
+    await eventuallyCalendar(() => pages.length === 1 && values.length === 1); expect(pages[0]!.items[0]!.id).toBe(block.id);
+    const initial = { ...counts };
+    await eventuallyCalendar(() => counts['calendar.blocks'] > initial['calendar.blocks'] && counts['calendar.availability'] > initial['calendar.availability'], 7_000);
+    expect(pages).toHaveLength(1); expect(values).toHaveLength(1); expect(blockErrors).toEqual([]); expect(availabilityErrors).toEqual([]);
+    await owner.api.resources.setGrants(resource.id, reader.userId, [], { idempotencyKey: 'revoke', expectedRevision: 2 });
+    await eventuallyCalendar(() => blockErrors.length === 1 && availabilityErrors.length === 1 && f.stats().subscriptions === 0);
+    expect(blockErrors[0]).toMatchObject({ code: 'CALENDAR_NOT_FOUND' }); expect(availabilityErrors[0]).toMatchObject({ code: 'CALENDAR_NOT_FOUND' });
+    expect(pages).toHaveLength(1); expect(values).toHaveLength(1);
+  } finally { stopBlocks(); stopAvailability(); await f.close(); }
+}, 15_000);
+
+test('a block watch drops a private multi-resource row after an unselected co-resource grant is revoked', async () => {
+  const f = memoryCalendarServiceFixture(), owner = f.session('owner'), manager = f.session('manager', { manager: true }), reader = f.session('reader');
+  let stop = () => {};
+  try {
+    const person = await owner.api.resources.create({ label: 'Selected resource', kind: 'person', timeZone: 'UTC' }, { idempotencyKey: 'person' });
+    const room = await manager.api.resources.create({ label: 'Unselected co-resource', kind: 'room', timeZone: 'UTC' }, { idempotencyKey: 'room' });
+    const created = await manager.api.blocks.create({ resourceIds: [person.id, room.id], title: 'PRIVATE_MULTI_RESOURCE_BLOCK', startAt: appointment([]).startAt, endAt: appointment([]).endAt, timeZone: 'UTC' }, { idempotencyKey: 'block' });
+    await owner.api.resources.setGrants(person.id, reader.userId, ['details'], { idempotencyKey: 'person-details', expectedRevision: 1 });
+    await manager.api.resources.setGrants(room.id, reader.userId, ['details'], { idempotencyKey: 'room-details', expectedRevision: 1 });
+    const pages: CalendarBlockPage[] = [], errors: unknown[] = [];
+    stop = reader.api.blocks.watch({ resourceIds: [person.id], ...range }, page => pages.push(page), { onError: error => errors.push(error) });
+    await eventuallyCalendar(() => pages.length === 1); expect(pages[0]!.items.map(row => row.id)).toEqual([created.id]);
+    await manager.api.resources.setGrants(room.id, reader.userId, [], { idempotencyKey: 'room-revoke', expectedRevision: 2 });
+    await eventuallyCalendar(() => pages.length === 2); expect(pages[1]!.items).toEqual([]); expect(errors).toEqual([]);
+    await owner.api.resources.setGrants(person.id, reader.userId, [], { idempotencyKey: 'person-revoke', expectedRevision: 2 });
+    await eventuallyCalendar(() => errors.length === 1 && f.stats().subscriptions === 0); expect(pages).toHaveLength(2);
+  } finally { stop(); await f.close(); }
+});

@@ -1,9 +1,9 @@
 /** Authoritative bounded range snapshots. Reconnects reads only; denial stops and withdraws the last projection. */
-import type { CalendarAppointmentPage, CalendarWatchOptions, CalendarWatchUpdate } from '../../calendar/contracts';
+import type { CalendarWatchOptions, CalendarWatchUpdate } from '../../calendar/contracts';
 import { CalendarReadError } from './calendar-mutation';
-export function watchCalendarRange(open: (path: string, init: RequestInit) => Promise<Response>, path: string, boundary: AbortSignal,
-  listener: (page: CalendarAppointmentPage, update?: CalendarWatchUpdate) => void,
-  parse: (value: unknown) => CalendarAppointmentPage, options: CalendarWatchOptions): () => void {
+export function watchCalendarRange<T>(open: (path: string, init: RequestInit) => Promise<Response>, path: string, boundary: AbortSignal,
+  listener: (page: T, update?: CalendarWatchUpdate) => void,
+  parse: (value: unknown) => T, options: CalendarWatchOptions): () => void {
   const owner = new AbortController(), signal = AbortSignal.any([owner.signal, boundary, ...(options.signal ? [options.signal] : [])]);
   let retry: ReturnType<typeof setTimeout> | undefined, published = false;
   const stop = () => { clearTimeout(retry); signal.removeEventListener('abort', stop); owner.abort(); };
@@ -29,7 +29,7 @@ export function watchCalendarRange(open: (path: string, init: RequestInit) => Pr
           const packet = buffer.slice(0, end); buffer = buffer.slice(end + 2);
           const data = packet.split('\n').filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n');
           if (!data) continue;
-          let page: CalendarAppointmentPage, invalidated = false;
+          let page: T, invalidated = false;
           try {
             const value = JSON.parse(data);
             if (!value || typeof value !== 'object' || Array.isArray(value) || value.version !== 1 || value.error

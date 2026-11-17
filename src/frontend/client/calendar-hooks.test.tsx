@@ -76,7 +76,9 @@ test('detail invalidation and explicit refresh mask the previous snapshot before
 });
 test('a detail read denied after a co-resource invalidation cannot revive the prior authorized snapshot', async () => {
   const f = fixture(), rendered = await renderReads(f.client);
-  const detail = { id: 'appointment-a', resourceIds: ['synthetic-resource', 'co-resource'] } as CalendarAppointmentView;
+  const detail: CalendarAppointmentView = { id: 'appointment-a', resourceIds: ['synthetic-resource', 'co-resource'],
+    revision: 1, title: 'Synthetic appointment', startAt: query.startAt, endAt: query.endAt, timeZone: 'UTC',
+    bufferBeforeMinutes: 0, bufferAfterMinutes: 0, status: 'confirmed', createdBy: 'synthetic-user' };
   await act(async () => { f.details[0]!.resolve(detail); });
   await rendered.change(null, 1);
   await act(async () => { f.details[1]!.reject(new CalendarReadError('CALENDAR_NOT_FOUND', 404)); });

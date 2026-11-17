@@ -10,7 +10,7 @@ import { calendarHash } from './validation';
 interface CalendarAuditMetadata {
   readonly revision: number;
   readonly resourceCount?: number;
-  readonly status?: 'confirmed' | 'cancelled';
+  readonly status?: 'confirmed' | 'cancelled' | 'active';
 }
 
 /** Call only inside an accepted mutation's callback; receipt replay and domain no-ops never reach this seam. */
@@ -25,7 +25,7 @@ export function appendCalendarSemanticAudit(context: DatabaseWriteCommandContext
     // A real mutation sequence identifies A -> B -> A transitions independently of transport retries.
     id: 'calendar:' + calendarHash([action, change.table, change.rowId, change.seq]),
     family: 'workflow', action, outcome: 'succeeded', occurredAt: change.ts,
-    target: { type: operation.startsWith('resource.') ? 'calendar.resource' : 'calendar.appointment', id: change.rowId },
+    target: { type: operation.startsWith('resource.') ? 'calendar.resource' : operation.startsWith('block.') ? 'calendar.block' : 'calendar.appointment', id: change.rowId },
     metadata: values,
   });
 }

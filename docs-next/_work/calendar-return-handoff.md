@@ -9,7 +9,7 @@ visibility: internal
 system: calendar
 feature: integration-return-notes
 maturity: experimental
-applies_to: ["2.11.0 released foundation and experimental calendar UI; calendar backend awaits design review"]
+applies_to: ["2.11.0 released foundation and experimental calendar UI; approved calendar backend implementation in progress on its feature branch"]
 ---
 
 # Return to calendar after the shared scheduling foundation
@@ -108,11 +108,15 @@ Do not mount a separate modal manager or use native HTML date dialogs in the
 final Zero integration. Use Zero icons first; any missing-icon fallback must be
 explicitly documented. Keep empty/loading/error states and responsive layouts.
 
-## Backend design still to do with the user
+<a id="backend-design-still-to-do-with-the-user"></a>
 
-No authoritative calendar persistence, booking, availability or reminders are
-implemented by the UI checkpoint. The editor's local synchronous save callback
-is not an accepted-write receipt. Local booking previews are not real slots.
+## Original backend integration requirements, preserved
+
+The following requirements were recorded before backend implementation. The UI
+checkpoint alone does not implement authoritative persistence, booking,
+availability or reminders. The editor's local synchronous save callback is not
+an accepted-write receipt, and local booking previews are not real slots. Follow
+the linked managed-core guide for the current implementation and remaining gates.
 
 Plan a generic opt-in calendar service, not a PracticeIQ-specific system:
 

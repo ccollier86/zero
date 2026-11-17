@@ -1,7 +1,7 @@
 /** Memory streams only. No server, child, database files or generated fixtures. */
 import { expect, test } from 'bun:test';
-import type { CalendarAppointmentPage, CalendarReadOptions, CalendarWatchOptions, ScopedCalendar } from './contracts';
-import { calendarAppointmentStream } from './stream';
+import type { CalendarAppointmentPage, CalendarAvailabilityView, CalendarBlockPage, CalendarReadOptions, CalendarWatchOptions, ScopedCalendar } from './contracts';
+import { calendarAppointmentStream, calendarAvailabilityStream, calendarBlockStream } from './stream';
 const query = { resourceIds: ['synthetic'], startAt: '2026-11-16T00:00:00.000Z', endAt: '2026-11-17T00:00:00.000Z' };
 const empty: CalendarAppointmentPage = { items: [], truncated: false };
 function fixture() {
@@ -80,3 +80,69 @@ test('terminal watch denial fences a late in-flight refresh even when its physic
     expect(f.calls).toBe(1);
   } finally { release(); await refresh; f.abort.abort(); await f.reader.cancel(); f.reader.releaseLock(); }
 });
+
+function schedulingFixture(kind: 'blocks' | 'availability') {
+  type Snapshot = CalendarBlockPage | CalendarAvailabilityView;
+  const initial: Snapshot = kind === 'blocks' ? { items: [], truncated: false }
+    : { resourceId: 'synthetic', resourceRevision: 1, timeZone: 'UTC', mode: 'windows', windows: [] };
+  const deferred: Snapshot = kind === 'blocks' ? { items: [], truncated: true }
+    : { resourceId: 'synthetic', resourceRevision: 2, timeZone: 'UTC', mode: 'windows', windows: [{ startAt: query.startAt, endAt: query.endAt }] };
+  let notify!: (value: Snapshot, update?: { invalidated: boolean }) => void;
+  let options!: CalendarWatchOptions, calls = 0, removals = 0;
+  let read: (options?: CalendarReadOptions) => Promise<Snapshot> = async () => initial;
+  const watch = (_query: unknown, callback: typeof notify, supplied: CalendarWatchOptions) => {
+    notify = callback; options = supplied; return () => { removals++; };
+  };
+  const refresh = async (_query: unknown, supplied?: CalendarReadOptions) => { calls++; return read(supplied); };
+  const calendar = { blocks: { watch, query: refresh }, availability: { watch, get: refresh } } as unknown as ScopedCalendar;
+  const abort = new AbortController(), stream = kind === 'blocks' ? calendarBlockStream(calendar, query, abort.signal)
+    : calendarAvailabilityStream(calendar, 'synthetic', abort.signal), reader = stream.getReader();
+  return { initial, deferred, notify: (value = initial) => notify(value, { invalidated: true }),
+    fail: () => options.onError?.(new Error('SYNTHETIC_PRIVATE_FAILURE')), setRead(next: typeof read) { read = next; },
+    abort, reader, get calls() { return calls; }, get removals() { return removals; } };
+}
+
+for (const kind of ['blocks', 'availability'] as const) {
+  test(`${kind} backpressure retains only dirty hints and requires another current authorized read`, async () => {
+    const f = schedulingFixture(kind);
+    try {
+      f.notify(); f.notify(f.deferred); expect(f.calls).toBe(0);
+      f.setRead(async () => { throw new Error('SYNTHETIC_PRIVATE_DENIAL'); });
+      const a = await f.reader.read(), b = await f.reader.read();
+      expect(new TextDecoder().decode(a.value)).toContain(JSON.stringify(f.initial));
+      const denial = new TextDecoder().decode(b.value);
+      expect(denial).toContain('event: invalidated'); expect(denial).not.toContain('PRIVATE');
+      expect(denial).not.toContain(JSON.stringify(f.deferred)); expect(f.calls).toBe(1); expect(f.removals).toBe(1);
+      expect((await f.reader.read()).done).toBe(true);
+    } finally { f.abort.abort(); await f.reader.cancel(); f.reader.releaseLock(); }
+  });
+
+  test(`${kind} terminal denial fences a late read that ignores cancellation`, async () => {
+    const f = schedulingFixture(kind); let entered!: () => void, release!: () => void;
+    const reading = new Promise<void>(resolve => { entered = resolve; }), gate = new Promise<void>(resolve => { release = resolve; });
+    let refresh: Promise<typeof f.deferred> | undefined;
+    try {
+      f.setRead(() => { refresh = (async () => { entered(); await gate; return f.deferred; })(); return refresh; });
+      f.notify(); f.notify(f.deferred); await f.reader.read(); await reading;
+      const pending = f.reader.read(); f.fail();
+      const denial = new TextDecoder().decode((await pending).value);
+      expect(denial).toContain('event: invalidated'); expect(denial).not.toContain(JSON.stringify(f.deferred)); expect(denial).not.toContain('PRIVATE');
+      release(); await refresh;
+      expect((await f.reader.read()).done).toBe(true); expect(f.removals).toBe(1); expect(f.calls).toBe(1);
+    } finally { release(); await refresh; f.abort.abort(); await f.reader.cancel(); f.reader.releaseLock(); }
+  });
+
+  test(`${kind} cancellation aborts its owned queued refresh and unsubscribes exactly once`, async () => {
+    const f = schedulingFixture(kind); let entered!: (signal: AbortSignal) => void;
+    const reading = new Promise<AbortSignal>(resolve => { entered = resolve; });
+    try {
+      f.setRead(options => new Promise<never>((_resolve, reject) => {
+        const signal = options!.signal!; entered(signal); signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      }));
+      f.notify(); f.notify(f.deferred); await f.reader.read(); const signal = await reading;
+      const pending = f.reader.read(); await f.reader.cancel();
+      expect(signal.aborted).toBe(true); expect(f.abort.signal.aborted).toBe(false); expect((await pending).done).toBe(true);
+      f.abort.abort(); expect(f.removals).toBe(1); f.notify(f.deferred);
+    } finally { f.abort.abort(); await f.reader.cancel(); f.reader.releaseLock(); }
+  });
+}

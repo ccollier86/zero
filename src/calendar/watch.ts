@@ -1,17 +1,23 @@
 /** Commit-driven invalidation with bounded authority checks. Never publishes rows from a raw database subscription. */
 import { admitCalendarRequest, type CalendarAuthority } from './authority';
 import type { ResolvedCalendarConfig } from './config';
-import type { CalendarAppointmentPage, CalendarRangeQuery, CalendarWatchOptions, CalendarWatchUpdate } from './contracts';
+import type { CalendarRangeQuery, CalendarWatchOptions, CalendarWatchUpdate } from './contracts';
 import type { CalendarServiceBroker } from './service';
 import { CalendarError } from './error';
 import { calendarRecord } from './validation';
 
-export function watchCalendarPage(input: {
+type CalendarWatchQuery = { queryName?: 'calendar.appointments'; query: CalendarRangeQuery }
+  | { queryName: 'calendar.blocks'; query: CalendarRangeQuery }
+  | { queryName: 'calendar.availability'; query: { readonly id: string } };
+export function watchCalendarPage<T>(input: {
   request: CalendarAuthority; broker: CalendarServiceBroker; config: ResolvedCalendarConfig; closing: AbortSignal;
-  query: CalendarRangeQuery; listener: (page: CalendarAppointmentPage, update?: CalendarWatchUpdate) => void;
+  /** Fixed by the canonical facade, never selected by authored input. Omission preserves appointment callers. */
+  listener: (page: T, update?: CalendarWatchUpdate) => void;
   options: CalendarWatchOptions; track: <T>(task: Promise<T>) => Promise<T>;
-}): () => void {
+} & CalendarWatchQuery): () => void {
   const options = calendarRecord(input.options, ['signal', 'onError']);
+  const queryName = input.queryName ?? 'calendar.appointments';
+  if (!['calendar.appointments', 'calendar.blocks', 'calendar.availability'].includes(queryName)) throw new CalendarError('CALENDAR_INPUT_INVALID');
   if (typeof input.listener !== 'function' || options.onError !== undefined && typeof options.onError !== 'function'
     || options.signal !== undefined && !(options.signal instanceof AbortSignal)
     || input.request.signal !== undefined && !(input.request.signal instanceof AbortSignal)) throw new CalendarError('CALENDAR_INPUT_INVALID');
@@ -42,7 +48,7 @@ export function watchCalendarPage(input: {
           const changed = invalidated; invalidated = false;
           await authority.confirm();
           authority.guard();
-          const page = await input.broker.read<CalendarAppointmentPage>(authority.scope, 'calendar.appointments',
+          const page = await input.broker.read<T>(authority.scope, queryName,
             { ...input.query, actor: authority.actor }, authority.guard, authority.signal);
           await authority.confirm();
           if (closed) return;

@@ -1,5 +1,6 @@
 /** Browser-safe scoped calendar commands. The SDK retires this entire transport on every authority replacement. */
 import type { CalendarAppointmentInput, CalendarAppointmentPage, CalendarAppointmentView, CalendarBusyPage, CalendarCommandReceipt,
+  CalendarAvailabilityInput, CalendarAvailabilityView, CalendarAvailabilityWindow, CalendarBlockInput, CalendarBlockPage, CalendarBlockRescheduleInput, CalendarBlockView,
   CalendarControlOptions, CalendarGrant, CalendarRangeQuery, CalendarReadOptions, CalendarRequestOptions, CalendarRescheduleInput, CalendarResourceInput,
   CalendarResourcePage, CalendarResourcePageQuery, CalendarResourceView, CalendarWatchOptions, CalendarWatchUpdate, ScopedCalendar } from '../../calendar/contracts';
 import type { FetchInit } from './sdk';
@@ -29,6 +30,21 @@ export function createCalendarClient(fetch: <T = unknown>(path: string, init?: F
       if (receipt.requestId !== key || receipt.operation !== operation || id !== undefined && receipt.id !== id) throw invalid(); return receipt; }
     catch (error) { if (!dispatched) throw error; throw calendarMutationFailure(error, key); }
   }
+  function watch<T>(path: string, parse: (value: unknown) => T, listener: (value: T, update?: CalendarWatchUpdate) => void,
+    supplied: CalendarWatchOptions): () => void {
+    const o = record(supplied, ['signal', 'onError']);
+    if (!open || typeof listener !== 'function' || o.signal !== undefined && !(o.signal instanceof AbortSignal)
+      || o.onError !== undefined && typeof o.onError !== 'function') throw invalid();
+    const accepted: CalendarWatchOptions = { ...(o.signal === undefined ? {} : { signal: o.signal as AbortSignal }),
+      ...(o.onError === undefined ? {} : { onError: o.onError as (error: unknown) => void }) };
+    return watchCalendarRange(open, '/api/calendar' + path, boundary.signal, listener, parse, accepted);
+  }
+  function watchRange<T>(kind: 'appointments' | 'blocks', query: CalendarRangeQuery, parse: (value: unknown) => T,
+    listener: (value: T, update?: CalendarWatchUpdate) => void, supplied: CalendarWatchOptions): () => void {
+    const r = range(query), params = new URLSearchParams({ resourceIds: (r.resourceIds as string[]).join(','), startAt: String(r.startAt), endAt: String(r.endAt) });
+    if (r.limit !== undefined) params.set('limit', String(r.limit));
+    return watch('/' + kind + '/live?' + params, parse, listener, supplied);
+  }
   return Object.freeze({
     resources: Object.freeze({
       list(supplied?: CalendarResourcePageQuery, readOptions?: CalendarReadOptions) {
@@ -51,9 +67,54 @@ export function createCalendarClient(fetch: <T = unknown>(path: string, init?: F
         return mutation('/resources/' + encodeURIComponent(id) + '/grants', { userId, grants: accepted, options: options(supplied, true) }, supplied, 'resource.grant-changed', id);
       },
     }),
+    availability: Object.freeze({
+      get(id: string, readOptions?: CalendarReadOptions) {
+        const resourceId = requestKey(id);
+        return read('/availability/' + encodeURIComponent(resourceId), value => {
+          const accepted = availabilityView(value); if (accepted.resourceId !== resourceId) throw invalid(); return accepted;
+        }, 'GET', undefined, readSignal(readOptions));
+      },
+      replace(id: string, input: CalendarAvailabilityInput, supplied: CalendarControlOptions) {
+        return mutation('/availability/' + encodeURIComponent(requestKey(id)),
+          { availability: availabilityInput(input), options: options(supplied, true) }, supplied, 'resource.availability-changed', id);
+      },
+      watch(id: string, listener: (availability: CalendarAvailabilityView, update?: CalendarWatchUpdate) => void, supplied: CalendarWatchOptions = {}) {
+        const resourceId = requestKey(id);
+        return watch('/availability/' + encodeURIComponent(resourceId) + '/live', value => {
+          const accepted = availabilityView(value); if (accepted.resourceId !== resourceId) throw invalid(); return accepted;
+        }, listener, supplied);
+      },
+    }),
+    blocks: Object.freeze({
+      query(supplied: CalendarRangeQuery, readOptions?: CalendarReadOptions) { return read('/blocks/query', blockPage, 'POST', { query: range(supplied) }, readSignal(readOptions)); },
+      get(id: string, readOptions?: CalendarReadOptions) {
+        const targetId = requestKey(id);
+        return read('/blocks/' + encodeURIComponent(targetId), value => {
+          const accepted = blockView(value); if (accepted.id !== targetId) throw invalid(); return accepted;
+        }, 'GET', undefined, readSignal(readOptions));
+      },
+      create(input: CalendarBlockInput, supplied: CalendarRequestOptions) {
+        return mutation('/blocks', { block: blockInput(input, true), options: options(supplied) }, supplied, 'block.created');
+      },
+      reschedule(id: string, input: CalendarBlockRescheduleInput, supplied: CalendarControlOptions) {
+        return mutation('/blocks/' + encodeURIComponent(requestKey(id)) + '/reschedule',
+          { block: blockInput(input, false), options: options(supplied, true) }, supplied, 'block.rescheduled', id);
+      },
+      cancel(id: string, supplied: CalendarControlOptions) {
+        return mutation('/blocks/' + encodeURIComponent(requestKey(id)) + '/cancel', { options: options(supplied, true) }, supplied, 'block.cancelled', id);
+      },
+      watch(query: CalendarRangeQuery, listener: (page: CalendarBlockPage, update?: CalendarWatchUpdate) => void, supplied: CalendarWatchOptions = {}) {
+        return watchRange('blocks', query, blockPage, listener, supplied);
+      },
+    }),
     appointments: Object.freeze({
       query(supplied: CalendarRangeQuery, readOptions?: CalendarReadOptions) { return read('/appointments/query', appointmentPage, 'POST', { query: range(supplied) }, readSignal(readOptions)); },
-      get(id: string, readOptions?: CalendarReadOptions) { return read('/appointments/' + encodeURIComponent(requestKey(id)), appointmentView, 'GET', undefined, readSignal(readOptions)); },
+      get(id: string, readOptions?: CalendarReadOptions) {
+        const targetId = requestKey(id);
+        return read('/appointments/' + encodeURIComponent(targetId), value => {
+          const accepted = appointmentView(value); if (accepted.id !== targetId) throw invalid(); return accepted;
+        }, 'GET', undefined, readSignal(readOptions));
+      },
       create(input: CalendarAppointmentInput, supplied: CalendarRequestOptions) {
         const r = appointmentInput(input, true); return mutation('/appointments', { appointment: r, options: options(supplied) }, supplied, 'appointment.created');
       },
@@ -65,20 +126,18 @@ export function createCalendarClient(fetch: <T = unknown>(path: string, init?: F
         return mutation('/appointments/' + encodeURIComponent(requestKey(id)) + '/cancel', { options: options(supplied, true) }, supplied, 'appointment.cancelled', id);
       },
       watch(query: CalendarRangeQuery, listener: (page: CalendarAppointmentPage, update?: CalendarWatchUpdate) => void, supplied: CalendarWatchOptions = {}) {
-        const r = range(query), o = record(supplied, ['signal', 'onError']);
-        if (!open || typeof listener !== 'function' || o.signal !== undefined && !(o.signal instanceof AbortSignal)
-          || o.onError !== undefined && typeof o.onError !== 'function') throw invalid();
-        const params = new URLSearchParams({ resourceIds: (r.resourceIds as string[]).join(','), startAt: String(r.startAt), endAt: String(r.endAt) });
-        if (r.limit !== undefined) params.set('limit', String(r.limit));
-        const accepted: CalendarWatchOptions = { ...(o.signal === undefined ? {} : { signal: o.signal as AbortSignal }),
-          ...(o.onError === undefined ? {} : { onError: o.onError as (error: unknown) => void }) };
-        return watchCalendarRange(open, '/api/calendar/appointments/live?' + params, boundary.signal, listener, appointmentPage, accepted);
+        return watchRange('appointments', query, appointmentPage, listener, supplied);
       },
     }),
     busy: Object.freeze({ query(query: CalendarRangeQuery, readOptions?: CalendarReadOptions) { return read('/busy/query', busyPage, 'POST', { query: range(query) }, readSignal(readOptions)); } }),
-    receipts: Object.freeze({ get(key: string, readOptions?: CalendarReadOptions) { return read('/receipts/' + encodeURIComponent(requestKey(key)), value => {
-      const r = record(value, ['receipt']); if (!Object.hasOwn(r, 'receipt')) throw invalid(); return r.receipt === null ? null : calendarReceipt(r.receipt);
-    }, 'GET', undefined, readSignal(readOptions)); } }),
+    receipts: Object.freeze({ get(key: string, readOptions?: CalendarReadOptions) {
+      const requestId = requestKey(key);
+      return read('/receipts/' + encodeURIComponent(requestId), value => {
+        const r = record(value, ['receipt']); if (!Object.hasOwn(r, 'receipt')) throw invalid();
+        if (r.receipt === null) return null;
+        const accepted = calendarReceipt(r.receipt); if (accepted.requestId !== requestId) throw invalid(); return accepted;
+      }, 'GET', undefined, readSignal(readOptions));
+    } }),
     clear() { generation++; boundary.abort(); boundary = new AbortController(); },
   });
 }
@@ -99,6 +158,41 @@ function appointmentInput(value: unknown, create: boolean): Record<string, unkno
   if (duration <= 0 || duration > 31 * 86400_000) throw invalid(); zone(r.timeZone);
   for (const key of ['bufferBeforeMinutes', 'bufferAfterMinutes']) if (!create || r[key] !== undefined) integer(r[key], 0, 1440);
   return { ...r, ...(resourceIds === undefined ? {} : { resourceIds }) };
+}
+function blockInput(value: unknown, create: boolean): Record<string, unknown> {
+  const r = record(value, ['startAt', 'endAt', 'timeZone', ...(create ? ['resourceIds', 'title'] : [])]);
+  const resourceIds = create ? ids(r.resourceIds) : undefined;
+  if (create) identifier(r.title, 512);
+  interval(r.startAt, r.endAt); zone(r.timeZone);
+  return { ...r, ...(resourceIds === undefined ? {} : { resourceIds }) };
+}
+function availabilityInput(value: unknown): CalendarAvailabilityInput {
+  const r = record(value, ['mode', 'windows']);
+  if (Object.keys(r).length !== 2 || r.mode !== 'unrestricted' && r.mode !== 'windows') throw invalid();
+  const windows = availabilityWindows(r.windows);
+  if (r.mode === 'unrestricted' && windows.length !== 0) throw invalid();
+  return Object.freeze({ mode: r.mode, windows });
+}
+function availabilityWindows(value: unknown, response = false): readonly CalendarAvailabilityWindow[] {
+  const windows = values(value, 100).map(value => {
+    const r = record(value, ['startAt', 'endAt']);
+    if (Object.keys(r).length !== 2) throw invalid();
+    instant(r.startAt); instant(r.endAt); if (Date.parse(String(r.startAt)) >= Date.parse(String(r.endAt))) throw invalid();
+    return Object.freeze({ startAt: r.startAt as string, endAt: r.endAt as string });
+  });
+  if (response) for (let index = 1; index < windows.length; index++) {
+    if (Date.parse(windows[index - 1]!.endAt) >= Date.parse(windows[index]!.startAt)) throw invalid();
+  }
+  return Object.freeze(windows);
+}
+function availabilityView(value: unknown): CalendarAvailabilityView {
+  const r = record(value, ['resourceId', 'resourceRevision', 'timeZone', 'mode', 'windows']);
+  if (Object.keys(r).length !== 5) throw invalid();
+  requestKey(r.resourceId); integer(r.resourceRevision, 1); zone(r.timeZone);
+  if (r.mode !== 'unrestricted' && r.mode !== 'windows') throw invalid();
+  const windows = availabilityWindows(r.windows, true);
+  if (r.mode === 'unrestricted' && windows.length) throw invalid();
+  return Object.freeze({ ...r, windows }) as unknown as CalendarAvailabilityView;
 }
 function range(value: unknown): Record<string, unknown> {
   const r = record(value, ['resourceIds', 'startAt', 'endAt', 'limit']), resourceIds = ids(r.resourceIds, true);
@@ -128,6 +222,19 @@ function appointmentView(value: unknown): CalendarAppointmentView {
   integer(r.bufferBeforeMinutes, 0, 1440); integer(r.bufferAfterMinutes, 0, 1440);
   return Object.freeze({ ...r, resourceIds: Object.freeze(resourceIds) }) as unknown as CalendarAppointmentView;
 }
+function blockView(value: unknown): CalendarBlockView {
+  const r = record(value, ['id', 'revision', 'resourceIds', 'title', 'startAt', 'endAt', 'timeZone', 'status', 'createdBy']);
+  if (Object.keys(r).length !== 9 || r.status !== 'active' && r.status !== 'cancelled') throw invalid();
+  requestKey(r.id); integer(r.revision, 1); const resourceIds = ids(r.resourceIds); identifier(r.title, 512); requestKey(r.createdBy);
+  interval(r.startAt, r.endAt); zone(r.timeZone);
+  return Object.freeze({ ...r, resourceIds: Object.freeze(resourceIds) }) as unknown as CalendarBlockView;
+}
+function blockPage(value: unknown): CalendarBlockPage {
+  const r = record(value, ['items', 'truncated']);
+  if (Object.keys(r).length !== 2 || typeof r.truncated !== 'boolean') throw invalid();
+  const items = values(r.items, 100).map(blockView); unique(items.map(item => item.id));
+  return Object.freeze({ items: Object.freeze(items), truncated: r.truncated });
+}
 export function parseCalendarAppointmentPage(value: unknown): CalendarAppointmentPage { return appointmentPage(value); }
 function appointmentPage(value: unknown): CalendarAppointmentPage {
   const r = record(value, ['items', 'truncated']);
@@ -145,7 +252,8 @@ function busyPage(value: unknown): CalendarBusyPage {
 }
 function calendarReceipt(value: unknown): CalendarCommandReceipt {
   const r = record(value, ['requestId', 'operation', 'id', 'revision', 'changed']);
-  if (Object.keys(r).length !== 5 || typeof r.operation !== 'string' || !['resource.created', 'resource.grant-changed', 'appointment.created', 'appointment.rescheduled', 'appointment.cancelled'].includes(r.operation) || typeof r.changed !== 'boolean') throw invalid();
+  if (Object.keys(r).length !== 5 || typeof r.operation !== 'string' || !['resource.created', 'resource.grant-changed', 'resource.availability-changed',
+    'block.created', 'block.rescheduled', 'block.cancelled', 'appointment.created', 'appointment.rescheduled', 'appointment.cancelled'].includes(r.operation) || typeof r.changed !== 'boolean') throw invalid();
   requestKey(r.requestId); requestKey(r.id); integer(r.revision, 1); return Object.freeze(r) as unknown as CalendarCommandReceipt;
 }
 function record(value: unknown, fields: readonly string[]): Record<string, unknown> {
@@ -169,6 +277,11 @@ function ids(value: unknown, empty = false): string[] { const accepted = values(
 function unique(value: readonly unknown[]): void { if (new Set(value).size !== value.length) throw invalid(); }
 function integer(value: unknown, min = 0, max = Number.MAX_SAFE_INTEGER): number { if (!Number.isSafeInteger(value) || Number(value) < min || Number(value) > max) throw invalid(); return Number(value); }
 function instant(value: unknown): void { if (typeof value !== 'string' || !Number.isFinite(Date.parse(value)) || new Date(value).toISOString() !== value) throw invalid(); }
+function interval(startAt: unknown, endAt: unknown): void {
+  instant(startAt); instant(endAt);
+  const duration = Date.parse(String(endAt)) - Date.parse(String(startAt));
+  if (duration <= 0 || duration > 31 * 86400_000) throw invalid();
+}
 function zone(value: unknown): void { const accepted = identifier(value); if (/^[+-]/.test(accepted)) throw invalid(); try { new Intl.DateTimeFormat('en', { timeZone: accepted }); } catch { throw invalid(); } }
 function invalid(): Error { return new Error('Invalid calendar request or acknowledgment.'); }
 function retired(): DOMException { return new DOMException('Calendar authority scope changed.', 'AbortError'); }

@@ -56,15 +56,19 @@ function fixture(tenancy: 'single' | 'multi' = 'single', overrides: Partial<Auth
   let readCalls = 0;
   const listeners = new Set<() => void>();
   const receipt = (call: WriteCall): CalendarCommandReceipt => ({ requestId: call.requestId,
-    operation: call.name === 'calendar.resource.create' ? 'resource.created' : 'appointment.created',
+    operation: ({ 'calendar.resource.create': 'resource.created', 'calendar.resource.grant': 'resource.grant-changed',
+      'calendar.resource.availability': 'resource.availability-changed', 'calendar.block.create': 'block.created',
+      'calendar.block.reschedule': 'block.rescheduled', 'calendar.block.cancel': 'block.cancelled',
+      'calendar.appointment.create': 'appointment.created', 'calendar.appointment.reschedule': 'appointment.rescheduled',
+      'calendar.appointment.cancel': 'appointment.cancelled' } as const)[call.name as 'calendar.resource.create'],
     id: call.input.id as string, revision: 1, changed: true });
   const broker: CalendarServiceBroker = {
-    async read<T>(scope, name, input, guard, signal): Promise<T> {
+    async read<T>(scope: ServiceDataScope, name: string, input: unknown, guard: () => void, signal?: AbortSignal): Promise<T> {
       readCalls++; guard();
       if (!onRead) throw new Error('Boundary fixture must never read or reconcile automatically.');
       return await onRead({ scope, name, input: input as Record<string, unknown>, guard, signal }) as T;
     },
-    async write<T>(scope, name, input, requestId, guard, signal): Promise<T> {
+    async write<T>(scope: ServiceDataScope, name: string, input: unknown, requestId: string, guard: () => void, signal?: AbortSignal): Promise<T> {
       const call = { scope, name, input: input as Record<string, unknown>, requestId, guard, signal };
       calls.push(call);
       guard();
@@ -85,10 +89,29 @@ function fixture(tenancy: 'single' | 'multi' = 'single', overrides: Partial<Auth
 }
 
 describe('calendar internal service boundary (in-memory broker, not Fabric)', () => {
+  for (const kind of ['blocks', 'availability'] as const) {
+    test(`${kind} watch detaches routing before await and conceals a delayed read after authority retirement`, async () => {
+      const f = fixture(), api = f.service.forAuthority(f.request), errors: unknown[] = [];
+      let entered!: () => void, release!: () => void, captured!: ReadCall, delivered = 0;
+      const reading = new Promise<void>(resolve => { entered = resolve; }), gate = new Promise<void>(resolve => { release = resolve; });
+      f.setOnRead(async call => { captured = call; entered(); await gate; return { private: 'NEVER_DELIVER' }; });
+      const query = { resourceIds: ['original'], startAt: '2026-11-16T00:00:00.000Z', endAt: '2026-11-17T00:00:00.000Z' };
+      const stop = kind === 'blocks' ? api.blocks.watch(query, () => { delivered++; }, { onError: error => errors.push(error) })
+        : api.availability.watch('original', () => { delivered++; }, { onError: error => errors.push(error) });
+      try {
+        query.resourceIds[0] = 'retargeted'; await reading;
+        expect(captured.name).toBe(kind === 'blocks' ? 'calendar.blocks' : 'calendar.availability');
+        expect(captured.input).toMatchObject(kind === 'blocks' ? { resourceIds: ['original'] } : { id: 'original' });
+        f.revoke(); release();
+        for (let attempt = 0; errors.length === 0 && attempt < 100; attempt++) await new Promise<void>(resolve => setTimeout(resolve, 0));
+        expect(errors).toHaveLength(1); expect(errors[0]).toMatchObject({ code: 'FORBIDDEN' }); expect(delivered).toBe(0); expect(f.subscriptions).toBe(0);
+      } finally { release(); stop(); await f.service.close(); }
+    });
+  }
   test('only fixed commands are exposed, and reserved authority/routing/identity fields cannot be client-selected', async () => {
     const f = fixture(), api = f.service.forAuthority(f.request);
     expect(Object.isFrozen(api)).toBe(true);
-    expect(Object.keys(api).sort()).toEqual(['appointments', 'busy', 'createAppointment', 'createResource', 'receipts', 'resources']);
+    expect(Object.keys(api).sort()).toEqual(['appointments', 'availability', 'blocks', 'busy', 'createAppointment', 'createResource', 'receipts', 'resources']);
     const baselineChecks = f.syncChecks;
     for (const field of ['actor', 'scope', 'scopeId', 'tenantId', 'userId', 'principal', 'manageAll', 'createOwn',
       'operation', 'name', 'id', 'requestId', 'createdBy', 'revision']) {
@@ -101,6 +124,56 @@ describe('calendar internal service boundary (in-memory broker, not Fabric)', ()
     expect(f.asyncChecks).toBe(0);
     expect(f.calls).toHaveLength(0);
     expect(f.readCalls).toBe(0);
+  });
+
+  test('block and availability facades preserve canonical routing, IDs, revisions and detached authored input', async () => {
+    const f = fixture(), api = f.service.forAuthority(f.request);
+    const block = { resourceIds: ['synthetic-resource'], title: 'Synthetic private block', startAt: appointment().startAt,
+      endAt: appointment().endAt, timeZone: 'UTC' };
+    const availability = { mode: 'windows' as const, windows: [{ startAt: block.startAt, endAt: block.endAt }] };
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; }); f.setBeforeCurrent(() => gate);
+    try {
+      const created = api.blocks.create(block, { idempotencyKey: 'block-create' });
+      const replaced = api.availability.replace('synthetic-resource', availability, { idempotencyKey: 'availability-replace', expectedRevision: 4 });
+      block.resourceIds[0] = 'retargeted'; availability.windows[0]!.endAt = '2026-11-16T12:00:00.000Z';
+      release();
+      const receipt = await created; await replaced;
+      expect(receipt.operation).toBe('block.created');
+      expect(f.calls[0]!.input).toMatchObject({ resourceIds: ['synthetic-resource'], id: calendarHash([
+        'application', (f.calls[0]!.input.actor as CalendarActor).principal, 'block-create']) });
+      expect(f.calls[1]!.input).toMatchObject({ id: 'synthetic-resource', expectedRevision: 4,
+        windows: [{ startAt: appointment().startAt, endAt: appointment().endAt }] });
+      await api.blocks.reschedule(receipt.id, { startAt: block.startAt, endAt: block.endAt, timeZone: 'UTC' }, { idempotencyKey: 'block-move', expectedRevision: 1 });
+      await api.blocks.cancel(receipt.id, { idempotencyKey: 'block-cancel', expectedRevision: 2 });
+      expect(f.calls.map(call => call.name)).toEqual(['calendar.block.create', 'calendar.resource.availability', 'calendar.block.reschedule', 'calendar.block.cancel']);
+      expect(f.calls[2]!.input).not.toHaveProperty('bufferBeforeMinutes');
+      expect(f.calls[3]!.input).toHaveProperty('confirmed', true);
+      expect(f.calls[3]!.input).toMatchObject({ id: receipt.id, expectedRevision: 2 });
+      const readNames: string[] = [];
+      f.setOnRead(async call => { readNames.push(call.name); return {}; });
+      await api.blocks.query({ resourceIds: [], startAt: block.startAt, endAt: block.endAt });
+      await api.blocks.get(receipt.id); await api.availability.get('synthetic-resource');
+      expect(readNames).toEqual(['calendar.blocks', 'calendar.block', 'calendar.availability']);
+    } finally { release(); await f.service.close(); }
+  });
+
+  test('new facade input cannot choose authority or appointment-only buffers and respects narrowed resource limits', async () => {
+    const f = fixture(), api = f.service.forAuthority(f.request), block = { resourceIds: ['resource-a'], title: 'Block',
+      startAt: appointment().startAt, endAt: appointment().endAt, timeZone: 'UTC' };
+    const narrowService = new CalendarService({} as CalendarServiceBroker, { ...f.config, maxResources: 1 }, f.closing.signal);
+    const narrow = narrowService.forAuthority(f.request);
+    try {
+      for (const input of [{ ...block, actor: {} }, { ...block, id: 'chosen' }, { ...block, bufferBeforeMinutes: 5 }]) {
+        await expect(api.blocks.create(input, { idempotencyKey: 'invalid-block' })).rejects.toMatchObject({ code: 'CALENDAR_INPUT_INVALID' });
+      }
+      await expect(api.availability.replace('resource-a', { mode: 'windows', windows: [], scope: 'other' } as never,
+        { idempotencyKey: 'invalid-availability', expectedRevision: 1 })).rejects.toMatchObject({ code: 'CALENDAR_INPUT_INVALID' });
+      await expect(narrow.blocks.create({ ...block, resourceIds: ['resource-a', 'resource-b'] }, { idempotencyKey: 'too-many' })).rejects.toMatchObject({ code: 'CALENDAR_INPUT_INVALID' });
+      await expect(narrow.blocks.query({ resourceIds: ['resource-a', 'resource-b'], startAt: block.startAt, endAt: block.endAt })).rejects.toMatchObject({ code: 'CALENDAR_INPUT_INVALID' });
+      await expect(api.blocks.cancel('block-a', { idempotencyKey: 'missing-revision' } as never)).rejects.toMatchObject({ code: 'CALENDAR_INPUT_INVALID' });
+      expect(f.calls).toHaveLength(0); expect(f.readCalls).toBe(0); expect(f.asyncChecks).toBe(0);
+    } finally { await narrowService.close(); await f.service.close(); }
   });
 
   test('scope, actor, operation and stable IDs come from the admitted Guardian authority in both tenancy modes', async () => {
@@ -211,6 +284,9 @@ describe('calendar internal service boundary (in-memory broker, not Fabric)', ()
         () => api.resources.list({ limit: 0 }),
         () => api.appointments.query({ ...range, resourceIds: ['duplicate', 'duplicate'] }),
         () => api.appointments.get('bad id'),
+        () => api.blocks.query({ ...range, resourceIds: ['duplicate', 'duplicate'] }),
+        () => api.blocks.get('bad id'),
+        () => api.availability.get('bad id'),
         () => api.busy.query({ ...range, endAt: range.startAt }),
         () => api.receipts.get('bad key'),
         () => api.resources.list({}, { signal: {} as AbortSignal }),

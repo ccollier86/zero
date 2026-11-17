@@ -33,3 +33,19 @@ test('separate pure calendar transforms do not reuse earlier migration snapshots
   expect(transformed(migrations, { '001': { up: 'up() { first(); }', down: null } }).migrations[0]!.up.toString()).toContain('first');
   expect(transformed(migrations, { '001': { up: 'up() { second(); }', down: null } }).migrations[0]!.up.toString()).toContain('second');
 });
+
+test('additive migrations preserve independent identities for legacy methods and named scheduling helpers', () => {
+  const source = `function defineDatabaseRealm(value) { return value; }
+function bundledSchedulingHelper() { return 'scheduling-executed'; }
+export const calendarRealm = defineDatabaseRealm({ migrations: [
+  {version:'001',up(){return 'legacy-executed'}},
+  {version:'002',up:bundledSchedulingHelper}
+] });`;
+  const snapshots = { '001': { up: 'up(database) { legacySource(database); }', down: null },
+    '002': { up: 'function migrateCalendarScheduling(database) { schedulingSource(database); }', down: null } };
+  const output = canonicalCalendarRealmSource(source, snapshots).replace('export const calendarRealm', 'const calendarRealm');
+  const realm = new Function(output + '\nreturn calendarRealm;')() as { migrations: { up(): string }[] };
+  expect(realm.migrations.map(migration => migration.up.toString())).toEqual([snapshots['001'].up, snapshots['002'].up]);
+  expect(realm.migrations.map(migration => migration.up())).toEqual(['legacy-executed', 'scheduling-executed']);
+  expect(Object.getOwnPropertyDescriptor(realm.migrations[1]!.up, 'toString')).toMatchObject({ configurable: false, writable: false });
+});

@@ -4,7 +4,7 @@ import { mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { allocateSyntheticFixture } from '../../test-support/synthetic-fixture';
-import type { CalendarAppointmentPage, CalendarCommandReceipt, CalendarResourcePage } from '../../calendar/contracts';
+import type { CalendarAppointmentPage, CalendarAvailabilityView, CalendarBlockPage, CalendarBlockView, CalendarBusyPage, CalendarCommandReceipt, CalendarResourcePage } from '../../calendar/contracts';
 import { createLoggingClient } from '../client/logging-client';
 import type { FetchInit } from '../client/sdk';
 import { createApp } from './app-factory';
@@ -84,9 +84,39 @@ for (const compliance of [false, true]) {
       expect(catalog.status).toBe(200);
       expect((await catalog.json() as CalendarResourcePage).items).toMatchObject([{ id: resource.id, ownerId: identity.user.userId }]);
       const range = { resourceIds: [resource.id], startAt: '2026-12-01T00:00:00.000Z', endAt: '2026-12-02T00:00:00.000Z' };
+      const defaultAvailability = await call('/api/calendar/availability/' + resource.id);
+      expect(defaultAvailability.status).toBe(200);
+      expect(await defaultAvailability.json() as CalendarAvailabilityView).toMatchObject({ resourceId: resource.id, resourceRevision: 1, timeZone: 'UTC', mode: 'unrestricted', windows: [] });
+      const emptyBlocks = await call('/api/calendar/blocks/query', { query: range });
+      expect(emptyBlocks.status).toBe(200); expect(await emptyBlocks.json()).toEqual({ items: [], truncated: false });
+      const policy = { availability: { mode: 'windows', windows: [{ startAt: '2026-12-01T08:00:00.000Z', endAt: '2026-12-01T18:00:00.000Z' }] },
+        options: { idempotencyKey: 'managed-availability', expectedRevision: 1 } };
+      const availabilityResponse = await call('/api/calendar/availability/' + resource.id, policy);
+      expect(availabilityResponse.status, await availabilityResponse.clone().text()).toBe(200);
+      const availability = await availabilityResponse.json() as CalendarCommandReceipt;
+      expect(availability).toMatchObject({ operation: 'resource.availability-changed', id: resource.id, revision: 2, changed: true });
+      const availabilityReplay = await call('/api/calendar/availability/' + resource.id, policy);
+      expect(availabilityReplay.status).toBe(200); expect(await availabilityReplay.json()).toEqual(availability);
+      const availabilityReceipt = await call('/api/calendar/receipts/managed-availability');
+      expect(availabilityReceipt.status).toBe(200); expect(await availabilityReceipt.json()).toEqual({ receipt: availability });
+      const availabilityNoop = await call('/api/calendar/availability/' + resource.id, { ...policy,
+        options: { idempotencyKey: 'managed-availability-noop', expectedRevision: 2 },
+        availability: { mode: 'windows', windows: [{ startAt: '2026-12-01T08:00:00.000Z', endAt: '2026-12-01T12:00:00.000Z' },
+          { startAt: '2026-12-01T12:00:00.000Z', endAt: '2026-12-01T18:00:00.000Z' }] } });
+      expect(availabilityNoop.status).toBe(200); expect(await availabilityNoop.json()).toMatchObject({ revision: 2, changed: false });
+      const currentAvailability = await call('/api/calendar/availability/' + resource.id);
+      expect(currentAvailability.status).toBe(200);
+      expect(await currentAvailability.json() as CalendarAvailabilityView).toMatchObject({ resourceId: resource.id, resourceRevision: 2, ...policy.availability });
       const input = { appointment: { resourceIds: [resource.id], title: 'PRIVATE_SYNTHETIC_APPOINTMENT',
         startAt: '2026-12-01T10:00:00.000Z', endAt: '2026-12-01T11:00:00.000Z', timeZone: 'UTC' },
         options: { idempotencyKey: 'managed-booking' } };
+      const outsideAvailability = await call('/api/calendar/appointments', { ...input,
+        appointment: { ...input.appointment, startAt: '2026-12-01T20:00:00.000Z', endAt: '2026-12-01T21:00:00.000Z' },
+        options: { idempotencyKey: 'outside-availability' } });
+      expect(outsideAvailability.status).toBe(409);
+      expect(await outsideAvailability.json()).toMatchObject({ code: 'CALENDAR_AVAILABILITY_CONFLICT', outcome: 'not-committed' });
+      const outsideReceipt = await call('/api/calendar/receipts/outside-availability');
+      expect(outsideReceipt.status).toBe(200); expect(await outsideReceipt.json()).toEqual({ receipt: null });
       const created = await call('/api/calendar/appointments', input);
       expect(created.status, await created.clone().text()).toBe(200);
       const booking = await created.json() as CalendarCommandReceipt;
@@ -94,6 +124,64 @@ for (const compliance of [false, true]) {
       const page = await call('/api/calendar/appointments/query', { query: range });
       expect(page.status).toBe(200);
       expect((await page.json() as CalendarAppointmentPage).items.map(item => item.id)).toEqual([booking.id]);
+      const conflictingBlock = await call('/api/calendar/blocks', { block: { ...input.appointment, title: 'PRIVATE_SYNTHETIC_CONFLICTING_BLOCK' },
+        options: { idempotencyKey: 'conflicting-block' } });
+      expect(conflictingBlock.status).toBe(409);
+      expect(await conflictingBlock.json()).toMatchObject({ code: 'CALENDAR_BOOKING_CONFLICT', outcome: 'not-committed' });
+      const rejectedBlockReceipt = await call('/api/calendar/receipts/conflicting-block');
+      expect(rejectedBlockReceipt.status).toBe(200); expect(await rejectedBlockReceipt.json()).toEqual({ receipt: null });
+      const blockInput = { block: { resourceIds: [resource.id], title: 'PRIVATE_SYNTHETIC_BLOCK',
+        startAt: '2026-12-01T12:00:00.000Z', endAt: '2026-12-01T13:00:00.000Z', timeZone: 'UTC' },
+        options: { idempotencyKey: 'managed-block' } };
+      const blockCreated = await call('/api/calendar/blocks', blockInput);
+      expect(blockCreated.status, await blockCreated.clone().text()).toBe(200);
+      const blocked = await blockCreated.json() as CalendarCommandReceipt;
+      expect(blocked).toMatchObject({ operation: 'block.created', revision: 1, changed: true });
+      const blockReplay = await call('/api/calendar/blocks', blockInput);
+      expect(blockReplay.status).toBe(200); expect(await blockReplay.json()).toEqual(blocked);
+      const blockReceipt = await call('/api/calendar/receipts/managed-block');
+      expect(blockReceipt.status).toBe(200); expect(await blockReceipt.json()).toEqual({ receipt: blocked });
+      expect(JSON.stringify(blocked)).not.toContain('PRIVATE_SYNTHETIC'); expect(JSON.stringify(blocked)).not.toContain(blockInput.block.startAt);
+      const blockedAppointment = await call('/api/calendar/appointments', { appointment: { ...input.appointment,
+        startAt: blockInput.block.startAt, endAt: blockInput.block.endAt }, options: { idempotencyKey: 'block-occupied-booking' } });
+      expect(blockedAppointment.status).toBe(409);
+      expect(await blockedAppointment.json()).toMatchObject({ code: 'CALENDAR_BOOKING_CONFLICT', outcome: 'not-committed' });
+      const moveBlock = { block: { startAt: '2026-12-01T13:00:00.000Z', endAt: '2026-12-01T14:00:00.000Z', timeZone: 'UTC' },
+        options: { idempotencyKey: 'managed-block-move', expectedRevision: 1 } };
+      const movedBlock = await call('/api/calendar/blocks/' + blocked.id + '/reschedule', moveBlock);
+      expect(movedBlock.status, await movedBlock.clone().text()).toBe(200);
+      const blockMoved = await movedBlock.json() as CalendarCommandReceipt;
+      expect(blockMoved).toMatchObject({ operation: 'block.rescheduled', revision: 2, changed: true });
+      const moveReplay = await call('/api/calendar/blocks/' + blocked.id + '/reschedule', moveBlock);
+      expect(moveReplay.status).toBe(200); expect(await moveReplay.json()).toEqual(blockMoved);
+      const moveNoop = await call('/api/calendar/blocks/' + blocked.id + '/reschedule', { ...moveBlock,
+        options: { idempotencyKey: 'managed-block-move-noop', expectedRevision: 2 } });
+      expect(moveNoop.status).toBe(200); expect(await moveNoop.json()).toMatchObject({ revision: 2, changed: false });
+      const blockPage = await call('/api/calendar/blocks/query', { query: range });
+      expect(blockPage.status).toBe(200);
+      expect((await blockPage.json() as CalendarBlockPage).items).toMatchObject([{ id: blocked.id, title: blockInput.block.title, status: 'active', revision: 2, ...moveBlock.block }]);
+      const busyResponse = await call('/api/calendar/busy/query', { query: range });
+      expect(busyResponse.status).toBe(200);
+      const busy = await busyResponse.json() as CalendarBusyPage;
+      expect(busy.items).toEqual([{ resourceId: resource.id, startAt: input.appointment.startAt, endAt: input.appointment.endAt },
+        { resourceId: resource.id, startAt: moveBlock.block.startAt, endAt: moveBlock.block.endAt }]);
+      expect(busy.items.every(item => Object.keys(item).sort().join(',') === 'endAt,resourceId,startAt')).toBe(true);
+      expect(JSON.stringify(busy)).not.toContain('PRIVATE_SYNTHETIC'); expect(JSON.stringify(busy)).not.toContain(blocked.id); expect(JSON.stringify(busy)).not.toContain(booking.id);
+      const cancelBlock = { options: { idempotencyKey: 'managed-block-cancel', expectedRevision: 2 } };
+      const blockCancelled = await call('/api/calendar/blocks/' + blocked.id + '/cancel', cancelBlock);
+      expect(blockCancelled.status, await blockCancelled.clone().text()).toBe(200);
+      const cancelledBlock = await blockCancelled.json() as CalendarCommandReceipt;
+      expect(cancelledBlock).toMatchObject({ operation: 'block.cancelled', revision: 3, changed: true });
+      const cancelReplay = await call('/api/calendar/blocks/' + blocked.id + '/cancel', cancelBlock);
+      expect(cancelReplay.status).toBe(200); expect(await cancelReplay.json()).toEqual(cancelledBlock);
+      const cancelBlockNoop = await call('/api/calendar/blocks/' + blocked.id + '/cancel', {
+        options: { idempotencyKey: 'managed-block-cancel-noop', expectedRevision: 3 } });
+      expect(cancelBlockNoop.status).toBe(200); expect(await cancelBlockNoop.json()).toMatchObject({ revision: 3, changed: false });
+      const cancelledBlockRead = await call('/api/calendar/blocks/' + blocked.id);
+      expect(cancelledBlockRead.status).toBe(200);
+      expect(await cancelledBlockRead.json() as CalendarBlockView).toMatchObject({ id: blocked.id, status: 'cancelled', revision: 3, title: blockInput.block.title });
+      const clearedBlocks = await call('/api/calendar/blocks/query', { query: range });
+      expect(clearedBlocks.status).toBe(200); expect(await clearedBlocks.json()).toEqual({ items: [], truncated: false });
       const competing = await call('/api/calendar/appointments', { ...input, options: { idempotencyKey: 'competing-booking' } });
       expect(competing.status).toBe(409);
       expect(await competing.json()).toMatchObject({ code: 'CALENDAR_BOOKING_CONFLICT', outcome: 'not-committed' });
@@ -106,6 +194,8 @@ for (const compliance of [false, true]) {
       const noop = await call('/api/calendar/appointments/' + booking.id + '/cancel',
         { options: { idempotencyKey: 'managed-cancel-noop', expectedRevision: 2 } });
       expect(noop.status).toBe(200); expect(await noop.json()).toMatchObject({ revision: 2, changed: false });
+      const clearedBusy = await call('/api/calendar/busy/query', { query: range });
+      expect(clearedBusy.status).toBe(200); expect(await clearedBusy.json()).toEqual({ items: [], truncated: false });
       if (compliance) {
         await services!.logging!.flush();
         const evidence = await loggingClient.page('audit', { action: 'calendar.appointment.created' });
@@ -115,7 +205,23 @@ for (const compliance of [false, true]) {
           target: { type: 'calendar.appointment', id: booking.id } });
         const cancellation = await loggingClient.page('audit', { action: 'calendar.appointment.cancelled' });
         expect(cancellation.events).toHaveLength(1);
-        expect(JSON.stringify([evidence, cancellation])).not.toMatch(/PRIVATE_SYNTHETIC|Fixture-only-password|calendar@example\.test/);
+        const availabilityEvidence = await loggingClient.page('audit', { action: 'calendar.resource.availability-changed' });
+        expect(availabilityEvidence.events).toHaveLength(1);
+        expect(availabilityEvidence.events[0]!.event).toMatchObject({ actor: { id: identity.user.userId },
+          target: { type: 'calendar.resource', id: resource.id }, outcome: 'succeeded', metadata: { revision: 2 } });
+        const blockEvidence = await Promise.all(['created', 'rescheduled', 'cancelled'].map(action => loggingClient.page('audit', { action: 'calendar.block.' + action })));
+        for (const [index, entry] of blockEvidence.entries()) {
+          expect(entry.events).toHaveLength(1);
+          expect(entry.events[0]!.event).toMatchObject({ actor: { id: identity.user.userId }, scope: { kind: 'application', tenantId: null },
+            target: { type: 'calendar.block', id: blocked.id }, outcome: 'succeeded', metadata: { revision: index + 1 } });
+          expect(Object.keys(entry.events[0]!.event.metadata).every(key => ['revision', 'resourceCount', 'status', 'sequence'].includes(key))).toBe(true);
+        }
+        const serializedEvidence = JSON.stringify([evidence, cancellation, availabilityEvidence, ...blockEvidence]);
+        expect(serializedEvidence).not.toMatch(/PRIVATE_SYNTHETIC|Fixture-only-password|calendar@example\.test/);
+        for (const instant of [input.appointment.startAt, input.appointment.endAt, blockInput.block.startAt,
+          blockInput.block.endAt, moveBlock.block.startAt, moveBlock.block.endAt, ...policy.availability.windows.flatMap(window => [window.startAt, window.endAt])]) {
+          expect(serializedEvidence).not.toContain(instant);
+        }
         services!.logging!.admission.invalidate();
         expect((await call('/api/calendar/resources')).status).toBe(428);
         await loggingClient.observe([], { policyVersion: services!.logging!.config.policyVersion });

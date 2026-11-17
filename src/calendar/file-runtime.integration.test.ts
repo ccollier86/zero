@@ -23,7 +23,7 @@ import { databaseActorFactoryLaunch, type DatabaseActorExecutorFactoryContext, t
 import { createReactiveDB } from '../sync/reactive-db';
 import { allocateSyntheticFixture } from '../test-support/synthetic-fixture';
 import { resolveCalendarConfig, type ResolvedCalendarConfig } from './config';
-import type { CalendarActor, CalendarAppointmentPage, CalendarAppointmentView, CalendarBusyPage, CalendarCommandReceipt, CalendarResourcePage } from './contracts';
+import type { CalendarActor, CalendarAppointmentPage, CalendarAppointmentView, CalendarAvailabilityView, CalendarBlockPage, CalendarBusyPage, CalendarCommandReceipt, CalendarResourcePage } from './contracts';
 import { CalendarError } from './error';
 import { inspectCalendarOwnerSchema } from './owner-schema';
 import { resolveCalendarPersistenceConfig, type ResolvedCalendarPersistenceConfig } from './persistence-config';
@@ -47,6 +47,10 @@ const appointment = (scope: ServiceDataScope, id: string, resourceIds = ['person
   actor: actor(scope), requestId: 'book-' + id, id, resourceIds, title: 'SYNTHETIC_PRIVATE_TITLE_' + id,
   startAt: '2026-12-01T10:00:00.000Z', endAt: '2026-12-01T11:00:00.000Z', timeZone: 'UTC',
   bufferBeforeMinutes: 5, bufferAfterMinutes: 10,
+});
+const block = (scope: ServiceDataScope, id: string, resourceIds = ['person', 'room']) => ({
+  actor: actor(scope), requestId: 'block-' + id, id, resourceIds, title: 'SYNTHETIC_PRIVATE_BLOCK_TITLE_' + id,
+  startAt: '2026-12-01T13:00:00.000Z', endAt: '2026-12-01T14:00:00.000Z', timeZone: 'UTC',
 });
 type OwnedActor = { readonly context: DatabaseActorExecutorFactoryContext; readonly executor: SubprocessDatabaseExecutor };
 type PersistenceProbe = (defaults: ResolvedCalendarPersistenceConfig, root: string, config: ResolvedCalendarConfig) => ResolvedCalendarPersistenceConfig;
@@ -159,12 +163,17 @@ test('file runtime empty reads and denied first writes allocate no domain or act
   try {
     expect(inspectCalendarOwnerSchema(f.system)).toBe('ready');
     expect(await f.runtime.read<CalendarResourcePage>(scope, 'calendar.resources', { actor: user }, guard)).toEqual({ items: [], truncated: false, nextAfter: null });
-    for (const name of ['calendar.busy', 'calendar.appointments']) {
-      expect(await f.runtime.read<CalendarBusyPage | CalendarAppointmentPage>(scope, name, { actor: user, resourceIds: [], ...range }, guard)).toEqual({ items: [], truncated: false });
+    for (const name of ['calendar.busy', 'calendar.appointments', 'calendar.blocks']) {
+      expect(await f.runtime.read<CalendarBusyPage | CalendarAppointmentPage | CalendarBlockPage>(scope, name, { actor: user, resourceIds: [], ...range }, guard)).toEqual({ items: [], truncated: false });
     }
     expect(await f.runtime.read<CalendarCommandReceipt | null>(scope, 'calendar.receipt', { actor: user, requestId: 'missing' }, guard)).toBeNull();
     await expect(f.runtime.read(scope, 'calendar.appointment', { actor: user, id: 'missing' }, guard)).rejects.toMatchObject({ code: 'CALENDAR_NOT_FOUND' });
+    await expect(f.runtime.read(scope, 'calendar.block', { actor: user, id: 'missing' }, guard)).rejects.toMatchObject({ code: 'CALENDAR_NOT_FOUND' });
+    await expect(f.runtime.read(scope, 'calendar.availability', { actor: user, id: 'missing' }, guard)).rejects.toMatchObject({ code: 'CALENDAR_NOT_FOUND' });
     await expect(f.runtime.write(scope, 'calendar.appointment.create', appointment(scope, 'missing'), 'book-missing', guard)).rejects.toMatchObject({ code: 'CALENDAR_NOT_FOUND' });
+    await expect(f.runtime.write(scope, 'calendar.block.create', block(scope, 'missing'), 'block-missing', guard)).rejects.toMatchObject({ code: 'CALENDAR_NOT_FOUND' });
+    await expect(f.runtime.write(scope, 'calendar.resource.availability', { actor: user, id: 'missing', requestId: 'missing-policy', expectedRevision: 1,
+      mode: 'windows', windows: [] }, 'missing-policy', guard)).rejects.toMatchObject({ code: 'CALENDAR_NOT_FOUND' });
     const denied = { ...resource(scope), actor: { ...user, manageAll: false, createOwn: false } };
     await expect(f.runtime.write(scope, 'calendar.resource.create', denied, denied.requestId, guard)).rejects.toMatchObject({ code: 'CALENDAR_FORBIDDEN' });
     await expect(f.runtime.read(scope, 'calendar.resources', { actor: user }, async () => {})).rejects.toMatchObject({ code: 'CALENDAR_CONFIG_INVALID' });
@@ -179,7 +188,7 @@ test('file runtime empty reads and denied first writes allocate no domain or act
   } finally { await f.close(); }
 }, 120_000);
 
-test('native calendar actors persist separate scope files and exact safe receipts across full SYSTEM restart', async () => {
+test('native calendar actors persist separate scopes, availability history and exact appointment/block receipts across full SYSTEM restart', async () => {
   const f = await fixture(), scopes = [applicationServiceDataScope(), trustedSystemServiceDataScope({ scopeKind: 'tenant', tenantId: 'synthetic-tenant' })];
   try {
     const receipts = await Promise.all(scopes.map(async scope => {
@@ -187,8 +196,17 @@ test('native calendar actors persist separate scope files and exact safe receipt
         const input = resource(scope, id, id === 'room' ? 'room' : 'person');
         await f.runtime.write(scope, 'calendar.resource.create', input, input.requestId, guard);
       }
-      const input = appointment(scope, 'same-id');
-      return f.runtime.write<CalendarCommandReceipt>(scope, 'calendar.appointment.create', input, input.requestId, guard);
+      expect(await f.runtime.read<CalendarAvailabilityView>(scope, 'calendar.availability', { actor: actor(scope), id: 'person' }, guard))
+        .toMatchObject({ resourceId: 'person', resourceRevision: 1, mode: 'unrestricted', windows: [], timeZone: 'UTC' });
+      const policy = { actor: actor(scope), id: 'person', requestId: 'availability-first', expectedRevision: 1, mode: 'windows',
+        windows: [{ startAt: '2026-12-01T08:00:00.000Z', endAt: '2026-12-01T18:00:00.000Z' }] };
+      await f.runtime.write(scope, 'calendar.resource.availability', policy, policy.requestId, guard);
+      const currentPolicy = { ...policy, requestId: 'availability-current', expectedRevision: 2,
+        windows: [{ startAt: '2026-12-01T09:00:00.000Z', endAt: '2026-12-01T17:00:00.000Z' }] };
+      const availability = await f.runtime.write<CalendarCommandReceipt>(scope, 'calendar.resource.availability', currentPolicy, currentPolicy.requestId, guard);
+      const input = appointment(scope, 'same-id'), blocked = block(scope, 'same-id');
+      return { appointment: await f.runtime.write<CalendarCommandReceipt>(scope, 'calendar.appointment.create', input, input.requestId, guard),
+        block: await f.runtime.write<CalendarCommandReceipt>(scope, 'calendar.block.create', blocked, blocked.requestId, guard), availability, currentPolicy };
     }));
     expect(f.system.prepare('SELECT count(*) AS n FROM _calendar_owners WHERE established=1').get()).toEqual({ n: 2 });
     const files = await Promise.all(scopes.map(async scope => ({ path: f.path(scope), identity: await lstat(f.path(scope)) })));
@@ -198,10 +216,19 @@ test('native calendar actors persist separate scope files and exact safe receipt
     await f.restart(false);
     for (const [index, scope] of scopes.entries()) {
       const input = appointment(scope, 'same-id');
-      expect(await f.runtime.read<CalendarCommandReceipt | null>(scope, 'calendar.receipt', { actor: actor(scope), requestId: input.requestId }, guard)).toEqual(receipts[index]);
-      expect(await f.runtime.write<CalendarCommandReceipt>(scope, 'calendar.appointment.create', input, input.requestId, guard)).toEqual(receipts[index]);
+      const retained = receipts[index]!, blocked = block(scope, 'same-id');
+      expect(await f.runtime.read<CalendarCommandReceipt | null>(scope, 'calendar.receipt', { actor: actor(scope), requestId: input.requestId }, guard)).toEqual(retained.appointment);
+      expect(await f.runtime.write<CalendarCommandReceipt>(scope, 'calendar.appointment.create', input, input.requestId, guard)).toEqual(retained.appointment);
+      expect(await f.runtime.read<CalendarCommandReceipt | null>(scope, 'calendar.receipt', { actor: actor(scope), requestId: blocked.requestId }, guard)).toEqual(retained.block);
+      expect(await f.runtime.write<CalendarCommandReceipt>(scope, 'calendar.block.create', blocked, blocked.requestId, guard)).toEqual(retained.block);
+      expect(await f.runtime.read<CalendarCommandReceipt | null>(scope, 'calendar.receipt', { actor: actor(scope), requestId: retained.currentPolicy.requestId }, guard)).toEqual(retained.availability);
+      expect(await f.runtime.write<CalendarCommandReceipt>(scope, 'calendar.resource.availability', retained.currentPolicy, retained.currentPolicy.requestId, guard)).toEqual(retained.availability);
+      expect(await f.runtime.read<CalendarAvailabilityView>(scope, 'calendar.availability', { actor: actor(scope), id: 'person' }, guard))
+        .toMatchObject({ resourceId: 'person', resourceRevision: 3, mode: 'windows', windows: retained.currentPolicy.windows, timeZone: 'UTC' });
       expect((await f.runtime.read<CalendarAppointmentPage>(scope, 'calendar.appointments', { actor: actor(scope), resourceIds: ['person'], ...range }, guard)).items)
         .toMatchObject([{ id: 'same-id', revision: 1, resourceIds: ['person', 'room'] }]);
+      expect((await f.runtime.read<CalendarBlockPage>(scope, 'calendar.blocks', { actor: actor(scope), resourceIds: ['person'], ...range }, guard)).items)
+        .toMatchObject([{ id: 'same-id', revision: 1, resourceIds: ['person', 'room'], status: 'active' }]);
       expect((await lstat(files[index]!.path)).ino).toBe(files[index]!.identity.ino);
     }
     await expect(f.runtime.read(scopes[0]!, 'calendar.resources', { actor: actor(scopes[1]!) }, guard)).rejects.toMatchObject({ code: 'CALENDAR_FORBIDDEN' });
@@ -210,13 +237,18 @@ test('native calendar actors persist separate scope files and exact safe receipt
       expect(database.query('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' });
       expect(database.query('SELECT count(*) AS n FROM calendar_appointments').get()).toEqual({ n: 1 });
       expect(database.query('SELECT count(*) AS n FROM _calendar_reservations WHERE active=1').get()).toEqual({ n: 2 });
+      expect(database.query('SELECT count(*) AS n FROM calendar_blocks').get()).toEqual({ n: 1 });
+      expect(database.query('SELECT count(*) AS n FROM _calendar_block_reservations WHERE active=1').get()).toEqual({ n: 2 });
+      expect(database.query('SELECT count(*) AS n FROM _calendar_block_receipts').get()).toEqual({ n: 1 });
+      expect(database.query('SELECT count(*) AS n FROM _calendar_availability_history WHERE resource_id=?').get('person')).toEqual({ n: 2 });
+      expect(database.query('SELECT policy_revision FROM _calendar_availability WHERE resource_id=?').get('person')).toEqual({ policy_revision: 3 });
       const retained = f.system.prepare('SELECT owner_id,scope_id FROM _calendar_owners WHERE id=?').get(calendarDatabaseId(serviceDataScopeKey(scope)));
       expect(database.query('SELECT owner_id,scope_id FROM _calendar_owner').get()).toEqual(retained);
     });
   } finally { await f.close(); }
 }, 120_000);
 
-test('native multi-resource booking races, intent conflicts and stale revisions roll back every reservation', async () => {
+test('native multi-resource appointment/block races, intent conflicts and stale revisions roll back every reservation', async () => {
   const f = await fixture(), scope = applicationServiceDataScope();
   try {
     for (const [id, kind] of [['person', 'person'], ['room', 'room'], ['other-person', 'person']] as const) {
@@ -242,10 +274,32 @@ test('native multi-resource booking races, intent conflicts and stale revisions 
     expect(await f.runtime.write<CalendarCommandReceipt>(scope, 'calendar.appointment.cancel', cancel, cancel.requestId, guard)).toMatchObject({ revision: 2, changed: true });
     expect((await f.runtime.read<CalendarBusyPage>(scope, 'calendar.busy', { actor: actor(scope), resourceIds: ['person', 'room', 'other-person'], ...range }, guard)).items).toEqual([]);
     await f.runtime.write(scope, 'calendar.appointment.create', loser, loser.requestId, guard);
+    const raceSlot = { startAt: '2026-12-01T14:00:00.000Z', endAt: '2026-12-01T15:00:00.000Z' };
+    const raceAppointment = { ...appointment(scope, 'cross-kind-appointment'), ...raceSlot, bufferBeforeMinutes: 0, bufferAfterMinutes: 0 };
+    const raceBlock = { ...block(scope, 'cross-kind-block', ['other-person', 'room']), ...raceSlot };
+    const crossKind = await Promise.allSettled([
+      f.runtime.write<CalendarCommandReceipt>(scope, 'calendar.appointment.create', raceAppointment, raceAppointment.requestId, guard),
+      f.runtime.write<CalendarCommandReceipt>(scope, 'calendar.block.create', raceBlock, raceBlock.requestId, guard),
+    ]);
+    expect(crossKind.filter(outcome => outcome.status === 'fulfilled')).toHaveLength(1);
+    expect(crossKind.find(outcome => outcome.status === 'rejected')).toMatchObject({ status: 'rejected', reason: { code: 'CALENDAR_BOOKING_CONFLICT', outcome: 'not-committed' } });
+    const appointmentWon = crossKind[0]!.status === 'fulfilled', crossLoser = appointmentWon ? raceBlock : raceAppointment;
+    expect(await f.runtime.read<CalendarCommandReceipt | null>(scope, 'calendar.receipt', { actor: actor(scope), requestId: crossLoser.requestId }, guard)).toBeNull();
+    expect((await f.runtime.read<CalendarAppointmentPage>(scope, 'calendar.appointments', { actor: actor(scope), resourceIds: ['person', 'room', 'other-person'], ...raceSlot }, guard)).items.map(item => item.id))
+      .toEqual(appointmentWon ? [raceAppointment.id] : []);
+    expect((await f.runtime.read<CalendarBlockPage>(scope, 'calendar.blocks', { actor: actor(scope), resourceIds: ['person', 'room', 'other-person'], ...raceSlot }, guard)).items.map(item => item.id))
+      .toEqual(appointmentWon ? [] : [raceBlock.id]);
+    expect((await f.runtime.read<CalendarBusyPage>(scope, 'calendar.busy', { actor: actor(scope), resourceIds: [appointmentWon ? 'other-person' : 'person'], ...raceSlot }, guard)).items).toEqual([]);
+    const raceBusy = await f.runtime.read<CalendarBusyPage>(scope, 'calendar.busy', { actor: actor(scope), resourceIds: ['person', 'room', 'other-person'], ...raceSlot }, guard);
+    expect(raceBusy.items).toHaveLength(2); expect(JSON.stringify(raceBusy)).not.toContain('SYNTHETIC_PRIVATE'); expect(JSON.stringify(raceBusy)).not.toContain('cross-kind');
     await f.stop();
     inspect(f.path(scope), database => {
-      expect(database.query('SELECT count(*) AS n FROM calendar_appointments').get()).toEqual({ n: 2 });
-      expect(database.query('SELECT count(*) AS n FROM _calendar_reservations WHERE active=1').get()).toEqual({ n: 2 });
+      expect(database.query('SELECT count(*) AS n FROM calendar_appointments').get()).toEqual({ n: appointmentWon ? 3 : 2 });
+      expect(database.query('SELECT count(*) AS n FROM _calendar_reservations WHERE active=1').get()).toEqual({ n: appointmentWon ? 4 : 2 });
+      expect(database.query('SELECT count(*) AS n FROM calendar_blocks').get()).toEqual({ n: appointmentWon ? 0 : 1 });
+      expect(database.query('SELECT count(*) AS n FROM _calendar_block_reservations WHERE active=1').get()).toEqual({ n: appointmentWon ? 0 : 2 });
+      expect(database.query('SELECT count(*) AS n FROM _calendar_receipts WHERE request_id=?').get(crossLoser.requestId)).toEqual({ n: 0 });
+      expect(database.query('SELECT count(*) AS n FROM _calendar_block_receipts WHERE request_id=?').get(crossLoser.requestId)).toEqual({ n: 0 });
       expect(database.query('SELECT count(*) AS n FROM _calendar_receipts WHERE request_id=?').get(move.requestId)).toEqual({ n: 0 });
     });
   } finally { await f.close(); }

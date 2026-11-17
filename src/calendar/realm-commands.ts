@@ -3,11 +3,13 @@ import type { DatabaseWriteCommandContext } from '../databases/database-realm';
 import type { CalendarCommandReceipt, CalendarGrant } from './contracts';
 import { CalendarError, calendarCommand } from './error';
 import { appointmentResources, calendarActor, calendarAppointment, calendarBudget, calendarIntent, calendarResource, calendarRevision,
-  eq, grantId, nextCalendarRevision, requireCalendarRight, reservationId } from './realm-model';
-import { calendarOverlapSearchStart, normalizeCalendarTimedInterval, normalizeCalendarTimeZone, type CalendarTimedInterval } from './time';
+  grantId, nextCalendarRevision, requireCalendarRight, reservationId } from './realm-model';
+import { normalizeCalendarTimedInterval, normalizeCalendarTimeZone, type CalendarTimedInterval } from './time';
 import { calendarInteger, calendarKey, calendarRecord, calendarScope, calendarText, calendarValue } from './validation';
 import { calendarSelection } from './realm-model';
 import { appendCalendarSemanticAudit } from './semantic-audit';
+import { assertCalendarResourcesAvailable } from './occupancy';
+import { assertCalendarAvailability } from './availability-model';
 
 function owner(context: DatabaseWriteCommandContext, scopeId: string): void {
   if (context.db.get('_calendar_owner', 'application')?.scope_id !== scopeId) throw new CalendarError('CALENDAR_STATE_INVALID');
@@ -18,16 +20,6 @@ function receipt(requestId: string, operation: CalendarCommandReceipt['operation
 function intervalFields(interval: CalendarTimedInterval) {
   return { start_at: interval.startAt, end_at: interval.endAt, start_ms: interval.startMs, end_ms: interval.endMs, time_zone: interval.timeZone,
     buffer_before: interval.bufferBeforeMinutes, buffer_after: interval.bufferAfterMinutes, occupied_start_ms: interval.occupiedStartMs, occupied_end_ms: interval.occupiedEndMs };
-}
-function assertAvailable(context: DatabaseWriteCommandContext, scopeId: string, resourceIds: string[], interval: CalendarTimedInterval, exceptId = ''): void {
-  for (const resourceId of resourceIds) {
-    const conflicts = context.db.find('_calendar_reservations', { select: ['id'], filters: [eq('scope_id', scopeId), eq('resource_id', resourceId), eq('active', 1),
-      { type: 'field', field: 'occupied_start_ms', operator: 'gte', value: calendarOverlapSearchStart(interval.occupiedStartMs) },
-      { type: 'field', field: 'occupied_start_ms', operator: 'lt', value: interval.occupiedEndMs },
-      { type: 'field', field: 'occupied_end_ms', operator: 'gt', value: interval.occupiedStartMs },
-      { type: 'field', field: 'appointment_id', operator: 'ne', value: exceptId }], limit: 1 });
-    if (conflicts.length) throw new CalendarError('CALENDAR_BOOKING_CONFLICT');
-  }
 }
 export function bindCalendarOwner(context: DatabaseWriteCommandContext, input: unknown) {
   return calendarCommand(() => {
@@ -96,7 +88,8 @@ export function createCalendarAppointment(context: DatabaseWriteCommandContext, 
         calendarAppointment(context, actor, id, 'book');
         throw new CalendarError('CALENDAR_INTENT_CONFLICT');
       }
-      assertAvailable(context, actor.scopeId, resourceIds, interval); calendarBudget(context, 'appointments');
+      assertCalendarAvailability(context, actor.scopeId, resourceIds, interval);
+      assertCalendarResourcesAvailable(context, actor.scopeId, resourceIds, interval); calendarBudget(context, 'appointments');
       const change = context.db.createStrict('calendar_appointments', { id, scope_id: actor.scopeId, title, ...intervalFields(interval), status: 'confirmed', revision: 1, created_by: actor.userId });
       for (const resourceId of resourceIds) context.db.createStrict('_calendar_reservations', { id: reservationId(actor.scopeId, id, resourceId), scope_id: actor.scopeId,
         appointment_id: id, resource_id: resourceId, occupied_start_ms: interval.occupiedStartMs, occupied_end_ms: interval.occupiedEndMs, active: 1 });
@@ -117,7 +110,10 @@ export function rescheduleCalendarAppointment(context: DatabaseWriteCommandConte
       if (row.status !== 'confirmed') throw new CalendarError('CALENDAR_REVISION_CONFLICT');
       if (Object.entries(intervalFields(interval)).every(([key, value]) => row[key] === value)) return receipt(requestId, 'appointment.rescheduled', row.id, row.revision, false);
       for (const id of resourceIds) if (!calendarResource(context, actor, id).active) throw new CalendarError('CALENDAR_FORBIDDEN');
-      assertAvailable(context, actor.scopeId, resourceIds, interval, row.id);
+      // A zone-only display correction does not invalidate grandfathered UTC occupancy.
+      if (row.start_ms !== interval.startMs || row.end_ms !== interval.endMs || row.buffer_before !== interval.bufferBeforeMinutes
+        || row.buffer_after !== interval.bufferAfterMinutes) assertCalendarAvailability(context, actor.scopeId, resourceIds, interval);
+      assertCalendarResourcesAvailable(context, actor.scopeId, resourceIds, interval, { kind: 'appointment', id: row.id });
       const revision = nextCalendarRevision(row.revision), change = context.db.update('calendar_appointments', row.id, { ...intervalFields(interval), revision });
       for (const id of resourceIds) context.db.update('_calendar_reservations', reservationId(actor.scopeId, row.id, id), { occupied_start_ms: interval.occupiedStartMs, occupied_end_ms: interval.occupiedEndMs });
       appendCalendarSemanticAudit(context, 'appointment.rescheduled', change, { revision, resourceCount: resourceIds.length, status: 'confirmed' });
