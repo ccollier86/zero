@@ -4,7 +4,7 @@ import { mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { allocateSyntheticFixture } from '../../test-support/synthetic-fixture';
-import type { CalendarAppointmentPage, CalendarAvailabilityView, CalendarBlockPage, CalendarBlockView, CalendarBusyPage, CalendarCommandReceipt, CalendarResourcePage } from '../../calendar/contracts';
+import type { CalendarAppointmentPage, CalendarAvailabilityView, CalendarBlockPage, CalendarBlockView, CalendarBusyPage, CalendarCommandReceipt, CalendarHoldPage, CalendarHoldView, CalendarResourcePage } from '../../calendar/contracts';
 import { createLoggingClient } from '../client/logging-client';
 import type { FetchInit } from '../client/sdk';
 import { createApp } from './app-factory';
@@ -196,13 +196,88 @@ for (const compliance of [false, true]) {
       expect(noop.status).toBe(200); expect(await noop.json()).toMatchObject({ revision: 2, changed: false });
       const clearedBusy = await call('/api/calendar/busy/query', { query: range });
       expect(clearedBusy.status).toBe(200); expect(await clearedBusy.json()).toEqual({ items: [], truncated: false });
+
+      // Holds use a separate unrestricted resource and dynamic future instants;
+      // the established December availability/booking assertions remain unchanged.
+      const holdResourceResponse = await call('/api/calendar/resources', { resource: { label: 'PRIVATE_SYNTHETIC_HOLD_CALENDAR', kind: 'person', timeZone: 'UTC' },
+        options: { idempotencyKey: 'managed-hold-resource' } });
+      expect(holdResourceResponse.status, await holdResourceResponse.clone().text()).toBe(200);
+      const holdResource = await holdResourceResponse.json() as CalendarCommandReceipt;
+      const holdNow = Date.now(), holdInput = { hold: { resourceIds: [holdResource.id],
+        startAt: new Date(holdNow + 3_600_000).toISOString(), endAt: new Date(holdNow + 7_200_000).toISOString(),
+        timeZone: 'UTC', bufferBeforeMinutes: 5, bufferAfterMinutes: 10, ttlSeconds: 900 }, options: { idempotencyKey: 'managed-hold' } };
+      const heldResponse = await call('/api/calendar/holds', holdInput);
+      expect(heldResponse.status, await heldResponse.clone().text()).toBe(200);
+      const held = await heldResponse.json() as CalendarCommandReceipt;
+      expect(held).toMatchObject({ operation: 'hold.acquired', revision: 1, changed: true });
+      const holdReplay = await call('/api/calendar/holds', holdInput);
+      expect(holdReplay.status).toBe(200); expect(await holdReplay.json()).toEqual(held);
+      const holdReceipt = await call('/api/calendar/receipts/managed-hold');
+      expect(holdReceipt.status).toBe(200); expect(await holdReceipt.json()).toEqual({ receipt: held });
+      const holdRange = { resourceIds: [holdResource.id], startAt: holdInput.hold.startAt, endAt: holdInput.hold.endAt };
+      const holdPage = await call('/api/calendar/holds/query', { query: holdRange });
+      expect(holdPage.status).toBe(200); expect((await holdPage.json() as CalendarHoldPage).items).toMatchObject([{ id: held.id, status: 'held', appointmentId: null }]);
+      const confirmInput = { appointment: { title: 'PRIVATE_SYNTHETIC_HOLD_APPOINTMENT' }, options: { idempotencyKey: 'managed-hold-confirm', expectedRevision: 1 } };
+      const confirmResponse = await call('/api/calendar/holds/' + held.id + '/confirm', confirmInput);
+      expect(confirmResponse.status, await confirmResponse.clone().text()).toBe(200);
+      const confirmedHold = await confirmResponse.json() as CalendarCommandReceipt;
+      expect(confirmedHold).toMatchObject({ operation: 'appointment.created', requestId: 'managed-hold-confirm', revision: 1, changed: true });
+      expect(confirmedHold.id).not.toBe(held.id);
+      const confirmReplay = await call('/api/calendar/holds/' + held.id + '/confirm', confirmInput);
+      expect(confirmReplay.status).toBe(200); expect(await confirmReplay.json()).toEqual(confirmedHold);
+      const confirmReceipt = await call('/api/calendar/receipts/managed-hold-confirm');
+      expect(confirmReceipt.status).toBe(200); expect(await confirmReceipt.json()).toEqual({ receipt: confirmedHold });
+      const confirmedRead = await call('/api/calendar/holds/' + held.id);
+      expect(confirmedRead.status).toBe(200); expect(await confirmedRead.json() as CalendarHoldView).toMatchObject({ status: 'confirmed', revision: 2, appointmentId: confirmedHold.id });
+      const confirmedAppointments = await call('/api/calendar/appointments/query', { query: holdRange });
+      expect(confirmedAppointments.status).toBe(200);
+      expect((await confirmedAppointments.json() as CalendarAppointmentPage).items).toMatchObject([{ id: confirmedHold.id, title: confirmInput.appointment.title,
+        startAt: holdInput.hold.startAt, endAt: holdInput.hold.endAt, resourceIds: [holdResource.id], bufferBeforeMinutes: 5, bufferAfterMinutes: 10 }]);
+      const consumedHolds = await call('/api/calendar/holds/query', { query: holdRange });
+      expect(consumedHolds.status).toBe(200); expect(await consumedHolds.json()).toEqual({ items: [], truncated: false });
+
+      const releaseInput = { hold: { ...holdInput.hold, startAt: new Date(holdNow + 10_800_000).toISOString(), endAt: new Date(holdNow + 14_400_000).toISOString(), ttlSeconds: 1 },
+        options: { idempotencyKey: 'managed-release-hold' } };
+      const releaseHeldResponse = await call('/api/calendar/holds', releaseInput);
+      expect(releaseHeldResponse.status, await releaseHeldResponse.clone().text()).toBe(200);
+      const releaseHeld = await releaseHeldResponse.json() as CalendarCommandReceipt;
+      const initialReleaseRead = await call('/api/calendar/holds/' + releaseHeld.id);
+      expect(initialReleaseRead.status).toBe(200); const releaseInitial = await initialReleaseRead.json() as CalendarHoldView;
+      const expiresMs = Date.parse(releaseInitial.expiresAt), expiryDeadline = performance.now() + 1_100;
+      while (Date.now() < expiresMs) {
+        if (performance.now() >= expiryDeadline) throw new Error('Managed source hold did not reach its admitted one-second expiry.');
+        await new Promise(resolve => setTimeout(resolve, Math.max(1, Math.min(20, expiresMs - Date.now()))));
+      }
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const expiredRead = await call('/api/calendar/holds/' + releaseHeld.id);
+        expect(expiredRead.status).toBe(200); expect(await expiredRead.json() as CalendarHoldView).toMatchObject({ status: 'expired', revision: 1, expiresAt: releaseInitial.expiresAt });
+      }
+      const releaseRange = { resourceIds: [holdResource.id], startAt: releaseInput.hold.startAt, endAt: releaseInput.hold.endAt };
+      const expiredBusy = await call('/api/calendar/busy/query', { query: releaseRange });
+      expect(expiredBusy.status).toBe(200); expect(await expiredBusy.json()).toEqual({ items: [], truncated: false });
+      const releaseControl = { options: { idempotencyKey: 'managed-hold-release', expectedRevision: 1 } };
+      const releaseResponse = await call('/api/calendar/holds/' + releaseHeld.id + '/release', releaseControl);
+      expect(releaseResponse.status, await releaseResponse.clone().text()).toBe(200);
+      const released = await releaseResponse.json() as CalendarCommandReceipt;
+      expect(released).toMatchObject({ id: releaseHeld.id, operation: 'hold.released', revision: 2, changed: true });
+      const releaseReplay = await call('/api/calendar/holds/' + releaseHeld.id + '/release', releaseControl);
+      expect(releaseReplay.status).toBe(200); expect(await releaseReplay.json()).toEqual(released);
+      const releaseNoop = await call('/api/calendar/holds/' + releaseHeld.id + '/release', { options: { idempotencyKey: 'managed-hold-release-noop', expectedRevision: 2 } });
+      expect(releaseNoop.status).toBe(200); expect(await releaseNoop.json()).toMatchObject({ id: releaseHeld.id, operation: 'hold.released', revision: 2, changed: false });
+      const releaseReceipt = await call('/api/calendar/receipts/managed-hold-release');
+      expect(releaseReceipt.status).toBe(200); expect(await releaseReceipt.json()).toEqual({ receipt: released });
+      const releasedRead = await call('/api/calendar/holds/' + releaseHeld.id);
+      expect(releasedRead.status).toBe(200); expect(await releasedRead.json() as CalendarHoldView).toMatchObject({ status: 'released', revision: 2, appointmentId: null });
       if (compliance) {
         await services!.logging!.flush();
         const evidence = await loggingClient.page('audit', { action: 'calendar.appointment.created' });
-        expect(evidence.events).toHaveLength(1);
-        expect(evidence.events[0]!.event).toMatchObject({ actor: { id: identity.user.userId },
+        expect(evidence.events).toHaveLength(2);
+        expect(evidence.events.map(entry => entry.event.target?.id).sort()).toEqual([booking.id, confirmedHold.id].sort());
+        expect(evidence.events.find(entry => entry.event.target?.id === booking.id)!.event).toMatchObject({ actor: { id: identity.user.userId },
           scope: { kind: 'application', tenantId: null }, outcome: 'succeeded',
           target: { type: 'calendar.appointment', id: booking.id } });
+        expect(evidence.events.find(entry => entry.event.target?.id === confirmedHold.id)!.event).toMatchObject({ actor: { id: identity.user.userId },
+          scope: { kind: 'application', tenantId: null }, outcome: 'succeeded', target: { type: 'calendar.appointment', id: confirmedHold.id } });
         const cancellation = await loggingClient.page('audit', { action: 'calendar.appointment.cancelled' });
         expect(cancellation.events).toHaveLength(1);
         const availabilityEvidence = await loggingClient.page('audit', { action: 'calendar.resource.availability-changed' });
@@ -216,10 +291,27 @@ for (const compliance of [false, true]) {
             target: { type: 'calendar.block', id: blocked.id }, outcome: 'succeeded', metadata: { revision: index + 1 } });
           expect(Object.keys(entry.events[0]!.event.metadata).every(key => ['revision', 'resourceCount', 'status', 'sequence'].includes(key))).toBe(true);
         }
-        const serializedEvidence = JSON.stringify([evidence, cancellation, availabilityEvidence, ...blockEvidence]);
+        const holdAcquired = await loggingClient.page('audit', { action: 'calendar.hold.acquired' });
+        expect(holdAcquired.events).toHaveLength(2);
+        expect(holdAcquired.events.map(entry => entry.event.target?.id).sort()).toEqual([held.id, releaseHeld.id].sort());
+        for (const entry of holdAcquired.events) expect(entry.event).toMatchObject({ actor: { id: identity.user.userId },
+          scope: { kind: 'application', tenantId: null }, outcome: 'succeeded', target: { type: 'calendar.hold' }, metadata: { revision: 1, resourceCount: 1, status: 'held' } });
+        const holdEvidence = await Promise.all(['confirmed', 'released'].map(action => loggingClient.page('audit', { action: 'calendar.hold.' + action })));
+        for (const [index, entry] of holdEvidence.entries()) {
+          expect(entry.events).toHaveLength(1);
+          expect(entry.events[0]!.event).toMatchObject({ actor: { id: identity.user.userId }, scope: { kind: 'application', tenantId: null }, outcome: 'succeeded',
+            target: { type: 'calendar.hold', id: index === 0 ? held.id : releaseHeld.id }, metadata: { revision: 2, resourceCount: 1, status: index === 0 ? 'confirmed' : 'released' } });
+        }
+        const expiryEvidence = await loggingClient.page('audit', { action: 'calendar.hold.expired' });
+        expect(expiryEvidence.events).toEqual([]);
+        for (const entry of [...holdAcquired.events, ...holdEvidence.flatMap(page => page.events)]) {
+          expect(Object.keys(entry.event.metadata).every(key => ['revision', 'resourceCount', 'status', 'sequence'].includes(key))).toBe(true);
+        }
+        const serializedEvidence = JSON.stringify([evidence, cancellation, availabilityEvidence, ...blockEvidence, holdAcquired, ...holdEvidence, expiryEvidence]);
         expect(serializedEvidence).not.toMatch(/PRIVATE_SYNTHETIC|Fixture-only-password|calendar@example\.test/);
         for (const instant of [input.appointment.startAt, input.appointment.endAt, blockInput.block.startAt,
-          blockInput.block.endAt, moveBlock.block.startAt, moveBlock.block.endAt, ...policy.availability.windows.flatMap(window => [window.startAt, window.endAt])]) {
+          blockInput.block.endAt, moveBlock.block.startAt, moveBlock.block.endAt, holdInput.hold.startAt, holdInput.hold.endAt,
+          releaseInput.hold.startAt, releaseInput.hold.endAt, ...policy.availability.windows.flatMap(window => [window.startAt, window.endAt])]) {
           expect(serializedEvidence).not.toContain(instant);
         }
         services!.logging!.admission.invalidate();

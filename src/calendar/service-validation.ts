@@ -26,6 +26,7 @@ export function calendarReceipt(input: unknown, requestId: string, operation: st
   const expected = { 'resource.create': 'resource.created', 'resource.grant': 'resource.grant-changed',
     'resource.availability': 'resource.availability-changed',
     'block.create': 'block.created', 'block.reschedule': 'block.rescheduled', 'block.cancel': 'block.cancelled',
+    'hold.acquire': 'hold.acquired', 'hold.release': 'hold.released', 'hold.confirm': 'appointment.created',
     'appointment.create': 'appointment.created', 'appointment.reschedule': 'appointment.rescheduled', 'appointment.cancel': 'appointment.cancelled' }[operation];
   if (!expected || r.requestId !== requestId || r.operation !== expected || r.id !== id || typeof r.changed !== 'boolean') throw new CalendarError('CALENDAR_STATE_INVALID');
   calendarInteger(r.revision, 1);

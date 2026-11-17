@@ -1,6 +1,7 @@
 /** Browser-safe scoped calendar commands. The SDK retires this entire transport on every authority replacement. */
 import type { CalendarAppointmentInput, CalendarAppointmentPage, CalendarAppointmentView, CalendarBusyPage, CalendarCommandReceipt,
   CalendarAvailabilityInput, CalendarAvailabilityView, CalendarAvailabilityWindow, CalendarBlockInput, CalendarBlockPage, CalendarBlockRescheduleInput, CalendarBlockView,
+  CalendarHoldInput, CalendarHoldView, CalendarHoldPage, CalendarHoldConfirmationInput,
   CalendarControlOptions, CalendarGrant, CalendarRangeQuery, CalendarReadOptions, CalendarRequestOptions, CalendarRescheduleInput, CalendarResourceInput,
   CalendarResourcePage, CalendarResourcePageQuery, CalendarResourceView, CalendarWatchOptions, CalendarWatchUpdate, ScopedCalendar } from '../../calendar/contracts';
 import type { FetchInit } from './sdk';
@@ -24,10 +25,11 @@ export function createCalendarClient(fetch: <T = unknown>(path: string, init?: F
       const { code, status } = calendarFailureDetails(cause); throw new CalendarReadError(code, status); }
   }
   async function mutation(path: string, body: unknown, supplied: CalendarRequestOptions,
-    operation: CalendarCommandReceipt['operation'], id?: string): Promise<CalendarCommandReceipt> {
+    operation: CalendarCommandReceipt['operation'], id?: string, forbiddenId?: string): Promise<CalendarCommandReceipt> {
     const key = requestKey(supplied.idempotencyKey); let dispatched = false;
     try { const receipt = calendarReceipt(await call(path, 'POST', body, supplied.signal, () => { dispatched = true; }));
-      if (receipt.requestId !== key || receipt.operation !== operation || id !== undefined && receipt.id !== id) throw invalid(); return receipt; }
+      if (receipt.requestId !== key || receipt.operation !== operation || id !== undefined && receipt.id !== id
+        || forbiddenId !== undefined && receipt.id === forbiddenId) throw invalid(); return receipt; }
     catch (error) { if (!dispatched) throw error; throw calendarMutationFailure(error, key); }
   }
   function watch<T>(path: string, parse: (value: unknown) => T, listener: (value: T, update?: CalendarWatchUpdate) => void,
@@ -39,7 +41,7 @@ export function createCalendarClient(fetch: <T = unknown>(path: string, init?: F
       ...(o.onError === undefined ? {} : { onError: o.onError as (error: unknown) => void }) };
     return watchCalendarRange(open, '/api/calendar' + path, boundary.signal, listener, parse, accepted);
   }
-  function watchRange<T>(kind: 'appointments' | 'blocks', query: CalendarRangeQuery, parse: (value: unknown) => T,
+  function watchRange<T>(kind: 'appointments' | 'blocks' | 'holds', query: CalendarRangeQuery, parse: (value: unknown) => T,
     listener: (value: T, update?: CalendarWatchUpdate) => void, supplied: CalendarWatchOptions): () => void {
     const r = range(query), params = new URLSearchParams({ resourceIds: (r.resourceIds as string[]).join(','), startAt: String(r.startAt), endAt: String(r.endAt) });
     if (r.limit !== undefined) params.set('limit', String(r.limit));
@@ -107,6 +109,32 @@ export function createCalendarClient(fetch: <T = unknown>(path: string, init?: F
         return watchRange('blocks', query, blockPage, listener, supplied);
       },
     }),
+    holds: Object.freeze({
+      query(supplied: CalendarRangeQuery, readOptions?: CalendarReadOptions) { return read('/holds/query', holdPage, 'POST', { query: range(supplied) }, readSignal(readOptions)); },
+      get(id: string, readOptions?: CalendarReadOptions) {
+        const targetId = requestKey(id);
+        return read('/holds/' + encodeURIComponent(targetId), value => {
+          const accepted = holdView(value); if (accepted.id !== targetId) throw invalid(); return accepted;
+        }, 'GET', undefined, readSignal(readOptions));
+      },
+      acquire(input: CalendarHoldInput, supplied: CalendarRequestOptions) {
+        return mutation('/holds', { hold: holdInput(input), options: options(supplied) }, supplied, 'hold.acquired');
+      },
+      release(id: string, supplied: CalendarControlOptions) {
+        return mutation('/holds/' + encodeURIComponent(requestKey(id)) + '/release',
+          { options: options(supplied, true) }, supplied, 'hold.released', id);
+      },
+      confirm(id: string, input: CalendarHoldConfirmationInput, supplied: CalendarControlOptions) {
+        const appointment = record(input, ['title']); identifier(appointment.title, 512);
+        // The server creates a new appointment identity; the hold ID must never
+        // be used as the expected appointment receipt identity.
+        return mutation('/holds/' + encodeURIComponent(requestKey(id)) + '/confirm',
+          { appointment, options: options(supplied, true) }, supplied, 'appointment.created', undefined, id);
+      },
+      watch(query: CalendarRangeQuery, listener: (page: CalendarHoldPage, update?: CalendarWatchUpdate) => void, supplied: CalendarWatchOptions = {}) {
+        return watchRange('holds', query, holdPage, listener, supplied);
+      },
+    }),
     appointments: Object.freeze({
       query(supplied: CalendarRangeQuery, readOptions?: CalendarReadOptions) { return read('/appointments/query', appointmentPage, 'POST', { query: range(supplied) }, readSignal(readOptions)); },
       get(id: string, readOptions?: CalendarReadOptions) {
@@ -165,6 +193,14 @@ function blockInput(value: unknown, create: boolean): Record<string, unknown> {
   if (create) identifier(r.title, 512);
   interval(r.startAt, r.endAt); zone(r.timeZone);
   return { ...r, ...(resourceIds === undefined ? {} : { resourceIds }) };
+}
+function holdInput(value: unknown): Record<string, unknown> {
+  const r = record(value, ['resourceIds', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'ttlSeconds']);
+  const resourceIds = ids(r.resourceIds);
+  interval(r.startAt, r.endAt); zone(r.timeZone);
+  for (const key of ['bufferBeforeMinutes', 'bufferAfterMinutes']) if (r[key] !== undefined) integer(r[key], 0, 1440);
+  if (r.ttlSeconds !== undefined) integer(r.ttlSeconds, 1, 900);
+  return { ...r, resourceIds };
 }
 function availabilityInput(value: unknown): CalendarAvailabilityInput {
   const r = record(value, ['mode', 'windows']);
@@ -235,6 +271,25 @@ function blockPage(value: unknown): CalendarBlockPage {
   const items = values(r.items, 100).map(blockView); unique(items.map(item => item.id));
   return Object.freeze({ items: Object.freeze(items), truncated: r.truncated });
 }
+function holdView(value: unknown): CalendarHoldView {
+  const r = record(value, ['id', 'revision', 'resourceIds', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes',
+    'status', 'expiresAt', 'createdBy', 'appointmentId']);
+  if (Object.keys(r).length !== 12 || !['held', 'expired', 'released', 'confirmed'].includes(r.status as string)) throw invalid();
+  requestKey(r.id); integer(r.revision, 1); const resourceIds = ids(r.resourceIds); requestKey(r.createdBy);
+  interval(r.startAt, r.endAt); instant(r.expiresAt); zone(r.timeZone);
+  integer(r.bufferBeforeMinutes, 0, 1440); integer(r.bufferAfterMinutes, 0, 1440);
+  if (Date.parse(String(r.expiresAt)) > Date.parse(String(r.startAt))) throw invalid();
+  if (r.status === 'confirmed') requestKey(r.appointmentId);
+  else if (r.appointmentId !== null) throw invalid();
+  return Object.freeze({ ...r, resourceIds: Object.freeze(resourceIds) }) as unknown as CalendarHoldView;
+}
+function holdPage(value: unknown): CalendarHoldPage {
+  const r = record(value, ['items', 'truncated']);
+  if (Object.keys(r).length !== 2 || typeof r.truncated !== 'boolean') throw invalid();
+  const items = values(r.items, 100).map(holdView); unique(items.map(item => item.id));
+  if (items.some(item => item.status !== 'held')) throw invalid();
+  return Object.freeze({ items: Object.freeze(items), truncated: r.truncated });
+}
 export function parseCalendarAppointmentPage(value: unknown): CalendarAppointmentPage { return appointmentPage(value); }
 function appointmentPage(value: unknown): CalendarAppointmentPage {
   const r = record(value, ['items', 'truncated']);
@@ -253,7 +308,8 @@ function busyPage(value: unknown): CalendarBusyPage {
 function calendarReceipt(value: unknown): CalendarCommandReceipt {
   const r = record(value, ['requestId', 'operation', 'id', 'revision', 'changed']);
   if (Object.keys(r).length !== 5 || typeof r.operation !== 'string' || !['resource.created', 'resource.grant-changed', 'resource.availability-changed',
-    'block.created', 'block.rescheduled', 'block.cancelled', 'appointment.created', 'appointment.rescheduled', 'appointment.cancelled'].includes(r.operation) || typeof r.changed !== 'boolean') throw invalid();
+    'block.created', 'block.rescheduled', 'block.cancelled', 'hold.acquired', 'hold.released',
+    'appointment.created', 'appointment.rescheduled', 'appointment.cancelled'].includes(r.operation) || typeof r.changed !== 'boolean') throw invalid();
   requestKey(r.requestId); requestKey(r.id); integer(r.revision, 1); return Object.freeze(r) as unknown as CalendarCommandReceipt;
 }
 function record(value: unknown, fields: readonly string[]): Record<string, unknown> {

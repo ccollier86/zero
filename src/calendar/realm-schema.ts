@@ -43,3 +43,24 @@ export const CALENDAR_SCHEDULING_TABLES: Record<string, TableSchema> = {
   _calendar_block_effect_intents: { id: 'TEXT PRIMARY KEY', scope_id: 'TEXT NOT NULL', receipt_id: 'TEXT NOT NULL REFERENCES _calendar_block_receipts(id)',
     operation: 'TEXT NOT NULL', target_kind: "TEXT NOT NULL CHECK(target_kind='block')", target_id: 'TEXT NOT NULL', revision: 'INTEGER NOT NULL CHECK(revision>0)' },
 };
+
+/** Generation 003 is additive. The 001/002 declarations above are migration identity inputs. */
+export const CALENDAR_HOLD_TABLES: Record<string, TableSchema> = {
+  ...CALENDAR_SCHEDULING_TABLES,
+  calendar_holds: { id: 'TEXT PRIMARY KEY', scope_id: 'TEXT NOT NULL', principal: 'TEXT NOT NULL', created_by: 'TEXT NOT NULL',
+    status: "TEXT NOT NULL CHECK(status IN ('held','released','confirmed'))", revision: 'INTEGER NOT NULL CHECK(revision>0)',
+    start_at: 'TEXT NOT NULL', end_at: 'TEXT NOT NULL', start_ms: 'INTEGER NOT NULL', end_ms: 'INTEGER NOT NULL CHECK(end_ms>start_ms AND end_ms-start_ms<=2678400000)',
+    time_zone: 'TEXT NOT NULL', buffer_before: 'INTEGER NOT NULL CHECK(buffer_before BETWEEN 0 AND 1440)', buffer_after: 'INTEGER NOT NULL CHECK(buffer_after BETWEEN 0 AND 1440)',
+    occupied_start_ms: 'INTEGER NOT NULL CHECK(occupied_start_ms=start_ms-buffer_before*60000)',
+    occupied_end_ms: 'INTEGER NOT NULL CHECK(occupied_end_ms=end_ms+buffer_after*60000)',
+    created_ms: 'INTEGER NOT NULL', expires_ms: 'INTEGER NOT NULL CHECK(expires_ms>created_ms AND expires_ms<=start_ms AND expires_ms-created_ms<=900000)',
+    appointment_id: "TEXT REFERENCES calendar_appointments(id) CHECK((status='confirmed')=(appointment_id IS NOT NULL))" },
+  _calendar_hold_reservations: { id: 'TEXT PRIMARY KEY', scope_id: 'TEXT NOT NULL', hold_id: 'TEXT NOT NULL REFERENCES calendar_holds(id)',
+    resource_id: 'TEXT NOT NULL REFERENCES calendar_resources(id)', resource_revision: 'INTEGER NOT NULL CHECK(resource_revision>0)',
+    occupied_start_ms: 'INTEGER NOT NULL', occupied_end_ms: 'INTEGER NOT NULL CHECK(occupied_end_ms>occupied_start_ms AND occupied_end_ms-occupied_start_ms<=2851200000)',
+    expires_ms: 'INTEGER NOT NULL', active: 'INTEGER NOT NULL CHECK(active IN (0,1))' },
+  _calendar_hold_receipts: { id: 'TEXT PRIMARY KEY', scope_id: 'TEXT NOT NULL', principal: 'TEXT NOT NULL', request_id: 'TEXT NOT NULL', digest: 'TEXT NOT NULL', result_json: 'TEXT NOT NULL',
+    target_kind: "TEXT NOT NULL CHECK(target_kind='hold')", target_id: 'TEXT NOT NULL REFERENCES calendar_holds(id)', required_right: "TEXT NOT NULL CHECK(required_right IN ('book','manage'))" },
+  _calendar_hold_effect_intents: { id: 'TEXT PRIMARY KEY', scope_id: 'TEXT NOT NULL', receipt_id: 'TEXT NOT NULL REFERENCES _calendar_hold_receipts(id)',
+    operation: 'TEXT NOT NULL', target_kind: "TEXT NOT NULL CHECK(target_kind='hold')", target_id: 'TEXT NOT NULL', revision: 'INTEGER NOT NULL CHECK(revision>0)' },
+};

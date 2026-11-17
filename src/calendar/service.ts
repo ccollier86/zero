@@ -59,6 +59,18 @@ export class CalendarService {
             queryName: 'calendar.blocks', query: detached, listener, options, track: task => this.track(task) });
         },
       }),
+      holds: Object.freeze({
+        query: (query, options) => this.read(request, 'holds', () => calendarRange(query, this.config), options),
+        get: (id, options) => this.read(request, 'hold', () => ({ id: calendarKey(id) }), options),
+        acquire: (input, options) => this.write(request, 'hold.acquire', input, options),
+        release: (id, options) => this.write(request, 'hold.release', {}, options, id),
+        confirm: (id, input, options) => this.write(request, 'hold.confirm', input, options, id),
+        watch: (query, listener, options: CalendarWatchOptions = {}) => {
+          const detached = calendarRange(query, this.config); this.ready();
+          return watchCalendarPage({ request, broker: this.broker, config: this.config, closing: this.signal,
+            queryName: 'calendar.holds', query: detached, listener, options, track: task => this.track(task) });
+        },
+      }),
       appointments: Object.freeze({
         query: (query, options) => this.read(request, 'appointments', () => calendarRange(query, this.config), options),
         get: (id, options) => this.read(request, 'appointment', () => ({ id: calendarKey(id) }), options),
@@ -109,7 +121,9 @@ export class CalendarService {
       const fields = operation === 'resource.create' ? ['label', 'kind', 'ownerId', 'timeZone']
         : operation === 'resource.grant' ? ['userId', 'grants']
         : operation === 'resource.availability' ? ['mode', 'windows']
-        : operation === 'block.cancel' || operation === 'appointment.cancel' ? []
+        : operation === 'block.cancel' || operation === 'appointment.cancel' || operation === 'hold.release' ? []
+        : operation === 'hold.confirm' ? ['title']
+        : operation === 'hold.acquire' ? ['resourceIds', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'ttlSeconds']
         : operation === 'block.reschedule' ? ['startAt', 'endAt', 'timeZone']
         : operation === 'block.create' ? ['resourceIds', 'title', 'startAt', 'endAt', 'timeZone']
         : operation === 'appointment.reschedule' ? ['startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes']
@@ -119,17 +133,23 @@ export class CalendarService {
       const opts = calendarRecord(options, target === undefined ? ['idempotencyKey', 'signal'] : ['idempotencyKey', 'signal', 'expectedRevision']);
       const key = calendarKey(opts.idempotencyKey), id = target === undefined ? null : calendarKey(target);
       const expectedRevision = id === null ? undefined : calendarInteger(opts.expectedRevision, 1);
-      if ((operation === 'appointment.create' || operation === 'block.create')
+      if ((operation === 'appointment.create' || operation === 'block.create' || operation === 'hold.acquire')
         && (!Array.isArray(body.resourceIds) || body.resourceIds.length > this.config.maxResources)) throw new CalendarError('CALENDAR_INPUT_INVALID');
+      if (operation === 'hold.acquire' && body.ttlSeconds !== undefined) calendarInteger(body.ttlSeconds, 1, 900);
       const authority = await admitCalendarRequest(request, this.config, this.signal, opts.signal as AbortSignal | undefined);
       authority.guard();
       const resolvedId = id ?? calendarHash([authority.actor.scopeId, authority.actor.principal, key]);
+      // A hold is not an appointment identity. Only admitted server authority can
+      // derive the appointment created by confirmation; authored IDs are rejected.
+      const appointmentId = operation === 'hold.confirm'
+        ? calendarHash(['appointment-from-hold', authority.actor.scopeId, authority.actor.principal, key]) : undefined;
       if (operation === 'resource.create' && body.ownerId === undefined) body.ownerId = body.kind === 'person' ? authority.actor.userId : null;
       const result = await this.broker.write<CalendarCommandReceipt>(authority.scope, 'calendar.' + operation,
         { ...body, actor: authority.actor, requestId: key, id: resolvedId,
           ...(expectedRevision === undefined ? {} : { expectedRevision }),
-          ...(operation === 'appointment.cancel' || operation === 'block.cancel' ? { confirmed: true } : {}) }, key, authority.guard, authority.signal);
-      try { await authority.confirm(); authority.guard(); return calendarReceipt(result, key, operation, resolvedId); }
+          ...(appointmentId === undefined ? {} : { appointmentId }),
+          ...(operation === 'appointment.cancel' || operation === 'block.cancel' || operation === 'hold.release' ? { confirmed: true } : {}) }, key, authority.guard, authority.signal);
+      try { await authority.confirm(); authority.guard(); return calendarReceipt(result, key, operation, appointmentId ?? resolvedId); }
       catch { throw new CalendarError('CALENDAR_OUTCOME_UNKNOWN'); }
     })());
   }

@@ -1,7 +1,7 @@
 /** Memory streams only. No server, child, database files or generated fixtures. */
 import { expect, test } from 'bun:test';
-import type { CalendarAppointmentPage, CalendarAvailabilityView, CalendarBlockPage, CalendarReadOptions, CalendarWatchOptions, ScopedCalendar } from './contracts';
-import { calendarAppointmentStream, calendarAvailabilityStream, calendarBlockStream } from './stream';
+import type { CalendarAppointmentPage, CalendarAvailabilityView, CalendarBlockPage, CalendarHoldPage, CalendarReadOptions, CalendarWatchOptions, ScopedCalendar } from './contracts';
+import { calendarAppointmentStream, calendarAvailabilityStream, calendarBlockStream, calendarHoldStream } from './stream';
 const query = { resourceIds: ['synthetic'], startAt: '2026-11-16T00:00:00.000Z', endAt: '2026-11-17T00:00:00.000Z' };
 const empty: CalendarAppointmentPage = { items: [], truncated: false };
 function fixture() {
@@ -81,11 +81,11 @@ test('terminal watch denial fences a late in-flight refresh even when its physic
   } finally { release(); await refresh; f.abort.abort(); await f.reader.cancel(); f.reader.releaseLock(); }
 });
 
-function schedulingFixture(kind: 'blocks' | 'availability') {
-  type Snapshot = CalendarBlockPage | CalendarAvailabilityView;
-  const initial: Snapshot = kind === 'blocks' ? { items: [], truncated: false }
+function schedulingFixture(kind: 'blocks' | 'holds' | 'availability') {
+  type Snapshot = CalendarBlockPage | CalendarHoldPage | CalendarAvailabilityView;
+  const initial: Snapshot = kind !== 'availability' ? { items: [], truncated: false }
     : { resourceId: 'synthetic', resourceRevision: 1, timeZone: 'UTC', mode: 'windows', windows: [] };
-  const deferred: Snapshot = kind === 'blocks' ? { items: [], truncated: true }
+  const deferred: Snapshot = kind !== 'availability' ? { items: [], truncated: true }
     : { resourceId: 'synthetic', resourceRevision: 2, timeZone: 'UTC', mode: 'windows', windows: [{ startAt: query.startAt, endAt: query.endAt }] };
   let notify!: (value: Snapshot, update?: { invalidated: boolean }) => void;
   let options!: CalendarWatchOptions, calls = 0, removals = 0;
@@ -94,15 +94,16 @@ function schedulingFixture(kind: 'blocks' | 'availability') {
     notify = callback; options = supplied; return () => { removals++; };
   };
   const refresh = async (_query: unknown, supplied?: CalendarReadOptions) => { calls++; return read(supplied); };
-  const calendar = { blocks: { watch, query: refresh }, availability: { watch, get: refresh } } as unknown as ScopedCalendar;
+  const calendar = { blocks: { watch, query: refresh }, holds: { watch, query: refresh }, availability: { watch, get: refresh } } as unknown as ScopedCalendar;
   const abort = new AbortController(), stream = kind === 'blocks' ? calendarBlockStream(calendar, query, abort.signal)
+    : kind === 'holds' ? calendarHoldStream(calendar, query, abort.signal)
     : calendarAvailabilityStream(calendar, 'synthetic', abort.signal), reader = stream.getReader();
   return { initial, deferred, notify: (value = initial) => notify(value, { invalidated: true }),
     fail: () => options.onError?.(new Error('SYNTHETIC_PRIVATE_FAILURE')), setRead(next: typeof read) { read = next; },
     abort, reader, get calls() { return calls; }, get removals() { return removals; } };
 }
 
-for (const kind of ['blocks', 'availability'] as const) {
+for (const kind of ['blocks', 'holds', 'availability'] as const) {
   test(`${kind} backpressure retains only dirty hints and requires another current authorized read`, async () => {
     const f = schedulingFixture(kind);
     try {

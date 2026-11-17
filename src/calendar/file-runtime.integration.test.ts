@@ -23,7 +23,7 @@ import { databaseActorFactoryLaunch, type DatabaseActorExecutorFactoryContext, t
 import { createReactiveDB } from '../sync/reactive-db';
 import { allocateSyntheticFixture } from '../test-support/synthetic-fixture';
 import { resolveCalendarConfig, type ResolvedCalendarConfig } from './config';
-import type { CalendarActor, CalendarAppointmentPage, CalendarAppointmentView, CalendarAvailabilityView, CalendarBlockPage, CalendarBusyPage, CalendarCommandReceipt, CalendarResourcePage } from './contracts';
+import type { CalendarActor, CalendarAppointmentPage, CalendarAppointmentView, CalendarAvailabilityView, CalendarBlockPage, CalendarBusyPage, CalendarCommandReceipt, CalendarHoldPage, CalendarHoldView, CalendarResourcePage } from './contracts';
 import { CalendarError } from './error';
 import { inspectCalendarOwnerSchema } from './owner-schema';
 import { resolveCalendarPersistenceConfig, type ResolvedCalendarPersistenceConfig } from './persistence-config';
@@ -163,12 +163,13 @@ test('file runtime empty reads and denied first writes allocate no domain or act
   try {
     expect(inspectCalendarOwnerSchema(f.system)).toBe('ready');
     expect(await f.runtime.read<CalendarResourcePage>(scope, 'calendar.resources', { actor: user }, guard)).toEqual({ items: [], truncated: false, nextAfter: null });
-    for (const name of ['calendar.busy', 'calendar.appointments', 'calendar.blocks']) {
-      expect(await f.runtime.read<CalendarBusyPage | CalendarAppointmentPage | CalendarBlockPage>(scope, name, { actor: user, resourceIds: [], ...range }, guard)).toEqual({ items: [], truncated: false });
+    for (const name of ['calendar.busy', 'calendar.appointments', 'calendar.blocks', 'calendar.holds']) {
+      expect(await f.runtime.read<CalendarBusyPage | CalendarAppointmentPage | CalendarBlockPage | CalendarHoldPage>(scope, name, { actor: user, resourceIds: [], ...range }, guard)).toEqual({ items: [], truncated: false });
     }
     expect(await f.runtime.read<CalendarCommandReceipt | null>(scope, 'calendar.receipt', { actor: user, requestId: 'missing' }, guard)).toBeNull();
     await expect(f.runtime.read(scope, 'calendar.appointment', { actor: user, id: 'missing' }, guard)).rejects.toMatchObject({ code: 'CALENDAR_NOT_FOUND' });
     await expect(f.runtime.read(scope, 'calendar.block', { actor: user, id: 'missing' }, guard)).rejects.toMatchObject({ code: 'CALENDAR_NOT_FOUND' });
+    await expect(f.runtime.read(scope, 'calendar.hold', { actor: user, id: 'missing' }, guard)).rejects.toMatchObject({ code: 'CALENDAR_NOT_FOUND' });
     await expect(f.runtime.read(scope, 'calendar.availability', { actor: user, id: 'missing' }, guard)).rejects.toMatchObject({ code: 'CALENDAR_NOT_FOUND' });
     await expect(f.runtime.write(scope, 'calendar.appointment.create', appointment(scope, 'missing'), 'book-missing', guard)).rejects.toMatchObject({ code: 'CALENDAR_NOT_FOUND' });
     await expect(f.runtime.write(scope, 'calendar.block.create', block(scope, 'missing'), 'block-missing', guard)).rejects.toMatchObject({ code: 'CALENDAR_NOT_FOUND' });
@@ -188,12 +189,12 @@ test('file runtime empty reads and denied first writes allocate no domain or act
   } finally { await f.close(); }
 }, 120_000);
 
-test('native calendar actors persist separate scopes, availability history and exact appointment/block receipts across full SYSTEM restart', async () => {
+test('native calendar actors persist separate scopes, availability history and exact appointment/block/hold receipts across full SYSTEM restart', async () => {
   const f = await fixture(), scopes = [applicationServiceDataScope(), trustedSystemServiceDataScope({ scopeKind: 'tenant', tenantId: 'synthetic-tenant' })];
   try {
     const receipts = await Promise.all(scopes.map(async scope => {
-      for (const id of ['person', 'room']) {
-        const input = resource(scope, id, id === 'room' ? 'room' : 'person');
+      for (const id of ['person', 'room', 'hold-room']) {
+        const input = resource(scope, id, id === 'person' ? 'person' : 'room');
         await f.runtime.write(scope, 'calendar.resource.create', input, input.requestId, guard);
       }
       expect(await f.runtime.read<CalendarAvailabilityView>(scope, 'calendar.availability', { actor: actor(scope), id: 'person' }, guard))
@@ -205,8 +206,13 @@ test('native calendar actors persist separate scopes, availability history and e
         windows: [{ startAt: '2026-12-01T09:00:00.000Z', endAt: '2026-12-01T17:00:00.000Z' }] };
       const availability = await f.runtime.write<CalendarCommandReceipt>(scope, 'calendar.resource.availability', currentPolicy, currentPolicy.requestId, guard);
       const input = appointment(scope, 'same-id'), blocked = block(scope, 'same-id');
+      const now = Date.now(), holdInput = { actor: actor(scope), requestId: 'retain-hold', id: 'retained-hold', resourceIds: ['hold-room'],
+        startAt: new Date(now + 3_600_000).toISOString(), endAt: new Date(now + 7_200_000).toISOString(), timeZone: 'UTC', ttlSeconds: 900 };
+      const hold = await f.runtime.write<CalendarCommandReceipt>(scope, 'calendar.hold.acquire', holdInput, holdInput.requestId, guard);
+      const holdView = await f.runtime.read<CalendarHoldView>(scope, 'calendar.hold', { actor: actor(scope), id: hold.id }, guard);
       return { appointment: await f.runtime.write<CalendarCommandReceipt>(scope, 'calendar.appointment.create', input, input.requestId, guard),
-        block: await f.runtime.write<CalendarCommandReceipt>(scope, 'calendar.block.create', blocked, blocked.requestId, guard), availability, currentPolicy };
+        block: await f.runtime.write<CalendarCommandReceipt>(scope, 'calendar.block.create', blocked, blocked.requestId, guard), availability, currentPolicy,
+        hold, holdView, holdInput };
     }));
     expect(f.system.prepare('SELECT count(*) AS n FROM _calendar_owners WHERE established=1').get()).toEqual({ n: 2 });
     const files = await Promise.all(scopes.map(async scope => ({ path: f.path(scope), identity: await lstat(f.path(scope)) })));
@@ -221,6 +227,9 @@ test('native calendar actors persist separate scopes, availability history and e
       expect(await f.runtime.write<CalendarCommandReceipt>(scope, 'calendar.appointment.create', input, input.requestId, guard)).toEqual(retained.appointment);
       expect(await f.runtime.read<CalendarCommandReceipt | null>(scope, 'calendar.receipt', { actor: actor(scope), requestId: blocked.requestId }, guard)).toEqual(retained.block);
       expect(await f.runtime.write<CalendarCommandReceipt>(scope, 'calendar.block.create', blocked, blocked.requestId, guard)).toEqual(retained.block);
+      expect(await f.runtime.read<CalendarCommandReceipt | null>(scope, 'calendar.receipt', { actor: actor(scope), requestId: retained.holdInput.requestId }, guard)).toEqual(retained.hold);
+      expect(await f.runtime.write<CalendarCommandReceipt>(scope, 'calendar.hold.acquire', retained.holdInput, retained.holdInput.requestId, guard)).toEqual(retained.hold);
+      expect(await f.runtime.read<CalendarHoldView>(scope, 'calendar.hold', { actor: actor(scope), id: retained.hold.id }, guard)).toEqual(retained.holdView);
       expect(await f.runtime.read<CalendarCommandReceipt | null>(scope, 'calendar.receipt', { actor: actor(scope), requestId: retained.currentPolicy.requestId }, guard)).toEqual(retained.availability);
       expect(await f.runtime.write<CalendarCommandReceipt>(scope, 'calendar.resource.availability', retained.currentPolicy, retained.currentPolicy.requestId, guard)).toEqual(retained.availability);
       expect(await f.runtime.read<CalendarAvailabilityView>(scope, 'calendar.availability', { actor: actor(scope), id: 'person' }, guard))
@@ -240,10 +249,86 @@ test('native calendar actors persist separate scopes, availability history and e
       expect(database.query('SELECT count(*) AS n FROM calendar_blocks').get()).toEqual({ n: 1 });
       expect(database.query('SELECT count(*) AS n FROM _calendar_block_reservations WHERE active=1').get()).toEqual({ n: 2 });
       expect(database.query('SELECT count(*) AS n FROM _calendar_block_receipts').get()).toEqual({ n: 1 });
+      expect(database.query('SELECT count(*) AS n FROM calendar_holds').get()).toEqual({ n: 1 });
+      expect(database.query('SELECT count(*) AS n FROM _calendar_hold_reservations WHERE active=1').get()).toEqual({ n: 1 });
+      expect(database.query('SELECT count(*) AS n FROM _calendar_hold_receipts').get()).toEqual({ n: 1 });
       expect(database.query('SELECT count(*) AS n FROM _calendar_availability_history WHERE resource_id=?').get('person')).toEqual({ n: 2 });
       expect(database.query('SELECT policy_revision FROM _calendar_availability WHERE resource_id=?').get('person')).toEqual({ policy_revision: 3 });
       const retained = f.system.prepare('SELECT owner_id,scope_id FROM _calendar_owners WHERE id=?').get(calendarDatabaseId(serviceDataScopeKey(scope)));
       expect(database.query('SELECT owner_id,scope_id FROM _calendar_owner').get()).toEqual(retained);
+    });
+  } finally { await f.close(); }
+}, 120_000);
+
+test('native actor source expiry never renews on replay and competing confirmations consume one hold atomically', async () => {
+  const f = await fixture(), scope = applicationServiceDataScope(), user = actor(scope);
+  try {
+    for (const [id, kind] of [['person', 'person'], ['room', 'room']] as const) {
+      const input = resource(scope, id, kind);
+      await f.runtime.write(scope, 'calendar.resource.create', input, input.requestId, guard);
+    }
+    const now = Date.now(), startAt = new Date(now + 3_600_000).toISOString(), endAt = new Date(now + 7_200_000).toISOString();
+    const expiring = { actor: user, requestId: 'acquire-expiring', id: 'expiring-hold', resourceIds: ['person', 'room'],
+      startAt, endAt, timeZone: 'UTC', bufferBeforeMinutes: 5, bufferAfterMinutes: 10, ttlSeconds: 1 };
+    const acquired = await f.runtime.write<CalendarCommandReceipt>(scope, 'calendar.hold.acquire', expiring, expiring.requestId, guard);
+    const initial = await f.runtime.read<CalendarHoldView>(scope, 'calendar.hold', { actor: user, id: acquired.id }, guard);
+    const expiresMs = Date.parse(initial.expiresAt), deadline = performance.now() + 1_100;
+    while (Date.now() < expiresMs) {
+      if (performance.now() >= deadline) throw new Error('Owned actor hold did not reach its admitted one-second expiry.');
+      await new Promise(resolve => setTimeout(resolve, Math.max(1, Math.min(20, expiresMs - Date.now()))));
+    }
+    expect(await f.runtime.read<CalendarHoldView>(scope, 'calendar.hold', { actor: user, id: acquired.id }, guard))
+      .toMatchObject({ status: 'expired', revision: 1, expiresAt: initial.expiresAt, appointmentId: null });
+    const expiredRange = { actor: user, resourceIds: expiring.resourceIds, startAt, endAt };
+    expect(await f.runtime.read<CalendarBusyPage>(scope, 'calendar.busy', expiredRange, guard)).toEqual({ items: [], truncated: false });
+    const expiredConfirm = { actor: user, requestId: 'confirm-expired', id: acquired.id,
+      appointmentId: calendarHash(['appointment-from-hold', user.scopeId, user.principal, 'confirm-expired']), expectedRevision: 1, title: 'SYNTHETIC_PRIVATE_EXPIRED_TITLE' };
+    await expect(f.runtime.write(scope, 'calendar.hold.confirm', expiredConfirm, expiredConfirm.requestId, guard))
+      .rejects.toMatchObject({ code: 'CALENDAR_HOLD_EXPIRED', outcome: 'not-committed' });
+    expect(await f.runtime.read<CalendarCommandReceipt | null>(scope, 'calendar.receipt', { actor: user, requestId: expiredConfirm.requestId }, guard)).toBeNull();
+    const afterExpiry = { ...appointment(scope, 'after-expiry'), startAt, endAt };
+    await f.runtime.write(scope, 'calendar.appointment.create', afterExpiry, afterExpiry.requestId, guard);
+    expect(await f.runtime.write<CalendarCommandReceipt>(scope, 'calendar.hold.acquire', expiring, expiring.requestId, guard)).toEqual(acquired);
+    expect(await f.runtime.read<CalendarHoldView>(scope, 'calendar.hold', { actor: user, id: acquired.id }, guard))
+      .toMatchObject({ status: 'expired', revision: 1, expiresAt: initial.expiresAt });
+
+    const live = { ...expiring, requestId: 'acquire-contended', id: 'contended-hold', ttlSeconds: 900,
+      startAt: new Date(now + 10_800_000).toISOString(), endAt: new Date(now + 14_400_000).toISOString() };
+    await f.runtime.write(scope, 'calendar.hold.acquire', live, live.requestId, guard);
+    const confirmations = ['first', 'second'].map(id => ({ actor: user, requestId: 'confirm-' + id, id: live.id,
+      appointmentId: calendarHash(['appointment-from-hold', user.scopeId, user.principal, 'confirm-' + id]), expectedRevision: 1, title: 'SYNTHETIC_PRIVATE_CONFIRM_' + id }));
+    const competitor = { ...appointment(scope, 'ordinary-competitor'), startAt: live.startAt, endAt: live.endAt };
+    const outcomes = await Promise.allSettled([
+      ...confirmations.map(input => f.runtime.write<CalendarCommandReceipt>(scope, 'calendar.hold.confirm', input, input.requestId, guard)),
+      f.runtime.write<CalendarCommandReceipt>(scope, 'calendar.appointment.create', competitor, competitor.requestId, guard),
+    ]);
+    expect(outcomes.filter(outcome => outcome.status === 'fulfilled')).toHaveLength(1);
+    const winnerIndex = outcomes.findIndex(outcome => outcome.status === 'fulfilled'); expect(winnerIndex).toBeLessThan(2);
+    const winner = confirmations[winnerIndex]!, loser = confirmations[1 - winnerIndex]!;
+    expect(outcomes[1 - winnerIndex]).toMatchObject({ status: 'rejected', reason: { code: 'CALENDAR_REVISION_CONFLICT', outcome: 'not-committed' } });
+    expect(outcomes[2]).toMatchObject({ status: 'rejected', reason: { code: 'CALENDAR_BOOKING_CONFLICT', outcome: 'not-committed' } });
+    const accepted = (outcomes[winnerIndex] as PromiseFulfilledResult<CalendarCommandReceipt>).value;
+    expect(accepted).toMatchObject({ operation: 'appointment.created', id: winner.appointmentId, revision: 1 });
+    expect(await f.runtime.write<CalendarCommandReceipt>(scope, 'calendar.hold.confirm', winner, winner.requestId, guard)).toEqual(accepted);
+    expect(await f.runtime.read<CalendarHoldView>(scope, 'calendar.hold', { actor: user, id: live.id }, guard))
+      .toMatchObject({ status: 'confirmed', revision: 2, appointmentId: winner.appointmentId });
+    const liveRange = { actor: user, resourceIds: live.resourceIds, startAt: live.startAt, endAt: live.endAt };
+    expect((await f.runtime.read<CalendarAppointmentPage>(scope, 'calendar.appointments', liveRange, guard)).items.map(item => item.id)).toEqual([winner.appointmentId]);
+    expect((await f.runtime.read<CalendarBusyPage>(scope, 'calendar.busy', liveRange, guard)).items).toHaveLength(2);
+    expect(await f.runtime.read<CalendarHoldPage>(scope, 'calendar.holds', liveRange, guard)).toEqual({ items: [], truncated: false });
+    for (const requestId of [loser.requestId, competitor.requestId]) {
+      expect(await f.runtime.read<CalendarCommandReceipt | null>(scope, 'calendar.receipt', { actor: user, requestId }, guard)).toBeNull();
+    }
+    await f.stop();
+    inspect(f.path(scope), database => {
+      expect(database.query('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' });
+      expect(database.query('SELECT count(*) AS n FROM calendar_appointments').get()).toEqual({ n: 2 });
+      expect(database.query('SELECT count(*) AS n FROM _calendar_reservations WHERE active=1').get()).toEqual({ n: 4 });
+      expect(database.query('SELECT count(*) AS n FROM _calendar_reservations WHERE appointment_id IN (?,?)').get(loser.appointmentId, competitor.id)).toEqual({ n: 0 });
+      expect(database.query('SELECT count(*) AS n FROM _calendar_reservations WHERE appointment_id=? AND active=1').get(winner.appointmentId)).toEqual({ n: 2 });
+      expect(database.query('SELECT count(*) AS n FROM _calendar_hold_reservations WHERE hold_id=? AND active=1').get(live.id)).toEqual({ n: 0 });
+      expect(database.query('SELECT status,appointment_id,revision FROM calendar_holds WHERE id=?').get(live.id))
+        .toEqual({ status: 'confirmed', appointment_id: winner.appointmentId, revision: 2 });
     });
   } finally { await f.close(); }
 }, 120_000);

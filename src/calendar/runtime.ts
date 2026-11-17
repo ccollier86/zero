@@ -41,9 +41,10 @@ export interface CalendarRuntimeOptions {
   readonly source?: (coordinator: DatabaseCoordinator) => CalendarRuntimeSource;
 }
 const QUERIES = new Set(['calendar.resources', 'calendar.busy', 'calendar.appointments', 'calendar.appointment',
-  'calendar.availability', 'calendar.blocks', 'calendar.block', 'calendar.receipt']);
+  'calendar.availability', 'calendar.blocks', 'calendar.block', 'calendar.holds', 'calendar.hold', 'calendar.receipt']);
 const COMMANDS = new Set(['calendar.resource.create', 'calendar.resource.grant', 'calendar.resource.availability',
   'calendar.block.create', 'calendar.block.reschedule', 'calendar.block.cancel',
+  'calendar.hold.acquire', 'calendar.hold.release', 'calendar.hold.confirm',
   'calendar.appointment.create', 'calendar.appointment.reschedule', 'calendar.appointment.cancel']);
 
 export class CalendarRuntime implements CalendarServiceBroker {
@@ -207,8 +208,8 @@ export class CalendarRuntime implements CalendarServiceBroker {
     if (actor.scopeId !== scopeId) throw new CalendarError('CALENDAR_FORBIDDEN');
     const { actor: _actor, ...query } = body;
     if (name === 'calendar.resources') return { ...calendarPageQuery(query, this.options.config), actor };
-    if (name === 'calendar.busy' || name === 'calendar.appointments' || name === 'calendar.blocks') return { ...calendarRange(query, this.options.config), actor };
-    if ((name === 'calendar.appointment.create' || name === 'calendar.block.create')
+    if (name === 'calendar.busy' || name === 'calendar.appointments' || name === 'calendar.blocks' || name === 'calendar.holds') return { ...calendarRange(query, this.options.config), actor };
+    if ((name === 'calendar.appointment.create' || name === 'calendar.block.create' || name === 'calendar.hold.acquire')
       && (!Array.isArray(body.resourceIds) || body.resourceIds.length > this.options.config.maxResources)) throw new CalendarError('CALENDAR_INPUT_INVALID');
     return body;
   }
@@ -331,8 +332,8 @@ export function assertCalendarOwnerRecord(record: CalendarOwnerRecord, rootHash:
 /** Never-owned scopes need no SQLite file. Mirror canonical query admission, not an error-to-empty fallback. */
 export function emptyCalendarRead(name: string, input: unknown): unknown {
   const fields = name === 'calendar.resources' ? ['actor', 'limit', 'after']
-    : name === 'calendar.receipt' ? ['actor', 'requestId'] : ['calendar.appointment', 'calendar.block', 'calendar.availability'].includes(name) ? ['actor', 'id']
-    : name === 'calendar.busy' || name === 'calendar.appointments' || name === 'calendar.blocks' ? ['actor', 'resourceIds', 'startAt', 'endAt', 'limit'] : null;
+    : name === 'calendar.receipt' ? ['actor', 'requestId'] : ['calendar.appointment', 'calendar.block', 'calendar.hold', 'calendar.availability'].includes(name) ? ['actor', 'id']
+    : name === 'calendar.busy' || name === 'calendar.appointments' || name === 'calendar.blocks' || name === 'calendar.holds' ? ['actor', 'resourceIds', 'startAt', 'endAt', 'limit'] : null;
   if (!fields) throw new CalendarError('CALENDAR_INPUT_INVALID');
   const r = calendarRecord(input, fields); calendarActor(r.actor);
   if (name === 'calendar.resources') {
@@ -340,7 +341,7 @@ export function emptyCalendarRead(name: string, input: unknown): unknown {
     return { items: [], truncated: false, nextAfter: null };
   }
   if (name === 'calendar.receipt') { calendarKey(r.requestId); return null; }
-  if (['calendar.appointment', 'calendar.block', 'calendar.availability'].includes(name)) { calendarKey(r.id); throw new CalendarError('CALENDAR_NOT_FOUND'); }
+  if (['calendar.appointment', 'calendar.block', 'calendar.hold', 'calendar.availability'].includes(name)) { calendarKey(r.id); throw new CalendarError('CALENDAR_NOT_FOUND'); }
   const ids = calendarSelection(r.resourceIds);
   const start = Date.parse(normalizeCalendarInstant(r.startAt)), end = Date.parse(normalizeCalendarInstant(r.endAt));
   calendarInteger(end - start, 1, CALENDAR_LIMITS.rangeMs); calendarInteger(r.limit ?? 100, 1, CALENDAR_LIMITS.page);

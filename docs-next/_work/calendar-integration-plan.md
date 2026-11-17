@@ -703,7 +703,7 @@ seams are explicitly simulated where used. They do not replace file-backed
 worker death/recovery, actual managed compliance, browser, installed Linux/amd64,
 bundle and updater acceptance. No qualified calendar artifact is selected yet.
 
-Recurring working-hours/holiday expansion, offer/slot generation, holds,
+Recurring working-hours/holiday expansion, offer/slot generation/public booking proofs,
 participant/catalog/location models, recurrence, clinical statuses,
 source-to-Jobs/Torrent effects, notifications,
 self-booking and AI are still future stages. Unsupported feature enablement
@@ -718,8 +718,8 @@ qualification and packaging remain blocked until storage recovery is verified.
 The [November 17 review checkpoint](../backend/calendar/qualification.md) records
 the subsequent lifecycle cancellation/close-retry, subscription retirement,
 scope-owned reconciliation and bounded interval-index corrections. It separates
-passing memory/HTTP/UI/type checks from the eight physical actor/file and two
-managed-compliance scenario definitions that are prepared but unexecuted. These
+passing memory/HTTP/UI/type checks from the then-prepared eight physical actor/file
+and two managed-compliance scenario definitions, all unexecuted. These
 changes do not make the richer standalone UI, reminders or public booking into
 implemented backend capabilities.
 
@@ -737,7 +737,7 @@ expansion, presence inference or an authoritative slot-offer API.
 Appointment, block and availability watches share the current-authority native
 subscription/SSE machinery, bounded quiet checks and SDK retirement. Busy reads
 bound each resource/store partition before merging a global redacted page rather
-than sorting all retained matching rows. The current integrated checkpoint is
+than sorting all retained matching rows. The completed checkpoint for this stage was
 279 memory/HTTP/SDK/UI/readable-label tests plus four pure migration-transform
 tests, with no-emit source/regression compilation; see the qualification guide
 for exact counts and the physical scenarios that remain unexecuted.
@@ -760,11 +760,12 @@ and block changes append source-atomic opaque semantic facts once; no-op, replay
 and rollback produce no false audit change. Effect-reference intents still do not
 dispatch work or enable Jobs, Torrent, reminders or notifications.
 
-The block suite passes 16 native-memory tests / 164 assertions on pinned Bun 1.4.4,
+The block suite passed 16 native-memory tests / 164 assertions on pinned Bun 1.4.4,
 using real tracked writer transactions and copied bounded read sessions, including
 late-create/update rollback, current-grant replay revocation, mixed busy truncation
-and the maximum interval boundary. Final combined scheduling-stage counts remain
-pending the primary agent's integrated verification and are recorded in the
+and the maximum interval boundary. The completed scheduling-stage checkpoint was
+279 integrated tests / 5,765 assertions / 35 files, plus four pure migration-transform
+tests / 15 assertions; see the historical evidence in the
 [qualification guide](../backend/calendar/qualification.md). No physical fixture,
 worker process, build, dependency install or release output was created by this
 stage. The storage-integrity hold remains unchanged. Physical additive upgrade,
@@ -772,6 +773,72 @@ recovery/contention, managed compliance, browser, bundle, installed Linux/amd64 
 normal updater acceptance still gate release. No production-qualified result,
 application migration, hosted-demo change, richer editor persistence or complete
 calendar-plan implementation is implied.
+
+### November 17 authenticated temporary holds
+
+Authenticated `holds.acquire/get/query/watch/release/confirm` now join the scoped
+server/browser facade. This is not public self-booking, guest proof/slot offers,
+or a new native hold UI. `selfBooking` remains false; the connected appointment
+workspace, richer local editors and hosted demo are unchanged.
+
+Holds reserve a fixed resource set and buffered UTC occupancy under current
+all-resource book, active, availability and conflict checks. The server derives
+identity and binds both principal and initiating user. Requested TTL is an integer
+1–900 seconds, default 300, clipped to a strictly future start. At server expiry,
+the held row is virtually expired for reads, conflict checks and live quota, with
+no timer-driven write or cleanup dependency. Expired retained holds for the same
+future interval do not block it. Fixed live quotas are 16 per principal and 1,000
+per scope, alongside 100,000 retained holds and the global 200,000 receipt budget.
+
+Private reads/releases require the original principal and user with current book
+on every co-resource, or manage on every co-resource; authorization precedes
+range membership/limit/truncation. Only the exact original subject can confirm,
+even if another actor manages all resources. Confirmation requires the hold
+revision, an unexpired held state, current book and every captured resource
+revision. Grant/availability changes can stale a hold. Its resource membership,
+instants, zone and buffers are immutable and sealed by acquisition evidence.
+
+Confirmation supplies title only for the new ordinary appointment. The canonical
+appointment writer freshly checks the same conflict/policy domain, excepting only
+this owned hold, then atomically creates the appointment/reservations and consumes
+the hold. The result is `appointment.created` with the new appointment ID, not a
+hold confirmation receipt. Expiry, contention, revision/capacity rejection and
+late insertion or audit failure roll the whole decision back. Release never
+claims to cancel an already confirmed appointment. Unknown outcomes keep the
+original key for receipt reconciliation and a separate authorized current read;
+there is no automatic resend/reacquire. Acquire replay after expiry returns the
+old accepted receipt, not renewal.
+
+Additive `003` preserves both earlier migration source checksums and schema-map
+generations. Private hold receipts/effect references share the existing
+scope/principal/request-key namespace across families; they do not enable Jobs/Torrent dispatch.
+Source-atomic acquired/released/confirmed facts are distinct and opaque; title,
+scheduling times and private subject content are not copied. No-op, replay,
+rollback and idle expiry emit no false semantic changes. Quiet watch expiry can
+publish a changed authorized page with `invalidated:false`; existing scope/denial
+retirement, backpressure and SDK owner boundaries remain in force.
+
+Busy reads now combine three stores with no private target identity or kind. Each
+resource/store partition is bounded before global merge, materializing at most
+`48 * (limit + 1)` candidates, or 4,848 at 16 resources and a 100-result limit.
+Expiry-first hold indexes skip retained expired prefixes before occupancy checks;
+range/busy branches may sort the live set bounded by the 1,000 scope ceiling.
+Appointment/block start indexes remain unchanged. These are query-plan/algorithm
+bounds, not physical throughput or wall-clock benchmarks.
+
+The focused hold suite passed 24 native-memory tests / 234 assertions, including
+expiry/replay, co-resource privacy, quotas and expiry-index plans, canonical
+confirmation/revision fences, competing transactions, partial rollback and late
+source-audit backpressure. The integrated authenticated-hold stage passes 332
+tests / 7,049 assertions / 40 files, plus four pure migration-transform tests /
+15 assertions and no-emit source/regression-fixture checks; see the
+[qualification guide](../backend/calendar/qualification.md); the completed
+279-test scheduling checkpoint above is historical, not a new hold-stage total.
+Nine native file/actor definitions and two managed-compliance variants now include
+prepared hold coverage, but are **not executed** under the unchanged filesystem
+integrity hold. Source/memory checks create no physical fixtures, actors, builds,
+dependency trees or release output, and do not authorize retained-domain upgrades,
+application migration, public booking or normal updater selection.
 
 ## 15. Documentation deliverables and open decisions
 

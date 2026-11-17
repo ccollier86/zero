@@ -1,6 +1,6 @@
 /** Short synchronous tracked commands. SQLite owns all-resource conflict decisions and rollback. */
 import type { DatabaseWriteCommandContext } from '../databases/database-realm';
-import type { CalendarCommandReceipt, CalendarGrant } from './contracts';
+import type { CalendarActor, CalendarCommandReceipt, CalendarGrant } from './contracts';
 import { CalendarError, calendarCommand } from './error';
 import { appointmentResources, calendarActor, calendarAppointment, calendarBudget, calendarIntent, calendarResource, calendarRevision,
   grantId, nextCalendarRevision, requireCalendarRight, reservationId } from './realm-model';
@@ -84,19 +84,30 @@ export function createCalendarAppointment(context: DatabaseWriteCommandContext, 
       if (!resource.active) throw new CalendarError('CALENDAR_FORBIDDEN');
     }
     return calendarIntent(context, actor, r.requestId, ['appointment.create', id, resourceIds, title, interval], 'appointment', 'book', requestId => {
-      if (context.db.get('calendar_appointments', id)) {
-        calendarAppointment(context, actor, id, 'book');
-        throw new CalendarError('CALENDAR_INTENT_CONFLICT');
-      }
-      assertCalendarAvailability(context, actor.scopeId, resourceIds, interval);
-      assertCalendarResourcesAvailable(context, actor.scopeId, resourceIds, interval); calendarBudget(context, 'appointments');
-      const change = context.db.createStrict('calendar_appointments', { id, scope_id: actor.scopeId, title, ...intervalFields(interval), status: 'confirmed', revision: 1, created_by: actor.userId });
-      for (const resourceId of resourceIds) context.db.createStrict('_calendar_reservations', { id: reservationId(actor.scopeId, id, resourceId), scope_id: actor.scopeId,
-        appointment_id: id, resource_id: resourceId, occupied_start_ms: interval.occupiedStartMs, occupied_end_ms: interval.occupiedEndMs, active: 1 });
-      appendCalendarSemanticAudit(context, 'appointment.created', change, { revision: 1, resourceCount: resourceIds.length, status: 'confirmed' });
+      commitCalendarAppointment(context, actor, id, title, resourceIds, interval);
       return receipt(requestId, 'appointment.created', id, 1);
     });
   });
+}
+/** Internal canonical writer shared with hold confirmation, always inside the caller's realm transaction. */
+export function commitCalendarAppointment(context: DatabaseWriteCommandContext, actor: CalendarActor, id: string, title: string,
+  resourceIds: readonly string[], interval: CalendarTimedInterval, options?: { readonly now?: number; readonly exceptHoldId?: string }): void {
+  if (context.db.get('calendar_appointments', id)) {
+    calendarAppointment(context, actor, id, 'book');
+    throw new CalendarError('CALENDAR_INTENT_CONFLICT');
+  }
+  for (const resourceId of resourceIds) {
+    const resource = calendarResource(context, actor, resourceId); requireCalendarRight(context, actor, resource, 'book');
+    if (!resource.active) throw new CalendarError('CALENDAR_FORBIDDEN');
+  }
+  assertCalendarAvailability(context, actor.scopeId, resourceIds, interval);
+  assertCalendarResourcesAvailable(context, actor.scopeId, resourceIds, interval,
+    options?.exceptHoldId === undefined ? undefined : { kind: 'hold', id: options.exceptHoldId }, options?.now);
+  calendarBudget(context, 'appointments');
+  const change = context.db.createStrict('calendar_appointments', { id, scope_id: actor.scopeId, title, ...intervalFields(interval), status: 'confirmed', revision: 1, created_by: actor.userId });
+  for (const resourceId of resourceIds) context.db.createStrict('_calendar_reservations', { id: reservationId(actor.scopeId, id, resourceId), scope_id: actor.scopeId,
+    appointment_id: id, resource_id: resourceId, occupied_start_ms: interval.occupiedStartMs, occupied_end_ms: interval.occupiedEndMs, active: 1 });
+  appendCalendarSemanticAudit(context, 'appointment.created', change, { revision: 1, resourceCount: resourceIds.length, status: 'confirmed' });
 }
 export function rescheduleCalendarAppointment(context: DatabaseWriteCommandContext, input: unknown) {
   return calendarCommand(() => {

@@ -25,6 +25,9 @@ test('calendar controls have readable semantic labels without claiming delivery 
   expect(loggingActivityCode('calendar.block.created').label).toBe('Blocked calendar time');
   expect(loggingActivityCode('calendar.block.rescheduled').label).toBe('Moved blocked time');
   expect(loggingActivityCode('calendar.block.cancelled').label).toBe('Removed blocked time');
+  expect(loggingActivityCode('calendar.hold.acquired').label).toBe('Reserved a booking slot');
+  expect(loggingActivityCode('calendar.hold.released').label).toBe('Released a booking slot');
+  expect(loggingActivityCode('calendar.hold.confirmed').label).toBe('Confirmed a held booking');
   expect(loggingActivityCode('calendar.appointment.created').label).toBe('Booked an appointment');
   expect(loggingActivityCode('calendar.appointment.rescheduled').label).toBe('Rescheduled an appointment');
   expect(loggingActivityCode('calendar.appointment.cancelled').label).toBe('Cancelled an appointment');

@@ -1,5 +1,5 @@
 /** Native in-memory SQL plans and bounded-history correctness, not a disk-mode latency benchmark. */
-import { expect, test } from 'bun:test';
+import { expect, spyOn, test } from 'bun:test';
 import type { DatabaseReadQueryContext } from '../databases/database-realm';
 import { runDatabaseRealmCommand } from '../databases/database-realm';
 import { createReactiveDB } from '../sync/reactive-db';
@@ -7,16 +7,22 @@ import type { CalendarActor } from './contracts';
 import { readCalendarRejection } from './error';
 import { calendarRealm } from './realm';
 import { queryCalendarBlocks } from './blocks';
+import { queryCalendarHolds, readCalendarHold } from './holds';
 import { queryCalendarAppointments, queryCalendarBusy } from './realm-queries';
 import { calendarOverlapSearchStart, normalizeCalendarTimedInterval } from './time';
+import { calendarHash, calendarJson } from './validation';
 
 const DAY = 86_400_000, MAX_OCCUPIED = 33 * DAY;
 const actor: CalendarActor = { scopeId: 'application', userId: 'synthetic-owner', principal: 'synthetic-owner', manageAll: true, createOwn: true };
 const begin = Date.parse('2030-01-01T00:00:00.000Z');
+const sourceNow = begin - 60_000;
 
 function fixture() {
   const db = createReactiveDB({ mode: 'memory' });
+  let restoreClock = () => {};
   try {
+    const clock = spyOn(Date, 'now').mockReturnValue(sourceNow);
+    restoreClock = () => clock.mockRestore();
     const raw = db.getRawDatabase(); raw.run('PRAGMA temp_store=MEMORY');
     for (const [name, schema] of Object.entries(calendarRealm.tables)) db.defineTable(name, schema);
     for (const migration of calendarRealm.migrations) migration.up(raw);
@@ -33,7 +39,30 @@ function fixture() {
       VALUES(?,'application','Synthetic block',?,?,?,?,'UTC','active',1,'synthetic-owner')`);
     const insertBlockReservation = raw.prepare(`INSERT INTO _calendar_block_reservations
       (id,scope_id,block_id,resource_id,occupied_start_ms,occupied_end_ms,active) VALUES(?,'application',?,'person',?,?,1)`);
-    // Old, valid, retained appointment/block rows are seeded directly as synthetic
+    const insertHold = raw.prepare(`INSERT INTO calendar_holds
+      (id,scope_id,principal,created_by,status,revision,start_at,end_at,start_ms,end_ms,time_zone,buffer_before,buffer_after,occupied_start_ms,occupied_end_ms,created_ms,expires_ms,appointment_id)
+      VALUES(?,'application',?,'synthetic-owner','held',1,?,?,?,?,'UTC',0,0,?,?,?,?,NULL)`);
+    const insertHoldReservation = raw.prepare(`INSERT INTO _calendar_hold_reservations
+      (id,scope_id,hold_id,resource_id,resource_revision,occupied_start_ms,occupied_end_ms,expires_ms,active) VALUES(?,'application',?,?,1,?,?,?,1)`);
+    const insertHoldReceipt = raw.prepare(`INSERT INTO _calendar_hold_receipts
+      (id,scope_id,principal,request_id,digest,result_json,target_kind,target_id,required_right) VALUES(?,'application',?,?,?,?,'hold',?,'book')`);
+    const insertHoldEffect = raw.prepare(`INSERT INTO _calendar_hold_effect_intents
+      (id,scope_id,receipt_id,operation,target_kind,target_id,revision) VALUES(?,'application',?,'hold.acquired','hold',?,1)`);
+    const seedHold = (id: string, resourceId: string, start: number, end: number,
+      expires = Math.min(sourceNow + 300_000, start), created = sourceNow) => {
+      // A distinct synthetic principal per accepted hold stays within both live
+      // quotas. Receipt sealing mirrors the real acquisition transaction.
+      const principal = 'synthetic-principal-' + id, requestId = 'acquire-' + id;
+      const receiptId = calendarHash([actor.scopeId, principal, requestId]);
+      const interval = normalizeCalendarTimedInterval({ startAt: new Date(start).toISOString(), endAt: new Date(end).toISOString(), timeZone: 'UTC' });
+      const ttl = expires === start ? 300 : (expires - created) / 1_000;
+      insertHold.run(id, principal, new Date(start).toISOString(), new Date(end).toISOString(), start, end, start, end, created, expires);
+      insertHoldReservation.run('reservation-' + id, id, resourceId, start, end, expires);
+      insertHoldReceipt.run(receiptId, principal, requestId, calendarHash(['hold.acquire', id, [resourceId], interval, ttl]),
+        calendarJson({ requestId, operation: 'hold.acquired', id, revision: 1, changed: true }), id);
+      insertHoldEffect.run(receiptId, receiptId, id);
+    };
+    // Old, valid, retained appointment/block/expired-hold rows are seeded directly as synthetic
     // setup. Production mutations still go through the canonical realm command.
     raw.transaction(() => {
       for (let i = 0; i < 2_000; i++) {
@@ -44,6 +73,9 @@ function fixture() {
         const blockId = 'block-history-' + i, blockStart = start + 2 * 3_600_000, blockEnd = blockStart + 3_600_000;
         insertBlock.run(blockId, new Date(blockStart).toISOString(), new Date(blockEnd).toISOString(), blockStart, blockEnd);
         insertBlockReservation.run('reservation-' + blockId, blockId, blockStart, blockEnd);
+        // Expired reservations deliberately share the queried future interval:
+        // only an expiry-first range avoids scanning this retained prefix.
+        seedHold('hold-history-' + i, 'person', begin, begin + 3_600_000, sourceNow, sourceNow - 300_000);
       }
     })();
     const plans: { sql: string; params: unknown[]; detail: string; rowsReturned: number }[] = [];
@@ -53,7 +85,7 @@ function fixture() {
         const member = Reflect.get(target, key);
         if (key === 'all' || key === 'get') return (...params: never[]) => {
           const result = member.apply(target, params);
-          if (sql.includes('occupied_start_ms') && /(?:SELECT a\.\*|SELECT resource_id,occupied_start_ms)/.test(sql)
+          if (sql.includes('occupied_start_ms') && /(?:SELECT [ah]\.\*|SELECT resource_id,occupied_start_ms)/.test(sql)
             || sql.includes('SELECT b.*') && sql.includes('b.start_ms>=?')) {
             const plan = raw.query('EXPLAIN QUERY PLAN ' + sql).all(...params) as { detail: string }[];
             plans.push({ sql, params, detail: plan.map(row => row.detail).join('\n'), rowsReturned: Array.isArray(result) ? result.length : result == null ? 0 : 1 });
@@ -63,8 +95,8 @@ function fixture() {
         return typeof member === 'function' ? member.bind(target) : member;
       } });
     }, prepare(sql: string) { return raw.prepare(sql); } } } as unknown as DatabaseReadQueryContext;
-    return { db, command, context, plans, close: () => db.dispose() };
-  } catch (error) { db.dispose(); throw error; }
+    return { db, command, context, plans, seedHold, close: () => { try { db.dispose(); } finally { restoreClock(); } } };
+  } catch (error) { try { db.dispose(); } finally { restoreClock(); } throw error; }
 }
 
 test('bounded overlap lookup includes the longest admitted interval and preserves half-open adjacency', () => {
@@ -86,10 +118,10 @@ test('bounded overlap lookup includes the longest admitted interval and preserve
     expect(queryCalendarBusy(f.context, adjacent).items).toEqual([]);
     for (const plan of f.plans) {
       expect(plan.sql).toContain('occupied_start_ms>=?');
-      expect(plan.detail).toMatch(/calendar_(?:appointment_range|(?:block_)?reservation_overlap)/);
-      expect(plan.detail).toMatch(/occupied_start_ms>\? AND occupied_start_ms<\?/);
+      expect(plan.detail).toMatch(/calendar_(?:appointment_range|(?:(?:block|hold)_)?reservation_overlap)/);
+      expect(plan.detail).toMatch(plan.sql.includes('_calendar_hold_reservations') ? /expires_ms>\?/ : /occupied_start_ms>\? AND occupied_start_ms<\?/);
     }
-    expect(f.plans).toHaveLength(6);
+    expect(f.plans).toHaveLength(8);
     // The new appointment's one-hour before-buffer makes its occupied start
     // begin exactly at queryStart. The longest old interval still overlaps it
     // by 1 ms and must be found by the canonical writer's bounded lookup.
@@ -137,7 +169,7 @@ test('canonical write conflict lookup uses the same bounded interval index witho
   } finally { f.db.prepare = prepare; f.close(); }
 });
 
-test('populated block range and mixed busy use bounded indexes on both stores without leaking retained history', () => {
+test('populated block range and mixed busy use all three bounded indexes without leaking retained or expired history', () => {
   const f = fixture();
   try {
     const blockStart = begin - 31 * DAY + 1;
@@ -145,6 +177,8 @@ test('populated block range and mixed busy use bounded indexes on both stores wi
       startAt: new Date(blockStart).toISOString(), endAt: new Date(begin + 1).toISOString(), timeZone: 'UTC' });
     f.command('appointment.create', { actor, requestId: 'current-appointment', id: 'current-appointment', resourceIds: ['person'], title: 'PRIVATE_APPOINTMENT',
       startAt: new Date(begin + 1).toISOString(), endAt: new Date(begin + 3_600_001).toISOString(), timeZone: 'UTC' });
+    f.seedHold('private-current-hold', 'person', begin + 3_600_001, begin + 7_200_001);
+    f.seedHold('private-expired-hold', 'person', begin + 3_600_001, begin + 7_200_001, sourceNow, sourceNow - 1_000);
     const range = { actor, resourceIds: ['person'], startAt: new Date(begin).toISOString(), endAt: new Date(begin + DAY).toISOString() };
     expect(queryCalendarBlocks(f.context, range).items.map(item => item.id)).toEqual(['long-block']);
     expect(queryCalendarAppointments(f.context, range).items.map(item => item.id)).toEqual(['current-appointment']);
@@ -152,8 +186,9 @@ test('populated block range and mixed busy use bounded indexes on both stores wi
     expect(busy).toEqual({ items: [
       { resourceId: 'person', startAt: new Date(blockStart).toISOString(), endAt: new Date(begin + 1).toISOString() },
       { resourceId: 'person', startAt: new Date(begin + 1).toISOString(), endAt: new Date(begin + 3_600_001).toISOString() },
+      { resourceId: 'person', startAt: new Date(begin + 3_600_001).toISOString(), endAt: new Date(begin + 7_200_001).toISOString() },
     ], truncated: false });
-    expect(JSON.stringify(busy)).not.toMatch(/PRIVATE|history|long-block|current-appointment/);
+    expect(JSON.stringify(busy)).not.toMatch(/PRIVATE|private-|history|long-block|current-appointment|principal|"id"|kind/);
     expect(queryCalendarBusy(f.context, { ...range, limit: 1 })).toEqual({ items: [busy.items[0]!], truncated: true });
     expect(queryCalendarBlocks(f.context, { ...range, startAt: new Date(begin + 1).toISOString() }).items).toEqual([]);
     const blockPlans = f.plans.filter(plan => plan.sql.includes('SELECT b.*'));
@@ -164,21 +199,24 @@ test('populated block range and mixed busy use bounded indexes on both stores wi
       expect(plan.detail).not.toMatch(/\bSCAN b\b/);
     }
     const busyPlans = f.plans.filter(plan => plan.sql.startsWith('SELECT resource_id,occupied_start_ms,occupied_end_ms,id FROM'));
-    expect(busyPlans).toHaveLength(4);
+    expect(busyPlans).toHaveLength(6);
     for (const plan of busyPlans) {
       expect(plan.params).toContain(begin - MAX_OCCUPIED);
-      const table = plan.sql.includes('FROM _calendar_block_reservations') ? '_calendar_block_reservations' : '_calendar_reservations';
-      const index = table === '_calendar_reservations' ? 'calendar_reservation_overlap' : 'calendar_block_reservation_overlap';
-      expect(plan.detail).toContain(`SEARCH ${table} USING INDEX ${index} (scope_id=? AND resource_id=? AND active=? AND occupied_start_ms>? AND occupied_start_ms<?)`);
+      const table = plan.sql.includes('FROM _calendar_hold_reservations') ? '_calendar_hold_reservations'
+        : plan.sql.includes('FROM _calendar_block_reservations') ? '_calendar_block_reservations' : '_calendar_reservations';
+      const index = table === '_calendar_reservations' ? 'calendar_reservation_overlap'
+        : table === '_calendar_block_reservations' ? 'calendar_block_reservation_overlap' : 'calendar_hold_reservation_overlap';
+      expect(plan.detail).toContain(`SEARCH ${table} USING INDEX ${index} (scope_id=? AND resource_id=? AND active=? AND ${table === '_calendar_hold_reservations' ? 'expires_ms>?' : 'occupied_start_ms>? AND occupied_start_ms<?'})`);
       expect(plan.sql).toContain('ORDER BY occupied_start_ms,id LIMIT ?');
-      expect(plan.rowsReturned).toBeLessThanOrEqual(Number(plan.params[5]));
-      expect(plan.detail).not.toMatch(/\bSCAN _calendar_(?:block_)?reservations\b/);
-      expect(plan.detail).not.toContain('USE TEMP B-TREE FOR ORDER BY');
+      expect(plan.rowsReturned).toBeLessThanOrEqual(Number(plan.params.at(-1)));
+      if (table === '_calendar_hold_reservations') { expect(plan.sql).toContain('expires_ms>?'); expect(plan.params[5]).toBe(sourceNow); }
+      expect(plan.detail).not.toMatch(/\bSCAN _calendar_(?:(?:block|hold)_)?reservations\b/);
+      if (table !== '_calendar_hold_reservations') expect(plan.detail).not.toContain('USE TEMP B-TREE FOR ORDER BY');
     }
   } finally { f.close(); }
 });
 
-test('dense current busy merges at most 32 bounded source pages with the exact prior global order and truncation', () => {
+test('dense current busy merges at most 48 bounded source pages with exact three-store global ordering and truncation', () => {
   const f = fixture();
   try {
     const resourceIds = ['person', ...Array.from({ length: 15 }, (_, index) => (index % 2 ? 'resource-' : 'Resource-') + String(index).padStart(2, '0'))];
@@ -194,8 +232,9 @@ test('dense current busy merges at most 32 bounded source pages with the exact p
       VALUES(?,'application','PRIVATE_DENSE_BLOCK',?,?,?,?,'UTC','active',1,'synthetic-owner')`);
     const insertBlockReservation = raw.prepare(`INSERT INTO _calendar_block_reservations
       (id,scope_id,block_id,resource_id,occupied_start_ms,occupied_end_ms,active) VALUES(?,'application',?,?,?,?,1)`);
-    // Each resource has 200 non-overlapping appointments interleaved with 200
-    // non-overlapping blocks. Cross-resource ties exercise SQLite BINARY order.
+    // Each resource has 200 appointments, 200 blocks and 60 live holds, all
+    // interleaved without overlap. 960 live holds fit the fixed 1,000 scope
+    // ceiling; each has a distinct principal. Ties exercise SQLite BINARY order.
     raw.transaction(() => {
       for (const [resourceIndex, resourceId] of resourceIds.entries()) for (let index = 0; index < 200; index++) {
         const id = `dense-appointment-${resourceId}-${index}`, start = begin + index * 1000, end = start + 50 + resourceIndex;
@@ -204,34 +243,45 @@ test('dense current busy merges at most 32 bounded source pages with the exact p
         const blockId = `dense-block-${resourceId}-${index}`, blockStart = start + 500, blockEnd = blockStart + 75 + resourceIndex;
         insertBlock.run(blockId, new Date(blockStart).toISOString(), new Date(blockEnd).toISOString(), blockStart, blockEnd);
         insertBlockReservation.run('reservation-' + blockId, blockId, resourceId, blockStart, blockEnd);
+        if (index < 60) f.seedHold(`dense-hold-${resourceId}-${index}`, resourceId, start + 250, start + 350 + resourceIndex);
       }
     })();
     const placeholders = resourceIds.map(() => '?').join(',');
-    // Reference only: the previous global SQL ordering is deliberately kept in
+    // Reference only: canonical three-store global SQL ordering is kept in
     // the synthetic test, never used by the production busy path.
     const reference = raw.query(`SELECT resource_id,occupied_start_ms,occupied_end_ms FROM (
       SELECT resource_id,occupied_start_ms,occupied_end_ms,id,0 AS kind FROM _calendar_reservations WHERE scope_id=? AND resource_id IN (${placeholders}) AND active=1 AND occupied_start_ms>=? AND occupied_start_ms<? AND occupied_end_ms>?
       UNION ALL
       SELECT resource_id,occupied_start_ms,occupied_end_ms,id,1 AS kind FROM _calendar_block_reservations WHERE scope_id=? AND resource_id IN (${placeholders}) AND active=1 AND occupied_start_ms>=? AND occupied_start_ms<? AND occupied_end_ms>?
+      UNION ALL
+      SELECT resource_id,occupied_start_ms,occupied_end_ms,id,2 AS kind FROM _calendar_hold_reservations WHERE scope_id=? AND resource_id IN (${placeholders}) AND active=1 AND occupied_start_ms>=? AND occupied_start_ms<? AND occupied_end_ms>? AND expires_ms>?
     ) ORDER BY occupied_start_ms,resource_id,kind,id LIMIT ?`);
     for (const limit of [1, 7, 100]) {
       f.plans.length = 0;
       const page = queryCalendarBusy(f.context, { actor, resourceIds, startAt: new Date(begin).toISOString(), endAt: new Date(begin + DAY).toISOString(), limit });
       const expected = reference.all(actor.scopeId, ...resourceIds, begin - MAX_OCCUPIED, begin + DAY, begin,
-        actor.scopeId, ...resourceIds, begin - MAX_OCCUPIED, begin + DAY, begin, limit + 1) as { resource_id: string; occupied_start_ms: number; occupied_end_ms: number }[];
+        actor.scopeId, ...resourceIds, begin - MAX_OCCUPIED, begin + DAY, begin,
+        actor.scopeId, ...resourceIds, begin - MAX_OCCUPIED, begin + DAY, begin, sourceNow, limit + 1) as { resource_id: string; occupied_start_ms: number; occupied_end_ms: number }[];
       expect(page).toEqual({ items: expected.slice(0, limit).map(row => ({ resourceId: row.resource_id,
         startAt: new Date(row.occupied_start_ms).toISOString(), endAt: new Date(row.occupied_end_ms).toISOString() })), truncated: expected.length > limit });
       expect(JSON.stringify(page)).not.toMatch(/PRIVATE|dense-|reservation|kind|"id"/);
-      expect(f.plans).toHaveLength(32);
-      expect(f.plans.reduce((count, plan) => count + plan.rowsReturned, 0)).toBe(32 * (limit + 1));
+      expect(f.plans).toHaveLength(48);
+      expect(f.plans.reduce((count, plan) => count + plan.rowsReturned, 0)).toBe(32 * (limit + 1) + 16 * Math.min(60, limit + 1));
+      expect(f.plans.reduce((count, plan) => count + plan.rowsReturned, 0)).toBeLessThanOrEqual(48 * (limit + 1));
       for (const plan of f.plans) {
-        expect(plan.rowsReturned).toBe(limit + 1); expect(plan.params[5]).toBe(limit + 1);
+        const hold = plan.sql.includes('_calendar_hold_reservations');
+        expect(plan.rowsReturned).toBe(hold ? Math.min(60, limit + 1) : limit + 1); expect(plan.params.at(-1)).toBe(limit + 1);
         expect(plan.sql).toContain('resource_id=?'); expect(plan.sql).not.toMatch(/\bIN\s*\(|UNION/);
         expect(plan.sql).toContain('ORDER BY occupied_start_ms,id LIMIT ?');
         expect(plan.params[2]).toBe(begin - MAX_OCCUPIED);
-        expect(plan.detail).toMatch(/SEARCH _calendar_(?:block_)?reservations USING INDEX calendar_(?:block_)?reservation_overlap \(scope_id=\? AND resource_id=\? AND active=\? AND occupied_start_ms>\? AND occupied_start_ms<\?\)/);
-        expect(plan.detail).not.toMatch(/\bSCAN _calendar_(?:block_)?reservations\b/);
-        expect(plan.detail).not.toContain('USE TEMP B-TREE FOR ORDER BY');
+        if (hold) {
+          expect(plan.detail).toContain('SEARCH _calendar_hold_reservations USING INDEX calendar_hold_reservation_overlap (scope_id=? AND resource_id=? AND active=? AND expires_ms>?)');
+          expect(plan.sql).toContain('expires_ms>?'); expect(plan.params[5]).toBe(sourceNow);
+        } else {
+          expect(plan.detail).toMatch(/SEARCH _calendar_(?:block_)?reservations USING INDEX calendar_(?:block_)?reservation_overlap \(scope_id=\? AND resource_id=\? AND active=\? AND occupied_start_ms>\? AND occupied_start_ms<\?\)/);
+          expect(plan.detail).not.toContain('USE TEMP B-TREE FOR ORDER BY');
+        }
+        expect(plan.detail).not.toMatch(/\bSCAN _calendar_(?:(?:block|hold)_)?reservations\b/);
       }
     }
     f.plans.length = 0;
@@ -249,13 +299,13 @@ test('dense current busy merges at most 32 bounded source pages with the exact p
   } finally { f.close(); }
 });
 
-test('populated shared writer scans both bounded reservation indexes and admits only exact no-overlap boundaries', () => {
+test('populated shared writer scans all three bounded indexes and admits only exact no-overlap boundaries', () => {
   const f = fixture(), prepare = f.db.prepare.bind(f.db);
   const seen: { sql: string; params: unknown[]; detail: string }[] = [];
   try {
     f.db.prepare = ((sql: string) => {
       const statement = prepare(sql);
-      if (!/FROM main\."_calendar_(?:block_)?reservations"/.test(sql) || !sql.includes('occupied_start_ms')) return statement;
+      if (!/FROM main\."_calendar_(?:(?:block|hold)_)?reservations"/.test(sql) || !sql.includes('occupied_start_ms')) return statement;
       return new Proxy(statement, { get(target, key) {
         if (key === 'all') return (...params: never[]) => {
           const plan = f.db.getRawDatabase().query('EXPLAIN QUERY PLAN ' + sql).all(...params) as { detail: string }[];
@@ -271,7 +321,7 @@ test('populated shared writer scans both bounded reservation indexes and admits 
     const appointment = (id: string, startMs: number, endMs: number) => f.command('appointment.create', { actor, requestId: id, id, resourceIds: ['person'], title: 'Synthetic',
       startAt: new Date(startMs).toISOString(), endAt: new Date(endMs).toISOString(), timeZone: 'UTC' });
     block('long-edge', begin - 31 * DAY + 1, begin + 1);
-    expect(seen).toHaveLength(2); // no old history incorrectly rejects a current interval
+    expect(seen).toHaveLength(3); // old or expired history cannot reject a current interval
     expect(() => appointment('one-ms-overlap', begin, begin + 3_600_000)).toThrow();
     expect(f.db.get('calendar_appointments', 'one-ms-overlap')).toBeNull();
     expect(() => appointment('adjacent-appointment', begin + 1, begin + 3_600_001)).not.toThrow();
@@ -283,20 +333,70 @@ test('populated shared writer scans both bounded reservation indexes and admits 
     expect(f.db.get('calendar_appointments', 'competing-appointment')).toBeNull();
     const appointmentPlans = seen.filter(plan => plan.sql.includes('FROM main."_calendar_reservations"'));
     const blockPlans = seen.filter(plan => plan.sql.includes('FROM main."_calendar_block_reservations"'));
-    expect(appointmentPlans).toHaveLength(7); expect(blockPlans).toHaveLength(6);
-    for (const [plans, index] of [[appointmentPlans, 'calendar_reservation_overlap'], [blockPlans, 'calendar_block_reservation_overlap']] as const) {
+    const holdPlans = seen.filter(plan => plan.sql.includes('FROM main."_calendar_hold_reservations"'));
+    expect(appointmentPlans).toHaveLength(7); expect(blockPlans).toHaveLength(6); expect(holdPlans).toHaveLength(4);
+    for (const [plans, index] of [[appointmentPlans, 'calendar_reservation_overlap'], [blockPlans, 'calendar_block_reservation_overlap'], [holdPlans, 'calendar_hold_reservation_overlap']] as const) {
       for (const plan of plans) {
         expect(plan.sql).toContain('"occupied_start_ms" >= ?');
         expect(plan.sql).toContain('"occupied_start_ms" < ?');
         expect(plan.sql).toContain('"occupied_end_ms" > ?');
         expect(plan.params[3]).toBe(calendarOverlapSearchStart(Number(plan.params[5])));
         expect(plan.detail).toContain(index);
-        expect(plan.detail).toMatch(/scope_id=\? AND resource_id=\? AND active=\? AND occupied_start_ms>\? AND occupied_start_ms<\?/);
-        expect(plan.detail).not.toMatch(/\bSCAN main\._calendar_(?:block_)?reservations\b/);
+        if (index === 'calendar_hold_reservation_overlap') {
+          expect(plan.detail).toMatch(/scope_id=\? AND resource_id=\? AND active=\? AND expires_ms>\?/);
+          expect(plan.sql).toContain('"expires_ms" > ?'); expect(plan.params[6]).toBe(sourceNow);
+        } else expect(plan.detail).toMatch(/scope_id=\? AND resource_id=\? AND active=\? AND occupied_start_ms>\? AND occupied_start_ms<\?/);
+        expect(plan.detail).not.toMatch(/\bSCAN main\._calendar_(?:(?:block|hold)_)?reservations\b/);
       }
     }
     expect(f.db.prepare('SELECT count(*) AS count FROM calendar_appointments').get()).toEqual({ count: 2_002 });
     expect(f.db.prepare('SELECT count(*) AS count FROM calendar_blocks').get()).toEqual({ count: 2_002 });
+  } finally { f.db.prepare = prepare; f.close(); }
+});
+
+test('expiry-first reads and writes skip a populated future-slot history without publishing private hold identities', () => {
+  const f = fixture(), prepare = f.db.prepare.bind(f.db);
+  const seen: { sql: string; detail: string; params: unknown[] }[] = [];
+  try {
+    const start = begin + 2 * 3_600_000, end = begin + 3 * 3_600_000;
+    f.seedHold('PRIVATE_live_hold', 'person', start, end);
+    f.db.prepare = ((sql: string) => {
+      const statement = prepare(sql);
+      if (!sql.includes('FROM main."_calendar_hold_reservations"')) return statement;
+      return new Proxy(statement, { get(target, key) {
+        if (key === 'all') return (...params: never[]) => {
+          const plan = f.db.getRawDatabase().query('EXPLAIN QUERY PLAN ' + sql).all(...params) as { detail: string }[];
+          seen.push({ sql, params, detail: plan.map(row => row.detail).join('\n') });
+          return target.all(...params);
+        };
+        const member = Reflect.get(target, key);
+        return typeof member === 'function' ? member.bind(target) : member;
+      } });
+    }) as typeof f.db.prepare;
+    const range = { actor, resourceIds: ['person'], startAt: new Date(begin).toISOString(), endAt: new Date(begin + DAY).toISOString(), limit: 1 };
+    const seq = f.db.currentSeq;
+    expect(queryCalendarHolds(f.context, range)).toMatchObject({ items: [{ id: 'PRIVATE_live_hold', status: 'held' }], truncated: false });
+    expect(readCalendarHold(f.context, { actor, id: 'hold-history-0' }).status).toBe('expired');
+    const busy = queryCalendarBusy(f.context, range);
+    expect(busy).toEqual({ items: [{ resourceId: 'person', startAt: new Date(start).toISOString(), endAt: new Date(end).toISOString() }], truncated: false });
+    expect(JSON.stringify(busy)).not.toMatch(/PRIVATE|hold-history|principal|"id"|kind/);
+    expect(f.db.currentSeq).toBe(seq);
+    expect(f.db.get('calendar_holds', 'hold-history-0')!.status).toBe('held');
+    const holdRange = f.plans.find(plan => plan.sql.startsWith('SELECT h.*'))!;
+    expect(holdRange.detail).toMatch(/SEARCH h USING INDEX calendar_hold_(?:range|live_scope) \(scope_id=\? AND status=\? AND expires_ms>\?\)/);
+    expect(holdRange.rowsReturned).toBe(1); expect(holdRange.params[1]).toBe(sourceNow);
+    // Two thousand still-active reservation rows are expired, so the old slot
+    // is admitted while the distinct live hold is still capacity-authoritative.
+    expect(() => f.command('appointment.create', { actor, requestId: 'expired-slot-is-free', id: 'expired-slot-is-free', resourceIds: ['person'], title: 'Synthetic',
+      startAt: new Date(begin).toISOString(), endAt: new Date(begin + 3_600_000).toISOString(), timeZone: 'UTC' })).not.toThrow();
+    expect(() => f.command('block.create', { actor, requestId: 'live-slot-is-held', id: 'live-slot-is-held', resourceIds: ['person'], title: 'Synthetic',
+      startAt: new Date(start).toISOString(), endAt: new Date(end).toISOString(), timeZone: 'UTC' })).toThrow();
+    expect(seen).toHaveLength(2);
+    for (const plan of seen) {
+      expect(plan.sql).toContain('"expires_ms" > ?'); expect(plan.params[6]).toBe(sourceNow);
+      expect(plan.detail).toContain('calendar_hold_reservation_overlap (scope_id=? AND resource_id=? AND active=? AND expires_ms>?)');
+      expect(plan.detail).not.toMatch(/\bSCAN main\._calendar_hold_reservations\b/);
+    }
   } finally { f.db.prepare = prepare; f.close(); }
 });
 

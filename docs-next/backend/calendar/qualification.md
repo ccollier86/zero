@@ -42,9 +42,87 @@ part of every overlap lookup. This is not a wall-clock throughput benchmark or
 an assertion that arbitrary future recurrence rules have the same duration bound.
 Changing the admitted interval invariant must update both validation and lookup.
 
+## November 17 authenticated-hold stage
+
+The next source stage adds authenticated acquire/get/query/watch/release/confirm
+facades, not public self-booking or a new native hold editor. Holds reserve fixed
+resources and buffered occupancy in the same capacity-one domain as appointments
+and blocks. Requested TTL defaults to 300 seconds and admits integer 1–900 seconds,
+clipped to a strictly future start using the trusted server clock. Expiry is
+virtual: at the boundary a held row stops occupying time, appearing in live
+ranges and consuming live quota, without a timer-driven mutation. Retained
+expired holds for the same future interval cannot block a new reservation.
+
+Private get/query/release requires the exact principal and initiating user with
+current book on every co-resource, or current manage on every co-resource.
+Authorization precedes membership and pagination. Confirmation requires the
+exact original subject even when another actor is a manager, current all-resource
+book rights, the expected hold revision and all resource revisions captured at
+acquisition. Grant or availability changes can stale a hold without revoking
+book. Instants, buffers and resources remain immutable; the accepted acquisition
+receipt seals resource membership.
+
+The canonical appointment writer creates a fresh ordinary appointment and its
+reservations before the same transaction consumes the hold and releases its
+reservations. The result is `appointment.created` for the new appointment ID,
+not a hold confirmation receipt. Expiry, contention, capacity, late reservation
+failure and late semantic-audit pressure roll the whole decision back. Accepted
+acquired/released/confirmed hold evidence contains opaque identity and bounded
+source facts only; no title, scheduling time or private subject snapshot is
+copied. Replay, no-op, idle expiry and rollback do not produce false change facts.
+
+Live ceilings are fixed at 16 per principal and 1,000 per scope. Retained holds
+have a separate 100,000-row budget; the existing 200,000 receipt budget remains
+global across command families. Quota probes use expiry-ordered live indexes.
+Hold range and reservation indexes are also expiry-first, excluding retained
+expired prefixes before occupied-time filtering. A hold range/busy branch may
+sort the remaining live set, bounded by the 1,000 scope ceiling, rather than all
+retained same-interval history. Appointment/block start indexes are unchanged.
+
+Three-store redacted busy reads materialize at most `48 * (limit + 1)` candidates:
+4,848 at 16 resources and a 100-result limit. Each resource/store partition is
+bounded before the global merge; no record kind, hold/appointment ID or title is
+published. This is an algorithm/query-plan bound, not a disk-latency, throughput
+or wall-clock performance qualification.
+
+Hold watches reuse current-authority quiet reads, commit hints, backpressure and
+scope/denial retirement. Quiet expiry can publish a changed page with
+`invalidated:false`, without source writes or audit. An acquire replay after
+expiry returns the old accepted receipt, not renewal. Unknown outcomes retain
+the original key for reconciliation; missing receipts never authorize automatic
+resend or reacquisition.
+
+Additive migration `003` preserves both `001` and `002` source checksums and
+declaration generations. Hold receipts/effect references use private tables while
+sharing the existing scope/principal/request-key namespace. Memory migration
+evidence does not establish a physical retained-file upgrade or authorize one.
+
+| Authenticated-hold-stage evidence | Result | Boundary |
+| --- | --- | --- |
+| Focused canonical hold native-memory suite | 24 tests, 234 assertions, 1 file; passed on pinned Bun 1.4.4 | Real tracked transactions/read sessions; expiry and replay, principal/user/co-resource privacy, live/retained quotas, captured range and expiry-index plans, canonical confirmation, contention, revision fences, partial rollback, source audit and late backpressure |
+| Final integrated calendar backend/HTTP/SDK/hooks/presentation/readable-audit set | 332 tests, 7,049 assertions, 40 files; passed on pinned Bun 1.4.4 | Includes the hold lifecycle, expiry, renewal/reconciliation, live revocation, populated upgrades and dense query plans alongside existing calendar regressions; physical coordinator seams are explicitly simulated |
+| Pure source migration-transform checks | 4 tests, 15 assertions, 1 file; passed | Source identity transform, not an executed bundle or installed actor |
+| Calendar source and regression-fixture no-emit TypeScript | Passed, 173 root files, zero diagnostics | Includes prepared file/actor and managed-compliance definitions; compilation is not physical execution |
+| Documentation structural graph | 899 pages, 899 reachable, zero problems | Canonical guide links/IDs/anchors remain valid |
+
+Review caught and corrected two integration issues without relaxing a boundary:
+the initial 1,024-scope quota draft exceeded the native find ceiling, so the new
+live scope limit is 1,000; and a multiline migration-array edit changed Bun's
+representation of the old `001` method, so its original layout was preserved.
+The pinned `001`/`002` checksums and original tables/trigger SQL remain unchanged.
+An incorrectly ordered native-test invocation selected the package runner and
+was rejected by its engine check; that diagnostic is not counted as runtime
+evidence, and its exact owned temporary report was automatically cleaned.
+
+All owned memory/read/logging handles close in `finally`. These runs create no
+file fixtures, actors, dependencies, builds or release artifacts. Native
+file/actor and managed-compliance definitions are prepared but **not executed**
+under the existing storage-integrity hold. No updater archive, hosted demo,
+application or real calendar state was changed.
+
 ## November 17 explicit-window and block stage
 
-This source stage adds bounded, versioned explicit UTC availability policies and
+The preceding scheduling source stage added bounded, versioned explicit UTC availability policies and
 private one-off blocks. Unrestricted availability is the backward-compatible
 default; an explicit empty window policy is closed. Appointment creation and
 UTC-occupancy changes check the full buffered interval against current policy on
@@ -77,8 +155,9 @@ private SSE retains dirty flags under backpressure, and account/scope retirement
 closes old readers. Exact replay is silent. A new-key no-op can still append a
 private receipt and invalidate the source without emitting semantic-change audit.
 
-Mixed busy queries bound each authorized resource/store partition before merging
-the global page. At the fixed 16-resource/100-result ceiling this materializes at
+At that two-store checkpoint, mixed busy queries bounded each authorized
+resource/store partition before merging the global page. The fixed
+16-resource/100-result ceiling materialized at
 most 3,232 candidates, rather than collecting every matching active interval for
 a global sort. Tests compare the exact old SQL order against dense synthetic
 current data and verify the executed per-partition index plans. This is a bounded
@@ -116,11 +195,13 @@ cancelling it, rather than awaiting the cancellation result before triggering it
 
 ## Physical scenarios prepared, not passed
 
-`src/calendar/file-runtime.integration.test.ts` defines eight actual file/WAL and
+`src/calendar/file-runtime.integration.test.ts` now defines nine actual file/WAL and
 dedicated-actor scenarios: inert empty reads, independent scope progress, full
 SYSTEM/actor restart, multi-resource contention and rollback, replay/current grant
 checks, missing/changed placement recovery, exact-owned writer death/replacement,
-and empty child-environment proof. The factory observer forwards to the production
+empty child-environment proof, and hold expiry/competing-confirmation truth.
+Persistence/restart definitions also retain hold source and exact receipt
+evidence. The factory observer forwards to the production
 subprocess executor; it does not substitute a mock coordinator or actor result.
 
 `src/frontend/server/app-calendar.integration.test.ts` adds two real managed
@@ -130,12 +211,15 @@ conflict/no-op truth, semantic source evidence reaching the native investigator,
 privacy, and admission retirement/recovery. No live provider or clinical data is
 needed. These are test definitions and type-check evidence, not successful runs.
 
-Those same eight file-runtime and two managed definitions now also exercise
+The file-runtime and two managed definitions also exercise
 availability/history and block receipt persistence across full restart, a real
 appointment-versus-block race, complete block control/replay/no-op handling and
 the new semantic evidence categories reaching the investigator. Their allocator
 and exact-owned shutdown/cleanup requirements are unchanged. They have not been
-executed under the current storage-integrity hold.
+executed under the current storage-integrity hold. The additional native hold
+definition, expanded native hold persistence/replay, and both managed variants'
+hold acquire/confirm/replay/release/expiry and investigator assertions are
+likewise prepared source, not successful physical, managed or browser runs.
 
 The canonical allocator records exact synthetic ownership. Each fixture closes
 its app, actors, coordinator and database handles before cleanup; unconfirmed
@@ -157,7 +241,7 @@ Then complete performance measurements, package exports/Doctor/adoption, the
 repository's applicable suite, artifact hashing and updater selection. A compiled
 executable with the default source actor remains deliberately unavailable.
 
-Recurring working-hours/holiday expansion, offer/slot generation, holds,
+Recurring working-hours/holiday expansion, offer/slot generation, public booking proofs,
 participants/catalogs/locations, recurrence, clinical transitions,
 source-bound Jobs/Torrent effects, reminders,
 outbound channels, public self-booking and AI remain later stages of the approved
@@ -165,7 +249,7 @@ integration plan. The hosted local-state UI is not evidence that these backend
 features are implemented. Keep the independent core useful without silently
 enabling optional services or treating this checkpoint as full calendar completion.
 
-The new additive migration and scheduling/block paths also need physical
+The additive migrations and scheduling/block/authenticated-hold paths also need physical
 existing-file upgrade/recovery, actor restart/contention, managed compliance and
 real-browser acceptance alongside the earlier core gates. Passing source/memory
 checks is not evidence those scenarios have run or that a production domain may

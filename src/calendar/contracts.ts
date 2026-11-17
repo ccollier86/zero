@@ -49,6 +49,32 @@ export interface CalendarBlockView extends CalendarBlockInput {
   readonly createdBy: string;
 }
 export interface CalendarBlockPage { readonly items: readonly CalendarBlockView[]; readonly truncated: boolean }
+/** Authenticated transient reservation; this does not enable public self-booking. */
+export interface CalendarHoldInput {
+  readonly resourceIds: readonly string[];
+  readonly startAt: string;
+  readonly endAt: string;
+  readonly timeZone: string;
+  readonly bufferBeforeMinutes?: number;
+  readonly bufferAfterMinutes?: number;
+  readonly ttlSeconds?: number;
+}
+export interface CalendarHoldConfirmationInput { readonly title: string }
+export interface CalendarHoldView {
+  readonly id: string;
+  readonly revision: number;
+  readonly resourceIds: readonly string[];
+  readonly startAt: string;
+  readonly endAt: string;
+  readonly timeZone: string;
+  readonly bufferBeforeMinutes: number;
+  readonly bufferAfterMinutes: number;
+  readonly status: 'held' | 'expired' | 'released' | 'confirmed';
+  readonly expiresAt: string;
+  readonly createdBy: string;
+  readonly appointmentId: string | null;
+}
+export interface CalendarHoldPage { readonly items: readonly CalendarHoldView[]; readonly truncated: boolean }
 export interface CalendarAppointmentView {
   readonly id: string;
   readonly revision: number;
@@ -67,7 +93,7 @@ export interface CalendarCommandReceipt {
   readonly requestId: string;
   readonly operation: 'resource.created' | 'resource.grant-changed' | 'resource.availability-changed'
     | 'appointment.created' | 'appointment.rescheduled' | 'appointment.cancelled'
-    | 'block.created' | 'block.rescheduled' | 'block.cancelled';
+    | 'block.created' | 'block.rescheduled' | 'block.cancelled' | 'hold.acquired' | 'hold.released';
   readonly id: string;
   readonly revision: number;
   readonly changed: boolean;
@@ -138,6 +164,16 @@ export interface CalendarWatchOptions extends CalendarReadOptions {
   readonly onError?: (error: unknown) => void;
 }
 export interface ScopedCalendar {
+  readonly holds: {
+    acquire(input: CalendarHoldInput, options: CalendarRequestOptions): Promise<CalendarCommandReceipt>;
+    get(id: string, options?: CalendarReadOptions): Promise<CalendarHoldView>;
+    query(query: CalendarRangeQuery, options?: CalendarReadOptions): Promise<CalendarHoldPage>;
+    watch(query: CalendarRangeQuery, listener: (page: CalendarHoldPage, update?: CalendarWatchUpdate) => void,
+      options?: CalendarWatchOptions): () => void;
+    release(id: string, options: CalendarControlOptions): Promise<CalendarCommandReceipt>;
+    /** Consumes the caller's hold and creates an ordinary appointment in the same transaction. */
+    confirm(id: string, input: CalendarHoldConfirmationInput, options: CalendarControlOptions): Promise<CalendarCommandReceipt>;
+  };
   readonly resources: {
     list(query?: CalendarResourcePageQuery, options?: CalendarReadOptions): Promise<CalendarResourcePage>;
     create(input: CalendarResourceInput, options: CalendarRequestOptions): Promise<CalendarCommandReceipt>;

@@ -59,9 +59,10 @@ function fixture(tenancy: 'single' | 'multi' = 'single', overrides: Partial<Auth
     operation: ({ 'calendar.resource.create': 'resource.created', 'calendar.resource.grant': 'resource.grant-changed',
       'calendar.resource.availability': 'resource.availability-changed', 'calendar.block.create': 'block.created',
       'calendar.block.reschedule': 'block.rescheduled', 'calendar.block.cancel': 'block.cancelled',
+      'calendar.hold.acquire': 'hold.acquired', 'calendar.hold.release': 'hold.released', 'calendar.hold.confirm': 'appointment.created',
       'calendar.appointment.create': 'appointment.created', 'calendar.appointment.reschedule': 'appointment.rescheduled',
       'calendar.appointment.cancel': 'appointment.cancelled' } as const)[call.name as 'calendar.resource.create'],
-    id: call.input.id as string, revision: 1, changed: true });
+    id: (call.name === 'calendar.hold.confirm' ? call.input.appointmentId : call.input.id) as string, revision: 1, changed: true });
   const broker: CalendarServiceBroker = {
     async read<T>(scope: ServiceDataScope, name: string, input: unknown, guard: () => void, signal?: AbortSignal): Promise<T> {
       readCalls++; guard();
@@ -89,7 +90,7 @@ function fixture(tenancy: 'single' | 'multi' = 'single', overrides: Partial<Auth
 }
 
 describe('calendar internal service boundary (in-memory broker, not Fabric)', () => {
-  for (const kind of ['blocks', 'availability'] as const) {
+  for (const kind of ['blocks', 'holds', 'availability'] as const) {
     test(`${kind} watch detaches routing before await and conceals a delayed read after authority retirement`, async () => {
       const f = fixture(), api = f.service.forAuthority(f.request), errors: unknown[] = [];
       let entered!: () => void, release!: () => void, captured!: ReadCall, delivered = 0;
@@ -97,11 +98,12 @@ describe('calendar internal service boundary (in-memory broker, not Fabric)', ()
       f.setOnRead(async call => { captured = call; entered(); await gate; return { private: 'NEVER_DELIVER' }; });
       const query = { resourceIds: ['original'], startAt: '2026-11-16T00:00:00.000Z', endAt: '2026-11-17T00:00:00.000Z' };
       const stop = kind === 'blocks' ? api.blocks.watch(query, () => { delivered++; }, { onError: error => errors.push(error) })
+        : kind === 'holds' ? api.holds.watch(query, () => { delivered++; }, { onError: error => errors.push(error) })
         : api.availability.watch('original', () => { delivered++; }, { onError: error => errors.push(error) });
       try {
         query.resourceIds[0] = 'retargeted'; await reading;
-        expect(captured.name).toBe(kind === 'blocks' ? 'calendar.blocks' : 'calendar.availability');
-        expect(captured.input).toMatchObject(kind === 'blocks' ? { resourceIds: ['original'] } : { id: 'original' });
+        expect(captured.name).toBe(kind === 'availability' ? 'calendar.availability' : 'calendar.' + kind);
+        expect(captured.input).toMatchObject(kind === 'availability' ? { id: 'original' } : { resourceIds: ['original'] });
         f.revoke(); release();
         for (let attempt = 0; errors.length === 0 && attempt < 100; attempt++) await new Promise<void>(resolve => setTimeout(resolve, 0));
         expect(errors).toHaveLength(1); expect(errors[0]).toMatchObject({ code: 'FORBIDDEN' }); expect(delivered).toBe(0); expect(f.subscriptions).toBe(0);
@@ -111,7 +113,7 @@ describe('calendar internal service boundary (in-memory broker, not Fabric)', ()
   test('only fixed commands are exposed, and reserved authority/routing/identity fields cannot be client-selected', async () => {
     const f = fixture(), api = f.service.forAuthority(f.request);
     expect(Object.isFrozen(api)).toBe(true);
-    expect(Object.keys(api).sort()).toEqual(['appointments', 'availability', 'blocks', 'busy', 'createAppointment', 'createResource', 'receipts', 'resources']);
+    expect(Object.keys(api).sort()).toEqual(['appointments', 'availability', 'blocks', 'busy', 'createAppointment', 'createResource', 'holds', 'receipts', 'resources']);
     const baselineChecks = f.syncChecks;
     for (const field of ['actor', 'scope', 'scopeId', 'tenantId', 'userId', 'principal', 'manageAll', 'createOwn',
       'operation', 'name', 'id', 'requestId', 'createdBy', 'revision']) {
@@ -124,6 +126,41 @@ describe('calendar internal service boundary (in-memory broker, not Fabric)', ()
     expect(f.asyncChecks).toBe(0);
     expect(f.calls).toHaveLength(0);
     expect(f.readCalls).toBe(0);
+  });
+
+  test('hold facades detach input, reject authored authority and derive a distinct confirmation appointment identity', async () => {
+    const f = fixture(), api = f.service.forAuthority(f.request);
+    const hold = { resourceIds: ['synthetic-resource'], startAt: appointment().startAt, endAt: appointment().endAt,
+      timeZone: 'UTC', ttlSeconds: 120, bufferBeforeMinutes: 5 };
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; }); f.setBeforeCurrent(() => gate);
+    try {
+      const acquiring = api.holds.acquire(hold, { idempotencyKey: 'hold-acquire' });
+      hold.resourceIds[0] = 'retargeted'; hold.ttlSeconds = 900; release();
+      const acquired = await acquiring;
+      expect(acquired.operation).toBe('hold.acquired');
+      expect(f.calls[0]!.input).toMatchObject({ resourceIds: ['synthetic-resource'], ttlSeconds: 120 });
+      const confirmed = await api.holds.confirm(acquired.id, { title: 'Private confirmed title' }, { idempotencyKey: 'hold-confirm', expectedRevision: 1 });
+      const actor = f.calls[1]!.input.actor as CalendarActor;
+      const appointmentId = calendarHash(['appointment-from-hold', actor.scopeId, actor.principal, 'hold-confirm']);
+      expect(confirmed).toMatchObject({ operation: 'appointment.created', id: appointmentId });
+      expect(confirmed.id).not.toBe(acquired.id);
+      expect(f.calls[1]!.input).toMatchObject({ id: acquired.id, appointmentId, expectedRevision: 1, title: 'Private confirmed title' });
+      await api.holds.release(acquired.id, { idempotencyKey: 'hold-release', expectedRevision: 2 });
+      expect(f.calls[2]!.input).toMatchObject({ id: acquired.id, expectedRevision: 2, confirmed: true });
+      const count = f.calls.length;
+      for (const field of ['actor', 'scopeId', 'id', 'appointmentId', 'createdBy', 'now', 'expiresAt', 'requestId']) {
+        await expect(api.holds.acquire({ ...hold, [field]: 'forged' }, { idempotencyKey: 'forged' })).rejects.toMatchObject({ code: 'CALENDAR_INPUT_INVALID' });
+        await expect(api.holds.confirm(acquired.id, { title: 'Title', [field]: 'forged' } as never,
+          { idempotencyKey: 'forged', expectedRevision: 1 })).rejects.toMatchObject({ code: 'CALENDAR_INPUT_INVALID' });
+      }
+      for (const ttlSeconds of [0, 901, 1.5]) await expect(api.holds.acquire({ ...hold, ttlSeconds }, { idempotencyKey: 'bad-ttl' })).rejects.toMatchObject({ code: 'CALENDAR_INPUT_INVALID' });
+      await expect(api.holds.release(acquired.id, { idempotencyKey: 'no-revision' } as never)).rejects.toMatchObject({ code: 'CALENDAR_INPUT_INVALID' });
+      expect(f.calls).toHaveLength(count);
+      f.setOnWrite(async call => ({ ...f.receipt(call), id: acquired.id }));
+      await expect(api.holds.confirm(acquired.id, { title: 'Title' }, { idempotencyKey: 'wrong-confirm-receipt', expectedRevision: 1 }))
+        .rejects.toMatchObject({ code: 'CALENDAR_OUTCOME_UNKNOWN' });
+    } finally { release(); await f.service.close(); }
   });
 
   test('block and availability facades preserve canonical routing, IDs, revisions and detached authored input', async () => {
@@ -286,6 +323,8 @@ describe('calendar internal service boundary (in-memory broker, not Fabric)', ()
         () => api.appointments.get('bad id'),
         () => api.blocks.query({ ...range, resourceIds: ['duplicate', 'duplicate'] }),
         () => api.blocks.get('bad id'),
+        () => api.holds.query({ ...range, resourceIds: ['duplicate', 'duplicate'] }),
+        () => api.holds.get('bad id'),
         () => api.availability.get('bad id'),
         () => api.busy.query({ ...range, endAt: range.startAt }),
         () => api.receipts.get('bad key'),

@@ -10,11 +10,11 @@ import { calendarHash } from './validation';
 interface CalendarAuditMetadata {
   readonly revision: number;
   readonly resourceCount?: number;
-  readonly status?: 'confirmed' | 'cancelled' | 'active';
+  readonly status?: 'confirmed' | 'cancelled' | 'active' | 'held' | 'released';
 }
 
 /** Call only inside an accepted mutation's callback; receipt replay and domain no-ops never reach this seam. */
-export function appendCalendarSemanticAudit(context: DatabaseWriteCommandContext, operation: CalendarCommandReceipt['operation'],
+export function appendCalendarSemanticAudit(context: DatabaseWriteCommandContext, operation: CalendarCommandReceipt['operation'] | 'hold.confirmed',
   change: Change | null, metadata: CalendarAuditMetadata): void {
   if (!change) throw new CalendarError('CALENDAR_STATE_INVALID');
   const values: Record<string, LoggingScalar> = { sequence: change.seq, revision: metadata.revision };
@@ -25,7 +25,8 @@ export function appendCalendarSemanticAudit(context: DatabaseWriteCommandContext
     // A real mutation sequence identifies A -> B -> A transitions independently of transport retries.
     id: 'calendar:' + calendarHash([action, change.table, change.rowId, change.seq]),
     family: 'workflow', action, outcome: 'succeeded', occurredAt: change.ts,
-    target: { type: operation.startsWith('resource.') ? 'calendar.resource' : operation.startsWith('block.') ? 'calendar.block' : 'calendar.appointment', id: change.rowId },
+    target: { type: operation.startsWith('resource.') ? 'calendar.resource' : operation.startsWith('block.') ? 'calendar.block'
+      : operation.startsWith('hold.') ? 'calendar.hold' : 'calendar.appointment', id: change.rowId },
     metadata: values,
   });
 }

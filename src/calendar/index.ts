@@ -4,6 +4,7 @@ export type { CalendarResourceKind, CalendarResourceView, CalendarResourceInput,
   CalendarAppointmentView, CalendarAppointmentInput, CalendarRescheduleInput, CalendarCommandReceipt,
   CalendarAvailabilityWindow, CalendarAvailabilityInput, CalendarAvailabilityView,
   CalendarBlockView, CalendarBlockInput, CalendarBlockRescheduleInput, CalendarBlockPage,
+  CalendarHoldView, CalendarHoldInput, CalendarHoldConfirmationInput, CalendarHoldPage,
   CalendarRangeQuery, CalendarRequestOptions, CalendarControlOptions, CalendarReadOptions,
   CalendarResourcePageQuery, CalendarResourcePage, CalendarAppointmentPage, CalendarBusyPage,
   CalendarWatchUpdate, CalendarWatchOptions, ScopedCalendar } from './contracts';

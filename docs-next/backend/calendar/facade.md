@@ -66,7 +66,13 @@ identity are rejected, not normalized away.
 | `blocks.reschedule(id, input, control)` | Exact revision, UTC instants and zone; resource set remains fixed |
 | `blocks.cancel(id, control)` | Explicit confirmed cancellation releases all block reservations, retains history |
 | `blocks.watch(range, listener, {signal?, onError?}?)` | Active private block snapshots with current all-co-resource authorization; returns unsubscribe |
-| `busy.query(range, {signal?}?)` | Appointment-buffer and block occupancy in one bounded order; no target IDs, titles or attendees |
+| `holds.query(range, {signal?}?)` | Effective live holds only; subject/current-book or all-co-resource manage authorization before pagination |
+| `holds.get(id, {signal?}?)` | Authorized private hold, including virtual expired, released and confirmed history |
+| `holds.acquire(input, options)` | Authenticated, server-expiring buffered reservation; current book and active availability on every resource |
+| `holds.release(id, control)` | Explicit confirmed release by the current authorized subject or all-co-resource manager |
+| `holds.confirm(id, {title}, control)` | Original subject only; atomically create a new ordinary appointment and consume the hold |
+| `holds.watch(range, listener, {signal?, onError?}?)` | Current authorized live holds; quiet expiry changes are not source invalidations |
+| `busy.query(range, {signal?}?)` | Appointment-buffer, block and live-hold occupancy in one bounded order; no target IDs, titles or attendees |
 | `receipts.get(originalKey, {signal?}?)` | Original safe outcome or null; current target rights still required |
 | `appointments.watch(range, listener, {signal?, onError?}?)` | Initial/fresh authorized pages and commit invalidation flag; returns unsubscribe |
 
@@ -85,8 +91,8 @@ Block ranges use the same bounds and return active records only. Guessed-ID read
 conceal missing and denied objects alike, including cancelled history. A private
 multi-resource block is omitted before membership/truncation unless every
 co-resource permits details, even when only one resource was selected. Busy-only
-grants reveal just `{resourceId,startAt,endAt}` for either kind of reservation;
-no block/appointment discriminator, private title or record ID is returned.
+grants reveal just `{resourceId,startAt,endAt}` across appointments, blocks and live
+holds; no reservation-kind discriminator, private title or record ID is returned.
 
 Canonical UTC ISO milliseconds are required by browser contracts. Server time
 helpers also admit exact integer epochs internally. Scheduling zones do not
@@ -135,6 +141,78 @@ same scope/principal/request-key namespace as resource and appointment commands;
 reusing a key across command families conflicts. Replay and receipt reconciliation
 still require current manage rights on all block resources, not historical grants.
 
+## Authenticated temporary holds
+
+`holds.acquire` takes `{resourceIds,startAt,endAt,timeZone,bufferBeforeMinutes?,
+bufferAfterMinutes?,ttlSeconds?}`. It deliberately has no title or client-selected
+identity/subject/expiry fields. The broker derives the opaque hold ID and binds
+the private record to both the authenticated principal and initiating user.
+This is a staff/member facade, not a guest proof or public booking endpoint;
+`selfBooking` remains false.
+
+Acquisition atomically checks current book rights, active state, explicit
+availability and all appointment/block/live-hold conflicts on every resource.
+It uses the same positive interval, buffer and half-open occupancy rules as an
+appointment. Requested TTL is an integer from 1 to 900 seconds, defaulting to
+300, clipped at the appointment start. The start must be strictly after the
+trusted server clock; input cannot supply `now` or choose a later expiry. Fixed
+live ceilings are 16 holds per principal and 1,000 per scope, counting only held
+records whose expiry is still future. Retained holds have a separate 100,000-row
+lifetime budget; all command families share the 200,000-receipt budget. Expiry
+does not delete history or reset either retained budget.
+
+The view contains `{id,revision,resourceIds,startAt,endAt,timeZone,
+bufferBeforeMinutes,bufferAfterMinutes,status,expiresAt,createdBy,appointmentId}`.
+Status is `held`, `expired`, `released` or `confirmed`; `appointmentId` is null
+until successful confirmation. Expired is a virtual read state: at
+`now >= expiresAt`, a stored held row no longer occupies time, appears in hold
+ranges or consumes live quota. No cleanup timer or idle database write is needed.
+Even repeated expired holds for the same future interval stop blocking it.
+`holds.get` can return this authorized history without changing its revision.
+
+Private reads and release require either the exact principal **and** user subject
+with current book rights on every co-resource, or current manage on every
+co-resource. Details alone does not expose another subject's hold. A selected
+resource may admit book or details for a range, but each matching hold must still
+pass its stricter subject/manage check before membership, limit and truncation.
+Missing and denied IDs are concealed alike. Busy-only grants see only redacted
+occupancy, never private hold IDs.
+
+`holds.release` uses the expected hold revision and explicit calling-UI
+confirmation. It atomically releases all hold reservations, including an expired
+hold that the caller deliberately releases. An already released row can return
+`changed:false` with the current expected revision. A confirmed hold cannot be
+released: that rejects with `CALENDAR_HOLD_STALE`, and never claims to cancel its
+appointment. Appointment cancellation remains its separate canonical command.
+
+`holds.confirm(id, {title}, control)` is narrower than management: only the
+original principal and user may consume a hold, even if another actor manages
+all resources. It requires current book on every resource, the exact hold
+revision, a still-held/unexpired lease, and every resource revision captured at
+acquisition. A grant or availability change can therefore make it stale even
+when booking would otherwise remain permitted. `CALENDAR_HOLD_EXPIRED` and
+`CALENDAR_HOLD_STALE` distinguish expiry and stale consumption. Resources, UTC
+instants, zone, buffers and expiry cannot be edited or renewed; the acquisition
+receipt seals membership. Title is supplied only for the new appointment, never
+stored on the hold.
+
+Confirmation uses the canonical appointment writer to freshly check active
+resources, book rights, availability, conflicts and retained capacity, excepting
+only this owned live hold. The same transaction creates the ordinary appointment
+and reservations, marks the hold confirmed with its appointment ID, releases the
+hold reservations, and commits receipt/evidence. A competing reservation, expiry,
+stale revision, late insert or audit-pressure failure rolls the whole attempt
+back. The result is an ordinary `appointment.created` receipt with the **new
+appointment ID**, revision 1 and `changed:true`, not a `hold.confirmed` receipt or
+a hold snapshot. Read the authorized appointment separately.
+
+An acquire replay after expiry still returns its original accepted receipt; it
+does not renew or reacquire the hold. A confirmed hold's original confirmation
+receipt remains subject-bound and currently authorized. If any hold command has
+unknown outcome, keep its original key and reconcile via `receipts.get`, then
+reload current authorized state. Do not automatically resend under a new key,
+reacquire after expiry, or interpret a missing receipt as rollback.
+
 ## Outcome and recovery
 
 A matching receipt is an accepted source commit, **not** proof that a person
@@ -160,16 +238,30 @@ invalidation retire old callbacks and snapshots. A reconnect is marked separatel
 from actual commit invalidation. SSE is authenticated fetch under `/api/calendar`,
 not a second unauthenticated Sync database or a browser-selected Fabric scope.
 
-Appointments, blocks and explicit availability all expose `watch`. Each watch
+Appointments, blocks, holds and explicit availability all expose `watch`. Each watch
 subscribes to payload-free source-commit hints, then performs a current-authority
 read. The browser uses private SSE at `/api/calendar/appointments/live`,
-`/api/calendar/blocks/live` or `/api/calendar/availability/:id/live`; applications
+`/api/calendar/blocks/live`, `/api/calendar/holds/live` or
+`/api/calendar/availability/:id/live`; applications
 should use the facade rather than constructing these transports. Slow readers
 retain a dirty hint, not another private snapshot, and reauthorize before a later
 publication. Quiet revalidation does not emit an unchanged snapshot or an audit
 event. Exact receipt replay emits no source hint; accepting a new-key no-op can
 still commit its private receipt and therefore invalidate a watch, without
 manufacturing a semantic change event.
+
+A quiet hold revalidation can publish a changed page when a lease expires without
+any source commit; its update has `invalidated:false`. This is not a synthetic
+expiry mutation or audit event. Holds reuse the existing bounded quiet read and
+retirement machinery, not a new expiry worker. Revocation, scope/account
+replacement, abort and terminal denial still retire old callbacks and snapshots.
+
+Accepted source transitions have separate `calendar.hold.acquired`,
+`calendar.hold.released` and `calendar.hold.confirmed` evidence; confirmation also
+records ordinary appointment creation. Evidence contains only opaque target and
+bounded revision/sequence/resource-count/status facts, not title, scheduling
+times, private subject data or copied hold content. Idle expiry, replay, no-op
+and rollback never manufacture semantic change facts.
 
 Always retire subscriptions when their owner closes and clear retained private
 presentation on `onError`. Account/scope replacement retires the SDK's old
@@ -222,9 +314,9 @@ Busy-only calendars remain available through the redacted `busy.query` facade,
 not a silently upgraded detail feed in this initial workspace. Managers should
 assign rights deliberately; hidden UI actions never replace server checks.
 
-The connected workspace remains the supported one-off appointment UI. Availability
-and block management use the scoped facades above until a dedicated native
-management surface is implemented; this stage does not retrofit the richer local
+The connected workspace remains the supported one-off appointment UI. Availability,
+block and authenticated-hold management use the scoped facades above until a
+dedicated native management surface is implemented; this stage does not retrofit the richer local
 editor or self-booking preview, nor change the approved hosted demo. Private
 effect-reference intents remain handoff groundwork, not dispatch, reminder or
 notification work.

@@ -8,6 +8,10 @@ export function calendarBlockStream(calendar: ScopedCalendar, query: CalendarRan
   return calendarSnapshotStream({ read: options => calendar.blocks.query(query, options),
     watch: (listener, options) => calendar.blocks.watch(query, listener, options) }, signal);
 }
+export function calendarHoldStream(calendar: ScopedCalendar, query: CalendarRangeQuery, signal: AbortSignal): ReadableStream<Uint8Array> {
+  return calendarSnapshotStream({ read: options => calendar.holds.query(query, options),
+    watch: (listener, options) => calendar.holds.watch(query, listener, options) }, signal);
+}
 export function calendarAvailabilityStream(calendar: ScopedCalendar, id: string, signal: AbortSignal): ReadableStream<Uint8Array> {
   return calendarSnapshotStream({ read: options => calendar.availability.get(id, options),
     watch: (listener, options) => calendar.availability.watch(id, listener, options) }, signal);
