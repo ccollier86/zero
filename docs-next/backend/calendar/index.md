@@ -28,7 +28,7 @@ working on an application; do not assume this branch is available through update
 - [Configuration and adoption](./configuration.md): enable/disable, placement,
   permissions, actor lifecycle and the existing-project boundary.
 - [Facade and booking semantics](./facade.md): resources, grants, appointments,
-  authenticated holds, bounded queries, live projections and uncertain outcomes.
+  authenticated holds, locations/resource facets, bounded queries, live projections and uncertain outcomes.
 - [Qualification and remaining gates](./qualification.md): current source review,
   completed memory checks and explicitly unexecuted physical/deployment scenarios.
 - [Frontend composition](../../frontend/calendar/index.md): connected core versus
@@ -71,8 +71,17 @@ for the new appointment ID. Expiry is evaluated without an idle mutation or
 cleanup timer; expired history consumes neither occupancy nor live quota.
 Unknown outcomes retain the original key; replay after expiry is not renewal.
 
+Versioned locations and resource assignments now support authorized directory
+facets. Location/region filters narrow current resource grants; they cannot grant
+access or serve as clinical/geographic booking policy. Global scope managers edit
+the catalog; resource managers replace only their own managed assignments using
+currently visible locations. Historical labels/assignments remain retained.
+Directory and location-detail hooks update reactively and retire revoked data.
+The richer demo's filter/management controls are not yet wired to these APIs.
+
 Recurrence, all-day and floating dates, recurring working-hours/holiday expansion,
-public booking proofs/offers, appointment-type catalogs, participant invitations, locations,
+public booking proofs/offers, appointment-type catalogs, participant invitations,
+effective-dated location eligibility and appointment visit locations,
 configurable clinical statuses, delivery channels, public self-booking and AI
 adapters remain future stages. Local UI fields/previews do not implement those
 features. In this core, `recurrence`, `reminders` and `selfBooking` must remain false; attempting to
@@ -82,7 +91,7 @@ Native/mobile and API-key calendar admission are not supported yet.
 ## Reactive and audit boundaries
 
 The scoped facade supports authorized live appointment, block and hold ranges,
-plus resource availability policies. They share the native commit-invalidation,
+resource/location catalogs and details, plus resource availability policies. They share the native commit-invalidation,
 bounded quiet authority checks, private SSE/backpressure and SDK-retirement
 machinery. The connected workspace still exposes only its documented appointment
 controls; adding live backend APIs does not silently enable the richer demo's
@@ -96,11 +105,11 @@ authorized query. Terminal read denial retires private presentation. A quiet
 lease-expiry read can publish a changed hold page with `invalidated:false`,
 without writing an expiry row or claiming a source event.
 
-When core Logging is enabled, accepted resource/grant/availability/appointment/block/hold
+When core Logging is enabled, accepted resource/location/grant/availability/appointment/block/hold
 transitions append semantic evidence in the source transaction and drain through the existing
 supervised logging worker. Rollback or outbox pressure rolls back the source
 operation. No-op and receipt replay do not emit false changes. Evidence contains
-opaque target identity and bounded sequence/revision/resource-count/status facts,
+opaque target identity and bounded sequence/revision/resource-count/location-count/active/status facts,
 not appointment/block titles, hold scheduling/subject data, times, labels, grantee
 values or clinical content. Hold acquired/released/confirmed are distinct facts;
 idle expiry is not an audited transition.

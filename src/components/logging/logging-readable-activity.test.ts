@@ -22,6 +22,9 @@ test('calendar controls have readable semantic labels without claiming delivery 
   expect(loggingActivityCode('calendar.resource.created').label).toBe('Created a calendar');
   expect(loggingActivityCode('calendar.resource.grant-changed').label).toBe('Changed calendar permissions');
   expect(loggingActivityCode('calendar.resource.availability-changed').label).toBe('Changed calendar availability');
+  expect(loggingActivityCode('calendar.resource.locations-changed').label).toBe('Changed calendar locations');
+  expect(loggingActivityCode('calendar.location.created').label).toBe('Created a scheduling location');
+  expect(loggingActivityCode('calendar.location.updated').label).toBe('Updated a scheduling location');
   expect(loggingActivityCode('calendar.block.created').label).toBe('Blocked calendar time');
   expect(loggingActivityCode('calendar.block.rescheduled').label).toBe('Moved blocked time');
   expect(loggingActivityCode('calendar.block.cancelled').label).toBe('Removed blocked time');

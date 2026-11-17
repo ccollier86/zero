@@ -6,7 +6,7 @@ import { CalendarError } from './error';
 import { calendarHash, calendarInteger, calendarKey, calendarRecord, calendarValue } from './validation';
 import { admitCalendarRequest, type CalendarAuthority } from './authority';
 import type { ResolvedCalendarConfig } from './config';
-import { calendarPageQuery, calendarRange, calendarReceipt } from './service-validation';
+import { calendarLocationIds, calendarLocationInput, calendarPageQuery, calendarResourcePageQuery, calendarRange, calendarReceipt } from './service-validation';
 import { watchCalendarPage } from './watch';
 
 export interface CalendarServiceBroker {
@@ -32,11 +32,39 @@ export class CalendarService {
     const createResource = (input: unknown, options: CalendarRequestOptions) => this.write(request, 'resource.create', input, options);
     const createAppointment = (input: unknown, options: CalendarRequestOptions) => this.write(request, 'appointment.create', input, options);
     return Object.freeze({
+      locations: Object.freeze({
+        list: (query = {}, options?: CalendarReadOptions) => this.read(request, 'locations', () => calendarPageQuery(query, this.config), options),
+        get: (id, options) => this.read(request, 'location', () => ({ id: calendarKey(id) }), options),
+        create: (input, options) => this.write(request, 'location.create', input, options),
+        replace: (id, input, options) => this.write(request, 'location.replace', input, options, id),
+        forResource: (id, options) => this.read(request, 'resourceLocations', () => ({ id: calendarKey(id) }), options),
+        watch: (query, listener, options: CalendarWatchOptions = {}) => {
+          const detached = calendarPageQuery(query, this.config); this.ready();
+          return watchCalendarPage({ request, broker: this.broker, config: this.config, closing: this.signal,
+            queryName: 'calendar.locations', query: detached, listener, options, track: task => this.track(task) });
+        },
+        watchLocation: (id, listener, options: CalendarWatchOptions = {}) => {
+          const query = Object.freeze({ id: calendarKey(id) }); this.ready();
+          return watchCalendarPage({ request, broker: this.broker, config: this.config, closing: this.signal,
+            queryName: 'calendar.location', query, listener, options, track: task => this.track(task) });
+        },
+        watchForResource: (id, listener, options: CalendarWatchOptions = {}) => {
+          const query = Object.freeze({ id: calendarKey(id) }); this.ready();
+          return watchCalendarPage({ request, broker: this.broker, config: this.config, closing: this.signal,
+            queryName: 'calendar.resourceLocations', query, listener, options, track: task => this.track(task) });
+        },
+      }),
       resources: Object.freeze({
-        list: (query = {}, options?: CalendarReadOptions) => this.read(request, 'resources', () => calendarPageQuery(query, this.config), options),
+        list: (query = {}, options?: CalendarReadOptions) => this.read(request, 'resources', () => calendarResourcePageQuery(query, this.config), options),
         create: createResource,
         setGrants: (id: string, userId: string, grants: readonly string[], options: CalendarControlOptions) =>
           this.write(request, 'resource.grant', { userId, grants }, options, id),
+        setLocations: (id, locationIds, options) => this.write(request, 'resource.locations', { locationIds }, options, id),
+        watch: (query, listener, options: CalendarWatchOptions = {}) => {
+          const detached = calendarResourcePageQuery(query, this.config); this.ready();
+          return watchCalendarPage({ request, broker: this.broker, config: this.config, closing: this.signal,
+            queryName: 'calendar.resources', query: detached, listener, options, track: task => this.track(task) });
+        },
       }),
       availability: Object.freeze({
         get: (id, options) => this.read(request, 'availability', () => ({ id: calendarKey(id) }), options),
@@ -110,8 +138,20 @@ export class CalendarService {
       const body = prepare(), opts = calendarRecord(options ?? {}, ['signal']);
       const authority = await admitCalendarRequest(request, this.config, this.signal, opts.signal as AbortSignal | undefined);
       authority.guard();
-      const result = await this.broker.read<T>(authority.scope, 'calendar.' + name, { ...body, actor: authority.actor }, authority.guard, authority.signal);
-      await authority.confirm(); authority.guard(); return result;
+      let dirty = false;
+      const remove = this.broker.subscribe?.(authority.scope, () => { dirty = true; });
+      try {
+        // Strong SQL reads linearize at their query. If this owner observes a
+        // newer domain commit during the final async Guardian check, do not
+        // deliver the known-stale private page. Bound retries under a hot writer.
+        for (let attempt = 0; attempt < 4; attempt++) {
+          authority.guard(); dirty = false;
+          const result = await this.broker.read<T>(authority.scope, 'calendar.' + name, { ...body, actor: authority.actor }, authority.guard, authority.signal);
+          await authority.confirm(); authority.guard();
+          if (!dirty) return result;
+        }
+        throw new CalendarError('CALENDAR_NOT_READY');
+      } finally { remove?.(); }
     })());
   }
 
@@ -119,6 +159,8 @@ export class CalendarService {
     return this.track((async () => {
       this.ready();
       const fields = operation === 'resource.create' ? ['label', 'kind', 'ownerId', 'timeZone']
+        : operation === 'location.create' || operation === 'location.replace' ? ['label', 'region', 'active']
+        : operation === 'resource.locations' ? ['locationIds']
         : operation === 'resource.grant' ? ['userId', 'grants']
         : operation === 'resource.availability' ? ['mode', 'windows']
         : operation === 'block.cancel' || operation === 'appointment.cancel' || operation === 'hold.release' ? []
@@ -130,6 +172,8 @@ export class CalendarService {
         : ['resourceIds', 'title', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes'];
       // Detach before the first await; authored mutation cannot alter an admitted command.
       const body = calendarValue(calendarRecord(input, fields)) as Record<string, unknown>;
+      if (operation === 'location.create' || operation === 'location.replace') calendarLocationInput(body, operation === 'location.replace');
+      if (operation === 'resource.locations') body.locationIds = calendarLocationIds(body.locationIds);
       const opts = calendarRecord(options, target === undefined ? ['idempotencyKey', 'signal'] : ['idempotencyKey', 'signal', 'expectedRevision']);
       const key = calendarKey(opts.idempotencyKey), id = target === undefined ? null : calendarKey(target);
       const expectedRevision = id === null ? undefined : calendarInteger(opts.expectedRevision, 1);
@@ -138,6 +182,19 @@ export class CalendarService {
       if (operation === 'hold.acquire' && body.ttlSeconds !== undefined) calendarInteger(body.ttlSeconds, 1, 900);
       const authority = await admitCalendarRequest(request, this.config, this.signal, opts.signal as AbortSignal | undefined);
       authority.guard();
+      if (operation === 'resource.locations' && !authority.actor.manageAll) {
+        // A location ID is metadata, not a visibility grant. Capture a currently
+        // authorized assignment witness; the final writer checks its live rights
+        // and membership again rather than trusting this read across the await.
+        const prior = await this.broker.read<CalendarCommandReceipt | null>(authority.scope, 'calendar.receipt',
+          { actor: authority.actor, requestId: key }, authority.guard, authority.signal);
+        await authority.confirm(); authority.guard();
+        if (prior === null) {
+          body.locationWitnesses = await this.broker.read(authority.scope, 'calendar.locationAssignmentWitnesses',
+            { actor: authority.actor, locationIds: body.locationIds }, authority.guard, authority.signal);
+          await authority.confirm(); authority.guard();
+        }
+      }
       const resolvedId = id ?? calendarHash([authority.actor.scopeId, authority.actor.principal, key]);
       // A hold is not an appointment identity. Only admitted server authority can
       // derive the appointment created by confirmation; authored IDs are rejected.

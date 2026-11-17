@@ -416,6 +416,44 @@ Specify success/replay/unknown and crash recovery before implementing this seam.
 Source-bound Torrent enqueue already exists; replacing Jobs with long timer workflows
 would be a separate architecture decision, not an implicit workaround.
 
+November 17 source review makes the next bridge slice explicit:
+
+- Add a true source-owned Jobs origin/control family with an additive migration.
+  Existing request admission owns schedules as a human actor even when execution
+  is service-owned; assigning invented actor/principal values is not an adapter.
+  Keep the initiating person only as factual provenance for source-owned work.
+- Bind registration to the verified established calendar owner/root/realm/scope,
+  one fixed definition/workflow version, durable policy generation, due/expiry and
+  normalized opaque intent. Version parser/eligibility semantics explicitly:
+  the current definition fingerprint excludes callback bodies and is not proof
+  that executable policy stayed unchanged.
+- Add indexed bounded source dispatch state beside immutable effect references.
+  Claim with a nonce/generation/expiry in a short source transaction; release
+  the lease before Jobs, then acknowledge its exact durable receipt in another
+  short transaction. Crashes on either cross-file boundary reconcile the original
+  logical identity. Retired/cancelled work still needs read-only reconciliation;
+  no new send is authorized merely because an acknowledgment was lost.
+- Compose the new source lifecycle with logging rather than replacing the single
+  logging source hook. Mount ownership dormant, then start reconciliation after
+  Jobs/Torrent readiness; stop source intake before those dependencies close.
+- SYSTEM execution seals validate scope shape, not current tenant/calendar/channel
+  policy. Recheck those domain facts after pool waits and at a source-owned effect
+  admission commit. That commit defines cancellation cutoff; release SQL/Guardian
+  leases before a provider wait. Do not promise recall after dispatch.
+- Qualify one bounded one-off integration before claiming automatic reminders.
+  Current Jobs retained limits are 10,000 schedules/file, 1,000/owner, 100,000
+  receipts and 100,000 occurrences. Two once schedules per appointment exhaust
+  one owner's schedule envelope after 500 appointments before revisions; a
+  once-per-minute recurring dispatcher exhausts 100,000 occurrences in roughly
+  69.4 days. Neither pattern solves lifecycle retention. Surface a durable
+  capacity-blocked state, never silently prune evidence or rotate scopes.
+
+Required bridge tests include both crash boundaries, cancellation during every
+await/pool wait, policy A → B → A retirement, source/tenant disablement, forged
+source/scope/definition rejection, unavailable old pins, capacity exhaustion and
+receipt reconciliation after retirement. This review is planning evidence, not
+an implemented bridge or permission to enable recurrence/reminders.
+
 ### Ownership and fresh eligibility
 
 Recommended organizational reminders are explicitly service-owned, with original
@@ -839,6 +877,37 @@ prepared hold coverage, but are **not executed** under the unchanged filesystem
 integrity hold. Source/memory checks create no physical fixtures, actors, builds,
 dependency trees or release output, and do not authorize retained-domain upgrades,
 application migration, public booking or normal updater selection.
+
+### November 17 versioned location directory and resource facets
+
+The next implemented source stage adds scoped location create/replace/get/list,
+resource assignment replacement and live catalog/detail facades. Catalog writes
+require the scope calendar manager; resource management never grants global
+catalog editing. Non-managers see only locations with a currently accessible
+assigned resource, filtered before pagination. An internal visibility witness is
+resolved by the service and checked again in the source transaction, preventing
+guessed hidden IDs from becoming visible through a new assignment.
+
+Location/region filters constrain the same current assignment and only narrow
+existing resource grants. Empty facets do not add authority, and an empty
+appointment resource selection remains empty. Inactive metadata remains readable;
+deactivation does not cancel bookings. This is not effective-dated geographic
+eligibility or an appointment visit-location model.
+
+Additive `004` retains the preceding three checksums/schema generations and
+original receipt identities. Immutable history preserves labels and assignments;
+a bounded current-members projection avoids querying retained history on every
+live read. Resource revision changes invalidate older captured hold revisions.
+Accepted semantic facts join native source-transaction logging without copying
+labels/regions or manufacturing events for no-ops, replay or quiet reads.
+
+The native server/browser APIs and live hooks include filter/authority retirement,
+strict keyset DTOs, private SSE and original-key reconciliation. Known commit hints
+during a read/final authority await discard the stale page before publication;
+one-shot reads bound rechecks instead of spinning indefinitely under writes.
+The standalone demo is unchanged, and backend support is not a new geographic
+management editor or a qualified released package. Final evidence is recorded in
+the [qualification guide](../backend/calendar/qualification.md).
 
 ## 15. Documentation deliverables and open decisions
 

@@ -64,3 +64,25 @@ export const CALENDAR_HOLD_TABLES: Record<string, TableSchema> = {
   _calendar_hold_effect_intents: { id: 'TEXT PRIMARY KEY', scope_id: 'TEXT NOT NULL', receipt_id: 'TEXT NOT NULL REFERENCES _calendar_hold_receipts(id)',
     operation: 'TEXT NOT NULL', target_kind: "TEXT NOT NULL CHECK(target_kind='hold')", target_id: 'TEXT NOT NULL', revision: 'INTEGER NOT NULL CHECK(revision>0)' },
 };
+
+/** Generation 004 is metadata-only. All earlier declarations remain checksum inputs. */
+export const CALENDAR_LOCATION_TABLES: Record<string, TableSchema> = {
+  ...CALENDAR_HOLD_TABLES,
+  calendar_locations: { id: 'TEXT PRIMARY KEY', scope_id: 'TEXT NOT NULL', revision: 'INTEGER NOT NULL CHECK(revision>0)' },
+  _calendar_location_history: { id: 'TEXT PRIMARY KEY', scope_id: 'TEXT NOT NULL', location_id: 'TEXT NOT NULL',
+    location_revision: 'INTEGER NOT NULL CHECK(location_revision>0)', label: 'TEXT NOT NULL CHECK(length(label) BETWEEN 1 AND 256)',
+    region: 'TEXT CHECK(region IS NULL OR length(region) BETWEEN 1 AND 64)', active: 'INTEGER NOT NULL CHECK(active IN (0,1))' },
+  _calendar_resource_location_history: { id: 'TEXT PRIMARY KEY', scope_id: 'TEXT NOT NULL', resource_id: 'TEXT NOT NULL REFERENCES calendar_resources(id)',
+    resource_revision: 'INTEGER NOT NULL CHECK(resource_revision>0)', location_ids_json: "TEXT NOT NULL CHECK(json_valid(location_ids_json) AND json_type(location_ids_json)='array' AND json_array_length(location_ids_json)<=16)" },
+  _calendar_resource_location_members: { id: 'TEXT PRIMARY KEY', scope_id: 'TEXT NOT NULL', resource_id: 'TEXT NOT NULL REFERENCES calendar_resources(id)',
+    resource_revision: 'INTEGER NOT NULL CHECK(resource_revision>0)', location_id: 'TEXT NOT NULL REFERENCES calendar_locations(id)' },
+  // Small replaceable lookup projection; immutable members/history above retain every past assignment.
+  _calendar_resource_location_current: { id: 'TEXT PRIMARY KEY', scope_id: 'TEXT NOT NULL', resource_id: 'TEXT NOT NULL REFERENCES calendar_resources(id)',
+    resource_revision: 'INTEGER NOT NULL CHECK(resource_revision>0)', location_id: 'TEXT NOT NULL REFERENCES calendar_locations(id)' },
+  _calendar_resource_locations: { id: 'TEXT PRIMARY KEY', scope_id: 'TEXT NOT NULL', resource_id: 'TEXT NOT NULL REFERENCES calendar_resources(id) CHECK(id=resource_id)',
+    resource_revision: 'INTEGER NOT NULL CHECK(resource_revision>0)' },
+  _calendar_location_receipts: { id: 'TEXT PRIMARY KEY', scope_id: 'TEXT NOT NULL', principal: 'TEXT NOT NULL', request_id: 'TEXT NOT NULL', digest: 'TEXT NOT NULL', result_json: 'TEXT NOT NULL',
+    target_kind: "TEXT NOT NULL CHECK(target_kind='location')", target_id: 'TEXT NOT NULL REFERENCES calendar_locations(id)', required_right: "TEXT NOT NULL CHECK(required_right='manage')" },
+  _calendar_location_effect_intents: { id: 'TEXT PRIMARY KEY', scope_id: 'TEXT NOT NULL', receipt_id: 'TEXT NOT NULL REFERENCES _calendar_location_receipts(id)',
+    operation: 'TEXT NOT NULL', target_kind: "TEXT NOT NULL CHECK(target_kind='location')", target_id: 'TEXT NOT NULL', revision: 'INTEGER NOT NULL CHECK(revision>0)' },
+};

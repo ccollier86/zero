@@ -72,6 +72,58 @@ test('calendar A-to-B-to-A grant transitions have unique committed source identi
   } finally { f.close(); }
 });
 
+test('location catalog and resource assignment facts are source-atomic, private and absent on replay or no-op', () => {
+  const f = fixture();
+  try {
+    f.resource();
+    const location = { actor, requestId: 'location', id: 'location', label: 'NEVER_LOG_CALENDAR_LOCATION', region: 'NEVER_LOG_CALENDAR_REGION' };
+    f.command('location.create', location); f.command('location.create', location);
+    const assignment = { actor, id: 'person', requestId: 'assignment', expectedRevision: 1, locationIds: ['location'] };
+    f.command('resource.locations', assignment); f.command('resource.locations', assignment);
+    f.command('resource.locations', { ...assignment, requestId: 'assignment-noop', expectedRevision: 2 });
+    const update = { actor, id: 'location', requestId: 'location-update', expectedRevision: 1,
+      label: 'NEVER_LOG_CALENDAR_RENAMED', region: null, active: false };
+    f.command('location.replace', update); f.command('location.replace', update);
+    f.command('location.replace', { ...update, requestId: 'location-noop', expectedRevision: 2 });
+    const events = f.source!.control({}).rows.map(row => row.event);
+    expect(events.map(event => event.action)).toEqual(['calendar.resource.created', 'calendar.location.created',
+      'calendar.resource.locations-changed', 'calendar.location.updated']);
+    expect(events[1]!.target).toEqual({ type: 'calendar.location', id: 'location' });
+    expect(events[2]!.target).toEqual({ type: 'calendar.resource', id: 'person' });
+    expect(events[2]!.metadata.locationCount).toBe(1); expect(events[3]!.metadata.active).toBe(false);
+    expect(events.every(event => event.actor.id === actor.userId && event.evidence === 'server-confirmed' && event.outcome === 'succeeded')).toBe(true);
+    expect(JSON.stringify(events)).not.toContain('NEVER_LOG_CALENDAR');
+    expect(new Set(events.map(event => event.id)).size).toBe(4);
+  } finally { f.close(); }
+});
+
+test('source audit pressure rolls back location revision history and resource assignment pointers', () => {
+  const f = fixture('enabled', 1);
+  const drain = () => { const page = f.source!.control({}); f.source!.control({ acknowledge: page.rows.map(row => row.id) }); };
+  try {
+    f.resource(); drain();
+    f.command('location.create', { actor, requestId: 'location', id: 'location', label: 'Private location', region: null });
+    expect(() => f.command('resource.locations', { actor, id: 'person', requestId: 'failed-assignment', expectedRevision: 1, locationIds: ['location'] }))
+      .toThrow(expect.objectContaining({ code: 'DATABASE_BACKPRESSURE', outcome: 'not-committed' }));
+    expect(f.db.get('calendar_resources', 'person')!.revision).toBe(1);
+    expect(f.db.get('_calendar_resource_locations', 'person')).toBeNull();
+    expect(f.db.list('_calendar_resource_location_history')).toHaveLength(0);
+    expect(f.db.list('_calendar_resource_location_members')).toHaveLength(0);
+    expect(() => f.command('location.replace', { actor, id: 'location', requestId: 'failed-update', expectedRevision: 1,
+      label: 'Changed', region: 'US-IN', active: true }))
+      .toThrow(expect.objectContaining({ code: 'DATABASE_BACKPRESSURE', outcome: 'not-committed' }));
+    expect(f.db.get('calendar_locations', 'location')!.revision).toBe(1);
+    expect(f.db.list('_calendar_location_history')).toHaveLength(1);
+    expect(f.db.list('_calendar_location_receipts')).toHaveLength(1);
+    expect(f.db.list('_calendar_location_effect_intents')).toHaveLength(1);
+    expect(f.db.get('_calendar_usage', 'receipts')!.count).toBe(2);
+    expect(f.db.get('_calendar_usage', 'resourceLocationHistory')).toBeNull();
+    drain();
+    f.command('resource.locations', { actor, id: 'person', requestId: 'failed-assignment', expectedRevision: 1, locationIds: ['location'] });
+    expect(f.db.get('_calendar_resource_locations', 'person')!.resource_revision).toBe(2);
+  } finally { f.close(); }
+});
+
 test('disabled logging and disabled workflow capture create no semantic calendar evidence', () => {
   for (const mode of ['disabled', 'workflow-disabled'] as const) {
     const f = fixture(mode);

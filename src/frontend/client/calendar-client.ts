@@ -2,6 +2,7 @@
 import type { CalendarAppointmentInput, CalendarAppointmentPage, CalendarAppointmentView, CalendarBusyPage, CalendarCommandReceipt,
   CalendarAvailabilityInput, CalendarAvailabilityView, CalendarAvailabilityWindow, CalendarBlockInput, CalendarBlockPage, CalendarBlockRescheduleInput, CalendarBlockView,
   CalendarHoldInput, CalendarHoldView, CalendarHoldPage, CalendarHoldConfirmationInput,
+  CalendarLocationInput, CalendarLocationReplacement, CalendarLocationView, CalendarLocationPageQuery, CalendarLocationPage, CalendarResourceLocationsView,
   CalendarControlOptions, CalendarGrant, CalendarRangeQuery, CalendarReadOptions, CalendarRequestOptions, CalendarRescheduleInput, CalendarResourceInput,
   CalendarResourcePage, CalendarResourcePageQuery, CalendarResourceView, CalendarWatchOptions, CalendarWatchUpdate, ScopedCalendar } from '../../calendar/contracts';
 import type { FetchInit } from './sdk';
@@ -25,9 +26,9 @@ export function createCalendarClient(fetch: <T = unknown>(path: string, init?: F
       const { code, status } = calendarFailureDetails(cause); throw new CalendarReadError(code, status); }
   }
   async function mutation(path: string, body: unknown, supplied: CalendarRequestOptions,
-    operation: CalendarCommandReceipt['operation'], id?: string, forbiddenId?: string): Promise<CalendarCommandReceipt> {
+    operation: CalendarCommandReceipt['operation'], id?: string, forbiddenId?: string, method = 'POST'): Promise<CalendarCommandReceipt> {
     const key = requestKey(supplied.idempotencyKey); let dispatched = false;
-    try { const receipt = calendarReceipt(await call(path, 'POST', body, supplied.signal, () => { dispatched = true; }));
+    try { const receipt = calendarReceipt(await call(path, method, body, supplied.signal, () => { dispatched = true; }));
       if (receipt.requestId !== key || receipt.operation !== operation || id !== undefined && receipt.id !== id
         || forbiddenId !== undefined && receipt.id === forbiddenId) throw invalid(); return receipt; }
     catch (error) { if (!dispatched) throw error; throw calendarMutationFailure(error, key); }
@@ -48,12 +49,51 @@ export function createCalendarClient(fetch: <T = unknown>(path: string, init?: F
     return watch('/' + kind + '/live?' + params, parse, listener, supplied);
   }
   return Object.freeze({
+    locations: Object.freeze({
+      list(supplied?: CalendarLocationPageQuery, readOptions?: CalendarReadOptions) {
+        const page = pageRequest(supplied);
+        return read('/locations' + page.search, value => locationPage(value, page.query), 'GET', undefined, readSignal(readOptions));
+      },
+      get(id: string, readOptions?: CalendarReadOptions) {
+        const targetId = requestKey(id);
+        return read('/locations/' + encodeURIComponent(targetId), value => {
+          const accepted = locationView(value); if (accepted.id !== targetId) throw invalid(); return accepted;
+        }, 'GET', undefined, readSignal(readOptions));
+      },
+      create(input: CalendarLocationInput, supplied: CalendarRequestOptions) {
+        return mutation('/locations', { location: locationInput(input), options: options(supplied) }, supplied, 'location.created');
+      },
+      replace(id: string, input: CalendarLocationReplacement, supplied: CalendarControlOptions) {
+        return mutation('/locations/' + encodeURIComponent(requestKey(id)),
+          { location: locationInput(input, true), options: options(supplied, true) }, supplied, 'location.updated', id, undefined, 'PUT');
+      },
+      forResource(id: string, readOptions?: CalendarReadOptions) {
+        const resourceId = requestKey(id);
+        return read('/resources/' + encodeURIComponent(resourceId) + '/locations', value => {
+          const accepted = resourceLocationsView(value); if (accepted.resourceId !== resourceId) throw invalid(); return accepted;
+        }, 'GET', undefined, readSignal(readOptions));
+      },
+      watch(query: CalendarLocationPageQuery, listener: (page: CalendarLocationPage, update?: CalendarWatchUpdate) => void, supplied: CalendarWatchOptions = {}) {
+        const page = pageRequest(query);
+        return watch('/locations/live' + page.search, value => locationPage(value, page.query), listener, supplied);
+      },
+      watchLocation(id: string, listener: (location: CalendarLocationView, update?: CalendarWatchUpdate) => void, supplied: CalendarWatchOptions = {}) {
+        const targetId = requestKey(id);
+        return watch('/locations/' + encodeURIComponent(targetId) + '/live', value => {
+          const accepted = locationView(value); if (accepted.id !== targetId) throw invalid(); return accepted;
+        }, listener, supplied);
+      },
+      watchForResource(id: string, listener: (locations: CalendarResourceLocationsView, update?: CalendarWatchUpdate) => void, supplied: CalendarWatchOptions = {}) {
+        const resourceId = requestKey(id);
+        return watch('/resources/' + encodeURIComponent(resourceId) + '/locations/live', value => {
+          const accepted = resourceLocationsView(value); if (accepted.resourceId !== resourceId) throw invalid(); return accepted;
+        }, listener, supplied);
+      },
+    }),
     resources: Object.freeze({
       list(supplied?: CalendarResourcePageQuery, readOptions?: CalendarReadOptions) {
-        const r = record(supplied ?? {}, ['limit', 'after']), params = new URLSearchParams();
-        if (r.limit !== undefined) params.set('limit', String(integer(r.limit, 1, 100)));
-        if (r.after !== undefined) params.set('after', requestKey(r.after));
-        return read('/resources' + (params.size ? '?' + params : ''), resourcePage, 'GET', undefined, readSignal(readOptions));
+        const page = pageRequest(supplied, true);
+        return read('/resources' + page.search, value => resourcePage(value, page.query), 'GET', undefined, readSignal(readOptions));
       },
       create(input: CalendarResourceInput, supplied: CalendarRequestOptions) {
         const r = record(input, ['label', 'kind', 'ownerId', 'timeZone']);
@@ -67,6 +107,14 @@ export function createCalendarClient(fetch: <T = unknown>(path: string, init?: F
         if (accepted.some(grant => grant !== 'busy' && grant !== 'details' && grant !== 'book' && grant !== 'manage')) throw invalid();
         unique(accepted);
         return mutation('/resources/' + encodeURIComponent(id) + '/grants', { userId, grants: accepted, options: options(supplied, true) }, supplied, 'resource.grant-changed', id);
+      },
+      setLocations(id: string, locationIds: readonly string[], supplied: CalendarControlOptions) {
+        return mutation('/resources/' + encodeURIComponent(requestKey(id)) + '/locations',
+          { locationIds: ids(locationIds, true).sort(), options: options(supplied, true) }, supplied, 'resource.locations-changed', id, undefined, 'PUT');
+      },
+      watch(query: CalendarResourcePageQuery, listener: (page: CalendarResourcePage, update?: CalendarWatchUpdate) => void, supplied: CalendarWatchOptions = {}) {
+        const page = pageRequest(query, true);
+        return watch('/resources/live' + page.search, value => resourcePage(value, page.query), listener, supplied);
       },
     }),
     availability: Object.freeze({
@@ -177,6 +225,47 @@ function options(value: unknown, control = false): Record<string, unknown> {
 function readSignal(value: unknown): AbortSignal | undefined {
   const r = record(value ?? {}, ['signal']); if (r.signal !== undefined && !(r.signal instanceof AbortSignal)) throw invalid(); return r.signal as AbortSignal | undefined;
 }
+function region(value: unknown): string {
+  if (typeof value !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/.test(value)) throw invalid(); return value;
+}
+function pageRequest(value: unknown, resource = false): { search: string; query: CalendarLocationPageQuery } {
+  const r = record(value ?? {}, ['limit', 'after', ...(resource ? ['locationIds', 'regions'] : [])]), params = new URLSearchParams();
+  if (r.limit !== undefined) params.set('limit', String(integer(r.limit, 1, 100)));
+  if (r.after !== undefined) params.set('after', requestKey(r.after));
+  if (r.locationIds !== undefined) params.set('locationIds', ids(r.locationIds, true).sort().join(','));
+  if (r.regions !== undefined) {
+    const accepted = values(r.regions, 16).map(region); unique(accepted); params.set('regions', accepted.sort().join(','));
+  }
+  return { search: params.size ? '?' + params : '', query: Object.freeze({ ...(r.limit === undefined ? {} : { limit: r.limit as number }),
+    ...(r.after === undefined ? {} : { after: r.after as string }) }) };
+}
+function locationInput(value: unknown, replacement = false): Record<string, unknown> {
+  const r = record(value, ['label', 'region', 'active']); identifier(r.label, 256);
+  if (replacement && (Object.keys(r).length !== 3 || r.region === undefined || typeof r.active !== 'boolean')) throw invalid();
+  if (r.region !== undefined && r.region !== null) region(r.region);
+  if (r.active !== undefined && typeof r.active !== 'boolean') throw invalid(); return r;
+}
+function locationView(value: unknown): CalendarLocationView {
+  const r = record(value, ['id', 'label', 'region', 'active', 'revision']);
+  if (Object.keys(r).length !== 5 || r.region === undefined || typeof r.active !== 'boolean') throw invalid();
+  requestKey(r.id); identifier(r.label, 256); if (r.region !== null) region(r.region); integer(r.revision, 1);
+  return Object.freeze(r) as unknown as CalendarLocationView;
+}
+function locationPage(value: unknown, query: CalendarLocationPageQuery): CalendarLocationPage {
+  const r = record(value, ['items', 'truncated', 'nextAfter']);
+  if (Object.keys(r).length !== 3 || typeof r.truncated !== 'boolean') throw invalid();
+  if (r.nextAfter !== null) requestKey(r.nextAfter);
+  const items = values(r.items, 100).map(locationView); unique(items.map(item => item.id));
+  pageBoundary(items, r.truncated, r.nextAfter, query);
+  return Object.freeze({ items: Object.freeze(items), truncated: r.truncated, nextAfter: r.nextAfter as string | null });
+}
+function resourceLocationsView(value: unknown): CalendarResourceLocationsView {
+  const r = record(value, ['resourceId', 'resourceRevision', 'locationIds']);
+  if (Object.keys(r).length !== 3) throw invalid(); requestKey(r.resourceId); integer(r.resourceRevision, 1);
+  const locationIds = ids(r.locationIds, true);
+  if (locationIds.some((id, index) => index > 0 && locationIds[index - 1]! >= id)) throw invalid();
+  return Object.freeze({ resourceId: r.resourceId as string, resourceRevision: r.resourceRevision as number, locationIds: Object.freeze(locationIds) });
+}
 function appointmentInput(value: unknown, create: boolean): Record<string, unknown> {
   const r = record(value, ['startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', ...(create ? ['resourceIds', 'title'] : [])]);
   const resourceIds = create ? ids(r.resourceIds) : undefined;
@@ -236,13 +325,21 @@ function range(value: unknown): Record<string, unknown> {
   if (Date.parse(String(r.endAt)) - Date.parse(String(r.startAt)) > 31 * 86400_000) throw invalid();
   if (r.limit !== undefined) integer(r.limit, 1, 100); return { ...r, resourceIds };
 }
-function resourcePage(value: unknown): CalendarResourcePage {
+function resourcePage(value: unknown, query: CalendarLocationPageQuery): CalendarResourcePage {
   const r = record(value, ['items', 'truncated', 'nextAfter']);
   if (typeof r.truncated !== 'boolean') throw invalid();
   if (r.nextAfter !== null) requestKey(r.nextAfter);
   const items = values(r.items, 100).map(resourceView); unique(items.map(item => item.id));
-  if (r.truncated !== (r.nextAfter !== null) || r.nextAfter !== null && items.at(-1)?.id !== r.nextAfter) throw invalid();
+  pageBoundary(items, r.truncated, r.nextAfter, query);
   return Object.freeze({ items: Object.freeze(items), truncated: r.truncated, nextAfter: r.nextAfter as string | null });
+}
+function pageBoundary(items: readonly { readonly id: string }[], truncated: boolean, nextAfter: unknown, query: CalendarLocationPageQuery): void {
+  if (items.length > (query.limit ?? 25) || truncated !== (nextAfter !== null)
+    || nextAfter !== null && items.at(-1)?.id !== nextAfter
+    || truncated && query.limit !== undefined && items.length !== query.limit) throw invalid();
+  for (let index = 0; index < items.length; index++) {
+    if (items[index]!.id <= (index === 0 ? query.after ?? '' : items[index - 1]!.id)) throw invalid();
+  }
 }
 function resourceView(value: unknown): CalendarResourceView {
   const r = record(value, ['id', 'label', 'kind', 'ownerId', 'timeZone', 'revision', 'active']);
@@ -307,7 +404,8 @@ function busyPage(value: unknown): CalendarBusyPage {
 }
 function calendarReceipt(value: unknown): CalendarCommandReceipt {
   const r = record(value, ['requestId', 'operation', 'id', 'revision', 'changed']);
-  if (Object.keys(r).length !== 5 || typeof r.operation !== 'string' || !['resource.created', 'resource.grant-changed', 'resource.availability-changed',
+  if (Object.keys(r).length !== 5 || typeof r.operation !== 'string' || !['resource.created', 'resource.grant-changed', 'resource.availability-changed', 'resource.locations-changed',
+    'location.created', 'location.updated',
     'block.created', 'block.rescheduled', 'block.cancelled', 'hold.acquired', 'hold.released',
     'appointment.created', 'appointment.rescheduled', 'appointment.cancelled'].includes(r.operation) || typeof r.changed !== 'boolean') throw invalid();
   requestKey(r.requestId); requestKey(r.id); integer(r.revision, 1); return Object.freeze(r) as unknown as CalendarCommandReceipt;

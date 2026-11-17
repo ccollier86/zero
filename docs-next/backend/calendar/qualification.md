@@ -42,6 +42,81 @@ part of every overlap lookup. This is not a wall-clock throughput benchmark or
 an assertion that arbitrary future recurrence rules have the same duration bound.
 Changing the admitted interval invariant must update both validation and lookup.
 
+## November 17 location-directory and reactive-resource stage
+
+The source branch adds scope-owned versioned locations, resource assignments,
+authorized location/region facets and native server/HTTP/SDK/live-hook integration.
+Global catalog editing requires the scope manager. Per-resource management does
+not grant global location visibility or editing: private assignment witnesses are
+resolved from an authorized resource and revalidated inside the final writer.
+Guessed hidden locations cannot be disclosed by attaching them to one's calendar.
+Both selected facets must match the same current assigned location; empty facets
+remain narrowing defaults, never grants or implicit resource selection.
+
+The source transaction preserves immutable label/region/assignment generations
+and replaces only the bounded current lookup projection. Deactivation retains
+history and does not cancel bookings; changed assignments advance the resource
+revision and stale older holds. Location metadata is not effective-dated provider
+eligibility, a visit location or geographic authorization.
+
+The review corrected four integration boundaries before this checkpoint:
+
+- Hidden-ID assignment discovery now requires a current, final-transaction
+  visibility witness. Ephemeral witness changes select a native transport attempt
+  without changing canonical scope/principal/request-key identity or intent digest.
+  Reconciliation still checks the normalized original command and current rights.
+- Directory visibility/filtering uses indexed current members, not a retained
+  history prefix. The query-plan fixture retains 1,000 assignment revisions with
+  only three current members and checks ten actual registered-query plans/results.
+- Catalog and location/assignment details use native watches and current-scope
+  hooks. A known domain commit during query/final authority await discards the old
+  result before publication. Direct reads retry at most four times and unsubscribe
+  in `finally`; continuous churn fails closed rather than spinning indefinitely.
+  These are strong-query snapshots plus observed-commit fences, not an atomic
+  transaction spanning Guardian and the separate calendar file.
+- Composed native auth exposed repeated numeric-query transformation failures.
+  Catalog and range-live limits now validate bounded decimal wire strings before
+  explicit numeric conversion. Raw query-key checks reject authored authority
+  fields and duplicates instead of letting query normalization silently strip them.
+  Browser keyset DTOs are bound to the captured cursor/limit and strict ID order.
+
+Additive `004` pins all three earlier migration checksums and the complete `003`
+schema generation. A populated native-memory `003 → 004` Migrator run preserves
+old rows/triggers/ledgers/receipts and leaves locations genuinely empty. Location
+receipts retain true target kinds while joining the existing global command-key
+namespace. Accepted semantic audit facts contain opaque identity and bounded
+revision/count/active fields only, never labels/regions; no-op, replay, rollback
+and quiet reads do not emit false changes.
+
+| Location-stage evidence | Result | Boundary |
+| --- | --- | --- |
+| Integrated calendar domain/runtime/native HTTP/SDK/hooks/presentation/readable-audit set | 379 tests, 7,954 assertions, 46 files; passed on pinned Bun 1.4.4 | Native memory only; physical coordinator seams remain explicitly simulated |
+| Final type-only query-spy fixture correction recheck | 14 tests, 358 assertions; passed | Preserves generic SQLite row/parameter types; no runtime, dependency or packaging change after the integrated run |
+| Calendar source and all regression-fixture no-emit TypeScript | 182 root files, zero diagnostics; passed | Includes the ten prepared file/actor tests and two managed variants, not their execution |
+| Pure migration build-transform checks | 4 tests, 15 assertions; passed | Executable behavior/source-identity transform, not an actual bundle |
+| Documentation structural graph | 899 pages, 899 reachable, zero problems | Canonical guide IDs, links and anchors |
+
+The 1,000-revision query-plan case checks actual bound SQL, current-projection
+indexes, authorized membership before limits and bounded results. It is not a
+disk latency/throughput benchmark. Native-memory paused-read regressions verify
+direct/detail/assignment withdrawal after domain grant loss and bounded direct
+retry under continuous mutation. An independent source review found no remaining
+concrete location-stage defect after the recorded corrections.
+
+The prepared file-backed suite now contains ten tests, including location-first
+provisioning, catalog/assignment persistence and original receipt replay across
+full SYSTEM/actor restart. The existing two managed-compliance variants remain
+prepared. None of these physical definitions, real-browser flows, Linux bundles
+or release archives were executed under the unchanged filesystem-integrity hold.
+Source/memory qualification does not select an updater archive or modify the
+hosted demo, an application or real calendar state.
+
+All owned memory/read/logging/stream handles close in `finally`. No physical
+fixtures, actors, dependency trees, builds or release artifacts were created.
+Storage status/check still return code 3 for the existing integrity hold;
+cleanup/build guards were not bypassed. Source and documentation remain retained
+in the existing feature worktree and branch; no generated run needs later cleanup.
+
 ## November 17 authenticated-hold stage
 
 The next source stage adds authenticated acquire/get/query/watch/release/confirm
@@ -242,14 +317,15 @@ repository's applicable suite, artifact hashing and updater selection. A compile
 executable with the default source actor remains deliberately unavailable.
 
 Recurring working-hours/holiday expansion, offer/slot generation, public booking proofs,
-participants/catalogs/locations, recurrence, clinical transitions,
+participants/appointment-type catalogs, effective-dated location eligibility and
+appointment visit locations, recurrence, clinical transitions,
 source-bound Jobs/Torrent effects, reminders,
 outbound channels, public self-booking and AI remain later stages of the approved
 integration plan. The hosted local-state UI is not evidence that these backend
 features are implemented. Keep the independent core useful without silently
 enabling optional services or treating this checkpoint as full calendar completion.
 
-The additive migrations and scheduling/block/authenticated-hold paths also need physical
+The additive migrations and scheduling/block/authenticated-hold/location paths also need physical
 existing-file upgrade/recovery, actor restart/contention, managed compliance and
 real-browser acceptance alongside the earlier core gates. Passing source/memory
 checks is not evidence those scenarios have run or that a production domain may

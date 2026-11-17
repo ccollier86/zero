@@ -1,5 +1,21 @@
 /** One coalesced authorized page under backpressure. No permanent streams or raw change payloads. */
-import type { CalendarRangeQuery, CalendarReadOptions, CalendarWatchOptions, CalendarWatchUpdate, ScopedCalendar } from './contracts';
+import type { CalendarLocationPageQuery, CalendarRangeQuery, CalendarResourcePageQuery, CalendarReadOptions, CalendarWatchOptions, CalendarWatchUpdate, ScopedCalendar } from './contracts';
+export function calendarResourceStream(calendar: ScopedCalendar, query: CalendarResourcePageQuery, signal: AbortSignal): ReadableStream<Uint8Array> {
+  return calendarSnapshotStream({ read: options => calendar.resources.list(query, options),
+    watch: (listener, options) => calendar.resources.watch(query, listener, options) }, signal);
+}
+export function calendarLocationStream(calendar: ScopedCalendar, query: CalendarLocationPageQuery, signal: AbortSignal): ReadableStream<Uint8Array> {
+  return calendarSnapshotStream({ read: options => calendar.locations.list(query, options),
+    watch: (listener, options) => calendar.locations.watch(query, listener, options) }, signal);
+}
+export function calendarLocationDetailStream(calendar: ScopedCalendar, id: string, signal: AbortSignal): ReadableStream<Uint8Array> {
+  return calendarSnapshotStream({ read: options => calendar.locations.get(id, options),
+    watch: (listener, options) => calendar.locations.watchLocation(id, listener, options) }, signal);
+}
+export function calendarResourceLocationsStream(calendar: ScopedCalendar, id: string, signal: AbortSignal): ReadableStream<Uint8Array> {
+  return calendarSnapshotStream({ read: options => calendar.locations.forResource(id, options),
+    watch: (listener, options) => calendar.locations.watchForResource(id, listener, options) }, signal);
+}
 export function calendarAppointmentStream(calendar: ScopedCalendar, query: CalendarRangeQuery, signal: AbortSignal): ReadableStream<Uint8Array> {
   return calendarSnapshotStream({ read: options => calendar.appointments.query(query, options),
     watch: (listener, options) => calendar.appointments.watch(query, listener, options) }, signal);

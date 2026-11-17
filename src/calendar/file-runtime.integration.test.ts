@@ -23,7 +23,7 @@ import { databaseActorFactoryLaunch, type DatabaseActorExecutorFactoryContext, t
 import { createReactiveDB } from '../sync/reactive-db';
 import { allocateSyntheticFixture } from '../test-support/synthetic-fixture';
 import { resolveCalendarConfig, type ResolvedCalendarConfig } from './config';
-import type { CalendarActor, CalendarAppointmentPage, CalendarAppointmentView, CalendarAvailabilityView, CalendarBlockPage, CalendarBusyPage, CalendarCommandReceipt, CalendarHoldPage, CalendarHoldView, CalendarResourcePage } from './contracts';
+import type { CalendarActor, CalendarAppointmentPage, CalendarAppointmentView, CalendarAvailabilityView, CalendarBlockPage, CalendarBusyPage, CalendarCommandReceipt, CalendarHoldPage, CalendarHoldView, CalendarLocationPage, CalendarLocationView, CalendarResourceLocationsView, CalendarResourcePage } from './contracts';
 import { CalendarError } from './error';
 import { inspectCalendarOwnerSchema } from './owner-schema';
 import { resolveCalendarPersistenceConfig, type ResolvedCalendarPersistenceConfig } from './persistence-config';
@@ -479,6 +479,45 @@ test('native coordinator replaces an exact owned killed writer and recovers the 
     expect(await f.runtime.write<CalendarCommandReceipt>(scope, 'calendar.resource.create', input, input.requestId, guard)).toEqual(accepted);
     expect(f.actors.some(entry => entry.context.role === 'writer'
       && entry.executor.diagnostics().state === 'ready' && entry.executor.diagnostics().generation > generation)).toBe(true);
+  } finally { await f.close(); }
+}, 120_000);
+
+test('native location/assignment history, current facets and original receipts survive full scope-owner restart', async () => {
+  const f = await fixture(), scope = applicationServiceDataScope(), manager = actor(scope);
+  try {
+    expect(await f.runtime.read<CalendarLocationPage>(scope, 'calendar.locations', { actor: manager }, guard))
+      .toEqual({ items: [], truncated: false, nextAfter: null });
+    const location = { actor: manager, id: 'location', requestId: 'location', label: 'PRIVATE_SYNTHETIC_LOCATION', region: 'US-IN' };
+    await expect(f.runtime.write(scope, 'calendar.location.create', { ...location, actor: { ...manager, manageAll: false } }, location.requestId, guard))
+      .rejects.toMatchObject({ code: 'CALENDAR_FORBIDDEN' });
+    expect(f.actors).toHaveLength(0);
+    const created = await f.runtime.write<CalendarCommandReceipt>(scope, 'calendar.location.create', location, location.requestId, guard);
+    const provider = resource(scope); await f.runtime.write(scope, 'calendar.resource.create', provider, provider.requestId, guard);
+    const assign = { actor: manager, id: provider.id, requestId: 'assign-location', expectedRevision: 1, locationIds: [location.id] };
+    const assigned = await f.runtime.write<CalendarCommandReceipt>(scope, 'calendar.resource.locations', assign, assign.requestId, guard);
+    const replace = { actor: manager, id: location.id, requestId: 'replace-location', expectedRevision: 1,
+      label: 'PRIVATE_SYNTHETIC_RENAMED', region: 'US-IN', active: false };
+    const replaced = await f.runtime.write<CalendarCommandReceipt>(scope, 'calendar.location.replace', replace, replace.requestId, guard);
+    await f.restart(false);
+    for (const [name, command, receipt] of [['calendar.location.create', location, created], ['calendar.resource.locations', assign, assigned],
+      ['calendar.location.replace', replace, replaced]] as const) {
+      expect(await f.runtime.read<CalendarCommandReceipt | null>(scope, 'calendar.receipt', { actor: manager, requestId: command.requestId }, guard)).toEqual(receipt);
+      expect(await f.runtime.write<CalendarCommandReceipt>(scope, name, command, command.requestId, guard)).toEqual(receipt);
+    }
+    expect(await f.runtime.read<CalendarLocationView>(scope, 'calendar.location', { actor: manager, id: location.id }, guard))
+      .toMatchObject({ id: location.id, revision: 2, active: false, label: replace.label });
+    expect(await f.runtime.read<CalendarResourceLocationsView>(scope, 'calendar.resourceLocations', { actor: manager, id: provider.id }, guard))
+      .toEqual({ resourceId: provider.id, resourceRevision: 2, locationIds: [location.id] });
+    const page = await f.runtime.read<CalendarResourcePage>(scope, 'calendar.resources', { actor: manager, locationIds: [location.id], regions: ['US-IN'] }, guard);
+    expect(page.items.map(item => item.id)).toEqual([provider.id]);
+    await f.stop();
+    inspect(f.path(scope), database => {
+      expect(database.query('SELECT label FROM _calendar_location_history ORDER BY location_revision').all())
+        .toEqual([{ label: location.label }, { label: replace.label }]);
+      expect(database.query('SELECT resource_revision,location_id FROM _calendar_resource_location_current').all())
+        .toEqual([{ resource_revision: 2, location_id: location.id }]);
+      expect(database.query('PRAGMA foreign_key_check').all()).toEqual([]);
+    });
   } finally { await f.close(); }
 }, 120_000);
 

@@ -1,6 +1,7 @@
 /** Server-facing setup and facade types only. Private Fabric owners, raw actors and commands are not public APIs. */
 export type { CalendarConfig, ResolvedCalendarConfig } from './config';
 export type { CalendarResourceKind, CalendarResourceView, CalendarResourceInput, CalendarGrant,
+  CalendarLocationInput, CalendarLocationReplacement, CalendarLocationView, CalendarLocationPageQuery, CalendarLocationPage, CalendarResourceLocationsView,
   CalendarAppointmentView, CalendarAppointmentInput, CalendarRescheduleInput, CalendarCommandReceipt,
   CalendarAvailabilityWindow, CalendarAvailabilityInput, CalendarAvailabilityView,
   CalendarBlockView, CalendarBlockInput, CalendarBlockRescheduleInput, CalendarBlockPage,

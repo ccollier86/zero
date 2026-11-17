@@ -11,7 +11,7 @@ import type { CalendarActor, CalendarCommandReceipt } from './contracts';
 import { readCalendarRejection } from './error';
 import { calendarRealm } from './realm';
 import { grantId, reservationId } from './realm-model';
-import { CALENDAR_HOLD_TABLES, CALENDAR_SCHEDULING_TABLES, CALENDAR_TABLES } from './realm-schema';
+import { CALENDAR_LOCATION_TABLES, CALENDAR_SCHEDULING_TABLES, CALENDAR_TABLES } from './realm-schema';
 import { normalizeCalendarTimedInterval } from './time';
 import { calendarHash, calendarJson } from './validation';
 
@@ -79,7 +79,7 @@ function fixture() {
     };
     const legacyData = () => Object.fromEntries(Object.keys(CALENDAR_TABLES).map(table => [table, raw.query(`SELECT * FROM ${table} ORDER BY id`).all()]));
     const upgrade = () => {
-      for (const [table, schema] of Object.entries(CALENDAR_HOLD_TABLES)) if (!(table in CALENDAR_TABLES)) db.defineTable(table, schema);
+      for (const [table, schema] of Object.entries(CALENDAR_LOCATION_TABLES)) if (!(table in CALENDAR_TABLES)) db.defineTable(table, schema);
       const current = new Migrator({ database: raw, dbPath: ':memory:', migrations: calendarRealm.migrations, createBackups: false, log() {} });
       try {
         const applied = current.run();
@@ -107,7 +107,7 @@ test('real migrator upgrades populated 001 without rewriting legacy rows, trigge
     const data = f.legacyData(), seq = f.db.currentSeq;
     const triggers = f.raw.query<{ name: string; sql: string }, []>("SELECT name,sql FROM sqlite_master WHERE type='trigger' ORDER BY name").all();
     const ledger = f.raw.query("SELECT * FROM _migrations WHERE version='001'").get();
-    expect(f.upgrade()).toEqual(['002', '003']);
+    expect(f.upgrade()).toEqual(['002', '003', '004']);
     expect(f.legacyData()).toEqual(data); expect(f.db.currentSeq).toBe(seq);
     expect(f.raw.query("SELECT * FROM _migrations WHERE version='001'").get()).toEqual(ledger);
     for (const trigger of triggers) expect(f.raw.query('SELECT name,sql FROM sqlite_master WHERE name=? AND type=\'trigger\'').get(trigger.name)).toEqual(trigger);

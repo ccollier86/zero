@@ -9,6 +9,7 @@ import { calendarHash, calendarInteger, calendarKey, calendarRecord } from './va
 import { readCalendarBlockTarget } from './blocks-model';
 import { readCalendarHoldTarget } from './holds-model';
 import { calendarNow } from './hold-time';
+import { calendarLocationSelection, calendarRegionSelection, readCalendarLocationTarget, requireCalendarLocationManager } from './locations-model';
 
 function owner(context: DatabaseReadQueryContext, scopeId: string): void {
   const row = context.database.query<{ scope_id: string }>("SELECT scope_id FROM _calendar_owner WHERE id='application'").get();
@@ -39,10 +40,16 @@ function rightSql(actor: CalendarActor, alias: string, right: 'any' | 'details')
   return { sql: `(${alias}.owner_id IS ? OR EXISTS(SELECT 1 FROM _calendar_grants g WHERE g.scope_id=${alias}.scope_id AND g.resource_id=${alias}.id AND g.user_id=? AND (${grants})))`, params: [actor.userId, actor.userId] };
 }
 export function listCalendarResources(context: DatabaseReadQueryContext, input: unknown) {
-  const r = calendarRecord(input, ['actor', 'limit', 'after']), actor = calendarActor(r.actor), limit = calendarInteger(r.limit ?? 25, 1, CALENDAR_LIMITS.page);
+  const r = calendarRecord(input, ['actor', 'limit', 'after', 'locationIds', 'regions']), actor = calendarActor(r.actor), limit = calendarInteger(r.limit ?? 25, 1, CALENDAR_LIMITS.page);
   const after = r.after === undefined ? '' : calendarKey(r.after); owner(context, actor.scopeId);
+  const locationIds = calendarLocationSelection(r.locationIds ?? []), regions = calendarRegionSelection(r.regions ?? []);
   const right = rightSql(actor, 'r', 'any');
-  const rows = context.database.query<CalendarResourceRow>(`SELECT r.* FROM calendar_resources r WHERE r.scope_id=? AND r.id>? AND ${right.sql} ORDER BY r.id LIMIT ?`).all(actor.scopeId, after, ...right.params, limit + 1);
+  const membership = (predicate: string) => `EXISTS(SELECT 1 FROM _calendar_resource_locations p JOIN _calendar_resource_location_current m ON m.scope_id=p.scope_id AND m.resource_id=p.resource_id AND m.resource_revision=p.resource_revision
+    JOIN calendar_locations l ON l.scope_id=m.scope_id AND l.id=m.location_id JOIN _calendar_location_history h ON h.scope_id=l.scope_id AND h.location_id=l.id AND h.location_revision=l.revision
+    WHERE p.scope_id=r.scope_id AND p.resource_id=r.id AND ${predicate})`;
+  const predicates = [...(locationIds.length ? [`m.location_id IN (${locationIds.map(() => '?').join(',')})`] : []),
+    ...(regions.length ? [`h.region IN (${regions.map(() => '?').join(',')})`] : [])];
+  const rows = context.database.query<CalendarResourceRow>(`SELECT r.* FROM calendar_resources r WHERE r.scope_id=? AND r.id>? AND ${right.sql}${predicates.length ? ' AND ' + membership(predicates.join(' AND ')) : ''} ORDER BY r.id LIMIT ?`).all(actor.scopeId, after, ...right.params, ...locationIds, ...regions, limit + 1);
   return { items: rows.slice(0, limit).map(resourceView), truncated: rows.length > limit, nextAfter: rows.length > limit ? rows[limit - 1]!.id : null };
 }
 function range(context: DatabaseReadQueryContext, input: unknown, right: 'busy' | 'details') {
@@ -96,13 +103,15 @@ export function readCalendarReceipt(context: DatabaseReadQueryContext, input: un
   const id = calendarHash([actor.scopeId, actor.principal, requestId]);
   const rows = context.database.query<CalendarReceiptRow>(`SELECT * FROM _calendar_receipts WHERE id=? AND scope_id=? AND principal=?
     UNION ALL SELECT * FROM _calendar_block_receipts WHERE id=? AND scope_id=? AND principal=?
-    UNION ALL SELECT * FROM _calendar_hold_receipts WHERE id=? AND scope_id=? AND principal=?`).all(id, actor.scopeId, actor.principal, id, actor.scopeId, actor.principal, id, actor.scopeId, actor.principal);
+    UNION ALL SELECT * FROM _calendar_hold_receipts WHERE id=? AND scope_id=? AND principal=?
+    UNION ALL SELECT * FROM _calendar_location_receipts WHERE id=? AND scope_id=? AND principal=?`).all(id, actor.scopeId, actor.principal, id, actor.scopeId, actor.principal, id, actor.scopeId, actor.principal, id, actor.scopeId, actor.principal);
   if (rows.length > 1) throw new CalendarError('CALENDAR_STATE_INVALID');
   const row = rows[0];
   if (!row) return null;
   if (row.target_kind === 'resource') resource(context, actor, row.target_id, row.required_right);
   else if (row.target_kind === 'block') readCalendarBlockTarget(context, actor, row.target_id, row.required_right);
   else if (row.target_kind === 'hold') readCalendarHoldTarget(context, actor, row.target_id, row.required_right);
+  else if (row.target_kind === 'location') { requireCalendarLocationManager(actor); readCalendarLocationTarget(context, actor, row.target_id); }
   else appointment(context, actor, row.target_id, row.required_right);
   const result = parseCalendarReceipt(row);
   if (row.target_kind === 'appointment' && result.operation === 'appointment.created') {

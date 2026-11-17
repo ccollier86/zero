@@ -7,11 +7,13 @@ import { CalendarError } from './error';
 import { calendarHash, calendarInteger, calendarJson, calendarKey, calendarRecord, calendarScope, calendarText, calendarValue } from './validation';
 import { calendarBlock } from './blocks-model';
 import { calendarHold } from './holds-model';
+import { calendarLocation, requireCalendarLocationManager } from './locations-model';
 
-export const CALENDAR_LIMITS = Object.freeze({ resources: 10_000, appointments: 100_000, blocks: 100_000, holds: 100_000, receipts: 200_000, selection: 16, page: 100, rangeMs: 31 * 86_400_000 });
+export const CALENDAR_LIMITS = Object.freeze({ resources: 10_000, appointments: 100_000, blocks: 100_000, holds: 100_000, locations: 10_000,
+  locationHistory: 100_000, resourceLocationHistory: 100_000, receipts: 200_000, selection: 16, page: 100, rangeMs: 31 * 86_400_000 });
 export interface CalendarResourceRow extends Row { id: string; scope_id: string; label: string; kind: CalendarResourceView['kind']; owner_id: string | null; time_zone: string; revision: number; active: number }
 export interface CalendarAppointmentRow extends Row { id: string; scope_id: string; title: string; start_at: string; end_at: string; start_ms: number; end_ms: number; time_zone: string; buffer_before: number; buffer_after: number; occupied_start_ms: number; occupied_end_ms: number; status: CalendarAppointmentView['status']; revision: number; created_by: string }
-export interface CalendarReceiptRow extends Row { id: string; scope_id: string; principal: string; request_id: string; digest: string; result_json: string; target_kind: 'resource' | 'appointment' | 'block' | 'hold'; target_id: string; required_right: 'book' | 'manage' }
+export interface CalendarReceiptRow extends Row { id: string; scope_id: string; principal: string; request_id: string; digest: string; result_json: string; target_kind: 'resource' | 'appointment' | 'block' | 'hold' | 'location'; target_id: string; required_right: 'book' | 'manage' }
 export const eq = (field: string, value: string | number): DatabaseFindFilter => ({ type: 'field', field, operator: 'eq', value });
 export function calendarActor(input: unknown): CalendarActor {
   const r = calendarRecord(input, ['scopeId', 'userId', 'principal', 'manageAll', 'createOwn']);
@@ -69,7 +71,7 @@ export function calendarRevision(row: { revision: number }, input: unknown): voi
   if (row.revision !== calendarInteger(input, 1)) throw new CalendarError('CALENDAR_REVISION_CONFLICT');
 }
 export function nextCalendarRevision(revision: number): number { return calendarInteger(revision, 1, Number.MAX_SAFE_INTEGER - 1) + 1; }
-export function calendarBudget(context: DatabaseWriteCommandContext, key: 'resources' | 'appointments' | 'blocks' | 'holds' | 'receipts'): void {
+export function calendarBudget(context: DatabaseWriteCommandContext, key: 'resources' | 'appointments' | 'blocks' | 'holds' | 'locations' | 'locationHistory' | 'resourceLocationHistory' | 'receipts'): void {
   const prior = context.db.get('_calendar_usage', key), count = prior ? calendarInteger(prior.count) : 0;
   if (count >= CALENDAR_LIMITS[key]) throw new CalendarError('CALENDAR_CAPACITY');
   if (prior) context.db.update('_calendar_usage', key, { count: count + 1 });
@@ -79,6 +81,7 @@ export function authorizeCalendarReceipt(context: DatabaseWriteCommandContext, a
   if (prior.target_kind === 'resource') requireCalendarRight(context, actor, calendarResource(context, actor, prior.target_id), prior.required_right);
   else if (prior.target_kind === 'block') calendarBlock(context, actor, prior.target_id, prior.required_right);
   else if (prior.target_kind === 'hold') calendarHold(context, actor, prior.target_id, prior.required_right);
+  else if (prior.target_kind === 'location') { requireCalendarLocationManager(actor); calendarLocation(context, actor, prior.target_id); }
   else {
     calendarAppointment(context, actor, prior.target_id, prior.required_right);
     if (parseCalendarReceipt(prior).operation === 'appointment.created') {
@@ -94,12 +97,13 @@ export function authorizeCalendarReceipt(context: DatabaseWriteCommandContext, a
 export function parseCalendarReceipt(row: CalendarReceiptRow): CalendarCommandReceipt {
   try {
     const r = calendarRecord(JSON.parse(row.result_json), ['requestId', 'operation', 'id', 'revision', 'changed']);
-    const operations = { resource: ['resource.created', 'resource.grant-changed', 'resource.availability-changed'],
+    const operations = { resource: ['resource.created', 'resource.grant-changed', 'resource.availability-changed', 'resource.locations-changed'],
       appointment: ['appointment.created', 'appointment.rescheduled', 'appointment.cancelled'], block: ['block.created', 'block.rescheduled', 'block.cancelled'],
-      hold: ['hold.acquired', 'hold.released'] };
+      hold: ['hold.acquired', 'hold.released'], location: ['location.created', 'location.updated'] };
     if (r.requestId !== row.request_id || r.id !== row.target_id || typeof r.changed !== 'boolean'
       || !operations[row.target_kind]?.includes(r.operation as string)
       || row.target_kind === 'block' && row.required_right !== 'manage'
+      || row.target_kind === 'location' && row.required_right !== 'manage'
       || !['book', 'manage'].includes(row.required_right)) throw new CalendarError('CALENDAR_STATE_INVALID');
     return { requestId: calendarKey(r.requestId), operation: r.operation as CalendarCommandReceipt['operation'], id: calendarKey(r.id), revision: calendarInteger(r.revision, 1), changed: r.changed };
   } catch { throw new CalendarError('CALENDAR_STATE_INVALID'); }
@@ -111,8 +115,9 @@ export function calendarIntent(context: DatabaseWriteCommandContext, actor: Cale
   const legacy = context.db.get('_calendar_receipts', id) as CalendarReceiptRow | null;
   const block = context.db.get('_calendar_block_receipts', id) as CalendarReceiptRow | null;
   const hold = context.db.get('_calendar_hold_receipts', id) as CalendarReceiptRow | null;
-  if ([legacy, block, hold].filter(Boolean).length > 1) throw new CalendarError('CALENDAR_STATE_INVALID');
-  const prior = legacy ?? block ?? hold;
+  const location = context.db.get('_calendar_location_receipts', id) as CalendarReceiptRow | null;
+  if ([legacy, block, hold, location].filter(Boolean).length > 1) throw new CalendarError('CALENDAR_STATE_INVALID');
+  const prior = legacy ?? block ?? hold ?? location;
   if (prior) {
     if (prior.scope_id !== actor.scopeId || prior.principal !== actor.principal || prior.digest !== digest) throw new CalendarError('CALENDAR_INTENT_CONFLICT');
     authorizeCalendarReceipt(context, actor, prior);
@@ -120,9 +125,9 @@ export function calendarIntent(context: DatabaseWriteCommandContext, actor: Cale
   }
   calendarBudget(context, 'receipts');
   const result = run(requestId);
-  context.db.createStrict(targetKind === 'hold' ? '_calendar_hold_receipts' : targetKind === 'block' ? '_calendar_block_receipts' : '_calendar_receipts', { id, scope_id: actor.scopeId, principal: actor.principal, request_id: requestId, digest,
+  context.db.createStrict(targetKind === 'location' ? '_calendar_location_receipts' : targetKind === 'hold' ? '_calendar_hold_receipts' : targetKind === 'block' ? '_calendar_block_receipts' : '_calendar_receipts', { id, scope_id: actor.scopeId, principal: actor.principal, request_id: requestId, digest,
     result_json: calendarJson(result), target_kind: targetKind, target_id: result.id, required_right: requiredRight });
-  if (result.changed) context.db.createStrict(targetKind === 'hold' ? '_calendar_hold_effect_intents' : targetKind === 'block' ? '_calendar_block_effect_intents' : '_calendar_effect_intents', { id, scope_id: actor.scopeId, receipt_id: id,
+  if (result.changed) context.db.createStrict(targetKind === 'location' ? '_calendar_location_effect_intents' : targetKind === 'hold' ? '_calendar_hold_effect_intents' : targetKind === 'block' ? '_calendar_block_effect_intents' : '_calendar_effect_intents', { id, scope_id: actor.scopeId, receipt_id: id,
     operation: result.operation, target_kind: targetKind, target_id: result.id, revision: result.revision });
   return result;
 }

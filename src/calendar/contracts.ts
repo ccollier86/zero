@@ -8,6 +8,33 @@ export interface CalendarActor {
   readonly createOwn: boolean;
 }
 export type CalendarResourceKind = 'person' | 'room' | 'equipment';
+/** Scope-local catalog metadata. Neither locations nor geography filters grant resource access. */
+export interface CalendarLocationInput {
+  readonly label: string;
+  readonly region?: string | null;
+  readonly active?: boolean;
+}
+/** Replacement is explicit: omitted fields never silently restore a deactivated location. */
+export interface CalendarLocationReplacement {
+  readonly label: string;
+  readonly region: string | null;
+  readonly active: boolean;
+}
+export interface CalendarLocationView extends CalendarLocationReplacement {
+  readonly id: string;
+  readonly revision: number;
+}
+export interface CalendarLocationPageQuery { readonly limit?: number; readonly after?: string }
+export interface CalendarLocationPage {
+  readonly items: readonly CalendarLocationView[];
+  readonly truncated: boolean;
+  readonly nextAfter: string | null;
+}
+export interface CalendarResourceLocationsView {
+  readonly resourceId: string;
+  readonly resourceRevision: number;
+  readonly locationIds: readonly string[];
+}
 export interface CalendarResourceView {
   readonly id: string;
   readonly label: string;
@@ -91,7 +118,8 @@ export interface CalendarAppointmentView {
 /** Safe operation outcome only. Reconciliation must not replay an old private appointment snapshot. */
 export interface CalendarCommandReceipt {
   readonly requestId: string;
-  readonly operation: 'resource.created' | 'resource.grant-changed' | 'resource.availability-changed'
+  readonly operation: 'resource.created' | 'resource.grant-changed' | 'resource.availability-changed' | 'resource.locations-changed'
+    | 'location.created' | 'location.updated'
     | 'appointment.created' | 'appointment.rescheduled' | 'appointment.cancelled'
     | 'block.created' | 'block.rescheduled' | 'block.cancelled' | 'hold.acquired' | 'hold.released';
   readonly id: string;
@@ -136,9 +164,10 @@ export interface CalendarControlOptions extends CalendarRequestOptions {
   readonly expectedRevision: number;
 }
 export interface CalendarReadOptions { readonly signal?: AbortSignal }
-export interface CalendarResourcePageQuery {
-  readonly limit?: number;
-  readonly after?: string;
+export interface CalendarResourcePageQuery extends CalendarLocationPageQuery {
+  /** Empty or omitted facets are unrestricted within the currently authorized resource set. */
+  readonly locationIds?: readonly string[];
+  readonly regions?: readonly string[];
 }
 export interface CalendarResourcePage {
   readonly items: readonly CalendarResourceView[];
@@ -164,6 +193,19 @@ export interface CalendarWatchOptions extends CalendarReadOptions {
   readonly onError?: (error: unknown) => void;
 }
 export interface ScopedCalendar {
+  readonly locations: {
+    list(query?: CalendarLocationPageQuery, options?: CalendarReadOptions): Promise<CalendarLocationPage>;
+    get(id: string, options?: CalendarReadOptions): Promise<CalendarLocationView>;
+    create(input: CalendarLocationInput, options: CalendarRequestOptions): Promise<CalendarCommandReceipt>;
+    replace(id: string, input: CalendarLocationReplacement, options: CalendarControlOptions): Promise<CalendarCommandReceipt>;
+    forResource(resourceId: string, options?: CalendarReadOptions): Promise<CalendarResourceLocationsView>;
+    watch(query: CalendarLocationPageQuery, listener: (page: CalendarLocationPage, update?: CalendarWatchUpdate) => void,
+      options?: CalendarWatchOptions): () => void;
+    watchLocation(id: string, listener: (location: CalendarLocationView, update?: CalendarWatchUpdate) => void,
+      options?: CalendarWatchOptions): () => void;
+    watchForResource(resourceId: string, listener: (locations: CalendarResourceLocationsView, update?: CalendarWatchUpdate) => void,
+      options?: CalendarWatchOptions): () => void;
+  };
   readonly holds: {
     acquire(input: CalendarHoldInput, options: CalendarRequestOptions): Promise<CalendarCommandReceipt>;
     get(id: string, options?: CalendarReadOptions): Promise<CalendarHoldView>;
@@ -178,6 +220,9 @@ export interface ScopedCalendar {
     list(query?: CalendarResourcePageQuery, options?: CalendarReadOptions): Promise<CalendarResourcePage>;
     create(input: CalendarResourceInput, options: CalendarRequestOptions): Promise<CalendarCommandReceipt>;
     setGrants(id: string, userId: string, grants: readonly CalendarGrant[], options: CalendarControlOptions): Promise<CalendarCommandReceipt>;
+    setLocations(id: string, locationIds: readonly string[], options: CalendarControlOptions): Promise<CalendarCommandReceipt>;
+    watch(query: CalendarResourcePageQuery, listener: (page: CalendarResourcePage, update?: CalendarWatchUpdate) => void,
+      options?: CalendarWatchOptions): () => void;
   };
   readonly availability: {
     get(resourceId: string, options?: CalendarReadOptions): Promise<CalendarAvailabilityView>;

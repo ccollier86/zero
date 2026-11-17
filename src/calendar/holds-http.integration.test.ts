@@ -128,3 +128,25 @@ async function streamText(reader: ReadableStreamDefaultReader<Uint8Array>): Prom
     return new TextDecoder().decode(chunk.value);
   } finally { clearTimeout(timer); }
 }
+
+test('range live transports admit explicit page limits through composed native auth and reject authored or repeated query keys', async () => {
+  await withHttp(async ({ request, register, fixture }) => {
+    const owner = await register('bounded-range'), token = owner.accessToken;
+    const response = await request('POST', '/api/calendar/resources', { resource: { label: 'Bounded live calendar', kind: 'person', timeZone: 'UTC' },
+      options: { idempotencyKey: 'resource' } }, token);
+    expect(response.status).toBe(200); const resource = await response.json() as { id: string };
+    const parameters = new URLSearchParams({ resourceIds: resource.id, startAt: '2030-01-01T00:00:00.000Z', endAt: '2030-01-02T00:00:00.000Z', limit: '1' });
+    for (const kind of ['appointments', 'blocks', 'holds'] as const) {
+      const path = '/api/calendar/' + kind + '/live?' + parameters;
+      for (const invalid of [path + '&tenantId=forged', path + '&limit=2']) {
+        const denied = await request('GET', invalid, undefined, token);
+        expect(denied.status).toBe(400); expect(denied.headers.get('Content-Type')).not.toContain('text/event-stream');
+      }
+      const live = await request('GET', path, undefined, token); expect(live.status).toBe(200);
+      const reader = live.body!.getReader();
+      try { expect(await streamText(reader)).toContain('"items":[]'); }
+      finally { await reader.cancel(); reader.releaseLock(); }
+    }
+    await eventuallyCalendar(() => fixture.stats().subscriptions === 0);
+  });
+});

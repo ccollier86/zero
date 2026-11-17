@@ -23,10 +23,11 @@ booking API from these component exports. The foundation's
 [release closure](../../_work/durable-jobs-and-workers-plan.md#release-closure--november-16)
 records exact artifact identity and qualification boundaries.
 
-The shared scheduling/worker framework release gate is satisfied. Calendar
-backend work still requires plan review with the user before implementation.
+The shared scheduling/worker framework release gate is satisfied. The user has
+approved the calendar backend plan and implementation is now in progress on the
+feature branch; it has not been released with the experimental frontend archive.
 The [return handoff](../../_work/calendar-return-handoff.md) preserves the reviewed
-UI and explicit backend prerequisites; start the next design discussion there.
+UI and explicit backend prerequisites.
 The [managed integration plan](../../_work/calendar-integration-plan.md) now
 expands those requirements into proposed configuration, domain/service, async UI
 and qualification contracts. It does not add backend APIs to the released UI.
@@ -51,6 +52,14 @@ The new feature barrel exports browser-safe hooks/contracts/errors only; private
 actors and Fabric ownership remain in the server implementation. The focused
 calendar UI entry still owns `ConnectedCalendarWorkspace` and calendar CSS. The
 optional site-wide theme candidate is not applied automatically.
+
+Unreleased directory integration adds live `useCalendarResources` with location/region
+facets, `useCalendarLocations`, `useCalendarLocation` and
+`useCalendarResourceLocations`. The same current-scope watch/retirement machinery
+backs catalogs and details; unchanged Guardian identity does not bypass domain
+grant revocation. Filter replacement withdraws the old page before effect cleanup.
+This does not yet wire the rich demo's geographic controls or expose a catalog
+management editor. See [directory semantics](../../backend/calendar/facade.md#locations-regions-and-authorized-resource-filters).
 
 Sources and the full composition guide are in
 [`src/components/calendar/README.md`](../../../src/components/calendar/README.md).

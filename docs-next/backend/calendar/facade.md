@@ -49,9 +49,19 @@ identity are rejected, not normalized away.
 
 | Facade | Result / requirement |
 | --- | --- |
-| `resources.list({limit?, after?}, {signal?}?)` | Authorized resource page; follow `nextAfter` while truncated |
+| `resources.list({limit?, after?, locationIds?, regions?}, {signal?}?)` | Authorized resource page narrowed by current location facets; follow `nextAfter` while truncated |
+| `resources.watch(query, listener, options?)` | Authorized live resource pages, including current assignments and grant changes |
 | `resources.create(input, {idempotencyKey, signal?})` | Safe accepted receipt; own-person or delegated manager |
 | `resources.setGrants(id, userId, grants, control)` | Full explicit grant set, `[]` revokes; current manage right |
+| `resources.setLocations(id, locationIds, control)` | Replace location set; current resource manage and expected resource revision |
+| `locations.list({limit?, after?}?, options?)` | Authorized current location catalog; no hidden assignments or counts |
+| `locations.get(id, options?)` | Current authorized location revision, including retained inactive metadata |
+| `locations.create({label, region?, active?}, options)` | Scope calendar manager only; omitted region is null, active defaults true |
+| `locations.replace(id, {label, region, active}, control)` | Explicit full replacement; scope manager and exact location revision |
+| `locations.forResource(resourceId, options?)` | `{resourceId, resourceRevision, locationIds}` under current resource visibility |
+| `locations.watch(query, listener, options?)` | Authorized live location catalog pages |
+| `locations.watchLocation(id, listener, options?)` | Live detail; losing the last visible assignment retires the detail |
+| `locations.watchForResource(resourceId, listener, options?)` | Live assignments; losing resource access retires the detail |
 | `availability.get(resourceId, {signal?}?)` | Current explicit policy and resource revision; book or details right |
 | `availability.replace(resourceId, policy, control)` | Replace bounded windows/unrestricted policy; current manage right |
 | `availability.watch(resourceId, listener, {signal?, onError?}?)` | Current authorized policy snapshots; returns unsubscribe |
@@ -100,6 +110,61 @@ reinterpret the instants. Buffers are 0–1,440 minutes each; appointment durati
 is positive and at most 31 days. Exact adjacency is allowed; buffered overlap is
 rejected transactionally. No host-timezone, DST-fold, duration, working-hours or
 quarter-hour assumption is silently applied by the backend.
+
+## Locations, regions and authorized resource filters
+
+Locations are scope-owned directory metadata with stable IDs and immutable revision
+history. A region is an optional, case-sensitive opaque token, such as `US-IN` or
+`north`; it is not a geographic lookup, IANA timezone or authorization claim.
+Tokens match `[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}`. The backend never infers eligibility
+from an address, a self-edited profile or a location label.
+
+Only the admitted scope calendar manager (`manageAll`) creates or replaces global
+locations. Owning/managing one provider calendar is not global catalog authority.
+Managers can see unassigned/inactive locations for setup. Other users see only
+locations currently assigned to at least one resource they can already access.
+Visibility is applied before pagination and truncation. A denied or missing ID
+returns the same not-found result. Responses expose no hidden provider membership
+lists or global counts.
+
+`resources.setLocations` takes at most 16 distinct location IDs. They are normalized
+to a sorted set; `[]` deliberately clears assignments. The writer requires current
+manage on the resource and its exact revision. A non-global manager may introduce
+only currently visible locations: the service resolves a private assignment witness,
+and the writer rechecks that witness's current resource permission and membership
+inside the source transaction. That proof is internal, never client-authored and
+never a substitute for the stable command identity. Hidden IDs cannot be exposed
+by attaching them to a resource you own. Newly assigned locations must be active;
+an already assigned inactive location can be retained or removed. Assignment changes
+increment the resource revision, so older holds fail their captured-resource fence.
+
+Both `locationIds` and `regions` filters accept at most 16 distinct entries. An empty
+or omitted facet means no narrowing within the authorized resource set, not
+permission to discover another resource. Values are ORed within a facet; when both
+facets are set, one current assigned location must satisfy both. Selecting an Indiana
+region and a Georgia-only location does not match merely because a provider works
+at separate locations in both states. An appointment range's empty `resourceIds`
+continues to mean no resources; geography filtering never broadens that selection.
+
+Inactive locations/assignments remain readable and filterable history metadata.
+Deactivation is not a booking prohibition and does not erase, move or cancel any
+appointment. These APIs do not yet model effective-dated location eligibility or
+bind an appointment to a visit location; those remain explicit later policy work.
+
+Location and assignment histories each have a 100,000-revision lifetime ceiling;
+locations have a 10,000-row ceiling. These are retained budgets, not concurrent
+quotas. No-op replacements do not allocate history or false audit events. Migration
+`004` preserves preceding schema declarations/checksums and the global
+scope/principal/request-key receipt namespace. Current membership projections serve
+directory queries; retained assignment history is not scanned for every live page.
+
+Browser hooks `useCalendarResources` and `useCalendarLocations` are live pages;
+`useCalendarLocation` and `useCalendarResourceLocations` are live details. They mask
+old data during filter, client or scope replacement, clear denied presentation and
+retire late callbacks. `refresh()` retries the authorized read, not a mutation.
+The connected workspace's resource directory now uses that live path. The rich
+demo's geographic filters and the new catalog management editor are not silently
+connected by adding these backend APIs.
 
 ## Explicit availability and one-off blocks
 
@@ -238,11 +303,13 @@ invalidation retire old callbacks and snapshots. A reconnect is marked separatel
 from actual commit invalidation. SSE is authenticated fetch under `/api/calendar`,
 not a second unauthenticated Sync database or a browser-selected Fabric scope.
 
-Appointments, blocks, holds and explicit availability all expose `watch`. Each watch
+Appointments, blocks, holds, availability and resource/location directories/details
+expose live watches. Each watch
 subscribes to payload-free source-commit hints, then performs a current-authority
 read. The browser uses private SSE at `/api/calendar/appointments/live`,
 `/api/calendar/blocks/live`, `/api/calendar/holds/live` or
-`/api/calendar/availability/:id/live`; applications
+`/api/calendar/availability/:id/live`, plus the corresponding resource/location
+catalog/detail live routes; applications
 should use the facade rather than constructing these transports. Slow readers
 retain a dirty hint, not another private snapshot, and reauthorize before a later
 publication. Quiet revalidation does not emit an unchanged snapshot or an audit
@@ -297,8 +364,9 @@ scoped facade in an app-owned setup surface until native management ships.
 
 Catalog Previous/Next controls use native resource continuation, retain only the
 current authorized page and explicitly clear selection on a page change. The
-catalog is a paged read, not an independent live identity-directory subscription;
-unselected labels refresh through reload, page change or scope replacement.
+current resource catalog page is live: grant and assignment changes trigger a
+fresh authorized projection, and denial withdraws it. This is not a separate
+Guardian identity-directory subscription or a global list of users.
 Existing-appointment editors reauthorize details on source invalidation,
 reconnect and changed result membership. Access denial retires the form; a changed
 base revision blocks a stale write without silently rebasing the user's draft.

@@ -68,7 +68,8 @@ Each application/tenant scope's resource, reservation, revision and receipt data
 lives in its own file-backed Fabric domain. An opaque owner identity and root/
 realm fingerprints prevent reinterpreting unrelated or missing retained files as
 a fresh calendar. Established files are opened existing-only. First writes may
-provision only through a currently permitted resource creator; reads never
+provision only through a currently permitted resource creator or a scope-manager
+location creation; reads never
 create a domain. Owner catalog installation requires the ordinary explicit
 migration permission (or ephemeral test storage). Incompatible metadata is not
 rewritten, dropped or relabeled.

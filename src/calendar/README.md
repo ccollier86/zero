@@ -20,6 +20,11 @@ implemented core and its explicit limitations. This is not the complete plan:
 - Private one-off blocks share appointment conflicts, require current all-resource
   manage for writes and details for private reads, and retain cancelled history.
   They have no buffers and cannot overlap or silently cancel other reservations.
+- Versioned locations and resource assignments support permission-filtered
+  catalogs and same-location region/ID facets, never geographic authority. Scope
+  managers own catalog edits; current resource managers replace bounded location
+  sets with live, transaction-checked visibility witnesses. Current projections
+  keep queries off retained history. Resource revisions fence older holds.
 - Authenticated holds expose acquire/get/query/watch/release/confirm. Acquisition
   reserves fixed resources and buffered occupancy with current all-resource book,
   active state, availability and conflict checks. Requested TTL is an integer
@@ -55,12 +60,15 @@ implemented core and its explicit limitations. This is not the complete plan:
   schema generations. Hold receipts/effect references join that same namespace
   without rebuilding earlier evidence. Source/memory upgrade checks are not a
   passed physical existing-file upgrade.
+- Additive `004` preserves all three older migration/schema generations and
+  adds immutable location/assignment history, bounded current projections and
+  true location receipts in the existing global command-key namespace.
 - Private effect references are handoff groundwork, not another audit system or
   a working notification pipeline.
 
 The runtime uses fixed empty-environment actors, existing-only acquisition for
 established files, immutable scope ownership, bounded queues and commit-only
-invalidation. Authorized appointment, block, hold and availability watches use the same
+invalidation. Authorized appointment, block, hold, location/resource catalog/detail and availability watches use the same
 coalescing, quiet revalidation, private SSE and SDK-retirement machinery. Busy
 reads combine three stores with no titles, target IDs or kind discriminator. They
 bound each resource/store partition before merging a redacted page: at most
