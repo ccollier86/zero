@@ -7,7 +7,8 @@ import { calendarHash, calendarInteger, calendarKey, calendarRecord, calendarVal
 import { admitCalendarRequest, type CalendarAuthority } from './authority';
 import type { ResolvedCalendarConfig } from './config';
 import { calendarLocationIds, calendarLocationInput, calendarPageQuery, calendarResourcePageQuery, calendarRange, calendarReceipt,
-  calendarAppointmentTypePageQuery, calendarAppointmentTypeInput, calendarTypeReference, calendarResourceTypesInput } from './service-validation';
+  calendarAppointmentTypePageQuery, calendarAppointmentTypeInput, calendarTypeReference, calendarResourceTypesInput,
+  calendarLifecyclePolicyInput, calendarAppointmentTransitionInput, calendarLifecycleReason } from './service-validation';
 import { watchCalendarPage } from './watch';
 
 export interface CalendarServiceBroker {
@@ -33,6 +34,15 @@ export class CalendarService {
     const createResource = (input: unknown, options: CalendarRequestOptions) => this.write(request, 'resource.create', input, options);
     const createAppointment = (input: unknown, options: CalendarRequestOptions) => this.write(request, 'appointment.create', input, options);
     return Object.freeze({
+      lifecycle: Object.freeze({
+        get: (options) => this.read(request, 'lifecycle', () => ({}), options),
+        replace: (input, options) => this.write(request, 'lifecycle.replace', input, options, 'policy'),
+        watch: (listener, options: CalendarWatchOptions = {}) => {
+          this.ready();
+          return watchCalendarPage({ request, broker: this.broker, config: this.config, closing: this.signal,
+            queryName: 'calendar.lifecycle', query: Object.freeze({}), listener, options, track: task => this.track(task) });
+        },
+      }),
       types: Object.freeze({
         list: (query = {}, options?: CalendarReadOptions) => this.read(request, 'types', () => calendarAppointmentTypePageQuery(query, this.config), options),
         get: (id, options) => this.read(request, 'type', () => ({ id: calendarKey(id) }), options),
@@ -129,6 +139,13 @@ export class CalendarService {
         create: createAppointment,
         reschedule: (id, input, options) => this.write(request, 'appointment.reschedule', input, options, id),
         cancel: (id, options) => this.write(request, 'appointment.cancel', {}, options, id),
+        transitions: (id, options) => this.read(request, 'appointmentTransitions', () => ({ id: calendarKey(id) }), options),
+        transition: (id, input, options) => this.write(request, 'appointment.transition', input, options, id),
+        watchTransitions: (id, listener, options: CalendarWatchOptions = {}) => {
+          const query = Object.freeze({ id: calendarKey(id) }); this.ready();
+          return watchCalendarPage({ request, broker: this.broker, config: this.config, closing: this.signal,
+            queryName: 'calendar.appointmentTransitions', query, listener, options, track: task => this.track(task) });
+        },
         watch: (query, listener, options: CalendarWatchOptions = {}) => {
           const detached = calendarRange(query, this.config);
           this.ready();
@@ -183,6 +200,8 @@ export class CalendarService {
     return this.track((async () => {
       this.ready();
       const fields = operation === 'resource.create' ? ['label', 'kind', 'ownerId', 'timeZone']
+        : operation === 'lifecycle.replace' ? ['extended', 'cancellationReason', 'noShowReason']
+        : operation === 'appointment.transition' ? ['status', 'policyRevision', 'reason']
         : operation === 'type.create' || operation === 'type.replace' ? ['label', 'durationMinutes', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'colorKey', 'active']
         : operation === 'resource.types' ? ['mode', 'typeIds']
         : operation === 'location.create' || operation === 'location.replace' ? ['label', 'region', 'active']
@@ -202,11 +221,15 @@ export class CalendarService {
       if (operation === 'resource.locations') body.locationIds = calendarLocationIds(body.locationIds);
       if (operation === 'type.create' || operation === 'type.replace') calendarAppointmentTypeInput(body, operation === 'type.replace');
       if (operation === 'resource.types') Object.assign(body, calendarResourceTypesInput(body));
+      if (operation === 'lifecycle.replace') Object.assign(body, calendarLifecyclePolicyInput(body));
+      if (operation === 'appointment.transition') Object.assign(body, calendarAppointmentTransitionInput(body));
       if (Object.hasOwn(body, 'appointmentType')) {
         if (body.appointmentType === null) { if (operation !== 'appointment.reschedule') throw new CalendarError('CALENDAR_INPUT_INVALID'); }
         else body.appointmentType = calendarTypeReference(body.appointmentType);
       }
-      const opts = calendarRecord(options, target === undefined ? ['idempotencyKey', 'signal'] : ['idempotencyKey', 'signal', 'expectedRevision']);
+      const opts = calendarRecord(options, target === undefined ? ['idempotencyKey', 'signal']
+        : ['idempotencyKey', 'signal', 'expectedRevision', ...(operation === 'appointment.cancel' ? ['reason'] : [])]);
+      if (operation === 'appointment.cancel' && Object.hasOwn(opts, 'reason')) body.reason = calendarLifecycleReason(opts.reason);
       const key = calendarKey(opts.idempotencyKey), id = target === undefined ? null : calendarKey(target);
       const expectedRevision = id === null ? undefined : calendarInteger(opts.expectedRevision, 1);
       if ((operation === 'appointment.create' || operation === 'block.create' || operation === 'hold.acquire')
@@ -234,11 +257,11 @@ export class CalendarService {
         ? calendarHash(['appointment-from-hold', authority.actor.scopeId, authority.actor.principal, key]) : undefined;
       if (operation === 'resource.create' && body.ownerId === undefined) body.ownerId = body.kind === 'person' ? authority.actor.userId : null;
       const result = await this.broker.write<CalendarCommandReceipt>(authority.scope, 'calendar.' + operation,
-        { ...body, actor: authority.actor, requestId: key, id: resolvedId,
+        { ...body, actor: authority.actor, requestId: key, ...(operation === 'lifecycle.replace' ? {} : { id: resolvedId }),
           ...(expectedRevision === undefined ? {} : { expectedRevision }),
           ...(appointmentId === undefined ? {} : { appointmentId }),
           ...(operation === 'appointment.cancel' || operation === 'block.cancel' || operation === 'hold.release' ? { confirmed: true } : {}) }, key, authority.guard, authority.signal);
-      try { await authority.confirm(); authority.guard(); return calendarReceipt(result, key, operation, appointmentId ?? resolvedId); }
+      try { await authority.confirm(); authority.guard(); return calendarReceipt(result, key, operation, appointmentId ?? resolvedId, expectedRevision); }
       catch { throw new CalendarError('CALENDAR_OUTCOME_UNKNOWN'); }
     })());
   }

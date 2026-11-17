@@ -12,6 +12,7 @@ import { calendarNow } from './hold-time';
 import { calendarLocationSelection, calendarRegionSelection, readCalendarLocationTarget, requireCalendarLocationManager } from './locations-model';
 import { readCalendarAppointmentTypeSnapshot } from './appointment-type-bindings';
 import { requireCalendarTypeManager } from './appointment-types-model';
+import { readCalendarAppointmentLifecycle, requireCalendarLifecycleManager } from './lifecycle-model';
 
 function owner(context: DatabaseReadQueryContext, scopeId: string): void {
   const row = context.database.query<{ scope_id: string }>("SELECT scope_id FROM _calendar_owner WHERE id='application'").get();
@@ -94,12 +95,12 @@ export function queryCalendarAppointments(context: DatabaseReadQueryContext, inp
     AND NOT EXISTS(SELECT 1 FROM _calendar_reservations rr JOIN calendar_resources resource ON resource.id=rr.resource_id AND resource.scope_id=rr.scope_id WHERE rr.scope_id=a.scope_id AND rr.appointment_id=a.id AND NOT ${right.sql})
     ORDER BY a.occupied_start_ms,a.id LIMIT ?`).all(r.actor.scopeId, calendarOverlapSearchStart(r.startMs), r.endMs, r.startMs, ...r.ids, ...right.params, r.limit + 1);
   return { items: rows.slice(0, r.limit).map(row => appointmentView(row, resourceIds(context, r.actor.scopeId, row.id),
-    readCalendarAppointmentTypeSnapshot(context, r.actor.scopeId, row.id))), truncated: rows.length > r.limit };
+    readCalendarAppointmentTypeSnapshot(context, r.actor.scopeId, row.id), readCalendarAppointmentLifecycle(context, r.actor.scopeId, row.id))), truncated: rows.length > r.limit };
 }
 export function readCalendarAppointment(context: DatabaseReadQueryContext, input: unknown) {
   const r = calendarRecord(input, ['actor', 'id']), actor = calendarActor(r.actor); owner(context, actor.scopeId);
   const { row, ids } = appointment(context, actor, calendarKey(r.id), 'details');
-  return appointmentView(row, ids, readCalendarAppointmentTypeSnapshot(context, actor.scopeId, row.id));
+  return appointmentView(row, ids, readCalendarAppointmentTypeSnapshot(context, actor.scopeId, row.id), readCalendarAppointmentLifecycle(context, actor.scopeId, row.id));
 }
 export function readCalendarReceipt(context: DatabaseReadQueryContext, input: unknown) {
   const r = calendarRecord(input, ['actor', 'requestId']), actor = calendarActor(r.actor), requestId = calendarKey(r.requestId); owner(context, actor.scopeId);
@@ -108,11 +109,13 @@ export function readCalendarReceipt(context: DatabaseReadQueryContext, input: un
     UNION ALL SELECT * FROM _calendar_block_receipts WHERE id=? AND scope_id=? AND principal=?
     UNION ALL SELECT * FROM _calendar_hold_receipts WHERE id=? AND scope_id=? AND principal=?
     UNION ALL SELECT * FROM _calendar_location_receipts WHERE id=? AND scope_id=? AND principal=?
-    UNION ALL SELECT * FROM _calendar_type_receipts WHERE id=? AND scope_id=? AND principal=?`).all(id, actor.scopeId, actor.principal, id, actor.scopeId, actor.principal, id, actor.scopeId, actor.principal, id, actor.scopeId, actor.principal, id, actor.scopeId, actor.principal);
+    UNION ALL SELECT * FROM _calendar_type_receipts WHERE id=? AND scope_id=? AND principal=?
+    UNION ALL SELECT * FROM _calendar_lifecycle_receipts WHERE id=? AND scope_id=? AND principal=?`).all(id, actor.scopeId, actor.principal, id, actor.scopeId, actor.principal, id, actor.scopeId, actor.principal, id, actor.scopeId, actor.principal, id, actor.scopeId, actor.principal, id, actor.scopeId, actor.principal);
   if (rows.length > 1) throw new CalendarError('CALENDAR_STATE_INVALID');
   const row = rows[0];
   if (!row) return null;
-  if (row.target_kind === 'resource') { if (parseCalendarReceipt(row).operation === 'resource.types-changed') requireCalendarTypeManager(actor); resource(context, actor, row.target_id, row.required_right); }
+  if (row.target_kind === 'lifecycle') requireCalendarLifecycleManager(actor);
+  else if (row.target_kind === 'resource') { if (parseCalendarReceipt(row).operation === 'resource.types-changed') requireCalendarTypeManager(actor); resource(context, actor, row.target_id, row.required_right); }
   else if (row.target_kind === 'block') readCalendarBlockTarget(context, actor, row.target_id, row.required_right);
   else if (row.target_kind === 'hold') readCalendarHoldTarget(context, actor, row.target_id, row.required_right);
   else if (row.target_kind === 'location') { requireCalendarLocationManager(actor); readCalendarLocationTarget(context, actor, row.target_id); }

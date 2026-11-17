@@ -57,8 +57,8 @@ for (const compliance of [false, true]) {
       expect(registered.status, await registered.clone().text()).toBe(200);
       const identity = await registered.json() as { accessToken: string; user: { userId: string } };
       const headers = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + identity.accessToken };
-      const call = (path: string, body?: unknown) => fetch(origin + path, {
-        method: body === undefined ? 'GET' : 'POST', headers,
+      const call = (path: string, body?: unknown, method?: string) => fetch(origin + path, {
+        method: method ?? (body === undefined ? 'GET' : 'POST'), headers,
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       });
       const resourceInput = { resource: { label: 'PRIVATE_SYNTHETIC_CALENDAR', kind: 'person', timeZone: 'UTC' },
@@ -268,6 +268,30 @@ for (const compliance of [false, true]) {
       expect(releaseReceipt.status).toBe(200); expect(await releaseReceipt.json()).toEqual({ receipt: released });
       const releasedRead = await call('/api/calendar/holds/' + releaseHeld.id);
       expect(releasedRead.status).toBe(200); expect(await releasedRead.json() as CalendarHoldView).toMatchObject({ status: 'released', revision: 2, appointmentId: null });
+      const lifecyclePolicy = { policy: { extended: true, cancellationReason: 'required', noShowReason: 'required' },
+        options: { idempotencyKey: 'managed-lifecycle-policy', expectedRevision: 1 } };
+      const policyResponse = await call('/api/calendar/lifecycle', lifecyclePolicy, 'PUT');
+      expect(policyResponse.status, await policyResponse.clone().text()).toBe(200);
+      expect(await policyResponse.json()).toMatchObject({ operation: 'lifecycle.policy-changed', id: 'policy', revision: 2, changed: true });
+      const transitions = await call('/api/calendar/appointments/' + confirmedHold.id + '/transitions');
+      expect(transitions.status).toBe(200);
+      expect(await transitions.json()).toMatchObject({ id: confirmedHold.id, revision: 1, policyRevision: 2, status: 'confirmed',
+        allowed: expect.arrayContaining([{ status: 'no-show', requiresReason: true }, { status: 'cancelled', requiresReason: true }]) });
+      const missingReason = await call('/api/calendar/appointments/' + confirmedHold.id + '/cancel', { options: { idempotencyKey: 'managed-no-reason', expectedRevision: 1 } });
+      expect(missingReason.status).toBe(409); expect(await missingReason.json()).toMatchObject({ code: 'CALENDAR_REASON_REQUIRED', outcome: 'not-committed' });
+      const statusInput = { transition: { status: 'no-show', policyRevision: 2, reason: 'PRIVATE_SYNTHETIC_REASON' },
+        options: { idempotencyKey: 'managed-no-show', expectedRevision: 1 } };
+      const statusResponse = await call('/api/calendar/appointments/' + confirmedHold.id + '/transition', statusInput);
+      expect(statusResponse.status, await statusResponse.clone().text()).toBe(200);
+      const statusReceipt = await statusResponse.json() as CalendarCommandReceipt;
+      expect(statusReceipt).toMatchObject({ operation: 'appointment.transitioned', id: confirmedHold.id, revision: 2, changed: true });
+      const statusReplay = await call('/api/calendar/appointments/' + confirmedHold.id + '/transition', statusInput);
+      expect(statusReplay.status).toBe(200); expect(await statusReplay.json()).toEqual(statusReceipt);
+      const statusDetail = await call('/api/calendar/appointments/' + confirmedHold.id);
+      expect(statusDetail.status).toBe(200); expect(await statusDetail.json()).toMatchObject({ revision: 2, status: 'confirmed',
+        lifecycle: { status: 'no-show', reason: statusInput.transition.reason, policyRevision: 2 } });
+      const terminalBusy = await call('/api/calendar/busy/query', { query: holdRange });
+      expect(terminalBusy.status).toBe(200); expect((await terminalBusy.json() as { items: unknown[] }).items).toHaveLength(1);
       if (compliance) {
         await services!.logging!.flush();
         const evidence = await loggingClient.page('audit', { action: 'calendar.appointment.created' });
@@ -304,10 +328,17 @@ for (const compliance of [false, true]) {
         }
         const expiryEvidence = await loggingClient.page('audit', { action: 'calendar.hold.expired' });
         expect(expiryEvidence.events).toEqual([]);
+        const lifecycleEvidence = await loggingClient.page('audit', { action: 'calendar.appointment.transitioned' });
+        expect(lifecycleEvidence.events).toHaveLength(1);
+        expect(lifecycleEvidence.events[0]!.event).toMatchObject({ actor: { id: identity.user.userId },
+          target: { type: 'calendar.appointment', id: confirmedHold.id }, outcome: 'succeeded', metadata: { status: 'no-show', revision: 2, policyRevision: 2, reasonPresent: true } });
+        const lifecyclePolicyEvidence = await loggingClient.page('audit', { action: 'calendar.lifecycle.policy-changed' });
+        expect(lifecyclePolicyEvidence.events).toHaveLength(1);
+        expect(lifecyclePolicyEvidence.events[0]!.event).toMatchObject({ actor: { id: identity.user.userId }, target: { type: 'calendar.lifecycle-policy', id: 'policy' }, outcome: 'succeeded' });
         for (const entry of [...holdAcquired.events, ...holdEvidence.flatMap(page => page.events)]) {
           expect(Object.keys(entry.event.metadata).every(key => ['revision', 'resourceCount', 'status', 'sequence'].includes(key))).toBe(true);
         }
-        const serializedEvidence = JSON.stringify([evidence, cancellation, availabilityEvidence, ...blockEvidence, holdAcquired, ...holdEvidence, expiryEvidence]);
+        const serializedEvidence = JSON.stringify([evidence, cancellation, availabilityEvidence, ...blockEvidence, holdAcquired, ...holdEvidence, expiryEvidence, lifecycleEvidence, lifecyclePolicyEvidence]);
         expect(serializedEvidence).not.toMatch(/PRIVATE_SYNTHETIC|Fixture-only-password|calendar@example\.test/);
         for (const instant of [input.appointment.startAt, input.appointment.endAt, blockInput.block.startAt,
           blockInput.block.endAt, moveBlock.block.startAt, moveBlock.block.endAt, holdInput.hold.startAt, holdInput.hold.endAt,

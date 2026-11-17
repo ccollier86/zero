@@ -7,6 +7,8 @@ import { CalendarError } from './error';
 import { calendarRecord } from './validation';
 
 type CalendarWatchQuery = { queryName?: 'calendar.appointments'; query: CalendarRangeQuery }
+  | { queryName: 'calendar.lifecycle'; query: Record<string, never> }
+  | { queryName: 'calendar.appointmentTransitions'; query: { readonly id: string } }
   | { queryName: 'calendar.blocks'; query: CalendarRangeQuery }
   | { queryName: 'calendar.holds'; query: CalendarRangeQuery }
   | { queryName: 'calendar.resources'; query: CalendarResourcePageQuery }
@@ -24,7 +26,7 @@ export function watchCalendarPage<T>(input: {
   const options = calendarRecord(input.options, ['signal', 'onError']);
   const queryName = input.queryName ?? 'calendar.appointments';
   if (!['calendar.appointments', 'calendar.blocks', 'calendar.holds', 'calendar.availability', 'calendar.resources', 'calendar.locations', 'calendar.location', 'calendar.resourceLocations',
-    'calendar.types', 'calendar.type', 'calendar.resourceTypes'].includes(queryName)) throw new CalendarError('CALENDAR_INPUT_INVALID');
+    'calendar.types', 'calendar.type', 'calendar.resourceTypes', 'calendar.lifecycle', 'calendar.appointmentTransitions'].includes(queryName)) throw new CalendarError('CALENDAR_INPUT_INVALID');
   if (typeof input.listener !== 'function' || options.onError !== undefined && typeof options.onError !== 'function'
     || options.signal !== undefined && !(options.signal instanceof AbortSignal)
     || input.request.signal !== undefined && !(input.request.signal instanceof AbortSignal)) throw new CalendarError('CALENDAR_INPUT_INVALID');

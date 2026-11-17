@@ -8,6 +8,35 @@ export interface CalendarActor {
   readonly createOwn: boolean;
 }
 export type CalendarResourceKind = 'person' | 'room' | 'equipment';
+/** Reservation occupancy remains separate from confirmation/outcome; only cancellation releases it. */
+export type CalendarAppointmentStatus = 'tentative' | 'confirmed' | 'completed' | 'no-show' | 'cancelled';
+export interface CalendarLifecyclePolicyInput {
+  readonly extended: boolean;
+  readonly cancellationReason: 'optional' | 'required';
+  readonly noShowReason: 'optional' | 'required';
+}
+export interface CalendarLifecyclePolicy extends CalendarLifecyclePolicyInput { readonly revision: number }
+export interface CalendarAppointmentLifecycle {
+  readonly status: CalendarAppointmentStatus;
+  /** Source appointment revision at which this lifecycle fact was accepted. */
+  readonly revision: number;
+  readonly policyRevision: number;
+  /** Private domain value. Never copied into audit metadata, busy views or integration intents. */
+  readonly reason: string | null;
+}
+export interface CalendarAppointmentTransitionInput {
+  readonly status: CalendarAppointmentStatus;
+  /** Captured from the current server transition projection; a changed policy requires review. */
+  readonly policyRevision: number;
+  readonly reason?: string;
+}
+export interface CalendarAppointmentTransitions {
+  readonly id: string;
+  readonly revision: number;
+  readonly policyRevision: number;
+  readonly status: CalendarAppointmentStatus;
+  readonly allowed: readonly { readonly status: CalendarAppointmentStatus; readonly requiresReason: boolean }[];
+}
 /** A caller selects a current catalog version; policy and historical snapshots are server-owned. */
 export interface CalendarAppointmentTypeReference { readonly id: string; readonly revision: number }
 export interface CalendarAppointmentTypeSnapshot extends CalendarAppointmentTypeReference {
@@ -146,6 +175,7 @@ export interface CalendarHoldView {
 }
 export interface CalendarHoldPage { readonly items: readonly CalendarHoldView[]; readonly truncated: boolean }
 export interface CalendarAppointmentView {
+  readonly lifecycle?: CalendarAppointmentLifecycle;
   readonly appointmentType?: CalendarAppointmentTypeSnapshot;
   readonly id: string;
   readonly revision: number;
@@ -165,7 +195,8 @@ export interface CalendarCommandReceipt {
   readonly operation: 'resource.created' | 'resource.grant-changed' | 'resource.availability-changed' | 'resource.locations-changed'
     | 'location.created' | 'location.updated'
     | 'type.created' | 'type.updated' | 'resource.types-changed'
-    | 'appointment.created' | 'appointment.rescheduled' | 'appointment.cancelled'
+    | 'appointment.created' | 'appointment.rescheduled' | 'appointment.cancelled' | 'appointment.transitioned'
+    | 'lifecycle.policy-changed'
     | 'block.created' | 'block.rescheduled' | 'block.cancelled' | 'hold.acquired' | 'hold.released';
   readonly id: string;
   readonly revision: number;
@@ -211,6 +242,7 @@ export interface CalendarRequestOptions {
 export interface CalendarControlOptions extends CalendarRequestOptions {
   readonly expectedRevision: number;
 }
+export interface CalendarCancellationOptions extends CalendarControlOptions { readonly reason?: string }
 export interface CalendarReadOptions { readonly signal?: AbortSignal }
 export interface CalendarResourcePageQuery extends CalendarLocationPageQuery {
   /** Empty or omitted facets are unrestricted within the currently authorized resource set. */
@@ -241,6 +273,11 @@ export interface CalendarWatchOptions extends CalendarReadOptions {
   readonly onError?: (error: unknown) => void;
 }
 export interface ScopedCalendar {
+  readonly lifecycle: {
+    get(options?: CalendarReadOptions): Promise<CalendarLifecyclePolicy>;
+    replace(input: CalendarLifecyclePolicyInput, options: CalendarControlOptions): Promise<CalendarCommandReceipt>;
+    watch(listener: (policy: CalendarLifecyclePolicy, update?: CalendarWatchUpdate) => void, options?: CalendarWatchOptions): () => void;
+  };
   readonly types: {
     list(query?: CalendarAppointmentTypePageQuery, options?: CalendarReadOptions): Promise<CalendarAppointmentTypePage>;
     get(id: string, options?: CalendarReadOptions): Promise<CalendarAppointmentTypeView>;
@@ -306,7 +343,11 @@ export interface ScopedCalendar {
     get(id: string, options?: CalendarReadOptions): Promise<CalendarAppointmentView>;
     create(input: CalendarAppointmentInput, options: CalendarRequestOptions): Promise<CalendarCommandReceipt>;
     reschedule(id: string, input: CalendarRescheduleInput, options: CalendarControlOptions): Promise<CalendarCommandReceipt>;
-    cancel(id: string, options: CalendarControlOptions): Promise<CalendarCommandReceipt>;
+    cancel(id: string, options: CalendarCancellationOptions): Promise<CalendarCommandReceipt>;
+    transitions(id: string, options?: CalendarReadOptions): Promise<CalendarAppointmentTransitions>;
+    transition(id: string, input: CalendarAppointmentTransitionInput, options: CalendarControlOptions): Promise<CalendarCommandReceipt>;
+    watchTransitions(id: string, listener: (transitions: CalendarAppointmentTransitions, update?: CalendarWatchUpdate) => void,
+      options?: CalendarWatchOptions): () => void;
     watch(query: CalendarRangeQuery, listener: (page: CalendarAppointmentPage, update?: CalendarWatchUpdate) => void,
       options?: CalendarWatchOptions): () => void;
   };

@@ -1,5 +1,13 @@
 /** One coalesced authorized page under backpressure. No permanent streams or raw change payloads. */
 import type { CalendarAppointmentTypePageQuery, CalendarLocationPageQuery, CalendarRangeQuery, CalendarResourcePageQuery, CalendarReadOptions, CalendarWatchOptions, CalendarWatchUpdate, ScopedCalendar } from './contracts';
+export function calendarLifecycleStream(calendar: ScopedCalendar, signal: AbortSignal): ReadableStream<Uint8Array> {
+  return calendarSnapshotStream({ read: options => calendar.lifecycle.get(options),
+    watch: (listener, options) => calendar.lifecycle.watch(listener, options) }, signal);
+}
+export function calendarAppointmentTransitionsStream(calendar: ScopedCalendar, id: string, signal: AbortSignal): ReadableStream<Uint8Array> {
+  return calendarSnapshotStream({ read: options => calendar.appointments.transitions(id, options),
+    watch: (listener, options) => calendar.appointments.watchTransitions(id, listener, options) }, signal);
+}
 export function calendarTypeStream(calendar: ScopedCalendar, query: CalendarAppointmentTypePageQuery, signal: AbortSignal): ReadableStream<Uint8Array> {
   return calendarSnapshotStream({ read: options => calendar.types.list(query, options),
     watch: (listener, options) => calendar.types.watch(query, listener, options) }, signal);

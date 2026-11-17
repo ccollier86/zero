@@ -6,6 +6,7 @@ import { AuthorizationScopeBoundaryFence, useAuthorizationScopeBoundary, readAut
   isAuthorizationDataReady, isAuthorizationScopeReady } from './authorization-scope-hooks';
 import type { Client, InternalClient } from './sdk';
 import type { CalendarAppointmentPage, CalendarAppointmentView, CalendarAppointmentTypePage, CalendarAppointmentTypePageQuery, CalendarAppointmentTypeView, CalendarResourceTypesView,
+  CalendarLifecyclePolicy, CalendarAppointmentTransitions,
   CalendarLocationPage, CalendarLocationPageQuery, CalendarLocationView, CalendarResourceLocationsView,
   CalendarRangeQuery, CalendarResourcePage, CalendarResourcePageQuery, CalendarWatchOptions, CalendarWatchUpdate } from '../../calendar/contracts';
 import { CalendarReadError } from './calendar-mutation';
@@ -50,6 +51,13 @@ export function useCalendarResourceLocations(id: string | null, readRevision?: s
 }
 export function useCalendarAppointment(id: string | null, readRevision?: string | number): CalendarReadResult<CalendarAppointmentView> {
   return useCalendarRead(id === null ? null : JSON.stringify(['appointment', id, readRevision ?? null]), (client, signal) => client.calendar.appointments.get(id!, { signal }));
+}
+export function useCalendarLifecycle(): CalendarReadResult<CalendarLifecyclePolicy> {
+  return useCalendarLive<CalendarLifecyclePolicy>('lifecycle', (client, listener, options) => client.calendar.lifecycle.watch(listener, options));
+}
+export function useCalendarAppointmentTransitions(id: string | null, readRevision?: string | number): CalendarReadResult<CalendarAppointmentTransitions> {
+  return useCalendarLive<CalendarAppointmentTransitions>(id === null ? null : JSON.stringify(['appointment-transitions', id, readRevision ?? null]),
+    (client, listener, options) => client.calendar.appointments.watchTransitions(id!, listener, options));
 }
 function useCalendarRead<T>(identity: string | null, load: (client: Client, signal: AbortSignal) => Promise<T>): CalendarReadResult<T> {
   const client = useClientMaybe(), ssr = shouldUseSsrFallback(client, 'useCalendarRead'), boundary = useAuthorizationScopeBoundary(client);

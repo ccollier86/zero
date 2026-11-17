@@ -38,6 +38,13 @@ contracts and the [current checkpoint](./calendar-integration-plan.md#implementa
 for remaining work. This is not yet selected by normal update; the historical
 UI requirements below remain preserved, not all implemented by that core.
 
+The latest source stage adds optional generic lifecycle/reason policy and native
+managed transition review, with old cancel/reschedule bypasses closed. See
+[Lifecycle and reasons](../backend/calendar/lifecycle.md) and the
+[qualification record](../backend/calendar/qualification.md). Clinical progress,
+lobby/attention, participants, recurrence and Jobs/Torrent effect dispatch remain
+separate pending stages. The approved hosted demo was not changed by this work.
+
 ## Checkpoints and places to resume
 
 - Historical starting baseline: `05344d46a5d0178cdb5df3ab02bbe763ef6aa3cd`, Zero 2.10.5.

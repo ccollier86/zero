@@ -207,6 +207,13 @@ its registry use small retained Tabler SVG fallbacks; attribution is in
 
 ## What is deliberately not implemented
 
+The feature branch now has a separately documented managed backend; the list below
+describes the standalone recovered UI, not the connected core. See
+[`docs-next/backend/calendar/index.md`](../../../docs-next/backend/calendar/index.md)
+for the exact branch/release boundary. The connected workspace now uses server
+transition discovery and a native managed review/reason dialog, while clinical
+visit progress and lobby fields in the recovered UI remain local-only.
+
 No calendar Fabric database, Guardian policy, booking transaction/hold,
 cross-worker conflict arbitration, durable recurrence, timezone/DST engine,
 invitations, reminders, workflow triggers, external calendar sync or telehealth

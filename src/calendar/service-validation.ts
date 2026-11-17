@@ -66,6 +66,24 @@ export function calendarResourceTypesInput(input: unknown): Record<string, unkno
   if (new Set(typeIds).size !== typeIds.length || r.mode === 'unrestricted' && typeIds.length !== 0) throw new CalendarError('CALENDAR_INPUT_INVALID');
   return { mode: r.mode, typeIds: Object.freeze(typeIds) };
 }
+export function calendarLifecyclePolicyInput(input: unknown): Record<string, unknown> {
+  const r = calendarRecord(input, ['extended', 'cancellationReason', 'noShowReason']);
+  if (typeof r.extended !== 'boolean' || !['optional', 'required'].includes(r.cancellationReason as string)
+    || !['optional', 'required'].includes(r.noShowReason as string)) throw new CalendarError('CALENDAR_INPUT_INVALID');
+  return calendarValue(r) as Record<string, unknown>;
+}
+export function calendarLifecycleReason(input: unknown): string {
+  const text = calendarText(input, 1024).trim();
+  if (!text) throw new CalendarError('CALENDAR_INPUT_INVALID');
+  return text;
+}
+export function calendarAppointmentTransitionInput(input: unknown): Record<string, unknown> {
+  const r = calendarRecord(input, ['status', 'policyRevision', 'reason']);
+  if (!['tentative', 'confirmed', 'completed', 'no-show', 'cancelled'].includes(r.status as string)) throw new CalendarError('CALENDAR_INPUT_INVALID');
+  calendarInteger(r.policyRevision, 1);
+  if (Object.hasOwn(r, 'reason') && r.status !== 'cancelled' && r.status !== 'no-show') throw new CalendarError('CALENDAR_INPUT_INVALID');
+  return { ...calendarValue(r) as Record<string, unknown>, ...(Object.hasOwn(r, 'reason') ? { reason: calendarLifecycleReason(r.reason) } : {}) };
+}
 /** Create defaults belong to the realm; replacement must explicitly supply every retained catalog field. */
 export function calendarLocationInput(input: unknown, replacement = false): Record<string, unknown> {
   const r = calendarRecord(input, ['label', 'region', 'active']);
@@ -87,7 +105,7 @@ export function calendarRange(input: unknown, config: ResolvedCalendarConfig): C
   return Object.freeze({ resourceIds: Object.freeze(resourceIds), startAt, endAt,
     limit: calendarInteger(r.limit === undefined ? config.maxPageSize : r.limit, 1, config.maxPageSize) });
 }
-export function calendarReceipt(input: unknown, requestId: string, operation: string, id: string): CalendarCommandReceipt {
+export function calendarReceipt(input: unknown, requestId: string, operation: string, id: string, expectedRevision?: number): CalendarCommandReceipt {
   const r = calendarRecord(input, ['requestId', 'operation', 'id', 'revision', 'changed']);
   const expected = { 'resource.create': 'resource.created', 'resource.grant': 'resource.grant-changed',
     'resource.availability': 'resource.availability-changed',
@@ -95,8 +113,11 @@ export function calendarReceipt(input: unknown, requestId: string, operation: st
     'type.create': 'type.created', 'type.replace': 'type.updated', 'resource.types': 'resource.types-changed',
     'block.create': 'block.created', 'block.reschedule': 'block.rescheduled', 'block.cancel': 'block.cancelled',
     'hold.acquire': 'hold.acquired', 'hold.release': 'hold.released', 'hold.confirm': 'appointment.created',
-    'appointment.create': 'appointment.created', 'appointment.reschedule': 'appointment.rescheduled', 'appointment.cancel': 'appointment.cancelled' }[operation];
+    'appointment.create': 'appointment.created', 'appointment.reschedule': 'appointment.rescheduled', 'appointment.cancel': 'appointment.cancelled',
+    'appointment.transition': 'appointment.transitioned', 'lifecycle.replace': 'lifecycle.policy-changed' }[operation];
   if (!expected || r.requestId !== requestId || r.operation !== expected || r.id !== id || typeof r.changed !== 'boolean') throw new CalendarError('CALENDAR_STATE_INVALID');
   calendarInteger(r.revision, 1);
+  if (expectedRevision !== undefined && (operation === 'lifecycle.replace' || operation === 'appointment.transition')
+    && (r.revision !== expectedRevision + (r.changed ? 1 : 0) || operation === 'appointment.transition' && !r.changed)) throw new CalendarError('CALENDAR_STATE_INVALID');
   return Object.freeze({ requestId, operation: expected as CalendarCommandReceipt['operation'], id, revision: r.revision as number, changed: r.changed });
 }

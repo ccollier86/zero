@@ -27,6 +27,14 @@ test('real reservations project for each selected co-resource without fabricated
   }
   expect(projectCalendarAppointments([record], [], ['2026-11-16'], 'America/New_York', 'day').events).toEqual([]);
 });
+test('managed cards display the accepted lifecycle without treating terminal outcomes as released reservations', () => {
+  for (const status of ['tentative', 'completed', 'no-show'] as const) {
+    const source = { ...record, lifecycle: { status, revision: 1, policyRevision: 2, reason: null } };
+    const projected = projectCalendarAppointments([source], ['resource-a'], ['2026-11-16'], 'America/New_York', 'day');
+    expect(projected.events[0]!.status).toBe(status);
+    expect(projected.sourceByEventId.get(projected.events[0]!.id)!.status).toBe('confirmed');
+  }
+});
 test('outside-hours, overnight, sub-minute and DST-transition records remain in the exact-instant companion list, never silently clipped', () => {
   const cases = [
     { ...record, startAt: '2026-11-16T10:00:00.000Z', endAt: '2026-11-16T11:00:00.000Z' },

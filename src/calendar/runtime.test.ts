@@ -14,7 +14,7 @@ import { createDatabaseReadQuerySession, withDatabaseReadQuerySession } from '..
 import { runDatabaseRealmCommand, runDatabaseRealmQuery } from '../databases/database-realm';
 import { createReactiveDB } from '../sync/reactive-db';
 import { resolveCalendarConfig, type ResolvedCalendarConfig } from './config';
-import type { CalendarActor, CalendarCommandReceipt } from './contracts';
+import type { CalendarActor, CalendarCommandReceipt, CalendarLifecyclePolicy } from './contracts';
 import { CalendarError } from './error';
 import { installCalendarOwnerSchema, type CalendarOwnerRecord } from './owner-schema';
 import { resolveCalendarPersistenceConfig } from './persistence-config';
@@ -141,6 +141,29 @@ test('empty projections reject malformed inputs, forged physical scope and async
     await expect(f.runtime.read(trustedSystemServiceDataScope({ scopeKind: 'tenant', tenantId: 'other' }), 'calendar.resources', { actor }, noop)).rejects.toMatchObject({ code: 'CALENDAR_FORBIDDEN' });
     await expect(f.runtime.read(scope, 'calendar.resources', { actor }, async () => {})).rejects.toMatchObject({ code: 'CALENDAR_CONFIG_INVALID' });
     expect(f.stats().acquisitions).toBe(0);
+  } finally { await f.close(); }
+});
+
+test('lifecycle broker reads stay file-free until an admitted manager policy write and route through the canonical transition domain', async () => {
+  const f = fixture();
+  try {
+    const policy = { actor, requestId: 'lifecycle-policy', expectedRevision: 1, extended: true, cancellationReason: 'required', noShowReason: 'optional' };
+    expect(await f.runtime.read<CalendarLifecyclePolicy>(scope, 'calendar.lifecycle', { actor }, noop)).toEqual({ revision: 1, extended: false, cancellationReason: 'optional', noShowReason: 'optional' });
+    await expect(f.runtime.read(scope, 'calendar.lifecycle', { actor: { ...actor, manageAll: false } }, noop)).rejects.toMatchObject({ code: 'CALENDAR_FORBIDDEN' });
+    await expect(f.runtime.read(scope, 'calendar.lifecycle', { actor, revision: 1 }, noop)).rejects.toMatchObject({ code: 'CALENDAR_INPUT_INVALID' });
+    await expect(f.runtime.read(scope, 'calendar.appointmentTransitions', { actor, id: 'missing' }, noop)).rejects.toMatchObject({ code: 'CALENDAR_NOT_FOUND' });
+    await expect(f.runtime.write(scope, 'calendar.lifecycle.replace', { ...policy, actor: { ...actor, manageAll: false } }, policy.requestId, noop)).rejects.toMatchObject({ code: 'CALENDAR_FORBIDDEN' });
+    await expect(f.runtime.write(scope, 'calendar.lifecycle.replace', { ...policy, expectedRevision: 2 }, policy.requestId, noop)).rejects.toMatchObject({ code: 'CALENDAR_REVISION_CONFLICT' });
+    expect(f.stats().acquisitions).toBe(0); expect(f.system.prepare('SELECT count(*) AS count FROM _calendar_owners').get()).toEqual({ count: 0 });
+    expect(await f.runtime.write(scope, 'calendar.lifecycle.replace', policy, policy.requestId, noop)).toMatchObject({ id: 'policy', revision: 2, changed: true });
+    await f.runtime.write(scope, 'calendar.resource.create', resource, resource.requestId, noop);
+    const appointment = { actor, requestId: 'visit', id: 'visit', resourceIds: ['resource'], title: 'PRIVATE_TITLE', startAt: '2030-01-01T10:00:00.000Z', endAt: '2030-01-01T11:00:00.000Z', timeZone: 'UTC' };
+    await f.runtime.write(scope, 'calendar.appointment.create', appointment, appointment.requestId, noop);
+    expect(await f.runtime.read(scope, 'calendar.appointmentTransitions', { actor, id: 'visit' }, noop)).toMatchObject({ id: 'visit', revision: 1, policyRevision: 2, status: 'confirmed' });
+    const transition = { actor, requestId: 'finish', id: 'visit', expectedRevision: 1, status: 'completed', policyRevision: 2 };
+    expect(await f.runtime.write(scope, 'calendar.appointment.transition', transition, transition.requestId, noop)).toMatchObject({ operation: 'appointment.transitioned', revision: 2 });
+    expect(await f.runtime.read(scope, 'calendar.appointmentTransitions', { actor, id: 'visit' }, noop)).toMatchObject({ status: 'completed', allowed: [] });
+    expect(f.stats().acquisitions).toBe(f.stats().releases);
   } finally { await f.close(); }
 });
 

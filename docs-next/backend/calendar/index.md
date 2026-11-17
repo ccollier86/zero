@@ -30,6 +30,8 @@ working on an application; do not assume this branch is available through update
 - [Facade and booking semantics](./facade.md): resources, grants, appointments,
   authenticated holds, locations/resource facets, appointment types/policies,
   bounded queries, live projections and uncertain outcomes.
+- [Lifecycle and required reasons](./lifecycle.md): optional richer outcomes,
+  server-supplied transitions, private reasons and canonical cancellation.
 - [Qualification and remaining gates](./qualification.md): current source review,
   completed memory checks and explicitly unexecuted physical/deployment scenarios.
 - [Frontend composition](../../frontend/calendar/index.md): connected core versus
@@ -88,10 +90,18 @@ Catalog and policy editing requires scope management, not provider ownership.
 The native facade/hooks are available on this branch; type-management and
 type-selection UI are not yet connected.
 
+The optional versioned lifecycle policy now supports unconfirmed, completed and
+no-show outcomes in addition to normal confirmation/cancellation. Server-supplied
+actions and required reasons are enforced through both new transitions and the
+legacy cancel API. Completed/no-show are terminal and retain occupancy; only
+cancellation releases reservations. The connected workspace uses native managed
+review/reason dialogs and shows effective outcomes. This is not yet clinical visit
+progress, lobby tracking, arbitrary state machines or automatic workflow delivery.
+
 Recurrence, all-day and floating dates, recurring working-hours/holiday expansion,
 public booking proofs/offers, participant invitations,
 effective-dated location eligibility and appointment visit locations,
-configurable clinical statuses, delivery channels, public self-booking and AI
+clinical visit/lobby/attention state, delivery channels, public self-booking and AI
 adapters remain future stages. Local UI fields/previews do not implement those
 features. In this core, `recurrence`, `reminders` and `selfBooking` must remain false; attempting to
 enable them fails with `CALENDAR_NOT_READY` instead of a partial working feature.

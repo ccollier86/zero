@@ -49,6 +49,9 @@ identity are rejected, not normalized away.
 
 | Facade | Result / requirement |
 | --- | --- |
+| `lifecycle.get(options?)` | Current versioned scope lifecycle/reason policy; scope calendar manager only |
+| `lifecycle.replace(policy, control)` | Complete policy replacement with exact revision; scope calendar manager only |
+| `lifecycle.watch(listener, options?)` | Live manager-only policy with normal authority retirement |
 | `resources.list({limit?, after?, locationIds?, regions?}, {signal?}?)` | Authorized resource page narrowed by current location facets; follow `nextAfter` while truncated |
 | `resources.watch(query, listener, options?)` | Authorized live resource pages, including current assignments and grant changes |
 | `resources.create(input, {idempotencyKey, signal?})` | Safe accepted receipt; own-person or delegated manager |
@@ -78,7 +81,10 @@ identity are rejected, not normalized away.
 | `appointments.get(id, {signal?}?)` | Current detail, including cancelled state; denied/missing concealed alike |
 | `appointments.create(input, options)` | Atomic capacity-one reservation on every selected resource |
 | `appointments.reschedule(id, input, control)` | Exact revision, instants, zone and both buffers required |
-| `appointments.cancel(id, control)` | Explicit command after UI confirmation, releases all reservations |
+| `appointments.cancel(id, {...control, reason?})` | Explicit cancellation enforcing current lifecycle/reason rules; releases all reservations |
+| `appointments.transitions(id, options?)` | Current effective status, policy/appointment revisions and allowed changes; manage on all co-resources |
+| `appointments.transition(id, {status, policyRevision, reason?}, control)` | Canonical status transition, exact current policy and appointment revisions |
+| `appointments.watchTransitions(id, listener, options?)` | Live allowed-action projection; current all-co-resource manage rights |
 | `blocks.query(range, {signal?}?)` | Active private blocks; all co-resources must allow details before pagination |
 | `blocks.get(id, {signal?}?)` | Current private block, including cancelled history; all co-resources allow details |
 | `blocks.create(input, options)` | Current manage right on every selected resource; atomically reject occupied time |
@@ -98,6 +104,9 @@ identity are rejected, not normalized away.
 `control` is `{expectedRevision, idempotencyKey, signal?}`. Every command requires
 an explicit stable idempotency key. Receipts include only `requestId`, operation,
 target ID, revision and `changed`; never an old private appointment snapshot.
+
+See [Lifecycle and required reasons](./lifecycle.md) for simple defaults, richer
+confirmation/outcomes, private reasons and legacy cancellation compatibility.
 
 A range is `{resourceIds, startAt, endAt, limit?}`. It is half-open, positive,
 bounded at 31 days / 16 resources / 100 results (or narrower config). Empty

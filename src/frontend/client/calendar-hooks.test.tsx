@@ -3,12 +3,13 @@ import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { act, createElement } from 'react';
 import type { Root } from 'react-dom/client';
 import type { CalendarAppointmentPage, CalendarAppointmentView, CalendarAppointmentTypePage, CalendarAppointmentTypePageQuery, CalendarAppointmentTypeView,
+  CalendarLifecyclePolicy, CalendarAppointmentTransitions,
   CalendarResourceTypesView, CalendarLocationPage, CalendarLocationPageQuery, CalendarRangeQuery, CalendarReadOptions, CalendarResourcePage, CalendarResourcePageQuery, CalendarWatchOptions, CalendarWatchUpdate } from '../../calendar/contracts';
 import { ClientProvider } from './client-context';
 import type { Client } from './sdk';
 import { CalendarReadError } from './calendar-mutation';
 import { useCalendarAppointment, useCalendarAppointments, useCalendarResources, useCalendarLocations, useCalendarAppointmentTypes,
-  useCalendarAppointmentType, useCalendarResourceTypes, type CalendarReadResult, type UseCalendarAppointmentsResult } from './calendar-hooks';
+  useCalendarAppointmentType, useCalendarResourceTypes, useCalendarLifecycle, useCalendarAppointmentTransitions, type CalendarReadResult, type UseCalendarAppointmentsResult } from './calendar-hooks';
 import { createHookContainer, installMinimalHookDom } from './test-fixtures/react-hook-dom';
 const roots = new Set<Root>(); let restore: () => void;
 beforeEach(() => { restore = installMinimalHookDom(); });
@@ -154,6 +155,29 @@ test('type-selector omission and explicit empty resource selection never share a
   await act(async () => { f.types[1]!.options.onError?.(new CalendarReadError('CALENDAR_NOT_FOUND', 404)); });
   expect(current).toMatchObject({ status: 'error', value: null, code: 'CALENDAR_NOT_FOUND' });
 });
+test('lifecycle policy and transition hooks withdraw on domain denial, appointment replacement and scope retirement', async () => {
+  const f = fixture(), { createRoot } = await import('react-dom/client'), root = createRoot(createHookContainer()); roots.add(root);
+  let id: string | null = 'appointment', current!: { policy: CalendarReadResult<CalendarLifecyclePolicy>; transitions: CalendarReadResult<CalendarAppointmentTransitions> };
+  const renders: { id: string | null; transitions: CalendarReadResult<CalendarAppointmentTransitions> }[] = [];
+  function Capture() { current = { policy: useCalendarLifecycle(), transitions: useCalendarAppointmentTransitions(id) }; renders.push({ id, transitions: current.transitions }); return null; }
+  const render = () => root.render(createElement(ClientProvider, { client: f.client, children: createElement(Capture) }));
+  await act(async () => { render(); });
+  const policy: CalendarLifecyclePolicy = { revision: 1, extended: true, cancellationReason: 'required', noShowReason: 'optional' };
+  const projection: CalendarAppointmentTransitions = { id: 'appointment', revision: 1, policyRevision: 1, status: 'tentative', allowed: [{ status: 'confirmed', requiresReason: false }] };
+  await act(async () => { f.lifecycle[0]!.resolve(policy); f.transitions[0]!.resolve(projection); });
+  expect(current.policy.value).toBe(policy); expect(current.transitions.value).toBe(projection);
+  id = 'replacement'; await act(async () => { render(); });
+  expect(renders.find(render => render.id === id)!.transitions).toMatchObject({ status: 'loading', value: null });
+  expect(f.transitions[0]!.options.signal!.aborted).toBe(true); expect(f.transitions[0]!.removals).toBe(1);
+  await act(async () => { f.transitions[0]!.resolve(projection); }); expect(current.transitions.value).toBeNull();
+  await act(async () => { f.transitions[1]!.resolve({ ...projection, id: 'replacement' }); });
+  await act(async () => { f.transitions[1]!.options.onError?.(new CalendarReadError('CALENDAR_NOT_FOUND', 404)); });
+  expect(current.transitions).toMatchObject({ status: 'error', value: null, code: 'CALENDAR_NOT_FOUND' });
+  expect(f.transitions[1]!.removals).toBe(1); expect(current.policy.value).toBe(policy);
+  f.auth.authorizationScopeKey = 'replacement-scope'; await act(async () => { f.notify(); });
+  expect(current.policy).toMatchObject({ status: 'loading', value: null }); expect(f.lifecycle[0]!.removals).toBe(1);
+  id = null; await act(async () => { render(); }); expect(current.transitions).toMatchObject({ status: 'idle', value: null });
+});
 test('type and resource-policy detail hooks withdraw independently on domain denial and retire on scope replacement', async () => {
   const f = fixture(), { createRoot } = await import('react-dom/client'), root = createRoot(createHookContainer()); roots.add(root);
   let current!: { type: CalendarReadResult<CalendarAppointmentTypeView>; policy: CalendarReadResult<CalendarResourceTypesView> };
@@ -184,7 +208,11 @@ function fixture() {
   const typeDetails: { id: string; options: CalendarWatchOptions; resolve(value: CalendarAppointmentTypeView): void }[] = [];
   const typePolicies: { id: string; options: CalendarWatchOptions; resolve(value: CalendarResourceTypesView): void }[] = [];
   const details: { options: CalendarReadOptions; resolve(value: CalendarAppointmentView): void; reject(error: unknown): void }[] = [];
-  const client = { auth, calendar: { resources: { watch(query: CalendarResourcePageQuery, listener: (value: CalendarResourcePage) => void, options: CalendarWatchOptions) {
+  const lifecycle: { options: CalendarWatchOptions; resolve(value: CalendarLifecyclePolicy): void; removals: number }[] = [];
+  const transitions: { id: string; options: CalendarWatchOptions; resolve(value: CalendarAppointmentTransitions): void; removals: number }[] = [];
+  const client = { auth, calendar: { lifecycle: { watch(listener: (value: CalendarLifecyclePolicy) => void, options: CalendarWatchOptions) {
+    const item = { options, resolve: listener, removals: 0 }; lifecycle.push(item); return () => { item.removals++; };
+  } }, resources: { watch(query: CalendarResourcePageQuery, listener: (value: CalendarResourcePage) => void, options: CalendarWatchOptions) {
     const item = { query, options, resolve: listener, removals: 0 }; resources.push(item); return () => { item.removals++; };
   } }, locations: { watch(query: CalendarLocationPageQuery, listener: (value: CalendarLocationPage) => void, options: CalendarWatchOptions) {
     const item = { query, options, resolve: listener, removals: 0 }; locations.push(item); return () => { item.removals++; };
@@ -194,10 +222,12 @@ function fixture() {
     typeDetails.push({ id, options, resolve: listener }); return () => {};
   }, watchForResource(id: string, listener: (value: CalendarResourceTypesView) => void, options: CalendarWatchOptions) {
     typePolicies.push({ id, options, resolve: listener }); return () => {};
-  } }, appointments: { get(_id: string, options: CalendarReadOptions) { return new Promise<CalendarAppointmentView>((resolve, reject) => details.push({ options, resolve, reject })); }, watch(query: CalendarRangeQuery, listener: (page: CalendarAppointmentPage, update?: CalendarWatchUpdate) => void, options: CalendarWatchOptions) {
+  } }, appointments: { watchTransitions(id: string, listener: (value: CalendarAppointmentTransitions) => void, options: CalendarWatchOptions) {
+    const item = { id, options, resolve: listener, removals: 0 }; transitions.push(item); return () => { item.removals++; };
+  }, get(_id: string, options: CalendarReadOptions) { return new Promise<CalendarAppointmentView>((resolve, reject) => details.push({ options, resolve, reject })); }, watch(query: CalendarRangeQuery, listener: (page: CalendarAppointmentPage, update?: CalendarWatchUpdate) => void, options: CalendarWatchOptions) {
     subscriptions.push({ query, listener, options }); return () => {};
   } } } } as unknown as Client;
-  return { client, auth, subscriptions, resources, locations, types, typeDetails, typePolicies, details, notify() { for (const observer of observers) observer(); } };
+  return { client, auth, subscriptions, resources, locations, types, typeDetails, typePolicies, details, lifecycle, transitions, notify() { for (const observer of observers) observer(); } };
 }
 async function renderReads(client: Client) {
   const { createRoot } = await import('react-dom/client'), root = createRoot(createHookContainer()); roots.add(root);

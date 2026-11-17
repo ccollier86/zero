@@ -89,6 +89,12 @@ controlled session closed. Actual owner unmount, account/scope change and target
 replacement still retire immediately. Notification exceptions or rejected async
 observers are isolated and cannot replay an acknowledged action.
 
+Controlled-owner teardown retires its still-active hosted opening in React's
+layout cleanup, before paint; private content must not linger until passive-effect
+cleanup after access loss. Pending contexts are aborted without success/close
+callbacks. This does not remove an already accepted native exit or unrelated
+openings, and ordinary X/Escape/Cancel still use the manager's normal dismissal.
+
 Title/meta/description/icon/tone/footer and action presentation stay live through
 the adapter without retiring its callback generation. Body callbacks also stay
 live. Keep action IDs stable; geometry, panel structure, target and guard changes

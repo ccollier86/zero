@@ -18,6 +18,54 @@ This is feature-branch evidence, not a release certificate. No calendar backend
 archive has been selected by normal `zero-update`, and no application deployment
 or data migration is authorized by these checks.
 
+## November 17 lifecycle checkpoint
+
+Additive `006` adds a virtual-default/versioned scope lifecycle policy, immutable
+appointment outcomes/private reasons and a genuine policy receipt family. All
+five preceding migration checksums and the complete `005` declaration are pinned;
+the populated memory upgrade preserves old rows, indexes/triggers, ledger,
+sequence and accepted receipts without backfill. The original reservation status
+domain remains unchanged. Completed/no-show retain occupancy and are terminal;
+the older cancel/reschedule paths cannot bypass those outcomes or required reasons.
+
+Current manager/all-co-resource authorization, exact policy and appointment
+revisions, safe receipt correlation, quiet no-ops/replay and atomic source-audit
+rollback are covered. Native-memory service/HTTP tests exercise the real facade,
+broker, realm and auth composition while explicitly simulating physical
+coordinator/file/process seams. Reasons remain private domain values, absent from
+busy projections, receipts, source effect references and audit metadata.
+
+The connected workspace now discovers server actions and uses native managed
+transition/reason review. The review corrected local reason admission that could
+otherwise create an unsettled identity before SDK dispatch, and known denial
+retirement that could otherwise wait for an independent live query. Receipt
+reconciliation also withdraws on access denial and verifies exact source revision.
+The modal controller's owner-unmount teardown now runs in layout cleanup: a real
+memory ReactDOM regression fails before that change and passes after it, checking
+hosted entry removal/context abort before a sibling layout observer. StrictMode,
+identity replacement, accepted exit retention and unrelated owners remain covered.
+These are runtime memory checks, not a real browser animation pass.
+
+| Lifecycle-stage evidence | Result | Boundary |
+| --- | --- | --- |
+| Integrated native-memory calendar/HTTP/SDK/hooks/UI models/readable-audit/modal/source-transform set | 536 tests, 10,269 assertions, 63 files; passed on pinned Bun 1.4.4 | Memory-only; no file-backed coordinator, actors, browser, bundle or installed-package execution |
+| Focused controlled-modal ownership/regression set | 57 tests, 269 assertions, 5 files; passed | Actual memory ReactDOM/effect lifecycle plus native modal state; not animation pixels |
+| Scoped no-emit TypeScript | 206 root files, zero diagnostics | Calendar source/UI/client checks, controlled-modal adapter and prepared physical/managed fixtures; no emitted build or claim those fixtures executed |
+| Documentation graph | 900 pages, 900 reachable, zero problems | Includes new lifecycle/reason guide and linked API/UI documentation |
+
+The two managed `createApp` variants now include policy/required-reason/terminal
+outcome commands and investigator assertions; a twelfth native file/actor fixture
+adds lifecycle policy, private reasons, original receipt replay and terminal
+occupancy across complete SYSTEM/actor restart. **Prepared, not executed.** Their
+canonical synthetic allocator and `finally` shutdown/cleanup remain in force.
+No test directories, database files, build trees or dependencies were created by
+this checkpoint. The existing filesystem integrity hold is unchanged.
+
+The generic lifecycle does not implement clinical progress, lobby membership,
+arbitrary state catalogs or a terminal-correction operation. New appointments and
+hold confirmations start confirmed and need an explicit transition for tentative.
+No channel, reminder or AI effect starts automatically.
+
 ## November 17 source review
 
 The managed core now retires queued admission on direct runtime close as well as
@@ -331,7 +379,7 @@ cancelling it, rather than awaiting the cancellation result before triggering it
 
 ## Physical scenarios prepared, not passed
 
-`src/calendar/file-runtime.integration.test.ts` now defines nine actual file/WAL and
+At the earlier core/hold checkpoint, `src/calendar/file-runtime.integration.test.ts` defined nine actual file/WAL and
 dedicated-actor scenarios: inert empty reads, independent scope progress, full
 SYSTEM/actor restart, multi-resource contention and rollback, replay/current grant
 checks, missing/changed placement recovery, exact-owned writer death/replacement,
@@ -379,14 +427,14 @@ executable with the default source actor remains deliberately unavailable.
 
 Recurring working-hours/holiday expansion, offer/slot generation, public booking proofs,
 participants, connected type-selection/management controls, effective-dated location eligibility and
-appointment visit locations, recurrence, clinical transitions,
+appointment visit locations, recurrence, clinical visit/lobby/attention transitions,
 source-bound Jobs/Torrent effects, reminders,
 outbound channels, public self-booking and AI remain later stages of the approved
 integration plan. The hosted local-state UI is not evidence that these backend
 features are implemented. Keep the independent core useful without silently
 enabling optional services or treating this checkpoint as full calendar completion.
 
-The additive migrations and scheduling/block/authenticated-hold/location/type paths also need physical
+The additive migrations and scheduling/block/authenticated-hold/location/type/lifecycle paths also need physical
 existing-file upgrade/recovery, actor restart/contention, managed compliance and
 real-browser acceptance alongside the earlier core gates. Passing source/memory
 checks is not evidence those scenarios have run or that a production domain may

@@ -31,6 +31,12 @@ implemented core and its explicit limitations. This is not the complete plan:
   type policy. Typed bookings/holds capture historical generations, while new
   bookings, changed occupancy/bindings and confirmation check current policy.
   Catalog changes never relabel accepted appointments or change their occupancy.
+- Generic lifecycle policy defaults to ordinary confirmation/cancellation with
+  optional reasons; scope management can enable tentative/completed/no-show and
+  required reasons. Server action discovery and canonical transitions enforce
+  all-co-resource management, exact appointment/policy revisions and terminal
+  states. Only cancellation releases occupancy. Private reasons stay out of busy,
+  receipt/effect and audit payloads; visit/lobby/attention are separate future axes.
 - Authenticated holds expose acquire/get/query/watch/release/confirm. Acquisition
   reserves fixed resources and buffered occupancy with current all-resource book,
   active state, availability and conflict checks. Requested TTL is an integer
@@ -73,13 +79,17 @@ implemented core and its explicit limitations. This is not the complete plan:
   generations, typed appointment/hold bindings and the fifth true receipt family.
   Typed reschedule history and original receipts survive subsequent type changes;
   cleared or cancelled bindings are retained, not silently erased.
+- Additive `006` preserves all five prior identities and adds immutable lifecycle
+  policy/outcome/reason history. Its sixth receipt family has a real policy target,
+  while appointment transitions keep the existing appointment receipt family.
+  Legacy cancel digests/default wire shapes and current-right replay are retained.
 - Private effect references are handoff groundwork, not another audit system or
   a working notification pipeline.
 
 The runtime uses fixed empty-environment actors, existing-only acquisition for
 established files, immutable scope ownership, bounded queues and commit-only
 invalidation. Authorized appointment, block, hold, location/resource/type catalog
-and detail, availability and type-policy watches use the same
+and detail, availability, type-policy, lifecycle policy and transition watches use the same
 coalescing, quiet revalidation, private SSE and SDK-retirement machinery. Busy
 reads combine three stores with no titles, target IDs or kind discriminator. They
 bound each resource/store partition before merging a redacted page: at most
@@ -101,7 +111,7 @@ Still required before release: actual file/actor, managed compliance, real-brows
 official JS bundle, Linux/amd64 installed archive and normal updater qualification.
 Compiled executables fail closed with the default source actor launch. Recurrence,
 recurring working-hours/holiday expansion, slot offers/public booking proofs, participants,
-clinical states, invitations, reminders, AI and public self-booking are not
+clinical visit/lobby/attention states, invitations, reminders, AI and public self-booking are not
 implemented; unsupported enablement rejects. Authenticated holds do not enable
 `selfBooking`; public booking remains off. Availability/block/hold management is
 scoped facade-only in this stage; the connected appointment workspace and hosted demo do

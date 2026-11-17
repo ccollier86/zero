@@ -4,7 +4,7 @@
  * Adapts React-controlled content to the manager without descriptor replacement on
  * each keystroke. Each opening owns a bridge; structural/target changes retire it.
  */
-import { useEffect, useLayoutEffect, useRef, useSyncExternalStore, type ReactNode } from 'react';
+import { useLayoutEffect, useRef, useSyncExternalStore, type ReactNode } from 'react';
 import { modals } from './modal-events';
 import { ModalManager } from './modal-manager';
 import { useModalHostPresent } from './modal-host-context';
@@ -192,7 +192,7 @@ export function ControlledModal<T = unknown>(props: ControlledModalProps<T>) {
       notifyControlledObserver(() => current.onOpenChange(false), stillOwned);
     });
   });
-  useEffect(() => {
+  useLayoutEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;

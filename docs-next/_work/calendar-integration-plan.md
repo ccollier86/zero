@@ -948,6 +948,46 @@ restart coverage are documented in the [qualification guide](../backend/calendar
 this is not a newly selected updater archive, production qualification or completion
 of the participant/status/recurrence/Jobs/Torrent stages.
 
+### November 17 generic lifecycle and required reasons
+
+The next source stage is a deliberately bounded generic lifecycle, not a clinical
+state machine: tentative/confirmed → permitted active or terminal outcomes;
+completed/no-show/cancelled are terminal. Only cancellation releases reservations.
+Clinical progress, office/telehealth lobby, attendance and attention remain
+separate future axes. The default policy is virtual revision 1 with extended
+outcomes off and optional reasons. A scope calendar manager can explicitly change
+the extended/reason policy through the same scoped facade; resource ownership alone
+cannot weaken that policy. See [the lifecycle contract](../backend/calendar/lifecycle.md).
+
+Additive `006` retains all five earlier migration/schema identities, then adds
+immutable scope-policy and appointment lifecycle/reason history plus forward
+projections. The policy has a genuine sixth receipt/effect family in the single
+global scope/principal/key namespace. Appointment transitions retain appointment
+targets in the existing family. Historical meanings/reasons are not rewritten.
+Current detail reads expose private lifecycle facts; busy/action/receipt/evidence
+projections never copy the reason. Audit records only safe fixed status, revision,
+policy revision and reason-presence facts. No-op, replay and rejection are quiet.
+
+The source writer supplies live allowed transitions under manage rights on every
+co-resource, then rechecks exact appointment and policy revisions at mutation.
+The older reschedule/cancel APIs cannot bypass terminal states or required reasons.
+Original reason-less cancellation digests and default legacy wire shape remain
+unchanged; accepted replay precedes fresh policy readmission while retaining current
+object authorization. A later policy change does not invalidate an old receipt.
+
+The connected workspace now discovers server actions and uses the native modal
+manager for transition review/reasons. It preserves newer typing, blocks duplicate
+submission, checks receipt identity/revision and reconciles unknown outcomes under
+the original key. Known mutation/read denial immediately retires the surface rather
+than waiting for the independent watch. A review found that passive modal-owner
+cleanup could retain hosted private content until after paint; native controlled
+owner retirement now uses layout cleanup. Memory ReactDOM tests reproduce the old
+gap, verify StrictMode/identity behavior and preserve accepted native exit ownership.
+
+The hosted demo/theme is unchanged. Source/memory tests and prepared file/actor/
+managed fixtures are not real browser or Linux qualification. There is still no
+dispatched reminder/channel/AI workflow or public booking offer enabled here.
+
 ## 15. Documentation deliverables and open decisions
 
 Create a canonical calendar backend guide/index with configuration/defaults,

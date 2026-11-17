@@ -1,5 +1,7 @@
 /** Browser-safe scoped calendar commands. The SDK retires this entire transport on every authority replacement. */
 import type { CalendarAppointmentInput, CalendarAppointmentPage, CalendarAppointmentView, CalendarBusyPage, CalendarCommandReceipt,
+  CalendarAppointmentStatus, CalendarAppointmentLifecycle, CalendarAppointmentTransitionInput, CalendarAppointmentTransitions,
+  CalendarLifecyclePolicyInput, CalendarLifecyclePolicy, CalendarCancellationOptions,
   CalendarAvailabilityInput, CalendarAvailabilityView, CalendarAvailabilityWindow, CalendarBlockInput, CalendarBlockPage, CalendarBlockRescheduleInput, CalendarBlockView,
   CalendarHoldInput, CalendarHoldView, CalendarHoldPage, CalendarHoldConfirmationInput,
   CalendarAppointmentTypeInput, CalendarAppointmentTypeReplacement, CalendarAppointmentTypeReference, CalendarAppointmentTypeSnapshot,
@@ -28,11 +30,12 @@ export function createCalendarClient(fetch: <T = unknown>(path: string, init?: F
       const { code, status } = calendarFailureDetails(cause); throw new CalendarReadError(code, status); }
   }
   async function mutation(path: string, body: unknown, supplied: CalendarRequestOptions,
-    operation: CalendarCommandReceipt['operation'], id?: string, forbiddenId?: string, method = 'POST'): Promise<CalendarCommandReceipt> {
+    operation: CalendarCommandReceipt['operation'], id?: string, forbiddenId?: string, method = 'POST', expectedRevision?: number): Promise<CalendarCommandReceipt> {
     const key = requestKey(supplied.idempotencyKey); let dispatched = false;
     try { const receipt = calendarReceipt(await call(path, method, body, supplied.signal, () => { dispatched = true; }));
       if (receipt.requestId !== key || receipt.operation !== operation || id !== undefined && receipt.id !== id
-        || forbiddenId !== undefined && receipt.id === forbiddenId) throw invalid(); return receipt; }
+        || forbiddenId !== undefined && receipt.id === forbiddenId
+        || expectedRevision !== undefined && receipt.revision !== expectedRevision + (receipt.changed ? 1 : 0)) throw invalid(); return receipt; }
     catch (error) { if (!dispatched) throw error; throw calendarMutationFailure(error, key); }
   }
   function watch<T>(path: string, parse: (value: unknown) => T, listener: (value: T, update?: CalendarWatchUpdate) => void,
@@ -51,6 +54,16 @@ export function createCalendarClient(fetch: <T = unknown>(path: string, init?: F
     return watch('/' + kind + '/live?' + params, parse, listener, supplied);
   }
   return Object.freeze({
+    lifecycle: Object.freeze({
+      get(readOptions?: CalendarReadOptions) { return read('/lifecycle', lifecyclePolicy, 'GET', undefined, readSignal(readOptions)); },
+      replace(input: CalendarLifecyclePolicyInput, supplied: CalendarControlOptions) {
+        const policy = lifecyclePolicyInput(input), control = options(supplied, true);
+        return mutation('/lifecycle', { policy, options: control }, supplied, 'lifecycle.policy-changed', 'policy', undefined, 'PUT', control.expectedRevision as number);
+      },
+      watch(listener: (policy: CalendarLifecyclePolicy, update?: CalendarWatchUpdate) => void, supplied: CalendarWatchOptions = {}) {
+        return watch('/lifecycle/live', lifecyclePolicy, listener, supplied);
+      },
+    }),
     types: Object.freeze({
       list(supplied?: CalendarAppointmentTypePageQuery, readOptions?: CalendarReadOptions) {
         const page = typePageRequest(supplied);
@@ -245,8 +258,24 @@ export function createCalendarClient(fetch: <T = unknown>(path: string, init?: F
         return mutation('/appointments/' + encodeURIComponent(requestKey(id)) + '/reschedule',
           { appointment: appointmentInput(input, false), options: options(supplied, true) }, supplied, 'appointment.rescheduled', id);
       },
-      cancel(id: string, supplied: CalendarControlOptions) {
-        return mutation('/appointments/' + encodeURIComponent(requestKey(id)) + '/cancel', { options: options(supplied, true) }, supplied, 'appointment.cancelled', id);
+      cancel(id: string, supplied: CalendarCancellationOptions) {
+        const captured = record(supplied, ['idempotencyKey', 'expectedRevision', 'signal', 'reason']);
+        const { reason: _reason, ...control } = captured;
+        return mutation('/appointments/' + encodeURIComponent(requestKey(id)) + '/cancel',
+          { options: options(control, true), ...(Object.hasOwn(captured, 'reason') ? { reason: lifecycleReason(captured.reason) } : {}) }, supplied, 'appointment.cancelled', id);
+      },
+      transitions(id: string, readOptions?: CalendarReadOptions) {
+        const targetId = requestKey(id);
+        return read('/appointments/' + encodeURIComponent(targetId) + '/transitions', value => appointmentTransitions(value, targetId), 'GET', undefined, readSignal(readOptions));
+      },
+      transition(id: string, input: CalendarAppointmentTransitionInput, supplied: CalendarControlOptions) {
+        const targetId = requestKey(id), transition = appointmentTransitionInput(input), control = options(supplied, true);
+        return mutation('/appointments/' + encodeURIComponent(targetId) + '/transition', { transition, options: control }, supplied,
+          'appointment.transitioned', targetId, undefined, 'POST', control.expectedRevision as number);
+      },
+      watchTransitions(id: string, listener: (transitions: CalendarAppointmentTransitions, update?: CalendarWatchUpdate) => void, supplied: CalendarWatchOptions = {}) {
+        const targetId = requestKey(id);
+        return watch('/appointments/' + encodeURIComponent(targetId) + '/transitions/live', value => appointmentTransitions(value, targetId), listener, supplied);
       },
       watch(query: CalendarRangeQuery, listener: (page: CalendarAppointmentPage, update?: CalendarWatchUpdate) => void, supplied: CalendarWatchOptions = {}) {
         return watchRange('appointments', query, appointmentPage, listener, supplied);
@@ -271,6 +300,54 @@ function options(value: unknown, control = false): Record<string, unknown> {
 }
 function readSignal(value: unknown): AbortSignal | undefined {
   const r = record(value ?? {}, ['signal']); if (r.signal !== undefined && !(r.signal instanceof AbortSignal)) throw invalid(); return r.signal as AbortSignal | undefined;
+}
+function lifecyclePolicyInput(value: unknown): CalendarLifecyclePolicyInput {
+  const r = record(value, ['extended', 'cancellationReason', 'noShowReason']);
+  if (Object.keys(r).length !== 3 || typeof r.extended !== 'boolean' || r.cancellationReason !== 'optional' && r.cancellationReason !== 'required'
+    || r.noShowReason !== 'optional' && r.noShowReason !== 'required') throw invalid();
+  return Object.freeze(r) as unknown as CalendarLifecyclePolicyInput;
+}
+function lifecyclePolicy(value: unknown): CalendarLifecyclePolicy {
+  const r = record(value, ['revision', 'extended', 'cancellationReason', 'noShowReason']);
+  if (Object.keys(r).length !== 4) throw invalid();
+  const revision = integer(r.revision, 1), { revision: _revision, ...input } = r;
+  return Object.freeze({ revision, ...lifecyclePolicyInput(input) });
+}
+function lifecycleStatus(value: unknown): CalendarAppointmentStatus {
+  if (!['tentative', 'confirmed', 'completed', 'no-show', 'cancelled'].includes(value as string)) throw invalid();
+  return value as CalendarAppointmentStatus;
+}
+function lifecycleReason(value: unknown): string {
+  const accepted = identifier(value, 1024).trim(); if (!accepted) throw invalid(); return accepted;
+}
+function appointmentTransitionInput(value: unknown): CalendarAppointmentTransitionInput {
+  const r = record(value, ['status', 'policyRevision', 'reason']);
+  const status = lifecycleStatus(r.status), policyRevision = integer(r.policyRevision, 1);
+  if (Object.hasOwn(r, 'reason') && status !== 'cancelled' && status !== 'no-show') throw invalid();
+  return Object.freeze({ status, policyRevision, ...(Object.hasOwn(r, 'reason') ? { reason: lifecycleReason(r.reason) } : {}) });
+}
+function appointmentLifecycle(value: unknown, appointment: Record<string, unknown>): CalendarAppointmentLifecycle {
+  const r = record(value, ['status', 'revision', 'policyRevision', 'reason']);
+  if (Object.keys(r).length !== 4) throw invalid();
+  const status = lifecycleStatus(r.status), revision = integer(r.revision, 1, Number(appointment.revision)), policyRevision = integer(r.policyRevision, 1);
+  if ((status === 'cancelled') !== (appointment.status === 'cancelled')) throw invalid();
+  const reason = r.reason === null ? null : lifecycleReason(r.reason);
+  if (reason !== r.reason || reason !== null && status !== 'cancelled' && status !== 'no-show') throw invalid();
+  return Object.freeze({ status, revision, policyRevision, reason });
+}
+function appointmentTransitions(value: unknown, targetId: string): CalendarAppointmentTransitions {
+  const r = record(value, ['id', 'revision', 'policyRevision', 'status', 'allowed']);
+  if (Object.keys(r).length !== 5 || requestKey(r.id) !== targetId) throw invalid();
+  const revision = integer(r.revision, 1), policyRevision = integer(r.policyRevision, 1), status = lifecycleStatus(r.status);
+  const allowed = values(r.allowed, 5).map(value => {
+    const entry = record(value, ['status', 'requiresReason']), next = lifecycleStatus(entry.status);
+    if (Object.keys(entry).length !== 2 || typeof entry.requiresReason !== 'boolean' || next === status
+      || entry.requiresReason && next !== 'no-show' && next !== 'cancelled') throw invalid();
+    return Object.freeze({ status: next, requiresReason: entry.requiresReason });
+  });
+  unique(allowed.map(entry => entry.status));
+  if (['completed', 'no-show', 'cancelled'].includes(status) && allowed.length !== 0) throw invalid();
+  return Object.freeze({ id: targetId, revision, policyRevision, status, allowed: Object.freeze(allowed) });
 }
 function region(value: unknown): string {
   if (typeof value !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/.test(value)) throw invalid(); return value;
@@ -458,13 +535,15 @@ function resourceView(value: unknown): CalendarResourceView {
   return Object.freeze(r) as unknown as CalendarResourceView;
 }
 function appointmentView(value: unknown): CalendarAppointmentView {
-  const r = record(value, ['id', 'revision', 'resourceIds', 'title', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'status', 'createdBy', 'appointmentType']);
-  if (Object.keys(r).length !== (Object.hasOwn(r, 'appointmentType') ? 12 : 11) || r.status !== 'confirmed' && r.status !== 'cancelled') throw invalid();
+  const r = record(value, ['id', 'revision', 'resourceIds', 'title', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'status', 'createdBy', 'appointmentType', 'lifecycle']);
+  if (Object.keys(r).length !== 11 + (Object.hasOwn(r, 'appointmentType') ? 1 : 0) + (Object.hasOwn(r, 'lifecycle') ? 1 : 0)
+    || r.status !== 'confirmed' && r.status !== 'cancelled') throw invalid();
   requestKey(r.id); integer(r.revision, 1); const resourceIds = ids(r.resourceIds); identifier(r.title, 512); requestKey(r.createdBy);
   instant(r.startAt); instant(r.endAt); if (Date.parse(String(r.endAt)) <= Date.parse(String(r.startAt))) throw invalid(); zone(r.timeZone);
   integer(r.bufferBeforeMinutes, 0, 1440); integer(r.bufferAfterMinutes, 0, 1440);
   const binding = bookingTypeSnapshot(r);
-  return Object.freeze({ ...r, resourceIds: Object.freeze(resourceIds), ...binding }) as unknown as CalendarAppointmentView;
+  const lifecycle = Object.hasOwn(r, 'lifecycle') ? { lifecycle: appointmentLifecycle(r.lifecycle, r) } : {};
+  return Object.freeze({ ...r, resourceIds: Object.freeze(resourceIds), ...binding, ...lifecycle }) as unknown as CalendarAppointmentView;
 }
 function blockView(value: unknown): CalendarBlockView {
   const r = record(value, ['id', 'revision', 'resourceIds', 'title', 'startAt', 'endAt', 'timeZone', 'status', 'createdBy']);
@@ -527,7 +606,9 @@ function calendarReceipt(value: unknown): CalendarCommandReceipt {
     'location.created', 'location.updated',
     'type.created', 'type.updated', 'resource.types-changed',
     'block.created', 'block.rescheduled', 'block.cancelled', 'hold.acquired', 'hold.released',
-    'appointment.created', 'appointment.rescheduled', 'appointment.cancelled'].includes(r.operation) || typeof r.changed !== 'boolean') throw invalid();
+    'appointment.created', 'appointment.rescheduled', 'appointment.cancelled', 'appointment.transitioned', 'lifecycle.policy-changed'].includes(r.operation)
+    || r.operation === 'lifecycle.policy-changed' && r.id !== 'policy' || typeof r.changed !== 'boolean') throw invalid();
+  if (r.operation === 'appointment.transitioned' && !r.changed) throw invalid();
   requestKey(r.requestId); requestKey(r.id); integer(r.revision, 1); return Object.freeze(r) as unknown as CalendarCommandReceipt;
 }
 function record(value: unknown, fields: readonly string[]): Record<string, unknown> {

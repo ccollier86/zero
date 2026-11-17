@@ -10,6 +10,8 @@ import { calendarSelection } from './realm-model';
 import { appendCalendarSemanticAudit } from './semantic-audit';
 import { assertCalendarResourcesAvailable } from './occupancy';
 import { assertCalendarAvailability } from './availability-model';
+import { assertCalendarLifecycleReason, bindCalendarAppointmentLifecycle, calendarLifecycleReason, currentCalendarAppointmentLifecycle,
+  currentCalendarLifecyclePolicy, effectiveCalendarAppointmentStatus, isCalendarLifecycleTerminal } from './lifecycle-model';
 import { assertCalendarBookingType, bindCalendarAppointmentType, calendarAppointmentTypeAtRevision, calendarAppointmentTypeReference,
   calendarCurrentAppointmentType, normalizeCalendarTypedBooking, normalizeCalendarTypedIntentInterval, sameCalendarAppointmentType } from './appointment-type-bindings';
 
@@ -135,7 +137,7 @@ export function rescheduleCalendarAppointment(context: DatabaseWriteCommandConte
       : ['appointment.reschedule', row.id, expectedRevision, interval];
     return calendarIntent(context, actor, r.requestId, intent, 'appointment', 'manage', requestId => {
       calendarRevision(row, expectedRevision);
-      if (row.status !== 'confirmed') throw new CalendarError('CALENDAR_REVISION_CONFLICT');
+      if (isCalendarLifecycleTerminal(effectiveCalendarAppointmentStatus(context, row))) throw new CalendarError('CALENDAR_REVISION_CONFLICT');
       const currentType = calendarCurrentAppointmentType(context, actor.scopeId, row.id);
       const typeChanged = !sameCalendarAppointmentType(currentType, typeRef);
       if (!typeChanged && Object.entries(intervalFields(interval)).every(([key, value]) => row[key] === value)) return receipt(requestId, 'appointment.rescheduled', row.id, row.revision, false);
@@ -149,24 +151,30 @@ export function rescheduleCalendarAppointment(context: DatabaseWriteCommandConte
       const revision = nextCalendarRevision(row.revision), change = context.db.update('calendar_appointments', row.id, { ...intervalFields(interval), revision });
       if (typeChanged) bindCalendarAppointmentType(context, actor.scopeId, row.id, revision, typeRef);
       for (const id of resourceIds) context.db.update('_calendar_reservations', reservationId(actor.scopeId, row.id, id), { occupied_start_ms: interval.occupiedStartMs, occupied_end_ms: interval.occupiedEndMs });
-      appendCalendarSemanticAudit(context, 'appointment.rescheduled', change, { revision, resourceCount: resourceIds.length, status: 'confirmed' });
+      appendCalendarSemanticAudit(context, 'appointment.rescheduled', change, { revision, resourceCount: resourceIds.length, status: effectiveCalendarAppointmentStatus(context, row) });
       return receipt(requestId, 'appointment.rescheduled', row.id, revision);
     });
   });
 }
 export function cancelCalendarAppointment(context: DatabaseWriteCommandContext, input: unknown) {
   return calendarCommand(() => {
-    const r = calendarRecord(input, ['actor', 'requestId', 'id', 'expectedRevision', 'confirmed']), actor = calendarActor(r.actor);
+    const r = calendarRecord(input, ['actor', 'requestId', 'id', 'expectedRevision', 'confirmed', 'reason']), actor = calendarActor(r.actor);
     owner(context, actor.scopeId);
     const { row } = calendarAppointment(context, actor, r.id, 'manage'), expectedRevision = calendarInteger(r.expectedRevision, 1);
     // Declining the dialog is not a command and cannot consume its logical identity or create false evidence.
     if (r.confirmed !== true) throw new CalendarError('CALENDAR_INPUT_INVALID');
-    return calendarIntent(context, actor, r.requestId, ['appointment.cancel', row.id, expectedRevision], 'appointment', 'manage', requestId => {
+    const reason = calendarLifecycleReason(r.reason);
+    const intent = r.reason === undefined ? ['appointment.cancel', row.id, expectedRevision] : ['appointment.cancel.reason.v1', row.id, expectedRevision, reason];
+    return calendarIntent(context, actor, r.requestId, intent, 'appointment', 'manage', requestId => {
       calendarRevision(row, expectedRevision);
       if (row.status === 'cancelled') return receipt(requestId, 'appointment.cancelled', row.id, row.revision, false);
+      if (isCalendarLifecycleTerminal(effectiveCalendarAppointmentStatus(context, row))) throw new CalendarError('CALENDAR_TRANSITION_INVALID');
+      const policy = currentCalendarLifecyclePolicy(context, actor.scopeId); assertCalendarLifecycleReason(policy, 'cancelled', reason);
       const revision = nextCalendarRevision(row.revision), change = context.db.update('calendar_appointments', row.id, { status: 'cancelled', revision });
+      const extendedFact = reason !== null || policy.revision > 1 || !!currentCalendarAppointmentLifecycle(context, actor.scopeId, row.id);
+      if (extendedFact) bindCalendarAppointmentLifecycle(context, actor.scopeId, row.id, revision, 'cancelled', policy.revision, reason);
       for (const id of appointmentResources(context, actor, row.id)) context.db.update('_calendar_reservations', reservationId(actor.scopeId, row.id, id), { active: 0 });
-      appendCalendarSemanticAudit(context, 'appointment.cancelled', change, { revision, status: 'cancelled' });
+      appendCalendarSemanticAudit(context, 'appointment.cancelled', change, { revision, status: 'cancelled', ...(extendedFact ? { policyRevision: policy.revision, reasonPresent: reason !== null } : {}) });
       return receipt(requestId, 'appointment.cancelled', row.id, revision);
     });
   });

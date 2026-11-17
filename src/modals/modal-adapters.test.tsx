@@ -1,6 +1,6 @@
 /** Controller/React adapter ownership tests; no server, database, or browser presentation. */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { act, createElement, type ReactNode } from 'react';
+import { act, createElement, StrictMode, useLayoutEffect, type ReactNode } from 'react';
 import type { Root } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { defineSchema, field } from '../schema';
@@ -124,6 +124,74 @@ describe('ConfirmProvider managed single-slot ownership', () => {
 });
 
 describe('ControlledModal bridge ownership', () => {
+  test('owner removal retires hosted private state during layout, before another committed layout observer or late writer can use it', async () => {
+    const receipt = deferred<string>(), observations: { present: boolean; aborted: boolean }[] = [];
+    let visible = true, owned!: ModalContext<string>, accepted = 0, closed = 0;
+    function ObserveCommit() {
+      useLayoutEffect(() => {
+        if (!visible) observations.push({ present: modalStore.getSnapshot().context.modals.some(modal => modal.id === owned.id), aborted: owned.signal.aborted });
+      });
+      return null;
+    }
+    function Capture() { return <>{visible && <ControlledModal<string> open identityKey="private-owner"
+      descriptor={{ title: 'Private owner', body: 'PRIVATE_SYNTHETIC_BODY', actions: [{ id: 'save', label: 'Save', onClick: () => receipt.promise }] }}
+      onResult={() => { accepted++; }} onOpenChange={() => { closed++; }} />}<ObserveCommit /></>; }
+    const root = await render(createElement(Capture));
+    let writing!: Promise<boolean>;
+    try {
+      const opening = modalStore.getSnapshot().context.modals[0]!; owned = modals.getContext(opening.id)! as ModalContext<string>;
+      await act(async () => { writing = modals.performAction(opening.id, 'save'); });
+      visible = false; await act(async () => root.render(wrap(createElement(Capture))));
+      expect(observations).toEqual([{ present: false, aborted: true }]);
+      expect(modalStore.getSnapshot().context.closingIds).not.toContain(opening.id);
+      expect(owned.accept('late')).toBe(false);
+      await act(async () => { receipt.resolve('late receipt'); expect(await writing).toBe(false); });
+      expect(accepted).toBe(0); expect(closed).toBe(0);
+    } finally {
+      receipt.resolve('cleanup');
+      await act(async () => root.unmount()); roots.delete(root);
+    }
+  });
+  test('StrictMode layout replay admits exactly one current opening and identity changes retire only that opening', async () => {
+    let identityKey = 'first', title = 'First', notifications = 0, layoutSetups = 0, layoutCleanups = 0;
+    function Capture() {
+      useLayoutEffect(() => { layoutSetups++; return () => { layoutCleanups++; }; }, []);
+      return <ControlledModal open identityKey={identityKey} descriptor={{ title, body: 'Synthetic body' }}
+        onResult={() => { notifications++; }} onOpenChange={() => { notifications++; }} />;
+    }
+    const content = () => createElement(StrictMode, null, wrap(createElement(Capture))), root = await render(createElement(Capture), true);
+    try {
+      expect(layoutSetups).toBe(2); expect(layoutCleanups).toBe(1);
+      expect(modalStore.getSnapshot().context.modals).toHaveLength(1);
+      const first = modalStore.getSnapshot().context.modals[0]!, owned = modals.getContext(first.id)!;
+      title = 'Live title'; await act(async () => root.render(content()));
+      expect(modalStore.getSnapshot().context.modals.map(modal => modal.id)).toEqual([first.id]);
+      expect(owned.signal.aborted).toBe(false);
+      identityKey = 'second'; title = 'Second'; await act(async () => root.render(content()));
+      expect(owned.signal.aborted).toBe(true);
+      expect(modalStore.getSnapshot().context.modals.map(modal => modal.title)).toEqual(['Second']);
+      expect(notifications).toBe(0);
+    } finally { await act(async () => root.unmount()); roots.delete(root); }
+    expect(modalStore.getSnapshot().context.modals).toEqual([]); expect(notifications).toBe(0);
+  });
+  test('accepted notifications remain once-only and owner unmount preserves the native exit without retiring unrelated openings', async () => {
+    const results: string[] = []; let closes = 0;
+    const root = await render(<ControlledModal<string> open identityKey="accepted-owner" descriptor={{ title: 'Accepted exit' }}
+      onResult={result => { if (result.kind === 'accepted') results.push(result.value); }} onOpenChange={() => { closes++; }} />);
+    try {
+      const opening = modalStore.getSnapshot().context.modals[0]!, owned = modals.getContext(opening.id)!;
+      await act(async () => { expect(owned.accept('accepted')).toBe(true); });
+      expect(results).toEqual(['accepted']); expect(closes).toBe(1);
+      expect(modalStore.getSnapshot().context.closingIds).toContain(opening.id);
+      const unrelated = modals.show({ title: 'Unrelated current opening' });
+      await act(async () => root.unmount()); roots.delete(root);
+      expect(modalStore.getSnapshot().context.modals.map(modal => modal.id)).toEqual([opening.id, unrelated.id]);
+      expect(modalStore.getSnapshot().context.closingIds).toContain(opening.id);
+      modals.completeExit(opening.id, opening.generation);
+      expect(modalStore.getSnapshot().context.modals.map(modal => modal.id)).toEqual([unrelated.id]);
+      expect(results).toEqual(['accepted']); expect(closes).toBe(1);
+    } finally { if (roots.delete(root)) await act(async () => root.unmount()); }
+  });
   test('body props update without retiring a context, while target identity updates retire the exact previous opening', async () => {
     let props: ControlledModalProps<string> = { open: true, identityKey: 'a', descriptor: { title: 'Fixture', body: 'Original' },
       onOpenChange() {} };
@@ -196,12 +264,13 @@ async function renderBoundForm(c: ModalContext<FormRow>, onSubmit: () => Promise
   await render(createElement(Capture)); return { get form() { return form; }, get binding() { return binding; }, get save() { return save; } };
 }
 function wrap(children: ReactNode) { return createElement(ModalHostContext.Provider, { value: true, children }); }
-async function render(children: ReactNode) {
+async function render(children: ReactNode, strict = false) {
   const { createRoot } = await import('react-dom/client');
   const container = { nodeType: 1, nodeName: 'DIV', tagName: 'DIV', namespaceURI: 'http://www.w3.org/1999/xhtml',
     ownerDocument: document, addEventListener() {}, removeEventListener() {}, appendChild() {}, removeChild() {},
     textContent: '', firstChild: null } as unknown as Element;
-  const root = createRoot(container); roots.add(root); await act(async () => root.render(wrap(children))); return root;
+  const root = createRoot(container); roots.add(root);
+  await act(async () => root.render(strict ? createElement(StrictMode, null, wrap(children)) : wrap(children))); return root;
 }
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(yes => { resolve = yes; }); return { promise, resolve }; }
 function installMinimalDom() {

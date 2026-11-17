@@ -21,6 +21,7 @@ import { installCalendarOwnerSchema, type CalendarOwnerRecord } from './owner-sc
 import type { ResolvedCalendarPersistenceConfig } from './persistence-config';
 import { calendarRealm } from './realm';
 import { calendarActor, calendarSelection, CALENDAR_LIMITS } from './realm-model';
+import { CALENDAR_DEFAULT_LIFECYCLE_POLICY, calendarLifecyclePolicyFields, requireCalendarLifecycleManager } from './lifecycle-model';
 import type { CalendarServiceBroker } from './service';
 import { calendarAppointmentTypeInput, calendarAppointmentTypePageQuery, calendarLocationInput, calendarPageQuery, calendarRange, calendarResourcePageQuery } from './service-validation';
 import { normalizeCalendarInstant, normalizeCalendarTimeZone } from './time';
@@ -42,11 +43,11 @@ export interface CalendarRuntimeOptions {
 }
 const QUERIES = new Set(['calendar.resources', 'calendar.busy', 'calendar.appointments', 'calendar.appointment',
   'calendar.locations', 'calendar.location', 'calendar.resourceLocations', 'calendar.locationAssignmentWitnesses',
-  'calendar.types', 'calendar.type', 'calendar.resourceTypes',
+  'calendar.types', 'calendar.type', 'calendar.resourceTypes', 'calendar.lifecycle', 'calendar.appointmentTransitions',
   'calendar.availability', 'calendar.blocks', 'calendar.block', 'calendar.holds', 'calendar.hold', 'calendar.receipt']);
 const COMMANDS = new Set(['calendar.resource.create', 'calendar.resource.grant', 'calendar.resource.availability',
   'calendar.location.create', 'calendar.location.replace', 'calendar.resource.locations',
-  'calendar.type.create', 'calendar.type.replace', 'calendar.resource.types',
+  'calendar.type.create', 'calendar.type.replace', 'calendar.resource.types', 'calendar.lifecycle.replace', 'calendar.appointment.transition',
   'calendar.block.create', 'calendar.block.reschedule', 'calendar.block.cancel',
   'calendar.hold.acquire', 'calendar.hold.release', 'calendar.hold.confirm',
   'calendar.appointment.create', 'calendar.appointment.reschedule', 'calendar.appointment.cancel']);
@@ -345,10 +346,12 @@ export function emptyCalendarRead(name: string, input: unknown): unknown {
     : name === 'calendar.locations' ? ['actor', 'limit', 'after']
     : name === 'calendar.types' ? ['actor', 'limit', 'after', 'resourceIds']
     : name === 'calendar.locationAssignmentWitnesses' ? ['actor', 'locationIds']
-    : name === 'calendar.receipt' ? ['actor', 'requestId'] : ['calendar.appointment', 'calendar.block', 'calendar.hold', 'calendar.availability', 'calendar.location', 'calendar.resourceLocations', 'calendar.type', 'calendar.resourceTypes'].includes(name) ? ['actor', 'id']
+    : name === 'calendar.lifecycle' ? ['actor']
+    : name === 'calendar.receipt' ? ['actor', 'requestId'] : ['calendar.appointment', 'calendar.appointmentTransitions', 'calendar.block', 'calendar.hold', 'calendar.availability', 'calendar.location', 'calendar.resourceLocations', 'calendar.type', 'calendar.resourceTypes'].includes(name) ? ['actor', 'id']
     : name === 'calendar.busy' || name === 'calendar.appointments' || name === 'calendar.blocks' || name === 'calendar.holds' ? ['actor', 'resourceIds', 'startAt', 'endAt', 'limit'] : null;
   if (!fields) throw new CalendarError('CALENDAR_INPUT_INVALID');
   const r = calendarRecord(input, fields); calendarActor(r.actor);
+  if (name === 'calendar.lifecycle') { requireCalendarLifecycleManager(calendarActor(r.actor)); return { ...CALENDAR_DEFAULT_LIFECYCLE_POLICY }; }
   if (name === 'calendar.types') {
     const { actor: _actor, ...query } = r;
     const accepted = calendarAppointmentTypePageQuery(query, { maxPageSize: CALENDAR_LIMITS.page, maxResources: CALENDAR_LIMITS.selection });
@@ -375,7 +378,7 @@ export function emptyCalendarRead(name: string, input: unknown): unknown {
     if (!calendarActor(r.actor).manageAll) throw new CalendarError('CALENDAR_FORBIDDEN');
     throw new CalendarError('CALENDAR_NOT_FOUND');
   }
-  if (['calendar.appointment', 'calendar.block', 'calendar.hold', 'calendar.availability', 'calendar.location', 'calendar.resourceLocations', 'calendar.resourceTypes'].includes(name)) { calendarKey(r.id); throw new CalendarError('CALENDAR_NOT_FOUND'); }
+  if (['calendar.appointment', 'calendar.appointmentTransitions', 'calendar.block', 'calendar.hold', 'calendar.availability', 'calendar.location', 'calendar.resourceLocations', 'calendar.resourceTypes'].includes(name)) { calendarKey(r.id); throw new CalendarError('CALENDAR_NOT_FOUND'); }
   const ids = calendarSelection(r.resourceIds);
   const start = Date.parse(normalizeCalendarInstant(r.startAt)), end = Date.parse(normalizeCalendarInstant(r.endAt));
   calendarInteger(end - start, 1, CALENDAR_LIMITS.rangeMs); calendarInteger(r.limit ?? 100, 1, CALENDAR_LIMITS.page);
@@ -383,6 +386,14 @@ export function emptyCalendarRead(name: string, input: unknown): unknown {
   return { items: [], truncated: false };
 }
 function assertCalendarProvisionAllowed(name: string, input: Record<string, unknown>): void {
+  if (name === 'calendar.lifecycle.replace') {
+    const r = calendarRecord(input, ['actor', 'requestId', 'expectedRevision', 'extended', 'cancellationReason', 'noShowReason']), actor = calendarActor(r.actor);
+    calendarKey(r.requestId); calendarInteger(r.expectedRevision, 1);
+    calendarLifecyclePolicyFields({ extended: r.extended, cancellationReason: r.cancellationReason, noShowReason: r.noShowReason });
+    requireCalendarLifecycleManager(actor);
+    if (r.expectedRevision !== 1) throw new CalendarError('CALENDAR_REVISION_CONFLICT');
+    return;
+  }
   if (name === 'calendar.type.create') {
     const r = calendarRecord(input, ['actor', 'requestId', 'id', 'label', 'durationMinutes', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'colorKey', 'active']), actor = calendarActor(r.actor);
     calendarKey(r.requestId); calendarKey(r.id);

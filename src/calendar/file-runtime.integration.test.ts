@@ -23,7 +23,7 @@ import { databaseActorFactoryLaunch, type DatabaseActorExecutorFactoryContext, t
 import { createReactiveDB } from '../sync/reactive-db';
 import { allocateSyntheticFixture } from '../test-support/synthetic-fixture';
 import { resolveCalendarConfig, type ResolvedCalendarConfig } from './config';
-import type { CalendarActor, CalendarAppointmentPage, CalendarAppointmentView, CalendarAppointmentTypeView, CalendarAvailabilityView, CalendarBlockPage, CalendarBusyPage, CalendarCommandReceipt, CalendarHoldPage, CalendarHoldView, CalendarLocationPage, CalendarLocationView, CalendarResourceLocationsView, CalendarResourcePage } from './contracts';
+import type { CalendarActor, CalendarAppointmentPage, CalendarAppointmentView, CalendarAppointmentTypeView, CalendarAvailabilityView, CalendarBlockPage, CalendarBusyPage, CalendarCommandReceipt, CalendarHoldPage, CalendarHoldView, CalendarLocationPage, CalendarLocationView, CalendarResourceLocationsView, CalendarResourcePage, CalendarLifecyclePolicy, CalendarAppointmentTransitions } from './contracts';
 import { CalendarError } from './error';
 import { inspectCalendarOwnerSchema } from './owner-schema';
 import { resolveCalendarPersistenceConfig, type ResolvedCalendarPersistenceConfig } from './persistence-config';
@@ -526,6 +526,40 @@ test('native typed bookings preserve original labels, hold policy and binding hi
       expect(database.query('SELECT appointment_revision,type_revision FROM _calendar_appointment_type_bindings ORDER BY appointment_revision').all())
         .toEqual([{ appointment_revision: 1, type_revision: 1 }, { appointment_revision: 2, type_revision: 2 }]);
       expect(database.query('SELECT type_revision FROM _calendar_hold_type_bindings').all()).toEqual([{ type_revision: 1 }]);
+      expect(database.query('PRAGMA foreign_key_check').all()).toEqual([]);
+    });
+  } finally { await f.close(); }
+}, 120_000);
+
+test('native lifecycle policy, private reasons, terminal occupancy and original outcomes survive full actor/SYSTEM restart', async () => {
+  const f = await fixture(), scope = applicationServiceDataScope(), manager = actor(scope);
+  try {
+    const provider = resource(scope); await f.runtime.write(scope, 'calendar.resource.create', provider, provider.requestId, guard);
+    const policy = { actor: manager, requestId: 'lifecycle-policy', expectedRevision: 1, extended: true, cancellationReason: 'required', noShowReason: 'required' };
+    const policyReceipt = await f.runtime.write<CalendarCommandReceipt>(scope, 'calendar.lifecycle.replace', policy, policy.requestId, guard);
+    const booking = { actor: manager, id: 'lifecycle-visit', requestId: 'lifecycle-visit', resourceIds: [provider.id], title: 'PRIVATE_SYNTHETIC_VISIT',
+      startAt: '2026-12-01T09:00:00.000Z', endAt: '2026-12-01T10:00:00.000Z', timeZone: 'UTC' };
+    await f.runtime.write(scope, 'calendar.appointment.create', booking, booking.requestId, guard);
+    await expect(f.runtime.write(scope, 'calendar.appointment.cancel', { actor: manager, id: booking.id, requestId: 'missing-reason', expectedRevision: 1, confirmed: true }, 'missing-reason', guard))
+      .rejects.toMatchObject({ code: 'CALENDAR_REASON_REQUIRED', outcome: 'not-committed' });
+    const transition = { actor: manager, id: booking.id, requestId: 'no-show', expectedRevision: 1, policyRevision: 2, status: 'no-show', reason: 'PRIVATE_SYNTHETIC_REASON' };
+    const receipt = await f.runtime.write<CalendarCommandReceipt>(scope, 'calendar.appointment.transition', transition, transition.requestId, guard);
+    await f.restart(false);
+    expect(await f.runtime.read<CalendarLifecyclePolicy>(scope, 'calendar.lifecycle', { actor: manager }, guard))
+      .toEqual({ revision: 2, extended: true, cancellationReason: 'required', noShowReason: 'required' });
+    expect(await f.runtime.write<CalendarCommandReceipt>(scope, 'calendar.lifecycle.replace', policy, policy.requestId, guard)).toEqual(policyReceipt);
+    expect(await f.runtime.write<CalendarCommandReceipt>(scope, 'calendar.appointment.transition', transition, transition.requestId, guard)).toEqual(receipt);
+    expect(await f.runtime.read<CalendarAppointmentView>(scope, 'calendar.appointment', { actor: manager, id: booking.id }, guard))
+      .toMatchObject({ revision: 2, status: 'confirmed', lifecycle: { revision: 2, policyRevision: 2, status: 'no-show', reason: transition.reason } });
+    expect((await f.runtime.read<CalendarAppointmentTransitions>(scope, 'calendar.appointmentTransitions', { actor: manager, id: booking.id }, guard)).allowed).toEqual([]);
+    expect((await f.runtime.read<CalendarBusyPage>(scope, 'calendar.busy', { actor: manager, resourceIds: [provider.id], ...range }, guard)).items).toHaveLength(1);
+    await expect(f.runtime.write(scope, 'calendar.appointment.cancel', { actor: manager, id: booking.id, requestId: 'bypass', expectedRevision: 2, confirmed: true, reason: 'Rejected' }, 'bypass', guard))
+      .rejects.toMatchObject({ code: 'CALENDAR_TRANSITION_INVALID', outcome: 'not-committed' });
+    expect(await f.runtime.read<CalendarCommandReceipt | null>(scope, 'calendar.receipt', { actor: manager, requestId: 'bypass' }, guard)).toBeNull();
+    await f.stop();
+    inspect(f.path(scope), database => {
+      expect(database.query('SELECT status,reason FROM _calendar_appointment_lifecycle_history').all()).toEqual([{ status: 'no-show', reason: transition.reason }]);
+      expect(database.query('SELECT active FROM _calendar_reservations').all()).toEqual([{ active: 1 }]);
       expect(database.query('PRAGMA foreign_key_check').all()).toEqual([]);
     });
   } finally { await f.close(); }

@@ -14,7 +14,9 @@ interface CalendarAuditMetadata {
   readonly typeCount?: number;
   readonly mode?: 'unrestricted' | 'optional' | 'required';
   readonly active?: boolean;
-  readonly status?: 'confirmed' | 'cancelled' | 'active' | 'held' | 'released';
+  readonly status?: 'tentative' | 'confirmed' | 'completed' | 'no-show' | 'cancelled' | 'active' | 'held' | 'released';
+  readonly policyRevision?: number;
+  readonly reasonPresent?: boolean;
 }
 
 /** Call only inside an accepted mutation's callback; receipt replay and domain no-ops never reach this seam. */
@@ -28,12 +30,14 @@ export function appendCalendarSemanticAudit(context: DatabaseWriteCommandContext
   if (metadata.mode !== undefined) values.mode = metadata.mode;
   if (metadata.active !== undefined) values.active = metadata.active;
   if (metadata.status !== undefined) values.status = metadata.status;
+  if (metadata.policyRevision !== undefined) values.policyRevision = metadata.policyRevision;
+  if (metadata.reasonPresent !== undefined) values.reasonPresent = metadata.reasonPresent;
   const action = 'calendar.' + operation;
   appendDatabaseCommandSourceAudit(context, {
     // A real mutation sequence identifies A -> B -> A transitions independently of transport retries.
     id: 'calendar:' + calendarHash([action, change.table, change.rowId, change.seq]),
     family: 'workflow', action, outcome: 'succeeded', occurredAt: change.ts,
-    target: { type: operation.startsWith('type.') ? 'calendar.appointment-type' : operation.startsWith('location.') ? 'calendar.location' : operation.startsWith('resource.') ? 'calendar.resource' : operation.startsWith('block.') ? 'calendar.block'
+    target: { type: operation.startsWith('lifecycle.') ? 'calendar.lifecycle-policy' : operation.startsWith('type.') ? 'calendar.appointment-type' : operation.startsWith('location.') ? 'calendar.location' : operation.startsWith('resource.') ? 'calendar.resource' : operation.startsWith('block.') ? 'calendar.block'
       : operation.startsWith('hold.') ? 'calendar.hold' : 'calendar.appointment', id: change.rowId },
     metadata: values,
   });

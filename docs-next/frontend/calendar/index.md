@@ -100,6 +100,17 @@ backend-configured catalogs/ranges are later integration work.
 
 ## Shared modal, drawer and floating-surface behavior
 
+On the unreleased managed-core branch, appointment details use
+`appointments.watchTransitions`/`useCalendarAppointmentTransitions` to discover
+currently permitted status changes. Selecting a change opens a native managed
+review dialog; required reasons come from the current server policy. Every entry
+point must use that same command boundary, not mutate the local preview's status.
+See [Lifecycle and reasons](../../backend/calendar/lifecycle.md). A changed source
+revision or policy requires review rather than silently rebasing the draft.
+Unknown outcomes retain their original receipt identity, and an older acceptance
+does not discard newer typing. These source/model checks are not real-browser
+qualification of the new connected dialog.
+
 Use the existing app-level [ModalManager](../modals/index.md) and TooltipProvider.
 Do not mount another manager for the calendar. `CalendarModal` uses
 `ControlledModal`; the filter drawer uses `ControlledDrawer` on the same owner.

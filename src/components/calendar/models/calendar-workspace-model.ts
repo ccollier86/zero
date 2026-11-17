@@ -75,7 +75,7 @@ export function projectCalendarAppointments(records: readonly CalendarAppointmen
       for (const resourceId of admitted) {
         const id = JSON.stringify([source.id, resourceId, day]); sourceByEventId.set(id, source);
         events.push({ id, resourceId, date: day, title: source.title, titleMode: 'custom', start: visibleStart, end: visibleEnd,
-          kind: 'appointment', status: source.status, location: 'Unspecified', notes: '', patientId: null, attendees: [],
+          kind: 'appointment', status: source.lifecycle?.status ?? source.status, location: 'Unspecified', notes: '', patientId: null, attendees: [],
           visitType: null, customVisitType: '', recurrence: null, reminder: null, sendReminder: false });
       }
     }

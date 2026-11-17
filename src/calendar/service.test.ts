@@ -90,6 +90,57 @@ function fixture(tenancy: 'single' | 'multi' = 'single', overrides: Partial<Auth
 }
 
 describe('calendar internal service boundary (in-memory broker, not Fabric)', () => {
+  test('lifecycle facade uses fixed policy identity and detaches policy/transition/cancellation controls before admission', async () => {
+    const f = fixture(), api = f.service.forAuthority(f.request);
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; }); f.setBeforeCurrent(() => gate);
+    f.setOnWrite(async call => ({ requestId: call.requestId,
+      operation: call.name === 'calendar.lifecycle.replace' ? 'lifecycle.policy-changed'
+        : call.name === 'calendar.appointment.transition' ? 'appointment.transitioned' : 'appointment.cancelled',
+      id: call.name === 'calendar.lifecycle.replace' ? 'policy' : call.input.id as string,
+      revision: (call.input.expectedRevision as number) + 1, changed: true }));
+    try {
+      const policy = { extended: true, cancellationReason: 'required' as const, noShowReason: 'optional' as const };
+      const transition = { status: 'cancelled' as const, policyRevision: 2, reason: '  Private reason  ' };
+      const cancellation = { idempotencyKey: 'cancel-reason', expectedRevision: 3, reason: '  Private reason  ' };
+      const replacing = api.lifecycle.replace(policy, { idempotencyKey: 'policy', expectedRevision: 1 });
+      const moving = api.appointments.transition('appointment', transition, { idempotencyKey: 'transition', expectedRevision: 3 });
+      const cancelling = api.appointments.cancel('appointment', cancellation);
+      policy.extended = false; transition.reason = 'changed'; transition.policyRevision = 9; cancellation.reason = 'changed'; cancellation.expectedRevision = 99;
+      release(); await Promise.all([replacing, moving, cancelling]);
+      expect(f.calls[0]!.input).toMatchObject({ extended: true, expectedRevision: 1 }); expect(f.calls[0]!.input).not.toHaveProperty('id');
+      expect(f.calls[1]!.input).toMatchObject({ id: 'appointment', expectedRevision: 3, status: 'cancelled', policyRevision: 2, reason: 'Private reason' });
+      expect(f.calls[2]!.input).toMatchObject({ reason: 'Private reason', expectedRevision: 3, confirmed: true });
+      await api.appointments.cancel('appointment', { idempotencyKey: 'legacy-cancel', expectedRevision: 4 }); expect(f.calls[3]!.input).not.toHaveProperty('reason');
+      const names: string[] = []; f.setOnRead(async call => { names.push(call.name); return {}; });
+      await api.lifecycle.get(); await api.appointments.transitions('appointment'); expect(names).toEqual(['calendar.lifecycle', 'calendar.appointmentTransitions']);
+      const count = f.calls.length;
+      for (const input of [{ extended: true }, { ...policy, revision: 1 }, { ...policy, actor: {} }]) await expect(api.lifecycle.replace(input as never,
+        { idempotencyKey: 'invalid', expectedRevision: 1 })).rejects.toMatchObject({ code: 'CALENDAR_INPUT_INVALID' });
+      await expect(api.appointments.transition('appointment', { status: 'cancelled', policyRevision: 0 }, { idempotencyKey: 'invalid', expectedRevision: 1 })).rejects.toMatchObject({ code: 'CALENDAR_INPUT_INVALID' });
+      await expect(api.appointments.cancel('appointment', { idempotencyKey: 'invalid', expectedRevision: 1, reason: ' ' })).rejects.toMatchObject({ code: 'CALENDAR_INPUT_INVALID' });
+      expect(f.calls).toHaveLength(count);
+      f.setOnWrite(async call => ({ requestId: call.requestId, operation: 'lifecycle.policy-changed', id: 'other-policy', revision: 2, changed: true }));
+      await expect(api.lifecycle.replace(policy, { idempotencyKey: 'bad-policy-receipt', expectedRevision: 1 })).rejects.toMatchObject({ code: 'CALENDAR_OUTCOME_UNKNOWN' });
+      f.setOnWrite(async call => ({ requestId: call.requestId, operation: 'appointment.transitioned', id: 'appointment', revision: 3, changed: false }));
+      await expect(api.appointments.transition('appointment', { status: 'cancelled', policyRevision: 2 }, { idempotencyKey: 'bad-transition-receipt', expectedRevision: 3 })).rejects.toMatchObject({ code: 'CALENDAR_OUTCOME_UNKNOWN' });
+    } finally { release(); await f.service.close(); }
+  });
+  for (const kind of ['lifecycle', 'transitions'] as const) test(`${kind} watch conceals delayed private projections and releases subscription on retirement`, async () => {
+    const f = fixture(), api = f.service.forAuthority(f.request), errors: unknown[] = [];
+    let entered!: () => void, release!: () => void, delivered = 0, captured!: ReadCall;
+    const reading = new Promise<void>(resolve => { entered = resolve; }), gate = new Promise<void>(resolve => { release = resolve; });
+    f.setOnRead(async call => { captured = call; entered(); await gate; return { private: 'NEVER_DELIVER' }; });
+    const stop = kind === 'lifecycle' ? api.lifecycle.watch(() => { delivered++; }, { onError: error => errors.push(error) })
+      : api.appointments.watchTransitions('appointment', () => { delivered++; }, { onError: error => errors.push(error) });
+    try {
+      await reading; expect(captured.name).toBe(kind === 'lifecycle' ? 'calendar.lifecycle' : 'calendar.appointmentTransitions');
+      if (kind === 'transitions') expect(captured.input.id).toBe('appointment');
+      f.revoke(); release();
+      for (let attempt = 0; errors.length === 0 && attempt < 100; attempt++) await new Promise<void>(resolve => setTimeout(resolve, 0));
+      expect(errors).toHaveLength(1); expect(delivered).toBe(0); expect(f.subscriptions).toBe(0);
+    } finally { release(); stop(); await f.service.close(); }
+  });
   for (const kind of ['blocks', 'holds', 'availability'] as const) {
     test(`${kind} watch detaches routing before await and conceals a delayed read after authority retirement`, async () => {
       const f = fixture(), api = f.service.forAuthority(f.request), errors: unknown[] = [];
@@ -113,7 +164,7 @@ describe('calendar internal service boundary (in-memory broker, not Fabric)', ()
   test('only fixed commands are exposed, and reserved authority/routing/identity fields cannot be client-selected', async () => {
     const f = fixture(), api = f.service.forAuthority(f.request);
     expect(Object.isFrozen(api)).toBe(true);
-    expect(Object.keys(api).sort()).toEqual(['appointments', 'availability', 'blocks', 'busy', 'createAppointment', 'createResource', 'holds', 'locations', 'receipts', 'resources', 'types']);
+    expect(Object.keys(api).sort()).toEqual(['appointments', 'availability', 'blocks', 'busy', 'createAppointment', 'createResource', 'holds', 'lifecycle', 'locations', 'receipts', 'resources', 'types']);
     const baselineChecks = f.syncChecks;
     for (const field of ['actor', 'scope', 'scopeId', 'tenantId', 'userId', 'principal', 'manageAll', 'createOwn',
       'operation', 'name', 'id', 'requestId', 'createdBy', 'revision']) {
