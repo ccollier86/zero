@@ -6,7 +6,7 @@ import { AuthorizationScopeBoundaryFence, useAuthorizationScopeBoundary, readAut
   isAuthorizationDataReady, isAuthorizationScopeReady } from './authorization-scope-hooks';
 import type { Client, InternalClient } from './sdk';
 import type { CalendarAppointmentPage, CalendarAppointmentView, CalendarAppointmentTypePage, CalendarAppointmentTypePageQuery, CalendarAppointmentTypeView, CalendarResourceTypesView,
-  CalendarLifecyclePolicy, CalendarAppointmentTransitions,
+  CalendarLifecyclePolicy, CalendarAppointmentTransitions, CalendarCapabilities,
   CalendarParticipantDirectoryQuery, CalendarParticipantDirectoryPage, CalendarParticipantsView,
   CalendarLocationPage, CalendarLocationPageQuery, CalendarLocationView, CalendarResourceLocationsView, CalendarVisitLocationQuery,
   CalendarRangeQuery, CalendarResourcePage, CalendarResourcePageQuery, CalendarWatchOptions, CalendarWatchUpdate } from '../../calendar/contracts';
@@ -21,6 +21,9 @@ export interface CalendarReadResult<T> {
 export interface UseCalendarAppointmentsResult extends CalendarReadResult<CalendarAppointmentPage> {
   readonly invalidationRevision: number;
   readonly reconnectRevision: number;
+}
+export function useCalendarCapabilities(): CalendarReadResult<CalendarCapabilities> {
+  return useCalendarLive<CalendarCapabilities>('capabilities', (client, listener, options) => client.calendar.capabilities.watch(listener, options));
 }
 export function useCalendarParticipantDirectory(query: CalendarParticipantDirectoryQuery | null): CalendarReadResult<CalendarParticipantDirectoryPage> {
   return useCalendarLive<CalendarParticipantDirectoryPage>(query === null ? null : JSON.stringify(['participant-directory', query.search ?? '', query.limit ?? null, query.after ?? null]),

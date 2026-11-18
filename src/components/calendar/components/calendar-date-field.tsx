@@ -1,7 +1,7 @@
 /** Local ISO-day contract over Zero's styled typed/calendar date picker. No native OS date dialog. */
 import { useEffect, useRef, useState } from 'react';
 import { DatePicker } from '@zero/framework/components/ui/date-picker';
-import { formatDatePickerValue, parseDatePickerInput } from '@zero/framework/components/ui/date-picker-value';
+import { formatDatePickerValue, parseDatePickerInput } from '../../controls/date-time/date-picker-value';
 import { dateKey, isDay, parseDay } from '../models/calendar-date';
 import '../styles/calendar-date-field.css';
 export function CalendarDateField({ value, onChange, label = 'Date', min }: { value: string; onChange(value: string): void; label?: string; min?: string }) {

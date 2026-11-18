@@ -21,3 +21,12 @@ test('unavailable retained identity can be removed but never falls back to its I
     accepted={[{ ref, availability: 'unavailable' }]} status="ready" />);
   expect(html).toContain('Remove Unavailable participant 1'); expect(html).not.toContain(ref.userId); expect(html).not.toContain(person.name);
 });
+test('a selected ref absent from this page is not falsely claimed unavailable and carries no old picker name', () => {
+  const html = renderToStaticMarkup(<CalendarParticipantFields {...common} accepted={[]} directory={{ items: [], truncated: false, nextAfter: null }} status="ready" />);
+  expect(html).toContain('Selected account (not on this page)'); expect(html).not.toContain('Unavailable participant');
+  expect(html).not.toContain(ref.userId); expect(html).not.toContain(person.name);
+});
+test('a current unavailable binding masks an independently lagging directory name', () => {
+  const html = renderToStaticMarkup(<CalendarParticipantFields {...common} accepted={[{ ref, availability: 'unavailable' }]} status="ready" />);
+  expect(html).toContain('Unavailable participant'); expect(html).not.toContain(person.name); expect(html).not.toContain(ref.userId);
+});

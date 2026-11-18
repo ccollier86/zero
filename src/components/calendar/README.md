@@ -2,13 +2,13 @@
 
 Status: released in Zero 2.11.0 as a frontend-only, experimental native component
 family. Its focused public entries are `@zero/framework/calendar` and
-`@zero/framework/components/calendar`. The calendar backend is not implemented;
-these exports are not a scheduling service or a production booking engine. See
+`@zero/framework/components/calendar`. That selected archive does not include the
+unreleased backend described below; its exports are not a production booking engine. See
 the [return handoff](../../../docs-next/_work/calendar-return-handoff.md) before
 planning authoritative persistence, availability, booking or reminders.
 The [managed integration plan](../../../docs-next/_work/calendar-integration-plan.md)
-defines the proposed backend/async UI contract and remaining core integration
-gates; it is not an implemented service or a replacement for these local UI APIs.
+defines the remaining integration gates. The connected source contracts below
+do not replace the preserved synchronous local UI APIs.
 
 ## Unreleased connected implementation
 
@@ -22,10 +22,20 @@ The participant stage additionally exports `CalendarParticipantFields`: a contro
 compact native-account multi-picker using current authorized directory pages,
 retained names/tombstones, server-driven search/pagination, native surfaces,
 magnetic highlights and edge fades. It hides old identities on read retirement.
-Compose it with the new scoped participant hooks; the connected one-off editor
-does not automatically enable it, and rich-demo patient/contact/manual guest UI
-is not a native backend adapter. See the
+The connected workspace now discovers optional participant availability from
+current native capabilities; `participants={false}` is a presentation opt-out,
+not an authorization change. Rich-demo patient/contact/manual guest UI is not a
+native backend adapter. See the
 [participant guide](../../../docs-next/backend/calendar/participants.md).
+
+`CalendarCoreEditor`, `CalendarCoreTypeFields`,
+`useCalendarParticipantSelection` and
+`CalendarAppointmentParticipantsDialog` are separately composable. Type defaults
+preserve exact durations/buffers, new bookings can select eligible account refs,
+and existing participant sets have a separate revision-controlled save. The
+[connected workspace guide](../../../docs-next/frontend/calendar/connected-workspace.md)
+covers native capabilities/limits, draft retirement, tombstones, receipt recovery
+and the source-only qualification boundary.
 
 ```tsx
 import { ConnectedCalendarWorkspace } from '@zero/framework/calendar';
@@ -34,7 +44,7 @@ import { ConnectedCalendarWorkspace } from '@zero/framework/calendar';
 
 Use existing App/ClientProvider and native modal/tooltip providers. The connected
 core supports real resources, current authorized live data and controlled
-one-off creation/reschedule/cancel. Its supported-field editor is separate from
+one-off creation/reschedule/lifecycle transitions and participant replacement. Its supported-field editor is separate from
 the richer synchronous `AppointmentEditor` below; unsupported fields are clearly
 unavailable, not silently dropped. Exact-instant records that do not fit the
 existing grid remain accessible in a companion list. Server API and UI resource

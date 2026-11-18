@@ -7,6 +7,7 @@ import { CalendarError } from './error';
 import { calendarRecord } from './validation';
 
 type CalendarWatchQuery = { queryName?: 'calendar.appointments'; query: CalendarRangeQuery }
+  | { queryName: 'calendar.capabilities'; query: Record<string, never> }
   | { queryName: 'calendar.participantDirectory'; query: CalendarParticipantDirectoryQuery }
   | { queryName: 'calendar.participantsForAppointment' | 'calendar.participantsForHold'; query: { readonly id: string } }
   | { queryName: 'calendar.lifecycle'; query: Record<string, never> }
@@ -28,7 +29,7 @@ export function watchCalendarPage<T>(input: {
 } & CalendarWatchQuery): () => void {
   const options = calendarRecord(input.options, ['signal', 'onError']);
   const queryName = input.queryName ?? 'calendar.appointments';
-  if (!['calendar.appointments', 'calendar.blocks', 'calendar.holds', 'calendar.availability', 'calendar.resources', 'calendar.locations', 'calendar.location', 'calendar.resourceLocations',
+  if (!['calendar.capabilities', 'calendar.appointments', 'calendar.blocks', 'calendar.holds', 'calendar.availability', 'calendar.resources', 'calendar.locations', 'calendar.location', 'calendar.resourceLocations',
     'calendar.types', 'calendar.type', 'calendar.resourceTypes', 'calendar.lifecycle', 'calendar.appointmentTransitions', 'calendar.visitLocations',
     'calendar.participantDirectory', 'calendar.participantsForAppointment', 'calendar.participantsForHold'].includes(queryName)) throw new CalendarError('CALENDAR_INPUT_INVALID');
   if (typeof input.listener !== 'function' || options.onError !== undefined && typeof options.onError !== 'function'

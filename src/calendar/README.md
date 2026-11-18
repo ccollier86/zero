@@ -71,6 +71,12 @@ implemented core and its explicit limitations. This is not the complete plan:
   routes: actor fields and creation IDs must come from a trusted broker, never
   browser input. The managed broker derives them from current Guardian authority.
 - Safe receipts preserve identity and outcome, not historical access rights.
+- Scoped `capabilities.get/watch` projects current UI flags and configured limits
+  without allocating owners/files/actors or enumerating accounts. It is not a
+  resource grant. The connected one-off editor now composes native type defaults,
+  visit/location and optional account selection; existing participant changes
+  use a separate revision-controlled dialog, never a hidden reschedule write.
+  See the [connected workspace guide](../../docs-next/frontend/calendar/connected-workspace.md).
 - Additive `002` preserves `001` migration/evidence identity. Block receipts and
   effect references have separate private tables with the same cross-family
   scope/principal/request-key namespace and current-target reauthorization.

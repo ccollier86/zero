@@ -67,6 +67,11 @@ test('native enabled directory and appointment binding replacement use canonical
   await withHttp(async ({ request, register, fixture }) => {
     expect((await request('GET', '/api/calendar/participants')).status).toBe(401);
     const manager = await register('manager'), target = await register('participant');
+    const capabilities = await request('GET', '/api/calendar/capabilities', undefined, manager.accessToken);
+    expect(capabilities.status).toBe(200); expect(await capabilities.json()).toMatchObject({ manage: true, participants: true });
+    const limitedCapabilities = await request('GET', '/api/calendar/capabilities', undefined, target.accessToken);
+    expect(limitedCapabilities.status).toBe(200); expect(await limitedCapabilities.json()).toMatchObject({ manage: false, participants: false });
+    expect((await request('GET', '/api/calendar/capabilities?scope=forged', undefined, manager.accessToken)).status).toBe(400);
     const discovered = await request('GET', '/api/calendar/participants?search=PRIVATE_NATIVE_participant', undefined, manager.accessToken);
     expect(discovered.status, await discovered.clone().text()).toBe(200); expect(await discovered.json()).toEqual({ items: [{ ref: ref(target.user.userId), availability: 'available', name: 'PRIVATE_NATIVE_participant' }], truncated: false, nextAfter: null });
     expect(fixture.stats().planes).toBe(0); // Directory discovery never provisions a calendar file.

@@ -51,8 +51,11 @@ preservation and exact hold transfer. The native participant stage now follows
 the preserved [admission notes](./calendar-participant-admission-notes.md), not
 the demo's fictional directory. See the [implemented boundaries](../backend/calendar/participants.md)
 for opt-in Guardian discovery, private bindings and separately composable picker.
-Domain contacts/guests, invitations and connected-editor integration are still
-later work. None of these stages implies a newly selected archive.
+The next connected UI pass now composes native type defaults and optional account
+selection, plus separate participant replacement and current scoped capability
+discovery. See the [connected workspace guide](../frontend/calendar/connected-workspace.md).
+Domain contacts/guests and invitations remain later work. None of these stages
+implies a newly selected archive.
 
 ## Checkpoints and places to resume
 

@@ -53,7 +53,7 @@ export function CalendarAppointmentTransitionDialog(props: CalendarAppointmentTr
     if (submitting.current || phase !== 'editing' || !current(context) || !ready || stale) return;
     const input = calendarTransitionInput(proposal, reasonRef.current);
     if (!input) { setError('Enter the required reason, using no more than 1,024 characters.'); return; }
-    const request: CalendarPendingRequest = { key: 'calendar-ui:' + crypto.randomUUID(), operation: 'appointment.transitioned', id: record.id };
+    const request: CalendarPendingRequest = { key: 'calendar-ui:' + crypto.randomUUID(), operation: 'appointment.transitioned', id: record.id, expectedRevision: proposal.revision };
     identity.current = request; fence.submit(request.key, request.operation, record.id);
     props.onUnknown(request); submitting.current = true; setBusy(true); setPhase('submitting'); setError(null); context.setBusy(true);
     try {

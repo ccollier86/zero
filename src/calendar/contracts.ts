@@ -8,6 +8,15 @@ export interface CalendarActor {
   readonly createOwn: boolean;
 }
 export type CalendarResourceKind = 'person' | 'room' | 'equipment';
+/** Current scoped UI discovery only; individual resource/command admission remains authoritative. */
+export interface CalendarCapabilities {
+  readonly timeZone: string;
+  readonly createOwn: boolean;
+  readonly manage: boolean;
+  /** Caller may discover/manage native account participants in this configured service. */
+  readonly participants: boolean;
+  readonly limits: { readonly maxRangeDays: number; readonly maxPageSize: number; readonly maxResources: number; readonly maxParticipants: number };
+}
 /** Native account identity only. Calendar files never duplicate Guardian profiles or credentials. */
 export interface CalendarParticipantReference { readonly kind: 'guardian-user'; readonly userId: string }
 export type CalendarParticipantView =
@@ -307,6 +316,10 @@ export interface CalendarWatchOptions extends CalendarReadOptions {
   readonly onError?: (error: unknown) => void;
 }
 export interface ScopedCalendar {
+  readonly capabilities: {
+    get(options?: CalendarReadOptions): Promise<CalendarCapabilities>;
+    watch(listener: (capabilities: CalendarCapabilities, update?: CalendarWatchUpdate) => void, options?: CalendarWatchOptions): () => void;
+  };
   readonly participants: {
     directory(query?: CalendarParticipantDirectoryQuery, options?: CalendarReadOptions): Promise<CalendarParticipantDirectoryPage>;
     forAppointment(id: string, options?: CalendarReadOptions): Promise<CalendarParticipantsView>;

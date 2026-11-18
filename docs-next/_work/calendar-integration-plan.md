@@ -942,8 +942,9 @@ attachment to a resource generation completed by another operation. Accepted
 semantic audits include no labels/default values; late source-audit failure rolls
 back parent, reservations, bindings, usage and receipts together.
 
-The native connected editor has not yet acquired type selection/management UI.
-The hosted demo remains unchanged. Source/memory evidence and prepared physical
+The subsequent connected UI pass adds type selection/defaults while keeping
+catalog/resource-policy administration for later. The hosted demo remains unchanged.
+Source/memory evidence and prepared physical
 restart coverage are documented in the [qualification guide](../backend/calendar/qualification.md);
 this is not a newly selected updater archive, production qualification or completion
 of the participant/status/recurrence/Jobs/Torrent stages.
@@ -1019,11 +1020,32 @@ Guardian subject policy, scope-manager-only discovery/private binding surfaces,
 opaque cursors, fixed hold captures and source version `008`. Ordinary details
 and busy views remain redacted. New target checks run under opaque final commit
 authority, not after accepted work; current presentation resolves after the last
-asynchronous viewer check. The reusable picker and live hooks are exported but
-the connected editor is not yet wired to them. No preview user, copied profile,
+asynchronous viewer check. The subsequent connected pass now wires these native
+hooks into creation and a separate participant replacement dialog. No preview user, copied profile,
 async app lookup or invitation is treated as authoritative identity. Domain
 contacts/guests require later reviewed adapters/proofs. Physical/browser/archive
 qualification remains outstanding; these source APIs are not selected for update.
+
+### November 18 connected type/participant editor
+
+The [connected workspace guide](../frontend/calendar/connected-workspace.md)
+records the implemented source composition: fixed native scoped capability
+discovery; server-bounded resource/range/participant selection; exact type
+duration/buffer defaults and retained generations; optional native participant
+creation; private current names/tombstones; and separate CAS participant
+replacement. Current management/participant denial retires old actions. Turning
+off participant controls retires an open creation rather than silently dropping
+its draft. Unknown original-key recovery retains the expected source revision
+after an editor closes; no UI receipt check substitutes for current read access.
+
+The richer local editor and approved hosted demo remain unchanged. There is no
+new migration, background timer, owner allocation during capability discovery,
+invitation, provider call or cross-service effect. Catalog management, recurring
+working hours/series, clinical progress/lobby/attention, domain contacts/guests,
+Jobs/Torrent delivery and public scheduling remain separate stages. Memory
+ReactDOM/controller checks are not physical, installed-browser or Linux/archive
+qualification. The [qualification record](../backend/calendar/qualification.md)
+keeps those unexecuted gates explicit.
 
 ## 15. Documentation deliverables and open decisions
 

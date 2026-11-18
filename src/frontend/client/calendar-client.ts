@@ -1,5 +1,5 @@
 /** Browser-safe scoped calendar commands. The SDK retires this entire transport on every authority replacement. */
-import type { CalendarAppointmentInput, CalendarAppointmentPage, CalendarAppointmentView, CalendarBusyPage, CalendarCommandReceipt,
+import type { CalendarAppointmentInput, CalendarAppointmentPage, CalendarAppointmentView, CalendarBusyPage, CalendarCommandReceipt, CalendarCapabilities,
   CalendarAppointmentStatus, CalendarAppointmentLifecycle, CalendarAppointmentTransitionInput, CalendarAppointmentTransitions,
   CalendarLifecyclePolicyInput, CalendarLifecyclePolicy, CalendarCancellationOptions,
   CalendarAvailabilityInput, CalendarAvailabilityView, CalendarAvailabilityWindow, CalendarBlockInput, CalendarBlockPage, CalendarBlockRescheduleInput, CalendarBlockView,
@@ -56,6 +56,12 @@ export function createCalendarClient(fetch: <T = unknown>(path: string, init?: F
     return watch('/' + kind + '/live?' + params, parse, listener, supplied);
   }
   return Object.freeze({
+    capabilities: Object.freeze({
+      get(supplied?: CalendarReadOptions) { return read('/capabilities', capabilityView, 'GET', undefined, readSignal(supplied)); },
+      watch(listener: (value: CalendarCapabilities, update?: CalendarWatchUpdate) => void, supplied: CalendarWatchOptions = {}) {
+        return watch('/capabilities/live', capabilityView, listener, supplied);
+      },
+    }),
     participants: Object.freeze({
       directory(query: CalendarParticipantDirectoryQuery = {}, supplied?: CalendarReadOptions) {
         const page = participantRequest(query);
@@ -520,6 +526,15 @@ function resourceLocationsView(value: unknown): CalendarResourceLocationsView {
   const locationIds = ids(r.locationIds, true);
   if (locationIds.some((id, index) => index > 0 && locationIds[index - 1]! >= id)) throw invalid();
   return Object.freeze({ resourceId: r.resourceId as string, resourceRevision: r.resourceRevision as number, locationIds: Object.freeze(locationIds) });
+}
+function capabilityView(value: unknown): CalendarCapabilities {
+  const r = record(value, ['timeZone', 'createOwn', 'manage', 'participants', 'limits']), limits = record(r.limits, ['maxRangeDays', 'maxPageSize', 'maxResources', 'maxParticipants']);
+  if (Object.keys(r).length !== 5 || Object.keys(limits).length !== 4 || typeof r.createOwn !== 'boolean'
+    || typeof r.manage !== 'boolean' || typeof r.participants !== 'boolean' || r.participants && !r.manage) throw invalid();
+  zone(r.timeZone);
+  return Object.freeze({ timeZone: r.timeZone as string, createOwn: r.createOwn, manage: r.manage, participants: r.participants,
+    limits: Object.freeze({ maxRangeDays: integer(limits.maxRangeDays, 1, 31), maxPageSize: integer(limits.maxPageSize, 1, 100),
+      maxResources: integer(limits.maxResources, 1, 16), maxParticipants: integer(limits.maxParticipants, 1, 100) }) });
 }
 function participantReferences(value: unknown): readonly CalendarParticipantReference[] {
   const refs = values(value, 100).map(item => {

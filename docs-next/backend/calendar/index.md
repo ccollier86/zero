@@ -97,8 +97,8 @@ unrestricted/optional/required policies. Typed appointments/holds retain their
 historical catalog generation. New/time-changed bookings and hold confirmation
 freshly check policy; older accepted records are not relabelled or cancelled.
 Catalog and policy editing requires scope management, not provider ownership.
-The native facade/hooks are available on this branch; type-management and
-type-selection UI are not yet connected.
+The connected editor now selects these types and applies exact duration/buffer
+defaults; catalog/resource-policy administration UI remains a later stage.
 
 The optional versioned lifecycle policy now supports unconfirmed, completed and
 no-show outcomes in addition to normal confirmation/cancellation. Server-supplied

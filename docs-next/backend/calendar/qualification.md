@@ -18,6 +18,75 @@ This is feature-branch evidence, not a release certificate. No calendar backend
 archive has been selected by normal `zero-update`, and no application deployment
 or data migration is authorized by these checks.
 
+## November 18 connected type and participant workspace checkpoint
+
+The [connected workspace](../../frontend/calendar/connected-workspace.md) now
+composes the native appointment-type, visit and optional account-participant
+contracts. Existing participant edits have their own exact-revision command and
+native modal; rescheduling never hides a second participant write. New fixed
+`capabilities.get/watch` discovery returns only current scoped UI flags/configured
+limits, without enumerating accounts or allocating a calendar owner/file/actor.
+No source migration, provider, background job or site-theme change accompanies
+this composition pass. The approved hosted local-state demo remains unchanged.
+
+Independent review and real ReactDOM/native-modal controller checks closed:
+
+- Current detail/management/participant denial now invalidates retained action
+  callbacks; an old button cannot reopen withdrawn private management.
+- Participant capability changes retire an open creation rather than silently
+  omitting its chosen references. Existing participant dialogs are also retired,
+  not automatically restored when capability returns.
+- A removed/inactive calendar no longer invisibly occupies the configured
+  selection ceiling when the user explicitly selects its replacement.
+- The separately exported core editor now keys account/client/provider/scope/
+  session/record-generation ownership. Old callbacks/receipts cannot mutate a
+  replacement, and unrelated initial-prop refreshes do not erase a dirty draft or
+  redefine its accepted baseline.
+- Scope-owned receipt reconciliation retains mutation target and base revision
+  after overlay retirement. Matching key/operation alone cannot accept an
+  impossible generation, absent mutation target or false transition no-op.
+- Unknown participant outcomes and accepted-but-unsent newer edits remain native
+  dirty/review work even after the visible selection returns to its old baseline.
+  Native close admission warns; Keep editing does not resend the request.
+- New type choices missing from the current page lose their metadata and cannot
+  submit. Accepted historical generations remain distinct. Exact-minute duration
+  defaults reject DST gaps/folds or same-day overflow instead of clipping time.
+- The date field no longer imports a `.ts` helper through a public wildcard that
+  only exports `.tsx` UI modules. Actual installed-package resolution is still a
+  separate unexecuted release gate.
+
+The two final parent regressions were **executed before their runtime fixes**:
+six tests passed and two failed, reproducing participant-dialog resurrection and
+the unusable replacement-calendar choice. That failing result is preserved here;
+the corrected parent/controller regressions subsequently passed. Early no-emit
+findings also corrected explicit generic broker typings, discriminated detail
+actions and test-fixture scope readers rather than weakening the public types.
+
+The final focused controller set passed 42 tests / 714 assertions across three
+files. It mounts the actual ReactDOM hook/native-modal owners, but intercepts
+parent host widgets and drives their declared field/form callbacks. This is not a
+real browser test of layout, keyboard/focus, touch, animation or installed assets.
+
+The parent capability-restoration and removed-resource-ceiling cases were
+executed before their corrections: six parent tests passed and two failed.
+The failures showed an automatically reopened participant modal and an absent
+schedule after choosing the replacement calendar. They pass after the fixes;
+the original failing run remains development evidence, not a passing result.
+
+| Final connected-stage evidence | Result | Boundary |
+| --- | --- | --- |
+| Integrated calendar/native-memory HTTP/SDK/hooks/upgrade/UI/readable-audit/modal/transform set | 737 passed, 0 failed, 13,947 assertions, 89 files; Bun 1.4.4, 91.04 seconds | Transpiler cache disabled; memory database/coordinator/actor simulation, not installed package or physical/browser qualification |
+| Actual connected editor, parent and exact-revision recovery controller set | 42 passed, 0 failed, 714 assertions, three files | Real ReactDOM/native-modal owners with test-only host interception; includes actual native dirty-close admission |
+| Full scoped no-emit review | 250 roots, 3,838 imported source files, zero diagnostics | No emit/incremental cache; prepared physical fixture source is type-checked, not executed |
+| Documentation graph | 904 pages, 904 reachable, zero problems | Native capabilities, reusable connected UI, plan/return notes and source-versus-release limits |
+
+Physical actor/file recovery, bundled managed compliance, installed browser,
+Linux/amd64 package and archive/updater qualification remain unexecuted under the
+existing filesystem integrity hold. Source/memory review does not retire that
+hold or make this branch available through normal update. Tests close their
+synthetic memory handles, roots, streams and modal owners; no generated disk
+fixtures, dependencies, build trees or new release archives are retained.
+
 ## November 18 native participant checkpoint
 
 Additive `008` preserves actual migration function identities `001`–`007` and
@@ -80,7 +149,7 @@ passed 21 tests/193 assertions. This history is retained, not relabelled as a pa
 
 The separately composable participant picker preserves token/native-surface
 anatomy, masks retired names/actions and represents unavailable references without
-an ID fallback. It is not yet integrated into the connected one-off editor.
+an ID fallback. The subsequent connected pass above integrates it into the native editor.
 Domain contacts/guests, invitations, avatar delivery and broader participant grants
 remain separate later capabilities.
 
@@ -563,7 +632,7 @@ repository's applicable suite, artifact hashing and updater selection. A compile
 executable with the default source actor remains deliberately unavailable.
 
 Recurring working-hours/holiday expansion, offer/slot generation, public booking proofs,
-domain-contact/guest participant adapters, connected type-selection/management controls, effective-dated location eligibility,
+domain-contact/guest participant adapters, type-catalog/resource-policy administration, effective-dated location eligibility,
 recurrence, clinical visit/lobby/attention transitions,
 source-bound Jobs/Torrent effects, reminders,
 outbound channels, public self-booking and AI remain later stages of the approved

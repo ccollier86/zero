@@ -13,6 +13,7 @@ import { watchCalendarPage } from './watch';
 import type { CalendarParticipantDirectory } from './participants-directory';
 import { calendarParticipantBroker, calendarParticipantCommitGuard, calendarParticipantQuery } from './participants-service';
 import { calendarParticipantReferences } from './participants-validation';
+import { calendarCapabilitiesBroker } from './capabilities';
 
 export interface CalendarServiceBroker {
   read<T>(scope: ServiceDataScope, name: string, input: unknown, guard: () => void, signal?: AbortSignal): Promise<T>;
@@ -32,7 +33,7 @@ export class CalendarService {
   constructor(private readonly broker: CalendarServiceBroker, private readonly config: ResolvedCalendarConfig,
     closing: AbortSignal, private readonly participantDirectory?: CalendarParticipantDirectory) {
     this.signal = AbortSignal.any([closing, this.stop.signal]);
-    this.broker = calendarParticipantBroker(broker, participantDirectory, config);
+    this.broker = calendarCapabilitiesBroker(calendarParticipantBroker(broker, participantDirectory, config), config, participantDirectory !== undefined);
   }
 
   forAuthority(request: CalendarAuthority): ScopedCalendar & {
@@ -43,6 +44,14 @@ export class CalendarService {
     const createResource = (input: unknown, options: CalendarRequestOptions) => this.write(request, 'resource.create', input, options);
     const createAppointment = (input: unknown, options: CalendarRequestOptions) => this.write(request, 'appointment.create', input, options);
     return Object.freeze({
+      capabilities: Object.freeze({
+        get: options => this.read(request, 'capabilities', () => ({}), options),
+        watch: (listener, options: CalendarWatchOptions = {}) => {
+          this.ready();
+          return watchCalendarPage({ request, broker: this.broker, config: this.config, closing: this.signal,
+            queryName: 'calendar.capabilities', query: Object.freeze({}), listener, options, track: task => this.track(task) });
+        },
+      }),
       participants: Object.freeze({
         directory: (query = {}, options) => this.read(request, 'participantDirectory', () => calendarParticipantQuery(query, this.config), options),
         forAppointment: (id, options) => this.read(request, 'participantsForAppointment', () => ({ id: calendarKey(id) }), options),

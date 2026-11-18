@@ -17,7 +17,7 @@ modes: [browser]
 [Frontend index](../index.md) · [Reusable components](../components/index.md)
 
 Zero 2.11.0 includes the reviewed calendar UI as one fully tokenized, native
-experimental component family. **No calendar backend is implemented or enabled.**
+experimental component family. **That selected archive has no calendar backend.**
 Do not infer a scheduling service, Fabric store, permission policy or production
 booking API from these component exports. The foundation's
 [release closure](../../_work/durable-jobs-and-workers-plan.md#release-closure--november-16)
@@ -47,6 +47,9 @@ modal ownership, token anatomy and shared animations. It never loads demo users
 or silently saves unavailable recurrence/clinical/invitee fields. The original
 rich local `AppointmentEditor` stays synchronous; do not wire a Promise into it.
 See the [facade and exact UI limits](../../backend/calendar/facade.md#browser-composition).
+The [connected workspace guide](./connected-workspace.md) documents current type
+selection, participant controls, capability discovery, native modal ownership and
+exact-request recovery; these remain feature-branch source, not an updater release.
 
 The new feature barrel exports browser-safe hooks/contracts/errors only; private
 actors and Fabric ownership remain in the server implementation. The focused
@@ -66,8 +69,9 @@ manager-only `useCalendarAppointmentType`, and `useCalendarResourceTypes` hooks.
 Selected-resource type catalogs intersect current authorized policy, and old
 pages retire on selection, client, scope or domain denial. Typed record DTOs
 retain historical labels/defaults; untyped DTOs omit the optional binding. The
-connected editor and rich demo's local type picker are not yet wired to those
-catalogs/policies; see [type semantics](../../backend/calendar/facade.md#appointment-types-and-booking-policy).
+connected editor now selects native types and applies exact duration/buffer
+defaults. Catalog/policy administration and the rich demo's local type picker
+remain separate; see [type semantics](../../backend/calendar/facade.md#appointment-types-and-booking-policy).
 
 The visit-binding stage adds `useCalendarVisitLocations` plus the separately
 composable `CalendarVisitFields`. The connected editor now persists explicit
@@ -83,7 +87,8 @@ The next unreleased participant stage adds `useCalendarParticipantDirectory`,
 `useCalendarAppointmentParticipants`, `useCalendarHoldParticipants` and separately
 composable `CalendarParticipantFields`. Native account references use explicit
 Guardian eligibility, private manager-only projections and current names or
-unavailable tombstones. The connected workspace is not yet wired to this picker;
+unavailable tombstones. The connected workspace now uses native capability
+discovery for creation and a separate participant-replacement dialog in details;
 the rich demo's patient/contact/manual guests are not native account adapters.
 See [native participant boundaries](../../backend/calendar/participants.md).
 
@@ -117,9 +122,10 @@ exports without an explicitly authorized application dependency update.
   UI and explicitly local example availability. They are not authoritative bookings.
 
 The caller supplies admitted people, calendars, locations, scope state and
-callbacks. Empty arrays never silently load demo identities. The current editor
-still uses the reviewed clinical type preset and a local 7 AM–7 PM display model;
-backend-configured catalogs/ranges are later integration work.
+callbacks. Empty arrays never silently load demo identities. The preserved local
+`AppointmentEditor` still uses the reviewed clinical type preset and a local
+7 AM–7 PM display model. The unreleased connected editor above uses the native
+managed catalog; it is a separate async/receipt contract.
 
 ## Shared modal, drawer and floating-surface behavior
 
@@ -151,7 +157,7 @@ transition before applying it, such as asking for a cancellation reason. The
 reason dialog requires a reason by default and can be explicitly configured
 otherwise. UI acceptance is not evidence that a server write or notification
 completed. The current `AppointmentEditor.onSave` remains synchronous local UI
-composition; an async persistence contract is not yet implemented.
+composition; it does not implement the separate `CalendarCoreEditor` async/receipt contract.
 
 ## Design tokens and future theme candidate
 

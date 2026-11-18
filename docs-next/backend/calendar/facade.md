@@ -67,6 +67,7 @@ identity are rejected, not normalized away.
 | `locations.watch(query, listener, options?)` | Authorized live location catalog pages |
 | `locations.watchLocation(id, listener, options?)` | Live detail; losing the last visible assignment retires the detail |
 | `locations.watchForResource(resourceId, listener, options?)` | Live assignments; losing resource access retires the detail |
+| `capabilities.get(options?)` / `watch(listener, options?)` | Current scoped UI flags and configured limits; no owner/file/actor allocation or account enumeration |
 | `types.list({resourceIds?, limit?, after?}?, options?)` | Authorized active-type intersection for selected resources; manager omission lists the full catalog |
 | `types.get(id, options?)` | Current catalog revision; scope calendar manager only |
 | `types.create(input, options)` | Create a versioned type; scope calendar manager only |
@@ -280,10 +281,11 @@ namespace. Migration `005` preserves the first four migration/schema identities.
 
 Native hooks `useCalendarAppointmentTypes`, `useCalendarAppointmentType` and
 `useCalendarResourceTypes` use the existing current-scope watch/retirement path.
-This stage does not yet add type-management or type-selection controls to the
-connected one-off editor or wire the rich demo's local type picker. Those UI
-surfaces must preserve historical selections, handle rejected current revisions,
-and use these APIs rather than copying the booking rules into browser code.
+The connected one-off editor now selects native types, applies exact elapsed
+duration/buffer defaults and preserves accepted historical generations separately
+from unsubmitted choices. Catalog/resource-policy administration is still later
+work; the rich demo's local type picker is not a backend adapter. See the
+[connected workspace](../../frontend/calendar/connected-workspace.md).
 
 ## Explicit availability and one-off blocks
 
@@ -471,6 +473,21 @@ day/week/month/list presentations without switching an app theme. Its core edito
 is explicitly limited to supported one-off fields; the original richer local
 `AppointmentEditor` remains unchanged and synchronous. It is not safe to pass an
 async persistence callback to that synchronous local editor.
+
+Current scoped capabilities discover optional participant controls and configured
+range/resource/participant limits without allocating a calendar owner. These are
+presentation hints, never grants. The workspace bounds itself to two range
+streams and explicitly requests a shorter view or fewer calendars when narrowed
+server limits cannot cover the requested view. It never silently presents a
+partial schedule as complete. `participants={false}` opts out of these controls;
+`true` cannot override native permission/configuration.
+
+`CalendarCoreEditor` composes current type, visit/location and optional account
+participant selection. Existing appointment participants use a separate native
+`CalendarAppointmentParticipantsDialog` and revision-controlled replace command;
+reschedule does not also write participants. The reusable pieces, privacy and
+exact receipt-revision recovery rules are documented in the
+[connected workspace guide](../../frontend/calendar/connected-workspace.md).
 
 The display timezone is mandatory and separate from each resource scheduling
 zone. Month reads split into bounded ranges. Minute-precision editing rejects

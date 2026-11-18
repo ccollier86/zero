@@ -29,8 +29,13 @@ export function CalendarParticipantFields(props: CalendarParticipantFieldsProps)
   const [opened, setOpened] = useState(false), id = useId(), trigger = useRef<HTMLButtonElement>(null);
   const ready = props.status === 'ready', disabled = !!props.disabled || !ready;
   const surfaceOpen = opened && (ready || props.status === 'loading');
-  const found = ready ? (props.directory?.items ?? []).filter(item => item.availability === 'available') : [];
-  const names = new Map(ready ? [...(props.accepted ?? []), ...found].map(item => [item.ref.userId, item] as const) : []);
+  const accepted = new Map(ready ? (props.accepted ?? []).map(item => [item.ref.userId, item] as const) : []);
+  const found = ready ? (props.directory?.items ?? []).flatMap(item => {
+    const retained = accepted.get(item.ref.userId);
+    return item.availability !== 'available' || retained?.availability === 'unavailable' ? [] : [retained?.availability === 'available' ? retained : item];
+  }) : [];
+  // A known current unavailable binding must mask an independently lagging directory caption.
+  const names = new Map(ready ? [...found, ...(props.accepted ?? [])].map(item => [item.ref.userId, item] as const) : []);
   const selected = new Set(props.value.map(ref => ref.userId));
   const max = Math.max(1, Math.min(100, props.maxParticipants ?? 100));
   const chrome = useListChrome(`participants/${opened}/${ready}/${props.search}/${found.map(item => item.ref.userId).join(',')}`, opened && ready);
@@ -56,7 +61,8 @@ export function CalendarParticipantFields(props: CalendarParticipantFieldsProps)
   return <div className="appointment-attendees" role="group" aria-label="Calendar participants">
     {ready && props.value.length > 0 && <div className="appointment-attendee-chips" role="list" aria-label="Selected participants">
       {props.value.map((ref, index) => {
-        const person = names.get(ref.userId), name = person?.availability === 'available' ? person.name : 'Unavailable participant';
+        const person = names.get(ref.userId), name = person?.availability === 'available' ? person.name
+          : person?.availability === 'unavailable' ? 'Unavailable participant' : 'Selected account (not on this page)';
         return <span key={ref.userId} role="listitem" className="appointment-attendee-chip is-staff">
           <span className="appointment-chip-name">{name}</span>
           <button type="button" disabled={disabled} aria-label={`Remove ${name}${person?.availability === 'available' ? '' : ` ${index + 1}`}`}

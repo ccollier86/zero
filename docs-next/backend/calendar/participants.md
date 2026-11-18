@@ -157,7 +157,10 @@ a stale accepted page after its hook retires. Loading/error masks previous names
 and actions, unavailable retained references remain removable, and no raw account
 ID is shown as a fallback. Search/pagination controls do not submit a booking.
 
-The connected one-off workspace has **not** yet been wired to participant fields.
+The connected one-off workspace now discovers current native capabilities,
+supports participant creation fields and opens a separate revisioned participant
+replacement dialog from details. See the [connected workspace guide](../../frontend/calendar/connected-workspace.md)
+for draft retirement, pagination/name privacy and exact receipt recovery.
 The rich local demo's patient/staff/contact/manual-invite selector remains a UI
 preview, not a native backend adapter. Public guests, domain contacts, invitation
 proofs, recurring participants, avatar delivery, mobile/API-key admission and

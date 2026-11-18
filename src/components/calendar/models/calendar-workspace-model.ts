@@ -1,23 +1,45 @@
 /** Pure display adapter for authoritative timed core records. Never interprets the browser's timezone as scheduling authority. */
-import type { CalendarAppointmentView, CalendarCommandReceipt, CalendarRangeQuery, CalendarResourceView, CalendarLocationSnapshot, CalendarVisitMode } from '../../../calendar/contracts';
+import type { CalendarAppointmentView, CalendarCommandReceipt, CalendarRangeQuery, CalendarResourceView, CalendarLocationSnapshot, CalendarVisitMode,
+  CalendarAppointmentTypeSnapshot, CalendarParticipantReference } from '../../../calendar/contracts';
 import type { CalendarResource, ScheduleEvent } from '../types';
 import type { CalendarViewMode } from '../recovered/calendar/types/calendar-view-mode';
 import { dateKey, isDay } from './calendar-date';
 import { monthDates, weekDates } from './calendar-model';
 const DAY_MS = 86400_000;
 export interface CalendarCoreDraft { resourceId: string; title: string; date: string; start: number; end: number;
-  visitMode?: CalendarVisitMode | 'unspecified'; visitLocation?: CalendarLocationSnapshot }
+  visitMode?: CalendarVisitMode | 'unspecified'; visitLocation?: CalendarLocationSnapshot;
+  appointmentType?: CalendarAppointmentTypeSnapshot | null; bufferBeforeMinutes?: number; bufferAfterMinutes?: number;
+  participants?: readonly CalendarParticipantReference[] }
+/** One modal opening owns its accepted base and draft; live data never silently rebases it. */
+export interface CalendarCoreSession {
+  readonly key: number;
+  readonly selection: string;
+  readonly initial: CalendarCoreDraft;
+  readonly trigger?: HTMLElement;
+  readonly record?: CalendarAppointmentView;
+  /** Capture optional creation controls; capability retirement cannot silently change an open draft's intent. */
+  readonly participantAccess?: boolean;
+}
 export function calendarDisplayDays(date: Date, view: CalendarViewMode): readonly string[] {
   return view === 'month' ? monthDates(date) : view === 'week' ? weekDates(date) : [dateKey(date)];
 }
 /** Conservative instant superset for IANA zones; split month views into bounded service-owned range watches. */
-export function calendarWorkspaceQueries(days: readonly string[], resourceIds: readonly string[]): readonly CalendarRangeQuery[] {
+export function calendarWorkspaceQueries(days: readonly string[], resourceIds: readonly string[], maxRangeDays = 31, timeZone?: string): readonly CalendarRangeQuery[] {
   if (!resourceIds.length || !days.length) return [];
-  if (resourceIds.length > 16 || days.length > 42 || days.some(day => !isDay(day))) throw new Error('Unsupported calendar display range.');
+  if (resourceIds.length > 16 || days.length > 42 || days.some(day => !isDay(day))
+    || !Number.isInteger(maxRangeDays) || maxRangeDays < 1 || maxRangeDays > 31) throw new Error('Unsupported calendar display range.');
   let start = Date.parse(days[0]! + 'T00:00:00.000Z') - DAY_MS;
-  const end = Date.parse(days.at(-1)! + 'T00:00:00.000Z') + 2 * DAY_MS, queries: CalendarRangeQuery[] = [];
+  let end = Date.parse(days.at(-1)! + 'T00:00:00.000Z') + 2 * DAY_MS;
+  if (timeZone) {
+    const nextDay = new Date(Date.parse(days.at(-1)! + 'T00:00:00.000Z') + DAY_MS).toISOString().slice(0, 10);
+    const from = calendarWallTimeCandidates(days[0]!, 0, timeZone), to = calendarWallTimeCandidates(nextDay, 0, timeZone);
+    // Unambiguous local midnights give exact display bounds. For unusual
+    // missing/folded midnights retain the conservative superset, never guess.
+    if (from.length === 1 && to.length === 1) { start = Date.parse(from[0]!); end = Date.parse(to[0]!); }
+  }
+  const queries: CalendarRangeQuery[] = [];
   while (start < end) {
-    const next = Math.min(start + 31 * DAY_MS, end);
+    const next = Math.min(start + maxRangeDays * DAY_MS, end);
     queries.push({ resourceIds: [...resourceIds], startAt: new Date(start).toISOString(), endAt: new Date(next).toISOString() }); start = next;
   }
   return queries;
@@ -102,7 +124,19 @@ export class CalendarDraftReceiptFence {
   rejected(): void { this.submitted = null; }
 }
 
-export interface CalendarPendingRequest { readonly key: string; readonly operation: CalendarCommandReceipt['operation']; readonly id?: string }
+export interface CalendarPendingRequest {
+  readonly key: string; readonly operation: CalendarCommandReceipt['operation']; readonly id?: string;
+  /** Mutation base survives editor retirement; never settle a receipt for an impossible generation. */
+  readonly expectedRevision?: number;
+}
+export function calendarPendingReceiptMatches(request: CalendarPendingRequest, receipt: CalendarCommandReceipt): boolean {
+  if (request.key !== receipt.requestId || request.operation !== receipt.operation || request.id !== undefined && request.id !== receipt.id
+    || !Number.isSafeInteger(receipt.revision) || receipt.revision < 1 || typeof receipt.changed !== 'boolean') return false;
+  if (request.operation === 'appointment.created') return receipt.revision === 1 && receipt.changed;
+  return request.id !== undefined && request.id.length > 0 && request.expectedRevision !== undefined && Number.isSafeInteger(request.expectedRevision) && request.expectedRevision >= 1
+    && receipt.revision === request.expectedRevision + (receipt.changed ? 1 : 0)
+    && (request.operation !== 'appointment.transitioned' || receipt.changed);
+}
 /** Scope-owned recovery survives an editor closing. An older read or editor cannot settle a newer request. */
 export class CalendarPendingRequestLedger {
   private pending: CalendarPendingRequest | null = null;

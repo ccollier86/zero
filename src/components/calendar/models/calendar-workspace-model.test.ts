@@ -12,6 +12,22 @@ test('month view uses two bounded contiguous authoritative ranges and preserves 
   for (const query of queries) expect(Date.parse(query.endAt) - Date.parse(query.startAt)).toBeLessThanOrEqual(31 * 86400_000);
   expect(calendarWorkspaceQueries(days, [])).toEqual([]);
 });
+test('native range limits produce exact zoned bounds and split a 25-hour day rather than guessing host midnight', () => {
+  const ordinary = calendarWorkspaceQueries(['2026-11-16'], ['resource-a'], 1, 'America/New_York');
+  expect(ordinary).toHaveLength(1); expect(ordinary[0]).toMatchObject({ startAt: '2026-11-16T05:00:00.000Z', endAt: '2026-11-17T05:00:00.000Z' });
+  const fold = calendarWorkspaceQueries(['2026-11-01'], ['resource-a'], 1, 'America/New_York');
+  expect(fold).toHaveLength(2); expect(fold[0]!.startAt).toBe('2026-11-01T04:00:00.000Z');
+  expect(fold[0]!.endAt).toBe(fold[1]!.startAt); expect(fold[1]!.endAt).toBe('2026-11-02T05:00:00.000Z');
+  for (const page of fold) expect(Date.parse(page.endAt) - Date.parse(page.startAt)).toBeLessThanOrEqual(86400_000);
+  const gap = calendarWorkspaceQueries(['2026-03-08'], ['resource-a'], 1, 'America/New_York');
+  expect(gap).toHaveLength(1); expect(Date.parse(gap[0]!.endAt) - Date.parse(gap[0]!.startAt)).toBe(23 * 3600000);
+});
+test('narrow month limits remain explicit bounded chunks for callers rather than silently omitting later dates', () => {
+  const days = calendarDisplayDays(new Date(2026, 10, 16, 12), 'month'), pages = calendarWorkspaceQueries(days, ['resource-a'], 1, 'UTC');
+  expect(pages).toHaveLength(42); expect(pages[0]!.startAt.slice(0, 10)).toBe(days[0]!);
+  expect(pages.at(-1)!.endAt).toBe(new Date(Date.parse(days.at(-1)! + 'T00:00:00.000Z') + 86400_000).toISOString());
+  for (const max of [0, 32, 0.5, NaN]) expect(() => calendarWorkspaceQueries(days, ['resource-a'], max, 'UTC')).toThrow();
+});
 test('wall-time admission rejects nonexistent and ambiguous local times rather than host-zone guessing', () => {
   expect(calendarWallTimeCandidates('2026-03-08', 150, 'America/New_York')).toEqual([]);
   expect(calendarWallTimeCandidates('2026-11-01', 90, 'America/New_York')).toEqual(['2026-11-01T05:30:00.000Z', '2026-11-01T06:30:00.000Z']);
