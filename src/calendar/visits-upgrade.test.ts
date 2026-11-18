@@ -10,7 +10,8 @@ import { createReactiveDB } from '../sync/reactive-db';
 import type { CalendarActor, CalendarAppointmentView, CalendarCommandReceipt, CalendarHoldView, CalendarLocationPage, CalendarLifecyclePolicy } from './contracts';
 import { calendarRealm } from './realm';
 import { CALENDAR_LIFECYCLE_TABLES } from './realm-lifecycle-migration';
-import { CALENDAR_INTEGRATION_ADDITIONS, CALENDAR_INTEGRATION_TABLES } from './realm-integrations-migration';
+import { CALENDAR_INTEGRATION_ADDITIONS } from './realm-integrations-migration';
+import { CALENDAR_INTEGRATION_OWNERSHIP_TABLES } from './realm-integration-ownership-migration';
 import { CALENDAR_VISIT_ADDITIONS, CALENDAR_VISIT_TABLES } from './realm-visit-bindings-migration';
 
 // Recorded before 007 was introduced. Never derive replacement historical
@@ -99,7 +100,7 @@ function fixture() {
 }
 
 test('007 is additive over the pinned six migration functions, registered checksums and complete 006 declaration', () => {
-  expect(calendarRealm.migrations.map(migration => migration.version)).toEqual(['001', '002', '003', '004', '005', '006', '007', '008', '009', '010']);
+  expect(calendarRealm.migrations.map(migration => migration.version)).toEqual(['001', '002', '003', '004', '005', '006', '007', '008', '009', '010', '011']);
   expect(calendarRealm.migrations.slice(0, 6).map(hashMigration)).toEqual([...ORIGINAL_006_CHECKSUMS]);
   expect(calendarRealm.migrationChecksums.slice(0, 6)).toEqual(ORIGINAL_006_CHECKSUMS.map((checksum, index) => ({ version: String(index + 1).padStart(3, '0'), checksum })));
   expect(hashSchemaSnapshot(snapshotDeclaredTables(CALENDAR_LIFECYCLE_TABLES))).toBe(ORIGINAL_006_TABLES);
@@ -107,7 +108,7 @@ test('007 is additive over the pinned six migration functions, registered checks
   expect(Object.keys(CALENDAR_VISIT_TABLES).filter(name => !(name in CALENDAR_LIFECYCLE_TABLES))).toEqual([
     '_calendar_appointment_visit_bindings', '_calendar_appointment_visit_current', '_calendar_hold_visit_bindings',
   ]);
-  expect(calendarRealm.tables).toEqual(CALENDAR_INTEGRATION_TABLES);
+  expect(calendarRealm.tables).toEqual(CALENDAR_INTEGRATION_OWNERSHIP_TABLES);
 });
 
 test('real populated 006 upgrade preserves all rows, ledgers, definitions, sequence and typed/untyped receipts without visit backfill', () => {
@@ -116,7 +117,7 @@ test('real populated 006 upgrade preserves all rows, ledgers, definitions, seque
     const before = f.legacy(), seq = f.db.currentSeq, ledger = f.raw.query('SELECT * FROM _migrations ORDER BY version').all();
     const definitions = f.raw.query<{ type: string; name: string; sql: string }, []>("SELECT type,name,sql FROM sqlite_master WHERE type IN ('table','index','trigger') AND name NOT LIKE 'sqlite_%' ORDER BY type,name").all();
     for (const table of Object.keys(CALENDAR_LIFECYCLE_TABLES)) expect(before[table]!.length).toBeGreaterThan(0);
-    expect(f.upgrade()).toEqual(['007', '008', '009', '010']); expect(f.legacy()).toEqual(before); expect(f.db.currentSeq).toBe(seq);
+    expect(f.upgrade()).toEqual(['007', '008', '009', '010', '011']); expect(f.legacy()).toEqual(before); expect(f.db.currentSeq).toBe(seq);
     expect(f.raw.query("SELECT * FROM _migrations WHERE version IN ('001','002','003','004','005','006') ORDER BY version").all()).toEqual(ledger);
     for (const definition of definitions) expect(f.raw.query('SELECT type,name,sql FROM sqlite_master WHERE type=? AND name=?').get(definition.type, definition.name)).toEqual(definition);
     expect(f.query<CalendarLifecyclePolicy>('lifecycle', { actor })).toEqual({ revision: 2, extended: true, cancellationReason: 'required', noShowReason: 'required' });

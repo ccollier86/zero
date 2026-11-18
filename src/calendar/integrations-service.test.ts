@@ -20,6 +20,7 @@ import { memoryCalendarServiceFixture } from './test-support/memory-service-fixt
 
 async function fixture(options: {
   tenancy?: 'single' | 'multi';
+  beforeJobsWrite?: (name: string) => void | Promise<void>;
   afterJobsWrite?: (name: string) => void | Promise<void>;
   beforeObservation?: () => void | Promise<void>;
   afterCutoff?: () => void | Promise<void>;
@@ -58,6 +59,7 @@ async function fixture(options: {
     } } as CalendarIntegrationOwner;
     jobs = await memorySourceJobsFixture({
       tenancy: options.tenancy ?? 'single',
+      beforeWrite: operation => options.beforeJobsWrite?.(operation.name),
       afterWrite: operation => options.afterJobsWrite?.(operation.name),
       activity: async (_input, context) => {
         captured.push(context);
@@ -90,8 +92,8 @@ async function fixture(options: {
     const registration = await sourceJobs.registration.activate({ expectedRevision: 0, idempotencyKey: 'activate-observation', pinInput: {} });
     await owner.command('calendar.integration.policy.activate', { ruleId: policy.ruleId, epoch: installed.epoch, registration }, { idempotencyKey: 'ack-activation' });
     dispatcher = new CalendarIntegrationDispatcher({ store: owner, jobs: sourceJobs, now: jobs.now });
-    const create = (key = 'appointment') => session.api.appointments.create({ title: 'PRIVATE_APPOINTMENT_TITLE', resourceIds: [resource.id],
-      startAt: new Date(jobs!.now()).toISOString(), endAt: new Date(jobs!.now() + 3_600_000).toISOString(), timeZone: 'UTC', bufferBeforeMinutes: 0, bufferAfterMinutes: 0 },
+    const create = (key = 'appointment', offsetMs = 0) => session.api.appointments.create({ title: 'PRIVATE_APPOINTMENT_TITLE', resourceIds: [resource.id],
+      startAt: new Date(jobs!.now() + offsetMs).toISOString(), endAt: new Date(jobs!.now() + offsetMs + 3_600_000).toISOString(), timeZone: 'UTC', bufferBeforeMinutes: 0, bufferAfterMinutes: 0 },
     { idempotencyKey: key });
     const intent = async (): Promise<CalendarIntegrationIntentView> => {
       const row = calendar.sourceRows(session.scope, '_calendar_integration_intents').at(-1);
@@ -264,4 +266,60 @@ test('expiry while waiting for the final source writer cannot be bypassed by a p
     expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_effect_outcomes')).toHaveLength(0);
     expect(f.observations).toEqual([]);
   } finally { await f.close(); }
+});
+
+test('actual native database no-start is not recorded as an unknown Jobs write and can expire without work', async () => {
+  const f = await fixture({ maxLatenessMs: 1_000, beforeJobsWrite(name) {
+    if (name === 'jobs.source.schedule.create') throw new DatabaseError('DATABASE_BACKPRESSURE', 'Synthetic no-start admission.', { outcome: 'not-started' });
+  } });
+  try {
+    await f.create();
+    expect(await f.dispatcher.runBatch()).toMatchObject({ deferred: 1, accepted: 0 });
+    expect(await f.intent()).toMatchObject({ state: 'pending', createAttempted: false, jobsReceipt: null });
+    expect(f.jobs.commands.filter(command => command.name === 'jobs.source.schedule.create')).toEqual([]);
+    f.jobs.advance(1_001);
+    expect(await f.dispatcher.runBatch()).toMatchObject({ suppressed: 1 });
+    expect(await f.intent()).toMatchObject({ state: 'suppressed', jobsReceipt: null });
+    expect(f.jobs.calls).toEqual([]);
+  } finally { await f.close(); }
+});
+
+test('graceful dispatcher stop restores only untouched claimed work while an invoked Jobs callback remains unconfirmed', async () => {
+  let entered!: () => void, release!: () => void;
+  const arrived = new Promise<void>(resolve => { entered = resolve; }), waiting = new Promise<void>(resolve => { release = resolve; });
+  let first = true, physicallyWaiting = false;
+  const f = await fixture({ maxLatenessMs: 1_000, async beforeJobsWrite(name) {
+    if (name === 'jobs.source.schedule.create' && first) {
+      first = false; physicallyWaiting = true; entered();
+      try { await waiting; } finally { physicallyWaiting = false; }
+    }
+  } });
+  let resumed: CalendarIntegrationDispatcher | undefined;
+  const pumping = f.dispatcher.runBatch.bind(f.dispatcher);
+  let pending: Promise<unknown> | undefined;
+  try {
+    const one = await f.create();
+    const otherResource = await f.session.api.resources.create({ label: 'PRIVATE_SECOND_RESOURCE', kind: 'person', timeZone: 'UTC' }, { idempotencyKey: 'second-resource' });
+    const two = await f.session.api.appointments.create({ title: 'PRIVATE_SECOND_APPOINTMENT', resourceIds: [otherResource.id],
+      startAt: new Date(f.jobs.now()).toISOString(), endAt: new Date(f.jobs.now() + 3_600_000).toISOString(), timeZone: 'UTC' }, { idempotencyKey: 'second-appointment' });
+    // Source ordering is by opaque identity at equal time. Identify whichever
+    // row entered Jobs rather than assuming a randomly generated ID order.
+    pending = pumping().then(value => value, error => error);
+    await arrived; await f.dispatcher.close();
+    expect(physicallyWaiting).toBe(true); // caller drainage is NOT physical Jobs settlement.
+    expect(f.dispatcher.diagnostics().unsettledUninvokedClaims).toEqual([]);
+    const intents = f.calendar.sourceRows(f.session.scope, '_calendar_integration_intents');
+    expect(intents.map(row => row.appointment_id).sort()).toEqual([one.id, two.id].sort());
+    const dispatch = f.calendar.sourceRows(f.session.scope, '_calendar_integration_dispatch');
+    expect(dispatch.filter(row => row.create_attempted === 1)).toHaveLength(1);
+    expect(dispatch.filter(row => row.create_attempted === 0 && row.claim_nonce === null)).toHaveLength(1);
+    expect(f.jobs.commands.filter(command => command.name === 'jobs.source.schedule.create')).toEqual([]);
+    f.jobs.advance(1_001);
+    resumed = new CalendarIntegrationDispatcher({ store: f.owner, jobs: f.sourceJobs, now: f.jobs.now });
+    expect(await resumed.runBatch()).toMatchObject({ claimed: 1, suppressed: 1 });
+    expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_dispatch').filter(row => row.state === 'suppressed')).toHaveLength(1);
+  } finally {
+    release(); await Promise.allSettled(pending ? [pending] : []);
+    try { await resumed?.close(); } finally { await f.close(); }
+  }
 });

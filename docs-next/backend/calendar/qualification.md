@@ -18,6 +18,39 @@ This is feature-branch evidence, not a release certificate. No calendar backend
 archive has been selected by normal `zero-update`, and no application deployment
 or data migration is authorized by these checks.
 
+## November 18 dispatch checkpoint review
+
+Independent review of `11e9bbc` found and corrected two source-boundary defects
+before starting managed lifecycle work:
+
+- Native typed database/worker refusals that prove no write started/committed
+  now preserve that evidence instead of becoming false unknown Jobs writes.
+  Plain authored outcome fields, active timeouts and actual unknown writes
+  remain uncertain. An accepted Jobs receipt followed by a refused source
+  acknowledgment cannot be mistaken for rejection of the Jobs write.
+- Additive realm `011` installs permanent bidirectional rule/source ownership.
+  Shared sources could previously cause one rule's hydration/retirement to
+  affect another rule; rotating a source could also evade retained capacity.
+  Neither is now admitted. Consistent `010` history backfills only the derived
+  binding; conflicting history blocks without rewriting or dropping evidence.
+  `010`'s recorded migration checksum and complete declaration hash stay exact.
+
+Controlled dispatcher exits now restore only tracked first-attempt claims for
+which no Jobs mutation was invoked. This runs on graceful stop and other batch
+failure paths; invoked/accepted/uncertain work is not reset. A real two-claim
+calendar/Jobs test proves an untouched second claim can expire normally while
+the first physical Jobs callback is still held. Cleanup failure retains bounded
+diagnostic IDs, rejects close and fences further intake. `close()` intentionally
+does not claim physical Jobs drainage; shared owners must outlive that drainage.
+
+The final focused review set passed **81 tests, 2,922 assertions, 6 files** in
+15.80 seconds. An earlier expanded migration/protocol/actual-service set passed
+**103 tests, 6,290 assertions, 13 files**; these are distinct runs, not additive
+coverage. The previous 557-test source baseline is retained below. Physical
+actors, browser, bundled deployment and archive/updater remain unqualified under
+the unchanged storage-integrity hold. No app, hosted demo, main or release
+selection changed during this review.
+
 ## November 18 private calendar dispatch and effect protocol
 
 The [private integration foundation](./integrations.md) now adds calendar realm

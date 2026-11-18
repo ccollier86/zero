@@ -1,11 +1,13 @@
 /** Pure protocol doubles: no database, process, timer, provider or filesystem fixture. */
 import { expect, test } from 'bun:test';
 import { JobsError } from '../jobs/error';
+import { DatabaseError } from '../databases/database-error';
+import { WorkerError } from '../workers/worker-error';
 import type { SourceJobs } from '../jobs/source-service';
 import { jobSourceId, jobSourceScheduleId, type JobSourceRegistration, type JobSourceScheduleReceipt } from '../jobs/source-model';
 import { CalendarError } from './error';
 import { CalendarIntegrationDispatcher, type CalendarIntegrationDispatchJobs, type CalendarIntegrationDispatchStore } from './integration-dispatcher';
-import type { CalendarIntegrationIntentView, CalendarIntegrationPolicySpec } from './integration-model';
+import type { CalendarIntegrationClaim, CalendarIntegrationIntentView, CalendarIntegrationPolicySpec } from './integration-model';
 import { calendarHash } from './validation';
 
 function latch() {
@@ -31,6 +33,7 @@ function fixture() {
   const creates: { input: unknown; options: unknown }[] = [], cancels: { id: string; options: unknown }[] = [];
   let beforeCreate: (() => void | Promise<void>) | undefined, beforeReceipt: (() => void | Promise<void>) | undefined;
   let beforeRegistration: (() => void | Promise<void>) | undefined, failAck = false, claimCalls = 0;
+  let ackFailure: unknown, ackDelay = 0;
   const original = (): JobSourceScheduleReceipt => ({ id: jobSourceScheduleId(policy.source.identity, intent.createKey), sourceId: registration.id,
     policyGeneration: 1, revision: 1, generation: 1, control: 'active', createdAt: time, updatedAt: time });
   const assertNoLease = () => { if (inStore) throw new Error('Calendar lease escaped into Jobs.'); };
@@ -51,6 +54,7 @@ function fixture() {
         if (input.claimGeneration !== generation) throw new CalendarError('CALENDAR_REVISION_CONFLICT');
         if (name === 'calendar.integration.ack') {
           if (failAck) { failAck = false; throw new CalendarError('CALENDAR_OUTCOME_UNKNOWN'); }
+          if (ackFailure !== undefined) { const error = ackFailure; ackFailure = undefined; time += ackDelay; throw error; }
           intent = { ...intent, state: input.phase === 'cancel' ? 'cancelled' : 'accepted',
             jobsReceipt: input.phase === 'create' ? input.receipt as JobSourceScheduleReceipt : intent.jobsReceipt };
         } else if (name === 'calendar.integration.defer') {
@@ -93,6 +97,7 @@ function fixture() {
     onReceipt(callback?: () => void | Promise<void>) { beforeReceipt = callback; },
     onRegistration(callback?: () => void | Promise<void>) { beforeRegistration = callback; },
     loseAck() { failAck = true; }, invalidateClaim() { generation++; }, claims: () => claimCalls,
+    rejectAck(error: unknown, delay = 0) { ackFailure = error; ackDelay = delay; },
   };
 }
 
@@ -187,6 +192,48 @@ test('capacity exhaustion is durably blocked/backed off without pruning evidence
   } finally { await f.dispatcher.close(); }
 });
 
+test('native database and queued worker no-write refusals preserve first-attempt provenance through expiry', async () => {
+  for (const failure of [
+    new DatabaseError('DATABASE_BACKPRESSURE', 'Synthetic known no-start.', { outcome: 'not-started' }),
+    new DatabaseError('DATABASE_TRANSACTION_EXPIRED', 'Synthetic known rollback.', { outcome: 'not-committed' }),
+    new WorkerError('WORKER_CAPACITY', 'Synthetic queue refusal.'),
+  ]) {
+    const f = fixture();
+    try {
+      f.onCreate(() => { throw failure; }); expect((await f.dispatcher.runBatch()).deferred).toBe(1);
+      expect(f.commands.at(-1)!.input).toMatchObject({ unknown: false, notCommitted: true });
+      expect(f.intent.createAttempted).toBe(false); expect(f.receipts.size).toBe(0);
+      f.advance(60_001); expect((await f.dispatcher.runBatch()).suppressed).toBe(1); expect(f.creates).toHaveLength(1);
+    } finally { await f.dispatcher.close(); }
+  }
+});
+
+test('forged no-write properties and native active-worker uncertainty cannot clear attempted provenance', async () => {
+  for (const failure of [
+    { code: 'DATABASE_BACKPRESSURE', outcome: 'not-started' },
+    new WorkerError('WORKER_EXECUTION_TIMEOUT', 'Synthetic active timeout.', 'unknown'),
+    new DatabaseError('DATABASE_OPERATION_TIMEOUT', 'Synthetic unknown writer.', { outcome: 'unknown' }),
+  ]) {
+    const f = fixture();
+    try {
+      f.onCreate(() => { throw failure; }); expect((await f.dispatcher.runBatch()).deferred).toBe(1);
+      expect(f.commands.at(-1)!.input.unknown).toBe(true); expect(f.commands.at(-1)!.input.notCommitted).toBeUndefined();
+      expect(f.intent.createAttempted).toBe(true); expect(f.commands.some(row => row.name === 'calendar.integration.suppress')).toBe(false);
+    } finally { await f.dispatcher.close(); }
+  }
+});
+
+test('known source-ack refusal after Jobs acceptance is not proof that the Jobs create failed', async () => {
+  const f = fixture();
+  try {
+    f.rejectAck(new DatabaseError('DATABASE_BACKPRESSURE', 'Synthetic source acknowledgment refusal.', { outcome: 'not-started' }), 60_001);
+    expect((await f.dispatcher.runBatch()).deferred).toBe(1); expect(f.receipts.size).toBe(1);
+    expect(f.intent.createAttempted).toBe(true); expect(f.intent.state).toBe('unknown');
+    expect(f.commands.at(-1)!.input.unknown).toBe(true); expect(f.commands.at(-1)!.input.notCommitted).toBeUndefined();
+    expect(f.commands.some(row => row.name === 'calendar.integration.suppress')).toBe(false);
+  } finally { await f.dispatcher.close(); }
+});
+
 test('unhydrated or asynchronous capability lookup never manufactures a writer attempt or prevents later expiry', async () => {
   for (const resolver of ['unhydrated', 'asynchronous'] as const) {
     const f = fixture();
@@ -228,4 +275,84 @@ test('wakes coalesce into one bounded empty batch and close leaves uncertain cla
     expect(await running).toHaveProperty('error'); expect(g.intent.jobsReceipt).toBeNull();
     expect(g.commands.some(row => row.name === 'calendar.integration.suppress')).toBe(false);
   } finally { barrier.release(); await running; await g.dispatcher.close(); }
+});
+
+function twoClaimFixture(failCleanup = false, firstUnavailable = false) {
+  const first = fixture(), second = fixture(), barrier = latch();
+  second.setIntent({ id: 'intent-two', createKey: 'calendar-create-two', cancelKey: 'calendar-cancel-two',
+    input: { ...second.intent.input, intentId: 'intent-two' } });
+  first.onCreate(() => barrier.wait());
+  const failures: string[] = []; let firstDeferFailed = false;
+  const store: CalendarIntegrationDispatchStore = {
+    signal: first.store.signal, assertCurrent: () => first.store.assertCurrent(),
+    async command<T>(name: Parameters<CalendarIntegrationDispatchStore['command']>[0], body: unknown,
+      options: Parameters<CalendarIntegrationDispatchStore['command']>[2]): Promise<T> {
+      if (name === 'calendar.integration.claim') {
+        const a = await first.store.command<CalendarIntegrationClaim[]>(name, body, options);
+        const b = await second.store.command<CalendarIntegrationClaim[]>(name, body, options); return [...a, ...b] as T;
+      }
+      const input = body as Record<string, unknown>;
+      if (firstUnavailable && input.id === first.intent.id && name === 'calendar.integration.defer' && !firstDeferFailed) {
+        firstDeferFailed = true; throw new CalendarError('CALENDAR_NOT_READY');
+      }
+      if (input.id === second.intent.id) {
+        if (failCleanup && name === 'calendar.integration.defer' && input.notCommitted === true) throw new CalendarError('CALENDAR_NOT_READY');
+        return second.store.command<T>(name, body, options);
+      }
+      return first.store.command<T>(name, body, options);
+    },
+  };
+  const dispatcher = new CalendarIntegrationDispatcher({ store, jobs: intent => {
+    if (firstUnavailable && intent.id === first.intent.id) throw new CalendarError('CALENDAR_NOT_READY');
+    return intent.id === first.intent.id ? first.jobs : second.jobs;
+  },
+    now: first.now, nonce: () => 'two-claim-batch', batchSize: 2, onFailure: code => failures.push(code) });
+  return { first, second, barrier, failures, store, dispatcher };
+}
+
+test('graceful close settles only tracked untouched first-attempt claims so restart can suppress them after expiry', async () => {
+  const f = twoClaimFixture();
+  const running = f.dispatcher.runBatch().then(value => ({ value }), error => ({ error }));
+  let restarted: CalendarIntegrationDispatcher | undefined;
+  try {
+    await f.barrier.entered; const closing = f.dispatcher.close(); f.barrier.release(); await closing; await running;
+    expect(f.first.intent.createAttempted).toBe(true); expect(f.first.intent.jobsReceipt).toBeNull();
+    expect(f.second.intent.createAttempted).toBe(false); expect(f.second.creates).toHaveLength(0);
+    expect(f.dispatcher.diagnostics().unsettledUninvokedClaims).toEqual([]);
+    expect(f.second.commands.at(-1)!.input).toMatchObject({ unknown: false, notCommitted: true });
+    f.first.advance(60_001); f.second.advance(60_001);
+    restarted = new CalendarIntegrationDispatcher({ store: f.store, jobs: intent => intent.id === f.first.intent.id ? f.first.jobs : f.second.jobs,
+      now: f.first.now, nonce: () => 'restart-two-claims', batchSize: 2 });
+    expect((await restarted.runBatch()).suppressed).toBe(1); expect(f.second.intent.state).toBe('suppressed');
+    expect(f.second.creates).toHaveLength(0);
+  } finally { f.barrier.release(); await running; await restarted?.close(); await f.dispatcher.close(); await f.first.dispatcher.close(); await f.second.dispatcher.close(); }
+});
+
+test('close reports bounded uninvoked cleanup failures instead of silently claiming a drained source', async () => {
+  const f = twoClaimFixture(true);
+  const running = f.dispatcher.runBatch().then(value => ({ value }), error => ({ error }));
+  try {
+    await f.barrier.entered; const closing = f.dispatcher.close(); f.barrier.release();
+    await expect(closing).rejects.toMatchObject({ code: 'CALENDAR_OUTCOME_UNKNOWN' });
+    expect(await running).toMatchObject({ error: { code: 'CALENDAR_OUTCOME_UNKNOWN' } });
+    expect(f.dispatcher.diagnostics().unsettledUninvokedClaims).toEqual([{ id: f.second.intent.id, code: 'CALENDAR_NOT_READY' }]);
+    expect(f.failures).toEqual(['CALENDAR_NOT_READY']); expect(f.second.intent.createAttempted).toBe(true);
+    expect(f.second.creates).toHaveLength(0);
+  } finally { f.barrier.release(); await running; await f.first.dispatcher.close(); await f.second.dispatcher.close(); }
+});
+
+test('a non-close source-defer failure still settles later no-invocation claims before discarding the batch', async () => {
+  const f = twoClaimFixture(false, true);
+  try {
+    await expect(f.dispatcher.runBatch()).rejects.toMatchObject({ code: 'CALENDAR_NOT_READY' });
+    expect(f.first.intent.createAttempted).toBe(false); expect(f.second.intent.createAttempted).toBe(false);
+    expect(f.first.creates).toHaveLength(0); expect(f.second.creates).toHaveLength(0);
+    expect(f.dispatcher.diagnostics().unsettledUninvokedClaims).toEqual([]);
+  } finally { await f.dispatcher.close(); await f.first.dispatcher.close(); await f.second.dispatcher.close(); }
+  const g = twoClaimFixture(true, true);
+  try {
+    await expect(g.dispatcher.runBatch()).rejects.toMatchObject({ code: 'CALENDAR_OUTCOME_UNKNOWN' });
+    expect(g.dispatcher.diagnostics().unsettledUninvokedClaims).toEqual([{ id: g.second.intent.id, code: 'CALENDAR_NOT_READY' }]);
+    await expect(g.dispatcher.close()).rejects.toMatchObject({ code: 'CALENDAR_OUTCOME_UNKNOWN' });
+  } finally { await g.first.dispatcher.close(); await g.second.dispatcher.close(); }
 });

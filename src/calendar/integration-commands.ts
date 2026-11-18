@@ -34,9 +34,13 @@ export function installCalendarIntegrationPolicy(context: DatabaseWriteCommandCo
     const identity = policy.source.identity;
     if (identity.ownerId !== owner.expectedOwnerId || identity.scopeId !== owner.scopeId || identity.databaseId !== 'calendar:' + calendarHash(owner.scopeId)) throw new CalendarError('CALENDAR_STATE_INVALID');
     const previous = context.db.find('_calendar_integration_policy_history', { filters: [eq('scope_id', owner.scopeId), eq('request_id', requestId)], limit: 1 })[0] as IntegrationPolicyRow | undefined;
-    const digest = calendarHash(policy);
+    const digest = calendarHash(policy), sourceId = jobSourceId(identity);
+    const binding = context.db.get('_calendar_integration_rule_sources', policy.ruleId);
+    const occupied = context.db.find('_calendar_integration_rule_sources', { filters: [eq('scope_id', owner.scopeId), eq('source_id', sourceId)], limit: 1 })[0];
+    if (binding && (binding.scope_id !== owner.scopeId || binding.source_id !== sourceId) || occupied && occupied.rule_id !== policy.ruleId) throw new CalendarError('CALENDAR_INTENT_CONFLICT');
     if (previous) {
       if (previous.digest !== digest || previous.epoch !== expectedEpoch + 1) throw new CalendarError('CALENDAR_INTENT_CONFLICT');
+      if (!binding) throw new CalendarError('CALENDAR_STATE_INVALID');
       return integrationPolicyView(previous, context.db.get('_calendar_integration_policy_current', policy.ruleId) as IntegrationCurrentRow | null,
         context.db.get('_calendar_integration_policy_registrations', previous.id)?.registration_json as string | null ?? null);
     }
@@ -44,9 +48,10 @@ export function installCalendarIntegrationPolicy(context: DatabaseWriteCommandCo
     if ((prior?.epoch ?? 0) !== expectedEpoch) throw new CalendarError('CALENDAR_POLICY_STALE');
     if (!prior && context.db.find('_calendar_integration_policy_current', { filters: [eq('scope_id', owner.scopeId)], limit: CALENDAR_INTEGRATION_LIMITS.rules }).length >= CALENDAR_INTEGRATION_LIMITS.rules) throw new CalendarError('CALENDAR_CAPACITY');
     integrationBudget(context, 'integrationPolicies', CALENDAR_INTEGRATION_LIMITS.policies);
+    if (!binding) context.db.createStrict('_calendar_integration_rule_sources', { id: policy.ruleId, scope_id: owner.scopeId, rule_id: policy.ruleId, source_id: sourceId });
     const epoch = next(expectedEpoch), id = calendarHash([owner.scopeId, policy.ruleId, epoch]);
     const history: IntegrationPolicyRow = { id, scope_id: owner.scopeId, rule_id: policy.ruleId, epoch, request_id: requestId, digest, policy_json: calendarJson(policy),
-      source_id: jobSourceId(identity), source_policy_hash: calendarHash(policy.source), created_ms: now };
+      source_id: sourceId, source_policy_hash: calendarHash(policy.source), created_ms: now };
     context.db.createStrict('_calendar_integration_policy_history', history);
     const pointer = { id: policy.ruleId, scope_id: owner.scopeId, rule_id: policy.ruleId, policy_id: id, epoch, state: 'activating', registration_json: null };
     if (prior) context.db.update('_calendar_integration_policy_current', policy.ruleId, pointer); else context.db.createStrict('_calendar_integration_policy_current', pointer);

@@ -743,6 +743,23 @@ the restored intent says pending.
 
 ## 14. Delivery stages and acceptance gates
 
+November 18 next-phase decision, following the reviewed private dispatch
+checkpoint: build the fixed native observation catalog and owner-readiness
+machinery before managed activation. An optional asynchronous readiness hook
+must cover established as well as newly bound owners, release physical proof
+leases before waiting, share only owner-lifetime work, preserve the initiating
+request's final authority check and leave historical receipt reconciliation
+available. Logging-only composition must retain its existing behavior and cost.
+
+Then add durable native activation/retirement control and original-command
+settlement barriers. Capture exact Jobs command key/CAS before attempting it;
+persist local retirement before Jobs retirement; do not substitute a null
+receipt read for physical settlement. The Jobs/Torrent dependency is bidirectional
+once recovered observations inspect Jobs execution evidence, so lifecycle work
+must distinguish dormant construction, recovery, dispatch admission, evidence
+availability and final physical close. Public config/automatic observation stays
+closed until those recovery, retry/fairness, capacity and shutdown gates pass.
+
 Each stage gets source/type tests and focused review before proceeding. These are
 future acceptance requirements, not results from this planning pass.
 

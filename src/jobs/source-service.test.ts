@@ -4,6 +4,7 @@ import { trustedSystemServiceDataScope } from '../auth/service-data-scope';
 import { jobBinding, jobDispatchKey } from './admission';
 import { JobsError } from './error';
 import { DatabaseError } from '../databases/database-error';
+import { WorkerError } from '../workers/worker-error';
 import { jobOccurrenceId, type JobAdmissionRow, type JobOccurrenceRow } from './model';
 import type { TrustedJobSource } from './source-authority';
 import { jobSourcePrincipal, jobSourceScheduleId } from './source-model';
@@ -33,6 +34,56 @@ test('invalid source timing is a typed known no-start Jobs rejection before any 
   } finally { await f.close(); }
 });
 
+test('source scheduling preserves native database no-start and rollback proof without a command receipt', async () => {
+  for (const failure of [
+    new DatabaseError('DATABASE_BACKPRESSURE', 'Synthetic admission refusal.', { outcome: 'not-started' }),
+    new DatabaseError('DATABASE_TRANSACTION_EXPIRED', 'Synthetic rolled-back operation.', { outcome: 'not-committed' }),
+  ]) {
+    let fail = true;
+    const f = await memorySourceJobsFixture({ beforeWrite(operation) {
+      if (fail && operation.name === 'jobs.source.schedule.create') { fail = false; throw failure; }
+    } });
+    try {
+      const source = f.source(); await source.api.registration.activate(activate); const writes = f.commands.length;
+      const input = { input: { value: 1 }, at: new Date(f.now() + 5_000).toISOString() }, key = 'native-no-write-proof';
+      await expect(source.api.schedules.create(input, { idempotencyKey: key })).rejects.toBe(failure);
+      expect(f.commands).toHaveLength(writes); expect(f.rows(source.scope, 'job_schedules')).toHaveLength(0);
+      expect(await source.api.receipts.get(key)).toBeNull();
+      const accepted = await source.api.schedules.create(input, { idempotencyKey: key });
+      expect(await source.api.receipts.get(key)).toEqual(accepted); expect(f.rows(source.scope, 'job_schedules')).toHaveLength(1);
+    } finally { await f.close(); }
+  }
+});
+
+test('source scheduling exposes an actual bounded Jobs gate refusal as native known no-start, not writer uncertainty', async () => {
+  const barrier = latch();
+  const f = await memorySourceJobsFixture({ async beforeWrite(operation) {
+    if (operation.name === 'jobs.source.schedule.create') await barrier.wait();
+  } });
+  const pending: Promise<unknown>[] = [];
+  try {
+    const source = f.source(); await source.api.registration.activate(activate);
+    const held: ReturnType<typeof f.source>[] = [];
+    for (let index = 0; index < 20; index++) {
+      const selected = f.source({ identity: { ownerId: 'synthetic-held-owner-' + index } });
+      await selected.api.registration.activate({ ...activate, idempotencyKey: 'register-held-' + index }); held.push(selected);
+    }
+    const writes = f.commands.length;
+    const input = { input: { value: 1 }, at: new Date(f.now() + 5_000).toISOString() };
+    // Real service configuration is four active + sixteen waiting. Every
+    // admitted writer is held before its memory realm command, with no SQL lease.
+    for (let index = 0; index < held.length; index++) pending.push(held[index]!.api.schedules.create(input, { idempotencyKey: 'held-gate-' + index })
+      .then(value => ({ value }), error => ({ error })));
+    await untilMemoryJobs(() => f.service.diagnostics().gate.active === 4 && f.service.diagnostics().gate.queued === 16);
+    let rejected: unknown;
+    try { await source.api.schedules.create(input, { idempotencyKey: 'gate-refused' }); } catch (error) { rejected = error; }
+    expect(rejected).toBeInstanceOf(WorkerError); expect(rejected).toMatchObject({ code: 'WORKER_CAPACITY', outcome: 'not-started' });
+    expect(f.commands).toHaveLength(writes); expect(await source.api.receipts.get('gate-refused')).toBeNull();
+    barrier.release(); await Promise.all(pending);
+    expect(f.rows(source.scope, 'job_schedules')).toHaveLength(20);
+  } finally { barrier.release(); await Promise.allSettled(pending); await f.close(); }
+});
+
 test('source schedules fence an exact expected registration but historical replay remains original evidence', async () => {
   const f = await memorySourceJobsFixture();
   try {
@@ -49,9 +100,11 @@ test('source schedules fence an exact expected registration but historical repla
     await expect(a.api.schedules.create({ ...input, input: { value: 2 } }, { idempotencyKey: 'mapped-original', expectedRegistration: third }))
       .rejects.toMatchObject({ code: 'JOBS_INTENT_CONFLICT' });
     expect(f.rows(a.scope, 'job_schedules')).toHaveLength(1);
-    await expect(a.api.registration.activate({ ...activate, expectedRevision: 3, idempotencyKey: 'mapping-not-a-registration-option', expectedRegistration: third }))
+    const invalidActivation = { ...activate, expectedRevision: 3, idempotencyKey: 'mapping-not-a-registration-option', expectedRegistration: third };
+    await expect(a.api.registration.activate(invalidActivation as unknown as Parameters<typeof a.api.registration.activate>[0]))
       .rejects.toMatchObject({ code: 'JOBS_INPUT_INVALID' });
-    await expect(a.api.schedules.cancel(receipt.id, { expectedRevision: 1, idempotencyKey: 'mapping-not-a-cancel-option', expectedRegistration: third }))
+    const invalidCancellation = { expectedRevision: 1, idempotencyKey: 'mapping-not-a-cancel-option', expectedRegistration: third };
+    await expect(a.api.schedules.cancel(receipt.id, invalidCancellation as unknown as Parameters<typeof a.api.schedules.cancel>[1]))
       .rejects.toMatchObject({ code: 'JOBS_INPUT_INVALID' });
   } finally { await f.close(); }
 });

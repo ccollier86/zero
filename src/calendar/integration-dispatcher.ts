@@ -1,5 +1,7 @@
 /** Private bounded source -> Jobs handoff. Never holds a calendar lease over Jobs or joins Torrent/provider execution. */
 import { JobsError } from '../jobs/error';
+import { DatabaseError } from '../databases/database-error';
+import { WorkerError } from '../workers/worker-error';
 import type { SourceJobs } from '../jobs/source-service';
 import { jobSourceId, jobSourceScheduleId, type JobSourceRegistration, type JobSourceScheduleReceipt } from '../jobs/source-model';
 import { CalendarError } from './error';
@@ -43,6 +45,7 @@ export class CalendarIntegrationDispatcher {
   private wakeQueued = false;
   private wakeAgain = false;
   private closing = false;
+  private readonly cleanupFailures = new Map<string, CalendarIntegrationCode>();
   constructor(private readonly options: CalendarIntegrationDispatcherOptions) {
     this.signal = AbortSignal.any([options.store.signal, this.abort.signal]);
     this.now = options.now ?? Date.now; this.nonce = options.nonce ?? (() => 'claim_' + crypto.randomUUID());
@@ -52,6 +55,7 @@ export class CalendarIntegrationDispatcher {
   }
   runBatch(): Promise<CalendarIntegrationBatchResult> {
     if (this.active) return this.active;
+    if (this.cleanupFailures.size) return Promise.reject(new CalendarError('CALENDAR_OUTCOME_UNKNOWN'));
     try { this.guard(); } catch (error) { return Promise.reject(error); }
     const task = Promise.resolve().then(() => this.batch()); this.active = task;
     void task.finally(() => {
@@ -61,7 +65,7 @@ export class CalendarIntegrationDispatcher {
     return task;
   }
   wake(): void {
-    if (this.closing || this.signal.aborted) return;
+    if (this.closing || this.signal.aborted || this.cleanupFailures.size) return;
     if (this.active) { this.wakeAgain = true; return; }
     if (this.wakeQueued) return; this.wakeQueued = true;
     queueMicrotask(() => {
@@ -69,11 +73,16 @@ export class CalendarIntegrationDispatcher {
       void this.runBatch().catch(error => this.report(safeCode(error)));
     });
   }
+  /** Stops intake and drains this handoff caller, NOT physical Jobs callbacks.
+   * Keep the calendar owner alive until the shared Jobs service has drained.
+   */
   async close(): Promise<void> {
     this.closing = true; this.wakeAgain = false; this.abort.abort();
     await Promise.allSettled(this.active ? [this.active] : []);
+    if (this.cleanupFailures.size) throw new CalendarError('CALENDAR_OUTCOME_UNKNOWN');
   }
-  diagnostics() { return { closing: this.closing, active: this.active !== null, wakeQueued: this.wakeQueued, batchSize: this.batchSize }; }
+  diagnostics() { return { closing: this.closing, active: this.active !== null, wakeQueued: this.wakeQueued, batchSize: this.batchSize,
+    unsettledUninvokedClaims: [...this.cleanupFailures].map(([id, code]) => ({ id, code })) }; }
   private guard = () => {
     if (this.closing) throw new CalendarError('CALENDAR_NOT_READY');
     this.signal.throwIfAborted(); this.options.store.assertCurrent();
@@ -84,15 +93,27 @@ export class CalendarIntegrationDispatcher {
       { now: this.time(), nonce, leaseMs: this.leaseMs, limit: this.batchSize }, ['claim', nonce]);
     if (!Array.isArray(claims) || claims.length > this.batchSize) throw new CalendarError('CALENDAR_STATE_INVALID');
     const result: MutableResult = { claimed: claims.length, accepted: 0, cancelled: 0, suppressed: 0, deferred: 0, stale: 0 };
+    const uninvoked = new Map<string, CalendarIntegrationClaim>();
     for (const claim of claims) {
-      this.guard();
       if (claim.nonce !== nonce || claim.id !== claim.intent.id || typeof claim.previouslyAttempted !== 'boolean') throw new CalendarError('CALENDAR_STATE_INVALID');
       calendarInteger(claim.claimGeneration, 1);
-      await this.handoff(claim, result);
+      if (!claim.previouslyAttempted && !claim.intent.jobsReceipt) uninvoked.set(claim.id, claim);
     }
-    return Object.freeze(result);
+    try {
+      for (const claim of claims) {
+        this.guard();
+        await this.handoff(claim, result, () => { uninvoked.delete(claim.id); });
+        uninvoked.delete(claim.id);
+      }
+      return Object.freeze(result);
+    } finally {
+      // Every controlled exit retains this process's no-invocation knowledge,
+      // including a failed source settlement before later rows were visited.
+      await this.releaseUninvoked(uninvoked.values());
+      if (this.cleanupFailures.size) throw new CalendarError('CALENDAR_OUTCOME_UNKNOWN');
+    }
   }
-  private async handoff(claim: CalendarIntegrationClaim, result: MutableResult): Promise<void> {
+  private async handoff(claim: CalendarIntegrationClaim, result: MutableResult, markInvoked: () => void): Promise<void> {
     const intent = claim.intent;
     let attempted = false, acceptanceObserved = intent.jobsReceipt !== null;
     try {
@@ -128,7 +149,7 @@ export class CalendarIntegrationDispatcher {
         await this.ack(claim, 'cancel', cancelled); result.cancelled++; return;
       }
       const saved = await jobs.receipts.get(intent.createKey); this.guard();
-      if (saved) { acceptanceObserved = true; await this.ack(claim, 'create', receipt(saved, intent, 'create')); result.accepted++; return; }
+      if (saved) { acceptanceObserved = true; markInvoked(); await this.ack(claim, 'create', receipt(saved, intent, 'create')); result.accepted++; return; }
       if (!claim.previouslyAttempted && (intent.eligibility !== 'current' || this.expired(intent))) {
         // Only the source's durable preclaim fact permits this no-write decision.
         // A null Jobs read alone never proves an uncertain old writer is absent.
@@ -142,7 +163,7 @@ export class CalendarIntegrationDispatcher {
       // after a null receipt read. That gate waits for a cancelled physical writer.
       // expectedRegistration prevents a missing old command sliding into a new
       // policy epoch; an original committed receipt still precedes that fence.
-      attempted = true;
+      attempted = true; markInvoked();
       const created = await jobs.schedules.create({ input: intent.input, at: intent.at,
         maxLatenessMs: intent.maxLatenessMs, initiatedBy: intent.initiatedBy },
       { idempotencyKey: intent.createKey, expectedRegistration: expected, signal: this.signal });
@@ -151,13 +172,12 @@ export class CalendarIntegrationDispatcher {
     } catch (error) {
       this.guard();
       if (isStale(error)) { result.stale++; return; }
-      if (!claim.previouslyAttempted && attempted && error instanceof JobsError && error.outcome !== 'unknown' && this.expired(intent)) {
+      if (!claim.previouslyAttempted && !acceptanceObserved && attempted && isKnownNoJobCommit(error) && this.expired(intent)) {
         try { await this.suppress(claim); result.suppressed++; return; }
         catch (settlement) { if (isStale(settlement)) { result.stale++; return; } throw settlement; }
       }
-      const code = safeCode(error), unknown = acceptanceObserved || attempted && (!(error instanceof JobsError) || error.outcome === 'unknown');
-      const notCommitted = !claim.previouslyAttempted && !acceptanceObserved && (!attempted
-        || error instanceof JobsError && (error.outcome === 'not-started' || error.outcome === 'not-committed'));
+      const code = safeCode(error), unknown = acceptanceObserved || attempted && !isKnownNoJobCommit(error);
+      const notCommitted = !claim.previouslyAttempted && !acceptanceObserved && (!attempted || isKnownNoJobCommit(error));
       try {
         const now = this.time();
         await this.command('calendar.integration.defer', { ...claimIdentity(claim), now, code,
@@ -173,6 +193,27 @@ export class CalendarIntegrationDispatcher {
   }
   private suppress(claim: CalendarIntegrationClaim) {
     return this.command('calendar.integration.suppress', claimIdentity(claim), ['suppress', claim.id, claim.nonce, claim.claimGeneration]);
+  }
+  /** This process knows these first-attempt rows never invoked a Jobs mutation.
+   * Persist that fact before the owner closes; a restart may NOT infer it later.
+   */
+  private async releaseUninvoked(claims: Iterable<CalendarIntegrationClaim>): Promise<void> {
+    const ownerGuard = () => { this.options.store.signal.throwIfAborted(); this.options.store.assertCurrent(); };
+    for (const claim of claims) {
+      try {
+        ownerGuard(); const now = this.time();
+        await this.options.store.command('calendar.integration.defer', { ...claimIdentity(claim), now, retryAt: now + this.retryMs,
+          code: 'CALENDAR_NOT_READY', unknown: false, notCommitted: true },
+        { idempotencyKey: 'calendar-integration:' + calendarHash(['close-uninvoked', claim.id, claim.nonce, claim.claimGeneration]),
+          signal: this.options.store.signal, assertCurrent: ownerGuard });
+        this.cleanupFailures.delete(claim.id);
+      } catch (error) {
+        // Another claim/settlement already owns this row; it is not an owned
+        // leftover. No other refusal is silently represented as clean drainage.
+        if (isStale(error)) { this.cleanupFailures.delete(claim.id); continue; }
+        const code = safeCode(error); this.cleanupFailures.set(claim.id, code); this.report(code);
+      }
+    }
   }
   private command<T>(name: Parameters<CalendarIntegrationOwner['command']>[0], input: unknown, identity: unknown): Promise<T> {
     this.guard();
@@ -205,6 +246,12 @@ function receipt(input: unknown, intent: CalendarIntegrationIntentView, phase: '
   return Object.freeze(value);
 }
 function isStale(error: unknown): boolean { return error instanceof CalendarError && error.code === 'CALENDAR_REVISION_CONFLICT'; }
+/** Native boundary proof only. Active pool cancellation is converted to Jobs unknown by SourceJobs before it reaches this adapter. */
+function isKnownNoJobCommit(error: unknown): boolean {
+  return error instanceof JobsError && (error.outcome === 'not-started' || error.outcome === 'not-committed')
+    || error instanceof DatabaseError && (error.outcome === 'not-started' || error.outcome === 'not-committed')
+    || error instanceof WorkerError && error.outcome === 'not-started';
+}
 function safeCode(error: unknown): CalendarIntegrationCode {
   if (error instanceof JobsError && ['JOBS_CAPACITY', 'JOBS_OUTCOME_UNKNOWN', 'JOBS_NOT_READY', 'JOBS_REVISION_CONFLICT',
     'JOBS_DEFINITION_UNAVAILABLE', 'JOBS_AUTHORITY_RETIRED'].includes(error.code)) return error.code as CalendarIntegrationCode;

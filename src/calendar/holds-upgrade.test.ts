@@ -111,7 +111,7 @@ function fixture() {
 }
 
 test('hold migration is additive while both original source functions and declaration generations remain frozen', () => {
-  expect(calendarRealm.migrations.map(migration => migration.version)).toEqual(['001', '002', '003', '004', '005', '006', '007', '008', '009', '010']);
+  expect(calendarRealm.migrations.map(migration => migration.version)).toEqual(['001', '002', '003', '004', '005', '006', '007', '008', '009', '010', '011']);
   expect(hashMigration(calendarRealm.migrations[0]!)).toBe(ORIGINAL_001_CHECKSUM);
   expect(hashMigration(calendarRealm.migrations[1]!)).toBe(ORIGINAL_002_CHECKSUM);
   expect(hashSchemaSnapshot(snapshotDeclaredTables(CALENDAR_TABLES))).toBe(ORIGINAL_001_TABLES);
@@ -132,7 +132,7 @@ test('real migrator upgrades populated 002 without rewriting either generation o
     const data = f.legacyData(), seq = f.db.currentSeq;
     const triggers = f.raw.query<{ name: string; sql: string }, []>("SELECT name,sql FROM sqlite_master WHERE type='trigger' ORDER BY name").all();
     const ledger = f.raw.query("SELECT * FROM _migrations WHERE version IN ('001','002') ORDER BY version").all();
-    expect(f.upgrade()).toEqual(['003', '004', '005', '006', '007', '008', '009', '010']); expect(f.legacyData()).toEqual(data); expect(f.db.currentSeq).toBe(seq);
+    expect(f.upgrade()).toEqual(['003', '004', '005', '006', '007', '008', '009', '010', '011']); expect(f.legacyData()).toEqual(data); expect(f.db.currentSeq).toBe(seq);
     expect(f.raw.query("SELECT * FROM _migrations WHERE version IN ('001','002') ORDER BY version").all()).toEqual(ledger);
     for (const trigger of triggers) expect(f.raw.query("SELECT name,sql FROM sqlite_master WHERE name=? AND type='trigger'").get(trigger.name)).toEqual(trigger);
     for (const [requestId, receipt] of f.saved) expect(f.query<CalendarCommandReceipt | null>('receipt', { actor, requestId })).toEqual(receipt);

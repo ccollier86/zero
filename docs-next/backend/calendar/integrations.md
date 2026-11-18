@@ -32,6 +32,12 @@ unchanged. Additive calendar migration `010` installs separate integration state
 Migrations `001`–`009` and their complete historical declaration maps retain their
 recorded checksums; no old appointment is reinterpreted or backfilled.
 
+The subsequent additive `011` permanently binds each calendar rule to exactly
+one Jobs source identity, and each source to one rule. Neither retirement nor a
+new policy epoch frees or rotates that binding. Consistent `010` history derives
+the same bindings without altering old evidence; conflicting shared/rotated
+history blocks migration for explicit recovery rather than choosing a winner.
+
 A changed appointment's canonical writer records the ordinary receipt/effect seal,
 then captures integration work **in the same transaction**. Creation, hold
 confirmation, rescheduling, cancellation, lifecycle changes and participant
@@ -90,6 +96,23 @@ the source's no-attempt provenance. This narrow case permits eventual expiry
 suppression after capacity failure. Unknown, unclassified or accepted results
 cannot acquire that permission. Lost source acknowledgment likewise cannot
 authorize another logical schedule.
+
+Only native typed Jobs/Database errors with a proven no-start/non-commit outcome,
+or a native Worker no-start, establish that proof. An authored object containing
+an `outcome` field does not. A known source acknowledgment refusal after Jobs
+acceptance is not proof that the Jobs write failed.
+
+Controlled batch exit also restores untouched first-attempt claims using tracked
+no-invocation proof and the owner lifetime, not an already-aborted dispatcher
+signal. Invoked, previously uncertain and accepted rows stay reconcilable. This
+is graceful-exit proof; it cannot be fabricated after a process crash.
+
+`close()` drains intake/caller work, **not physical Jobs settlement**. Shared
+Jobs callbacks may still be draining, and owner-bound evidence reads currently
+have no separate per-call cancellation option. Native shutdown must keep calendar
+and Jobs evidence owners alive until shared drainage. Unconfirmed claim cleanup
+retains bounded IDs/codes, rejects close and blocks new intake instead of
+reporting a clean stop or growing unbounded diagnostics.
 
 ## Original Torrent execution, not merely the same principal
 
