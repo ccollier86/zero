@@ -12,11 +12,13 @@ import type { ResolvedJobsConfig } from './config';
 import type { JobsDueCursor, JobsRuntime } from './runtime';
 import { jobHash } from './validation';
 import { withoutLoggingAttribution } from '../logging/logging-attribution';
+import type { JobsSourceBroker } from './source-service';
 
 export function jobGateKey(scope: ServiceDataScope, id: string): string { return jobHash([serviceDataScopeKey(scope), id]); }
 interface RunnerOptions {
   runtime: JobsRuntime; bridge: WorkflowDeferredStartBridge; config: ResolvedJobsConfig; gate: WorkPool;
   now?: () => number; onFailure?: (stage: 'scope' | 'dispatch' | 'completion', code: string) => void;
+  sources?: Pick<JobsSourceBroker, 'prepareDispatch'>;
 }
 interface DispatchContext { occurrence: JobOccurrenceRow; admission: JobAdmission; seal: JobSeal; dispatchAllowed: boolean }
 export class JobsRunner {
@@ -147,17 +149,26 @@ export class JobsRunner {
     const inspect = () => this.options.bridge.inspect(authority, admission.workflow, admission.input, jobDispatchKey(id), binding);
     let accepted = inspect();
     if (!accepted) {
+      // An uncertain claim still reconciles first after a backward clock step.
+      // Without a receipt, keep it recoverable instead of inventing retirement.
+      if (this.now() < context.occurrence.scheduled_at) throw new JobsError('JOBS_NOT_READY');
       if (!context.dispatchAllowed) {
         await this.write(scope, 'jobs.block', { scopeId, id, nonce, leaseGeneration: claim.leaseGeneration, code: 'JOBS_NOT_DISPATCHED', now: this.now() }); return;
       }
+      let sourceGuard: (() => void) | undefined;
       const assertSourceCurrent = () => {
         this.guard(); this.abort.signal.throwIfAborted();
-        if (this.state !== 'ready' || context.occurrence.lease_until === null || context.occurrence.lease_until <= this.now()
-          || this.now() > context.occurrence.scheduled_at + admission.timing.maxLatenessMs) throw new JobsError('JOBS_AUTHORITY_RETIRED');
+        const now = this.now();
+        if (now < context.occurrence.scheduled_at) throw new JobsError('JOBS_NOT_READY');
+        if (this.state !== 'ready' || context.occurrence.lease_until === null || context.occurrence.lease_until <= now
+          || now > context.occurrence.scheduled_at + admission.timing.maxLatenessMs) throw new JobsError('JOBS_AUTHORITY_RETIRED');
         const definition = this.options.config.catalog.resolve(admission.definition, admission.definitionVersion);
         assertJobDefinitionCurrent(definition, admission, authority, scope);
+        if (admission.source && !sourceGuard) throw new JobsError('JOBS_AUTHORITY_RETIRED');
+        sourceGuard?.();
       };
       try {
+        if (admission.source) sourceGuard = await this.options.sources?.prepareDispatch(scope, admission);
         assertSourceCurrent();
         await this.options.bridge.enqueue(authority, admission.workflow, admission.input, jobDispatchKey(id), binding, assertSourceCurrent);
         accepted = inspect(); if (!accepted) throw new JobsError('JOBS_OUTCOME_UNKNOWN');
@@ -167,7 +178,16 @@ export class JobsRunner {
         accepted = inspect();
         if (!accepted) {
           const rejection = dispatchRejection(error);
-          if (!rejection) throw error;
+          if (!rejection) {
+            if (code(error) === 'JOBS_NOT_READY') {
+              // Source hydration must not cost a full 60-second uncertain lease.
+              // Retain claimed state and the original key; retry still inspects
+              // Torrent first, including an acceptance that arrived meanwhile.
+              try { await this.write(scope, 'jobs.claim.defer', { scopeId, id, nonce, leaseGeneration: claim.leaseGeneration, now: this.now() }); }
+              catch { /* Preserve the original failure and its still-recoverable claim. */ }
+            }
+            throw error;
+          }
           await this.write(scope, 'jobs.block', { scopeId, id, nonce, leaseGeneration: claim.leaseGeneration, code: rejection, now: this.now() }); return;
         }
       }

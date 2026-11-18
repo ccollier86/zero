@@ -16,7 +16,7 @@ export class JobOperatorPolicy {
   private readonly exact = new Map<string, DefinitionAccess>();
   private readonly replacement = { actor: false, service: false };
   constructor(catalog: JobDefinitionCatalog, scopeKind: ServiceDataScope['scopeKind'], authorize: (definition: JobDefinition) => void) {
-    this.entries = catalog.list().map(definition => {
+    this.entries = catalog.list().filter(definition => definition.origin !== 'source').map(definition => {
       let access = true;
       try { authorize(definition); }
       catch (error) {

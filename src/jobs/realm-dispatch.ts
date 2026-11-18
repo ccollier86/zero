@@ -55,7 +55,10 @@ export function claimJobOccurrence(context: DatabaseWriteCommandContext, input: 
     if (!pinned) throw new JobsError('JOBS_STATE_INVALID');
     const admission = decodeJobAdmission(pinned as import('./model').JobAdmissionRow);
     const current = parent.control === 'active' && parent.generation === row.generation;
-    const allowed = current && now <= row.scheduled_at + admission.timing.maxLatenessMs;
+    // Materialization can precede a backward clock step. Do not consume or
+    // retire never-started work before its original due instant.
+    if (row.state === 'pending' && now < row.scheduled_at) return { claimed: false, reason: 'not-due' };
+    const allowed = current && now >= row.scheduled_at && now <= row.scheduled_at + admission.timing.maxLatenessMs;
     if (row.state === 'pending' && !allowed) {
       const reason = current ? 'expired' : 'cancelled';
       context.db.update('_jobs_occurrences', row.id, { state: current ? 'terminal' : 'cancelled', terminal_status: current ? 'expired' : 'not-dispatched', updated_at: now });
@@ -82,6 +85,18 @@ export function claimJobOccurrence(context: DatabaseWriteCommandContext, input: 
     context.db.update('_jobs_occurrences', row.id, { state: 'claimed', lease_nonce: nonce, lease_until: leaseUntil,
       lease_generation: generation, updated_at: now });
     return { claimed: true, id: row.id, nonce, leaseGeneration: generation, dispatchAllowed: allowed };
+  });
+}
+
+/** Shorten a recoverable not-ready lease without asserting that Torrent never accepted it. */
+export function deferJobOccurrenceClaim(context: DatabaseWriteCommandContext, input: unknown) {
+  return jobCommand(() => {
+    const r = jobRecord(input, ['scopeId', 'id', 'nonce', 'leaseGeneration', 'now']), scope = jobScope(r.scopeId), now = jobTime(r.now);
+    assertJobOwner(context, scope);
+    const row = occurrence(context, scope, r.id); assertClaim(row, r.nonce, r.leaseGeneration, now);
+    const until = Math.min(row.lease_until!, jobTime(now + 1000));
+    if (until !== row.lease_until) context.db.update('_jobs_occurrences', row.id, { lease_until: until, updated_at: now });
+    return { deferred: true };
   });
 }
 

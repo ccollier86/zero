@@ -10,6 +10,7 @@ import type { JobActor } from './realm-model';
 import { JobsError } from './error';
 import { jobHash, jobText, type JobValue } from './validation';
 import type { ScheduleTiming } from './schedule-time';
+import { jobSourcePrincipal } from './source-model';
 
 export function jobBinding(admission: JobAdmission, generation: number): string { return 'jobs:' + jobAdmissionDigest(admission) + ':' + generation; }
 export function jobDispatchKey(id: string): string { return 'jobs:' + id; }
@@ -19,6 +20,7 @@ export function jobActorFromAuthority(authority: WorkflowPersistedExecutionAutho
 }
 export function prepareJobAdmission(bridge: WorkflowDeferredStartBridge, definition: JobDefinition, actorAuthority: WorkflowPersistedExecutionAuthority,
   scope: ServiceDataScope, actor: JobActor, request: { id: string; input: unknown; timing: ScheduleTiming; overlap: JobAdmission['overlap']; runAs: JobAdmission['runAs']; generation: number; ownerId?: string; ownerPrincipal?: string }): { admission: JobAdmission; seal: JobSeal } {
+  if (definition.origin === 'source') throw new JobsError('JOBS_FORBIDDEN');
   const input = definition.parseInput(request.input), ownerId = request.ownerId ?? actor.userId;
   let authority = actorAuthority;
   if (request.runAs === 'service') {
@@ -35,13 +37,19 @@ export function prepareJobAdmission(bridge: WorkflowDeferredStartBridge, definit
 export function assertJobExecutionIdentity(admission: JobAdmission, authority: WorkflowPersistedExecutionAuthority): void {
   const scope = authority.identity.scopeKind === 'application' ? 'application' : 'tenant:' + authority.identity.tenantId;
   if (admission.scopeId !== scope || (admission.runAs === 'actor' ? authority.kind !== 'actor' || authority.identity.userId !== admission.actorId
-    || workflowActorStartPrincipal(authority) !== admission.principal : authority.kind !== 'system')) throw new JobsError('JOBS_STATE_INVALID');
+    || workflowActorStartPrincipal(authority) !== admission.principal : authority.kind !== 'system')
+    || admission.source && (authority.kind !== 'system' || authority.identity.principal !== jobSourcePrincipal(admission.source.id))) throw new JobsError('JOBS_STATE_INVALID');
 }
 export function assertJobDefinitionCurrent(definition: JobDefinition, admission: JobAdmission, authority: WorkflowPersistedExecutionAuthority, scope: ServiceDataScope): void {
+  if (admission.source ? definition.origin === 'request' : definition.origin === 'source') throw new JobsError('JOBS_DEFINITION_UNAVAILABLE');
   if (definition.name !== admission.definition || definition.version !== admission.definitionVersion || definition.fingerprint !== admission.definitionHash
     || definition.workflow.name !== admission.workflow.name || definition.workflow.version !== admission.workflow.version
     || jobHash(definition.parseInput(admission.input)) !== jobHash(admission.input)) throw new JobsError('JOBS_DEFINITION_UNAVAILABLE');
-  if (admission.runAs === 'service') {
+  if (admission.source) {
+    if (authority.kind !== 'system' || authority.identity.principal !== jobSourcePrincipal(admission.source.id)) throw new JobsError('JOBS_STATE_INVALID');
+    // Fresh source ownership/policy is checked by JobsSourceBroker after the
+    // pool wait and again through Torrent's synchronous final start fence.
+  } else if (admission.runAs === 'service') {
     if (authority.kind !== 'system' || authority.identity.principal !== servicePrincipal(definition)) throw new JobsError('JOBS_STATE_INVALID');
     assertJobServiceEligibility(definition, scope, admission.actorId, admission.input);
   }

@@ -14,6 +14,13 @@ test('code-owned jobs detach metadata, default to admin and require the exact re
   expect(catalog.fingerprint).toBe(new JobDefinitionCatalog([job]).fingerprint);
   expect(defineJob({ ...declaration(), version: '2' }).fingerprint).not.toBe(job.fingerprint);
 });
+test('origin restrictions are explicit while legacy request fingerprints remain unchanged', () => {
+  const legacy = defineJob(declaration()), request = defineJob({ ...declaration(), origin: 'request' });
+  expect(legacy.origin).toBe('request'); expect(request.fingerprint).toBe(legacy.fingerprint);
+  expect(defineJob({ ...declaration(), origin: 'source' }).fingerprint).not.toBe(legacy.fingerprint);
+  expect(defineJob({ ...declaration(), origin: 'both' }).fingerprint).not.toBe(legacy.fingerprint);
+  expect(() => defineJob({ ...declaration(), origin: 'root' as 'source' })).toThrow();
+});
 test('parsers are bounded detached canonical JSON, not non-idempotent transforms or async work', () => {
   const job = defineJob(declaration()), value = { synthetic: { count: 1 } }, parsed = job.parseInput(value); value.synthetic.count = 3;
   expect(parsed).toEqual({ synthetic: { count: 1 } });

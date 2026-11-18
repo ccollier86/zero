@@ -7,6 +7,7 @@ import { jobHash, jobInteger, jobJson, jobKey, jobRecord, jobScope, jobText } fr
 export { jobScope } from './validation';
 
 export interface JobActor { readonly scopeId: string; readonly userId: string; readonly principal: string; readonly manageAll: boolean }
+export type ActorJobScheduleRow = JobScheduleRow & { actor_id: string; principal: string; updated_by: string; source_id?: null };
 export interface JobScheduleView {
   readonly id: string; readonly definition: string; readonly definitionVersion: string; readonly ownerId: string;
   readonly runAs: 'actor' | 'service'; readonly control: JobScheduleRow['control']; readonly revision: number;
@@ -26,11 +27,11 @@ export function assertJobOwner(context: DatabaseWriteCommandContext, scopeId: st
   const owner = context.db.get('_jobs_owner', 'application');
   if (!owner || owner.scope_id !== scopeId) throw new JobsError('JOBS_STATE_INVALID');
 }
-export function ownedJob(context: DatabaseWriteCommandContext, actor: JobActor, id: unknown): JobScheduleRow {
+export function ownedJob(context: DatabaseWriteCommandContext, actor: JobActor, id: unknown): ActorJobScheduleRow {
   assertJobOwner(context, actor.scopeId);
   const row = context.db.get('job_schedules', jobText(id, 96)) as JobScheduleRow | null;
   // Do not disclose another scope/owner's existence.
-  if (!row || row.scope_id !== actor.scopeId || !actor.manageAll && row.actor_id !== actor.userId) throw new JobsError('JOBS_NOT_FOUND');
+  if (!row || row.scope_id !== actor.scopeId || !isActorJobSchedule(row) || !actor.manageAll && row.actor_id !== actor.userId) throw new JobsError('JOBS_NOT_FOUND');
   return row;
 }
 export function readJobAdmission(context: DatabaseWriteCommandContext, row: JobScheduleRow): JobAdmissionRow {
@@ -55,8 +56,12 @@ export function insertJobAdmission(context: DatabaseWriteCommandContext, admissi
     authority_json: seal.authorityJson, authority_mac: seal.authorityMac });
 }
 export function scheduleView(row: JobScheduleRow): JobScheduleView {
+  if (!isActorJobSchedule(row)) throw new JobsError('JOBS_NOT_FOUND');
   return { id: row.id, definition: row.definition_name, definitionVersion: row.definition_version, ownerId: row.actor_id,
     runAs: row.run_as, control: row.control, revision: row.revision, generation: row.generation, createdAt: row.created_at, updatedAt: row.updated_at };
+}
+export function isActorJobSchedule(row: JobScheduleRow): row is ActorJobScheduleRow {
+  return row.source_id == null && typeof row.actor_id === 'string' && typeof row.principal === 'string' && typeof row.updated_by === 'string';
 }
 export function jobBudget(context: DatabaseWriteCommandContext, id: string, limit: number, amount = 1): void {
   const row = context.db.get('_jobs_usage', id);

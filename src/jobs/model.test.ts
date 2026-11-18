@@ -40,6 +40,16 @@ test('unknown fields, getters, malformed scope/timing and oversized input fail w
   expect(() => jobInput('x'.repeat(32 * 1024))).toThrow();
   for (const key of ['', '../other', 'a b', 'a\n', 'x'.repeat(129)]) expect(() => jobKey(key)).toThrow();
 });
+test('source origin binds its own policy without inventing an actor and cannot carry human authority', () => {
+  const source = { id: 'src_' + 'd'.repeat(64), generation: 3, policyHash: 'e'.repeat(64) };
+  const accepted = normalizeJobAdmission({ ...admission(), actorId: null, principal: null, runAs: 'service', source, initiatedBy: 'factual-initiator' });
+  expect(accepted.source).toEqual(source); expect(accepted.actorId).toBeNull(); expect(accepted.principal).toBeNull();
+  expect(jobAdmissionDigest(accepted)).not.toBe(jobAdmissionDigest(normalizeJobAdmission({ ...accepted, source: { ...source, generation: 4 } })));
+  for (const candidate of [{ ...accepted, actorId: 'invented-user' }, { ...accepted, principal: 'invented-session' },
+    { ...accepted, runAs: 'actor' }, { ...accepted, source: { ...source, generation: 0 } }, { ...admission(), initiatedBy: 'not-source' }]) {
+    expect(() => normalizeJobAdmission(candidate)).toThrow();
+  }
+});
 
 test('actor domain rejections throw through the transaction and retain not-committed provenance; unknown never becomes a normal rejection', () => {
   let error: unknown;

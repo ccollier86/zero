@@ -18,6 +18,100 @@ This is feature-branch evidence, not a release certificate. No calendar backend
 archive has been selected by normal `zero-update`, and no application deployment
 or data migration is authorized by these checks.
 
+## November 18 source-owned Jobs/Torrent foundation
+
+The [native source-owned Jobs guide](../scheduler/source-owned-jobs.md) records
+this larger shared foundation. The same Jobs runner, bounded pool and sealed
+Torrent bridge now accept a distinct private source origin: no invented user,
+session principal or updated-by identity. Source-only definitions cannot be
+admitted through a request, including an administrator request, and human
+operator queries do not disclose/control source schedules. Immutable source
+policy generations, permanent command receipts and revision-CAS controls cover
+create, replace/supersede, cancel, retirement and reactivation. A → B → A never
+reuses an epoch. Factual initiation is separate from execution authority.
+
+Additive Jobs `002` keeps the exact `001` migration checksum
+`e685208b804564ef8099324f5218dbd6cc783d8d0541e4689cba348fb42a4749` and a golden
+legacy admission digest unchanged. Populated memory upgrades retain every old
+field, authority seal, dispatch receipt, original index/trigger SQL and FK.
+FK enforcement stays on. The child-first graph rebuild avoids a confirmed SQLite
+parent-drop/deferred-FK trap which could pass `foreign_key_check` yet fail COMMIT.
+Staging stays inside the owned file/transaction, not the host TEMP directory.
+Indexed row-equivalence checks avoid large `EXCEPT` sorting trees. Late failures
+and unknown incoming relationships roll back; source history is not backfilled
+into runnable work.
+
+Focused review closed concrete runtime issues:
+
+- Definitive retirement differs from an active source not hydrated on restart.
+  Not-ready work remains reconcilable rather than being permanently blocked.
+  Its claim shortens to one second without dropping uncertainty or changing the
+  original Torrent key, avoiding a needless 60-second hydration delay.
+- Not-before joins expiry at claim/final handoff. Backward clock movement cannot
+  start early work; original sealed receipt inspection still happens first.
+  Late one-off source admission retains its original due instant within lateness.
+- First-source absent receipts return null without provisioning. Existing-only
+  source reads/writes, retained binding and wake refresh never recreate a missing
+  Jobs file. Orphan/malformed ownership fails closed. Loss after commit preserves
+  the acknowledged result and durable dirty wake rather than falsely rejecting it.
+- Activation tokens fence the actual writer, not merely its acknowledgment.
+  Retirement, cancellation, owner replacement and pool abort cannot install late
+  authority. Pre-aborted/invalid retirement and historical control retries do not
+  evict a later healthy generation. New-key no-op controls still require CAS.
+- Actual pool execution signals reach final checks. Cancellation after a writer
+  may have started remains unknown; known completed transaction rejections retain
+  their not-committed result. Unknown receipts reconcile without a new identity.
+- Source registration/receipt state is bounded. Shared retained quotas and source
+  limits reject atomically, including semantic evidence; no timer/claim audit spam
+  or silent history pruning is introduced.
+
+The final native Jobs/Torrent set passed **128 tests, 856 assertions, 20 files**
+in 15.62 seconds. It includes actual JobsService/broker/runner and real in-memory
+Torrent authority seals, activity execution, permanent receipts and terminal
+reconciliation. Fault cases cover lost Jobs replies, abort after commit, Torrent
+acceptance before Jobs acknowledgment, retirement, A → B → A, restart hydration,
+shared-gate cancellation, tenant isolation, forged capabilities and request/admin
+exclusion. A separate actual JobsRuntime seam test uses real SYSTEM memory state
+and real commit-authority checks with fake existing-file leases; it proves
+existing-only routing and complete lease release. These physical seams are
+explicitly simulated, not represented as disk/process qualification.
+
+The broader memory regression baseline passed **916 tests, 16,050 assertions,
+116 files** in 119.06 seconds across calendar/HTTP/SDK/hooks/UI models, Jobs,
+auditing and modal helpers. Subsequent retirement-fence corrections and migration
+polish were rechecked in the final 128-test Jobs set; that distinction is not a
+claim that the whole framework or final installed archive was run. The no-emit
+graph review covers 334 roots/3,943 imported sources with zero diagnostics.
+Documentation has 906 pages, all reachable, with zero structural problems.
+
+Unsuccessful diagnostics remain part of the record: an earlier 117-file attempt
+passed 915 tests but could not collect the installed-consumer fixture because
+the borrowed read-only dependency resolver lacked `shiki/core` mapping. That
+consumer was excluded from the later memory-only baseline, not relabelled passed;
+no dependency install or package qualification was attempted. Earlier memory
+fixture failures used migrations outside their required transaction and an old
+audit expectation excluded newly explicit factual-initiation metadata; both
+fixtures were corrected without weakening identity/privacy assertions. A new
+writer-race test initially blocked on an eager promise matcher before releasing
+its own latch. Its two owned memory-only processes were retired; native promise
+settlement corrected the test, which then passed. Test-only generic/narrowing
+diagnostics were also corrected before the zero-diagnostic review.
+
+All final memory handles, query snapshots, pools and Torrent owners close in
+`finally`, including fixture construction failure. No files, actors, containers,
+build trees or dependencies were generated by these checks. Transpiler cache and
+TypeScript emit/incremental output were disabled. Existing source, archives,
+protected history, preview and release selections remain intact.
+
+The existing external filesystem integrity hold remains active. File-backed
+actor death/restart/disk-full, real Chromium, native logging workers, bundled
+Linux/amd64 and exact archive/updater qualification are not executed or bypassed.
+Native calendar ownership/lifecycle composition, bounded source dispatch/ack,
+effect-admission cutoff, explicit retire-before-disable procedure and sustainable
+retention/capacity remain stage-4 work. This foundation does not enable calendar
+reminders, recurring appointments or provider sends; the hosted demo and normal
+updater archive are unchanged.
+
 ## November 18 versioned working-hours checkpoint
 
 The [working-hours guide](./working-hours.md) describes the new whole-policy

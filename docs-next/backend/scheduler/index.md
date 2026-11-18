@@ -68,6 +68,8 @@ tenants' or platform maintenance jobs.
   captured options, overlap and caught-versus-rethrown failure policy.
 - [Durable jobs](./durable-jobs.md): managed configuration, ownership,
   permanent receipts, pinned handoff, live reads and deployment boundaries.
+- [Native source-owned Jobs](./source-owned-jobs.md): experimental fixed-source
+  ownership, policy retirement, permanent receipts and shared-runner recovery.
 - [Status](./status.md): list/get/existence, busy versus scheduled state and
   timestamp meaning.
 - [Lifecycle](./lifecycle.md): removal, stop, registration ownership and shutdown.

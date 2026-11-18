@@ -404,6 +404,15 @@ failure into a false rejection of an already accepted appointment.
 
 ### Required new source/service Jobs bridge
 
+November 18 implementation update: the shared
+[native source-owned Jobs foundation](../backend/scheduler/source-owned-jobs.md)
+now implements the distinct source ownership/epoch/receipt/control family and
+uses the existing runner/Torrent path. Its additive Jobs `002` retains `001` and
+legacy evidence. It is internal feature-branch source, not an activated calendar
+adapter. The source claim/acknowledgment queue, actual calendar owner/lifecycle
+composition, authoritative effect cutoff, retained-capacity operating procedure
+and physical/deployment qualification below still gate automatic calendar work.
+
 Design a fixed source-bound admission/control/receipt capability for calendar-owned
 intents: verified source and scope, fixed registered definition and workflow pin,
 stable intent key, source-revision fence, current policy and retirement signal.
@@ -466,7 +475,10 @@ November 18 source review preserves two additional gates before that bridge:
   Durable A → disabled/B → A retirement requires a reviewed separate source-lifecycle
   registry or an explicit durable-disable protocol. A matching config hash or new
   AbortSignal is insufficient. Do not silently weaken disabled inertness or claim
-  an unobserved retirement was recorded. This decision remains open before stage 4.
+  an unobserved retirement was recorded. The first shared bridge now chooses an
+  explicit durable-retire-before-disable protocol and new-generation reactivation;
+  calendar's actual lifecycle/operator procedure must still implement it before
+  stage 4 can complete. Automatic feature-manifest retirement is not implemented.
 
 ### Ownership and fresh eligibility
 

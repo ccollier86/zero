@@ -30,7 +30,10 @@ APIs, not proposed contracts. This source/local manual does not assert release
 status: use the exact commit/archive provenance and matching qualification
 receipt for the intended runtime and deployment topology. A version number alone
 is not deployment approval.
-Calendar components and the calendar backend remain outside this work.
+The experimental [source-owned native integration](./source-owned-jobs.md) now
+extends this same runner without changing the request HTTP/SDK ownership model.
+It is feature-branch source, not automatic calendar reminders or selected release
+qualification.
 
 ## Responsibilities
 
@@ -105,6 +108,13 @@ separate capability; a complete compiled jobs application is not qualified by
 the source/minified installed-app receipt and requires its own qualification.
 
 ## Definitions, ownership and authority
+
+`origin` defaults to `request`; `source` definitions are native-only and `both`
+is an explicit dual-origin declaration. Source-only definitions are not published
+or admitted through request discovery/create/readmission, even for administrators.
+See the [native boundary](./source-owned-jobs.md) for distinct source ownership,
+retirement and reconciliation; existing `service` execution below still has a
+human schedule owner.
 
 - A definition is an exact code-registered object or a registered name. Multiple
   explicit definition versions may coexist, with at most one default per name.

@@ -18,6 +18,8 @@ export interface JobDefinitionInput<Input> {
   readonly version: string;
   /** New name-only admissions select this version. Retained non-default versions remain available for recovery. Default: true. */
   readonly default?: boolean;
+  /** Source-only definitions cannot be invoked through a signed-in request, even by an administrator. Default: request. */
+  readonly origin?: 'request' | 'source' | 'both';
   readonly workflow: { readonly name: string; readonly version: number };
   readonly parseInput: (input: JobValue) => Input;
   /** Omitted means administrator, not public or every signed-in account. Compiled against Guardian at managed configuration. */
@@ -28,6 +30,7 @@ declare const jobInputType: unique symbol;
 export interface JobDefinition<Input = unknown> {
   readonly [jobInputType]?: { readonly input: Input };
   readonly name: string; readonly version: string; readonly fingerprint: string; readonly default: boolean;
+  readonly origin: 'request' | 'source' | 'both';
   readonly workflow: Readonly<{ name: string; version: number }>;
   readonly access: AccessRequirement;
   readonly service: JobServicePolicy | null;
@@ -37,16 +40,18 @@ export type JobDefinitionValue<Definition extends JobDefinition> = NonNullable<D
 const registered = new WeakSet<JobDefinition>();
 export function defineJob<Input>(definition: JobDefinitionInput<Input>): JobDefinition<Input> {
   try {
-    const r = jobRecord(definition, ['name', 'version', 'default', 'workflow', 'parseInput', 'access', 'service']);
+    const r = jobRecord(definition, ['name', 'version', 'default', 'origin', 'workflow', 'parseInput', 'access', 'service']);
     const name = nameValue(r.name), version = versionValue(r.version), workflow = jobRecord(r.workflow, ['name', 'version']);
-    if (typeof r.parseInput !== 'function' || r.default !== undefined && typeof r.default !== 'boolean') throw new JobsError('JOBS_CONFIG_INVALID');
+    if (typeof r.parseInput !== 'function' || r.default !== undefined && typeof r.default !== 'boolean'
+      || r.origin !== undefined && !['request', 'source', 'both'].includes(r.origin as string)) throw new JobsError('JOBS_CONFIG_INVALID');
     const pin = Object.freeze({ name: jobText(workflow.name, 200), version: jobInteger(workflow.version, 1) });
     if (pin.name.trim() !== pin.name) throw new JobsError('JOBS_CONFIG_INVALID');
     const parse = r.parseInput as (input: JobValue) => unknown, access = freeze(jobInput(r.access ?? 'admin')) as AccessRequirement;
     const service = r.service === undefined ? null : servicePolicy(r.service);
     // Portable semantic declaration, not a function.toString() or executable-integrity claim.
-    const fingerprint = jobHash({ name, version, workflow: pin, access, service: service ? { principal: service.principal, scopes: service.scopes } : null });
-    const result: JobDefinition<Input> = Object.freeze({ name, version, fingerprint, default: r.default ?? true, workflow: pin, access, service,
+    const fingerprint = jobHash({ name, version, workflow: pin, access, service: service ? { principal: service.principal, scopes: service.scopes } : null,
+      ...(r.origin === undefined || r.origin === 'request' ? {} : { origin: r.origin }) });
+    const result: JobDefinition<Input> = Object.freeze({ name, version, fingerprint, default: r.default ?? true, origin: (r.origin ?? 'request') as JobDefinition['origin'], workflow: pin, access, service,
       parseInput(input: unknown) {
         try {
           const value = parseValue(parse, input);

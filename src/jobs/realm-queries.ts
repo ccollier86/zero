@@ -3,7 +3,7 @@ import type { DatabaseReadQueryContext } from '../databases/database-realm';
 import { JobsError } from './error';
 import type { JobAdmissionRow, JobOccurrenceRow, JobScheduleRow } from './model';
 import { digest, jobAdmissionId } from './model';
-import { decodeJobAdmission, jobActor, jobScope, scheduleView, type JobActor } from './realm-model';
+import { decodeJobAdmission, isActorJobSchedule, jobActor, jobScope, scheduleView, type JobActor, type ActorJobScheduleRow } from './realm-model';
 import { activeJobOccurrence, jobBlockedCode, jobOccurrenceView, JOB_OCCURRENCE_VIEW_COLUMNS, type JobOccurrenceProjectionRow, type JobScheduleReadSummary } from './operator-views';
 import { jobHash, jobInteger, jobKey, jobRecord, jobText, jobTime } from './validation';
 
@@ -11,10 +11,10 @@ function owner(context: DatabaseReadQueryContext, scope: string): void {
   const row = context.database.query<{ scope_id: string }>("SELECT scope_id FROM _jobs_owner WHERE id='application'").get();
   if (!row || row.scope_id !== scope) throw new JobsError('JOBS_STATE_INVALID');
 }
-function readSchedule(context: DatabaseReadQueryContext, actor: JobActor, id: unknown): JobScheduleRow {
+function readSchedule(context: DatabaseReadQueryContext, actor: JobActor, id: unknown): ActorJobScheduleRow {
   owner(context, actor.scopeId);
   const row = context.database.query<JobScheduleRow>('SELECT * FROM job_schedules WHERE id=? AND scope_id=?').get(jobText(id, 96), actor.scopeId);
-  if (!row || !actor.manageAll && row.actor_id !== actor.userId) throw new JobsError('JOBS_NOT_FOUND');
+  if (!row || !isActorJobSchedule(row) || !actor.manageAll && row.actor_id !== actor.userId) throw new JobsError('JOBS_NOT_FOUND');
   return row;
 }
 export function readJobSchedule(context: DatabaseReadQueryContext, input: unknown) {
@@ -28,7 +28,7 @@ export function listJobSchedules(context: DatabaseReadQueryContext, input: unkno
   const r = jobRecord(input, ['actor', 'limit', 'offset', 'control']), actor = jobActor(r.actor), limit = jobInteger(r.limit ?? 25, 1, 100), offset = jobInteger(r.offset ?? 0, 0, 10_000);
   owner(context, actor.scopeId);
   if (r.control !== undefined && !['active', 'paused', 'cancelled'].includes(r.control as string)) throw new JobsError('JOBS_INPUT_INVALID');
-  const where = 'scope_id=?' + (actor.manageAll ? '' : ' AND actor_id=?') + (r.control === undefined ? '' : ' AND control=?');
+  const where = 'scope_id=? AND actor_id IS NOT NULL' + (actor.manageAll ? '' : ' AND actor_id=?') + (r.control === undefined ? '' : ' AND control=?');
   const params = [actor.scopeId, ...(actor.manageAll ? [] : [actor.userId]), ...(r.control === undefined ? [] : [String(r.control)])];
   const total = context.database.query<{ n: number }>('SELECT count(*) AS n FROM job_schedules WHERE ' + where).get(...params)!.n;
   const rows = context.database.query<JobScheduleRow>('SELECT * FROM job_schedules WHERE ' + where + ' ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?').all(...params, limit, offset);
@@ -130,5 +130,6 @@ export function readJobDispatchContext(context: DatabaseReadQueryContext, input:
   if (!admission || !parent) throw new JobsError('JOBS_STATE_INVALID');
   const admitted = decodeJobAdmission(admission);
   return { occurrence: row, admission: admitted, seal: { authorityJson: admission.authority_json, authorityMac: admission.authority_mac },
-    dispatchAllowed: parent.control === 'active' && parent.generation === row.generation && now <= row.scheduled_at + admitted.timing.maxLatenessMs };
+    dispatchAllowed: parent.control === 'active' && parent.generation === row.generation && now >= row.scheduled_at
+      && now <= row.scheduled_at + admitted.timing.maxLatenessMs };
 }

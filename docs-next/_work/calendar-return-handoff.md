@@ -65,6 +65,15 @@ format explicitly. It does not enable automatic recurrence or reminders; the
 source-owned Jobs bridge remains a separate prerequisite. No new management UI
 or hosted-demo change accompanies that backend increment.
 
+The subsequent larger source stage implements the shared
+[native source-owned Jobs foundation](../backend/scheduler/source-owned-jobs.md):
+real source ownership, permanent policy epochs and receipts, source-only admission,
+shared runner/Torrent recovery and existing-only storage reconciliation. It does
+not yet wire calendar effect references to runnable work. Resume with bounded
+calendar dispatch/acknowledgment and authoritative effect admission, plus lifecycle
+composition and explicit durable retirement before disable. Automatic reminders,
+calendar recurrence, provider sends and archive selection remain off.
+
 ## Checkpoints and places to resume
 
 - Historical starting baseline: `05344d46a5d0178cdb5df3ab02bbe763ef6aa3cd`, Zero 2.10.5.

@@ -4,9 +4,13 @@ import { quoteSqlIdentifier } from '../sync/identity';
 import { JobsError } from './error';
 import { JOB_TABLES } from './realm-schema';
 import { bindJobOwner, changeJobSchedule, createJobSchedule } from './realm-control';
-import { blockJobOccurrence, claimJobOccurrence, completeJobOccurrence, materializeJobOccurrences, receiveJobDispatch, blockJobCursor } from './realm-dispatch';
+import { blockJobOccurrence, claimJobOccurrence, completeJobOccurrence, materializeJobOccurrences, receiveJobDispatch, blockJobCursor, deferJobOccurrenceClaim } from './realm-dispatch';
 import { dueJobSchedules, listJobOccurrences, listJobSchedules, pendingJobOccurrences, readJobDispatchContext, readJobIntent, readJobSchedule, readJobScheduleContext, dispatchedJobOccurrences, readJobWake } from './realm-queries';
 import { withJobCommitHints } from './commit-hints';
+import { CURRENT_JOB_TABLES } from './realm-source-schema';
+import { JOB_SOURCE_MIGRATION } from './realm-source-migration';
+import { registerJobSource, retireJobSource, createSourceJobSchedule, changeSourceJobSchedule } from './realm-source-control';
+import { getJobSource, readSourceJobSchedule, readSourceJobIntent, readJobSourceDispatch } from './realm-source-queries';
 
 function query(handler: (context: Parameters<DatabaseReadQueryHandler>[0], input: unknown) => unknown): DatabaseReadQueryHandler {
   return (context, input) => {
@@ -15,7 +19,7 @@ function query(handler: (context: Parameters<DatabaseReadQueryHandler>[0], input
   };
 }
 export const jobsRealm = defineDatabaseRealm({
-  name: 'zero-jobs', version: '1', tables: JOB_TABLES,
+  name: 'zero-jobs', version: '2', tables: CURRENT_JOB_TABLES,
   migrations: [{ version: '001', description: 'Private scheduling ownership, immutable admissions, permanent intents and fenced occurrence handoffs', safety: 'safe', up(database) {
     for (const [table, columns] of Object.entries(JOB_TABLES)) database.run('CREATE TABLE ' + quoteSqlIdentifier(table) + ' (' + Object.entries(columns).map(([name, definition]) => quoteSqlIdentifier(name) + ' ' + definition).join(',') + ')');
     for (const sql of [
@@ -69,11 +73,15 @@ export const jobsRealm = defineDatabaseRealm({
     database.run(`CREATE TRIGGER jobs_occurrence_stage BEFORE UPDATE ON _jobs_occurrences WHEN NOT(
       (OLD.state='pending' AND NEW.state IN ('claimed','terminal','cancelled')) OR (OLD.state='claimed' AND NEW.state IN ('claimed','dispatched','blocked')) OR
       (OLD.state='dispatched' AND NEW.state='terminal')) BEGIN SELECT RAISE(ABORT,'Private occurrence stage is inconsistent'); END`);
-  } }],
+  } }, JOB_SOURCE_MIGRATION],
   commands: withJobCommitHints({ 'jobs.owner.bind': bindJobOwner, 'jobs.schedule.create': createJobSchedule, 'jobs.schedule.change': changeJobSchedule,
-    'jobs.materialize': materializeJobOccurrences, 'jobs.claim': claimJobOccurrence, 'jobs.dispatch': receiveJobDispatch,
-    'jobs.block': blockJobOccurrence, 'jobs.complete': completeJobOccurrence, 'jobs.cursor.block': blockJobCursor }),
+    'jobs.materialize': materializeJobOccurrences, 'jobs.claim': claimJobOccurrence, 'jobs.claim.defer': deferJobOccurrenceClaim, 'jobs.dispatch': receiveJobDispatch,
+    'jobs.block': blockJobOccurrence, 'jobs.complete': completeJobOccurrence, 'jobs.cursor.block': blockJobCursor,
+    'jobs.source.register': registerJobSource, 'jobs.source.retire': retireJobSource,
+    'jobs.source.schedule.create': createSourceJobSchedule, 'jobs.source.schedule.change': changeSourceJobSchedule }),
   queries: { 'jobs.schedule': query(readJobSchedule), 'jobs.schedules': query(listJobSchedules), 'jobs.receipt': query(readJobIntent), 'jobs.occurrences': query(listJobOccurrences),
     'jobs.due': query(dueJobSchedules), 'jobs.pending': query(pendingJobOccurrences), 'jobs.context': query(readJobDispatchContext),
-    'jobs.schedule.context': query(readJobScheduleContext), 'jobs.dispatched': query(dispatchedJobOccurrences), 'jobs.wake': query(readJobWake) },
+    'jobs.schedule.context': query(readJobScheduleContext), 'jobs.dispatched': query(dispatchedJobOccurrences), 'jobs.wake': query(readJobWake),
+    'jobs.source': query(getJobSource), 'jobs.source.schedule': query(readSourceJobSchedule),
+    'jobs.source.receipt': query(readSourceJobIntent), 'jobs.source.dispatch': query(readJobSourceDispatch) },
 });

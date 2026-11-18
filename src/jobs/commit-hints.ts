@@ -21,7 +21,9 @@ function capture({ db }: DatabaseWriteCommandContext, name: string, input: unkno
   if (occurrence) id = occurrence.schedule_id;
   if (typeof id !== 'string') return null;
   const row = db.get('job_schedules', id), cursor = db.get('_jobs_cursors', id);
-  if (!row) return null;
+  // Source-owned private work must not fabricate a human owner or leak an
+  // advisory invalidation through a human operator subscription.
+  if (!row || typeof row.actor_id !== 'string' || row.source_id != null) return null;
   return { id, ownerId: String(row.actor_id), hash: jobHash([row, cursor,
     occurrence ? [occurrence.id, occurrence.state, occurrence.workflow_id, occurrence.terminal_status, occurrence.error_code] : null]) };
 }

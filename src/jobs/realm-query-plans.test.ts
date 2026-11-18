@@ -15,7 +15,7 @@ function fixture() {
   try {
     database.run('PRAGMA temp_store=MEMORY');
     database.run('PRAGMA foreign_keys=ON');
-    for (const migration of jobsRealm.migrations) migration.up(database);
+    for (const migration of jobsRealm.migrations) database.transaction(() => migration.up(database))();
     database.run("INSERT INTO _jobs_owner VALUES('application','synthetic-query-owner','application')");
     const statements: string[] = [];
     const context: DatabaseReadQueryContext = { database: {
@@ -26,7 +26,7 @@ function fixture() {
         statements.push(sql); return database.prepare<TRow, TParams>(sql, params);
       },
     } };
-    const insertSchedule = database.query('INSERT INTO job_schedules VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)');
+    const insertSchedule = database.query('INSERT INTO job_schedules (id,scope_id,actor_id,principal,definition_name,definition_version,run_as,updated_by,control,revision,generation,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)');
     const insertAdmission = database.query('INSERT INTO _jobs_admissions VALUES(?,?,?,?,?,?,?,?)');
     const insertOccurrence = database.query('INSERT INTO _jobs_occurrences VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)');
     const addSchedule = (id: string, options: ScheduleOptions = {}) => {

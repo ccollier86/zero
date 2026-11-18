@@ -10,6 +10,9 @@ export function jobRecord(input: unknown, fields?: readonly string[]): Record<st
 export function jobValue(input: unknown): JobValue { try { return workerValue(input); } catch { throw new JobsError('JOBS_INPUT_INVALID'); } }
 export function jobJson(input: unknown): string { return stableStringify(jobValue(input)); }
 export function jobHash(input: unknown): string { return createHash('sha256').update(jobJson(input)).digest('hex'); }
+export function jobDigest(input: unknown): string {
+  const text = jobText(input, 64); if (!/^[a-f0-9]{64}$/.test(text)) throw new JobsError('JOBS_INPUT_INVALID'); return text;
+}
 export function jobText(input: unknown, limit = 256): string {
   if (typeof input !== 'string' || !input || input.length > limit || /[\u0000-\u001f\u007f]/.test(input)) throw new JobsError('JOBS_INPUT_INVALID');
   return input;

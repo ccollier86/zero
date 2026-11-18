@@ -21,7 +21,7 @@ export function createJobSchedule(context: DatabaseWriteCommandContext, input: u
     const r = jobRecord(input, ['actor', 'requestId', 'admission', 'seal', 'intentHash', 'now']), actor = jobActor(r.actor), now = jobTime(r.now);
     assertJobOwner(context, actor.scopeId);
     const admission = normalizeJobAdmission(r.admission), seal = normalizeJobSeal(r.seal);
-    if (admission.scopeId !== actor.scopeId || admission.actorId !== actor.userId || admission.principal !== actor.principal) throw new JobsError('JOBS_FORBIDDEN');
+    if (admission.source || admission.scopeId !== actor.scopeId || admission.actorId !== actor.userId || admission.principal !== actor.principal) throw new JobsError('JOBS_FORBIDDEN');
     return jobIntent(context, actor, r.requestId, ['create', r.intentHash === undefined ? admission : digest(r.intentHash)], now, () => {
       if (context.db.get('job_schedules', admission.id)) throw new JobsError('JOBS_INTENT_CONFLICT');
       const next = initialScheduleDue(admission.timing, now);
@@ -55,7 +55,7 @@ export function changeJobSchedule(context: DatabaseWriteCommandContext, input: u
       const next = { ...row, control, revision: nextJobInteger(row.revision), updated_by: actor.userId, updated_at: now } as JobScheduleRow;
       if (admission && seal) {
         // An administrator may stop another actor's work, not impersonate that actor on readmission.
-        if (admission.id !== row.id || admission.scopeId !== row.scope_id || admission.actorId !== row.actor_id || admission.runAs !== row.run_as
+        if (admission.source || admission.id !== row.id || admission.scopeId !== row.scope_id || admission.actorId !== row.actor_id || admission.runAs !== row.run_as
           || row.run_as === 'actor' && (actor.userId !== row.actor_id || admission.principal !== actor.principal)) throw new JobsError('JOBS_FORBIDDEN');
         const due = initialScheduleDue(admission.timing, now);
         if (due === null || due < now) throw new JobsError('JOBS_INPUT_INVALID');

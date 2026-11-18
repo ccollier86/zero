@@ -10,6 +10,9 @@ import { JobsError } from './error';
 import type { JobAdmission, JobScheduleRow } from './model';
 import { JobOperatorPolicy } from './operator-policy';
 import type { JobScheduleReadDetail, JobScheduleReadSummary } from './operator-views';
+import type { ActorJobScheduleRow } from './realm-model';
+import { JobsSourceBroker, type SourceJobs } from './source-service';
+import type { TrustedJobSource } from './source-authority';
 import { JobsRunner, jobGateKey } from './runner';
 import { JobsRuntime } from './runtime';
 import { normalizeScheduleTiming, type ScheduleTiming } from './schedule-time';
@@ -24,12 +27,13 @@ interface ServiceOptions {
   readonly now?: () => number;
   readonly onFailure?: (stage: 'scope' | 'dispatch' | 'completion', code: string) => void;
 }
-interface ScheduleContext { readonly schedule: JobScheduleRow; readonly admission: JobAdmission }
+interface ScheduleContext { readonly schedule: ActorJobScheduleRow; readonly admission: JobAdmission }
 type SchedulePatch = { definition?: string | JobDefinition; input?: unknown; timing?: ScheduleTiming; overlap?: JobAdmission['overlap']; ownership?: JobAdmission['runAs'] };
 type Control = 'pause' | 'cancel' | 'resume' | 'update' | 'runNow';
 export class JobsService {
   private readonly gate: WorkPool;
   private readonly runner: JobsRunner;
+  private readonly sources: JobsSourceBroker;
   private readonly abort = new AbortController();
   private readonly now: () => number;
   private closeTask: Promise<void> | null = null;
@@ -37,15 +41,19 @@ export class JobsService {
     this.now = options.now ?? Date.now;
     this.gate = new WorkPool({ concurrency: options.config.concurrency, maxConcurrentPerKey: 1,
       maxQueued: options.config.concurrency * 4, maxQueuedPerKey: Math.min(16, options.config.concurrency * 4), queueTimeoutMs: 5000 });
-    this.runner = new JobsRunner({ ...options, gate: this.gate });
+    this.sources = new JobsSourceBroker({ ...options, gate: this.gate, signal: this.abort.signal, now: this.now, wake: () => this.runner.wake() });
+    this.runner = new JobsRunner({ ...options, gate: this.gate, sources: this.sources });
   }
   start(scheduler: SchedulerService): void { this.runner.start(scheduler); }
   /** Trusted lifecycle/test composition. Request code only receives forAuthority(). */
   tick(): Promise<void> { return this.runner.tick(); }
+  /** @internal Native source lifecycle only; never project this method to a request/activity. */
+  forSource(source: TrustedJobSource): SourceJobs { return this.sources.forSource(source); }
   diagnostics() { return { gate: this.gate.status(), runner: this.runner.diagnostics(), persistence: this.options.runtime.diagnostics() }; }
   close(): Promise<void> {
     if (this.closeTask) return this.closeTask;
     this.abort.abort(new JobsError('JOBS_NOT_READY'));
+    this.sources.close();
     this.closeTask = (async () => {
       try { await this.runner.close(); } finally { try { await this.gate.close(); } finally { await this.options.runtime.close(); } }
     })();

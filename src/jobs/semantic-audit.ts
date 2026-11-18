@@ -14,6 +14,7 @@ interface JobAuditMetadata {
   readonly ownership?: 'actor' | 'service'; readonly scheduleId?: string; readonly workflowId?: string;
   readonly blockedCode?: 'JOBS_AUTHORITY_RETIRED' | 'JOBS_DEFINITION_UNAVAILABLE' | 'JOBS_CAPACITY' | 'JOBS_NOT_DISPATCHED';
   readonly workflowStatus?: 'completed' | 'failed' | 'cancelled';
+  readonly sourceId?: string; readonly policyGeneration?: number; readonly initiatedBy?: string;
 }
 
 export function appendJobSemanticAudit(context: DatabaseWriteCommandContext, action: JobAuditAction, change: Change | null,
