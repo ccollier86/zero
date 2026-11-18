@@ -13,7 +13,7 @@ import { assertJobSourceEligible, assertJobSourceOwner, confirmJobSource, requir
 import { jobSourceId, jobSourcePrincipal, jobSourceScheduleId, normalizeJobSourceContract, normalizeJobSourceInitiator,
   type JobSourceContract, type JobSourceRegistration, type JobSourceScheduleReceipt } from './source-model';
 import { jobHash, jobInput, jobInteger, jobKey, jobRecord, jobText } from './validation';
-import { sourceGateMutation } from './source-gate';
+import { isKnownJobMutationRejection, sourceGateMutation } from './source-gate';
 
 interface SourceOptions { readonly idempotencyKey: string; readonly signal?: AbortSignal }
 interface SourceRevisionOptions extends SourceOptions { readonly expectedRevision: number }
@@ -37,11 +37,17 @@ interface Options {
   readonly config: ResolvedJobsConfig; readonly runtime: JobsRuntime; readonly bridge: WorkflowDeferredStartBridge;
   readonly gate: WorkPool; readonly signal: AbortSignal; readonly now: () => number; readonly wake: () => void;
 }
-interface LiveBinding { readonly source: TrustedJobSource; readonly contract: JobSourceContract; readonly registration: JobSourceRegistration }
+interface LiveBinding {
+  readonly source: TrustedJobSource; readonly contract: JobSourceContract; readonly registration: JobSourceRegistration;
+  quiescedBy?: ActivationToken;
+}
+interface RetirementFence { readonly signal: AbortSignal; active: boolean }
+interface ActivationToken { readonly expectedRevision: number; retired: boolean; readonly retirements: Set<RetirementFence> }
 export class JobsSourceBroker {
   private readonly live = new Map<string, LiveBinding>();
-  private readonly pendingActivations = new Map<string, Set<{ retired: boolean }>>();
+  private readonly pendingActivations = new Map<string, Set<ActivationToken>>();
   private pendingActivationCount = 0;
+  private pendingRetirementCount = 0;
   private closed = false;
   constructor(private readonly options: Options) {}
   close(): void {
@@ -120,7 +126,7 @@ export class JobsSourceBroker {
       registration: Object.freeze({
         get: () => read<JobSourceRegistration | null>('jobs.source', { identity: source.identity }),
         activate: async (input: SourceRevisionOptions & { pinInput: unknown }) => {
-          const opts = normalizeOptions(input, true, true), token = this.beginActivation(id);
+          const opts = normalizeOptions(input, true, true), token = this.beginActivation(id, opts.expectedRevision);
           try {
             await confirm(true);
             const definition = this.options.config.catalog.resolve(source.definition);
@@ -133,7 +139,7 @@ export class JobsSourceBroker {
               workflow: this.options.bridge.pin(authority, definition.workflow.name, parsed, definition.workflow.version) });
             return await sourceGateMutation(this.options.gate, async operation => {
               await confirm(true);
-              if (token.retired) throw new JobsError('JOBS_AUTHORITY_RETIRED');
+              this.assertActivationCurrent(token);
               if (!this.live.has(id) && this.live.size >= 1024) throw new JobsError('JOBS_CAPACITY');
               const old = this.live.get(id);
               const prior = await receipt<JobSourceRegistration>(opts.key, ['register', contract, opts.expectedRevision]);
@@ -141,19 +147,34 @@ export class JobsSourceBroker {
                 const selected = await read<JobSourceRegistration | null>('jobs.source', { identity: source.identity });
                 if ((selected?.revision ?? 0) !== opts.expectedRevision) throw new JobsError('JOBS_REVISION_CONFLICT');
               }
-              const activationFence = () => { if (token.retired) throw new JobsError('JOBS_AUTHORITY_RETIRED'); };
-              const result = prior ?? await write<JobSourceRegistration>('jobs.source.register', { contract, expectedRevision: opts.expectedRevision,
-                requestId: opts.key, now: this.options.now() }, operation, true, activationFence,
-                () => { activationFence(); if (old && jobHash(old.contract) !== jobHash(contract)) this.live.delete(id); });
+              const activationFence = () => this.assertActivationCurrent(token);
+              let result: JobSourceRegistration;
+              try {
+                result = prior ?? await write<JobSourceRegistration>('jobs.source.register', { contract, expectedRevision: opts.expectedRevision,
+                  requestId: opts.key, now: this.options.now() }, operation, true, activationFence,
+                  () => {
+                    activationFence();
+                    // Keep the observed current CAS epoch while handoff is
+                    // quiesced. Absence loses the distinction between a current
+                    // retirement and a historical receipt retry.
+                    if (old && jobHash(old.contract) !== jobHash(contract)) old.quiescedBy = token;
+                  });
+              } catch (error) {
+                // Only a proved rejection may restore the prior live binding.
+                // An uncertain write may already have advanced its durable epoch.
+                if (isKnownJobMutationRejection(error) && old?.quiescedBy === token) delete old.quiescedBy;
+                throw error;
+              }
               // A replay is historical evidence, not permission to revive an old
               // generation after A -> B -> A or a durable retirement.
               try {
                 const selected = await read<JobSourceRegistration | null>('jobs.source', { identity: source.identity });
                 await confirm(true); operation.signal.throwIfAborted();
-                if (token.retired || !selected || selected.state !== 'active'
+                activationFence();
+                if (!selected || selected.state !== 'active'
                   || selected.generation !== result.generation || selected.revision !== result.revision || selected.policyHash !== jobHash(contract)) throw new JobsError('JOBS_AUTHORITY_RETIRED');
                 if (!this.live.has(id) && this.live.size >= 1024) throw new JobsError('JOBS_CAPACITY');
-                if (!old || old.source !== capability || old.registration.generation !== selected.generation || old.registration.revision !== selected.revision
+                if (!old || old.quiescedBy || old.source !== capability || old.registration.generation !== selected.generation || old.registration.revision !== selected.revision
                   || old.registration.policyHash !== selected.policyHash) this.live.set(id, { source: capability, contract, registration: selected });
                 this.options.wake(); return result;
               } catch (error) { if (!prior) throw new JobsError('JOBS_OUTCOME_UNKNOWN'); throw error; }
@@ -162,28 +183,51 @@ export class JobsSourceBroker {
         },
         retire: async (input: SourceRevisionOptions) => {
           const opts = normalizeOptions(input, true); jobInteger(opts.expectedRevision, 1); opts.signal.throwIfAborted(); guard();
+          if (this.pendingRetirementCount >= 1024) throw new JobsError('JOBS_CAPACITY');
+          this.pendingRetirementCount++;
+          const retirement: RetirementFence = { signal: opts.signal, active: true };
+          const marked = new Set<ActivationToken>();
+          const markPending = (definitive = false) => {
+            for (const token of this.pendingActivations.get(id) ?? []) {
+              if (token.expectedRevision !== opts.expectedRevision) continue;
+              if (definitive) token.retired = true;
+              else { token.retirements.add(retirement); marked.add(token); }
+            }
+          };
           const invalidate = () => {
             const live = this.live.get(id);
             if (live && live.registration.revision !== opts.expectedRevision) return;
-            this.live.delete(id); for (const token of this.pendingActivations.get(id) ?? []) token.retired = true;
+            this.live.delete(id); markPending(true);
           };
-          const selectedLive = this.live.get(id);
-          if (!selectedLive || selectedLive.registration.revision === opts.expectedRevision) {
-            for (const token of this.pendingActivations.get(id) ?? []) token.retired = true;
+          try {
+            // Inspect durable evidence before affecting pending activation. Its
+            // writer may already have committed a newer epoch while the reply
+            // is still in flight, despite the prior binding remaining quiesced.
+            await confirm();
+            const prior = await receipt<JobSourceRegistration>(opts.key, ['retire', source.identity, opts.expectedRevision]); opts.signal.throwIfAborted();
+            if (prior) return prior;
+            const selected = await read<JobSourceRegistration | null>('jobs.source', { identity: source.identity });
+            opts.signal.throwIfAborted();
+            if (!selected || selected.revision !== opts.expectedRevision) throw new JobsError('JOBS_REVISION_CONFLICT');
+            const selectedLive = this.live.get(id);
+            if (!selectedLive || selectedLive.registration.revision === opts.expectedRevision) markPending();
+            return await sourceGateMutation(this.options.gate, async operation => {
+              let attempted = false;
+              try {
+                await confirm();
+                const prior = await receipt<JobSourceRegistration>(opts.key, ['retire', source.identity, opts.expectedRevision]); operation.signal.throwIfAborted();
+                if (prior) return prior;
+                const selected = await read<JobSourceRegistration | null>('jobs.source', { identity: source.identity });
+                if (!selected || selected.revision !== opts.expectedRevision) throw new JobsError('JOBS_REVISION_CONFLICT');
+                operation.signal.throwIfAborted(); operation.markWriteAttempted(); invalidate(); attempted = true;
+                return await write<JobSourceRegistration>('jobs.source.retire', { identity: source.identity,
+                  expectedRevision: opts.expectedRevision, requestId: opts.key, now: this.options.now() }, operation, false);
+              } finally { if (attempted) invalidate(); }
+            }, { key: sourceGateKey(id), signal: opts.signal });
+          } finally {
+            retirement.active = false; for (const token of marked) token.retirements.delete(retirement);
+            this.pendingRetirementCount--;
           }
-          return sourceGateMutation(this.options.gate, async operation => {
-            let attempted = false;
-            try {
-              await confirm();
-              const prior = await receipt<JobSourceRegistration>(opts.key, ['retire', source.identity, opts.expectedRevision]); operation.signal.throwIfAborted();
-              if (prior) return prior;
-              const selected = await read<JobSourceRegistration | null>('jobs.source', { identity: source.identity });
-              if (!selected || selected.revision !== opts.expectedRevision) throw new JobsError('JOBS_REVISION_CONFLICT');
-              operation.signal.throwIfAborted(); operation.markWriteAttempted(); invalidate(); attempted = true;
-              return await write<JobSourceRegistration>('jobs.source.retire', { identity: source.identity,
-                expectedRevision: opts.expectedRevision, requestId: opts.key, now: this.options.now() }, operation, false);
-            } finally { if (attempted) invalidate(); }
-          }, { key: sourceGateKey(id), signal: opts.signal });
         },
       }),
       receipts: Object.freeze({ get: (key: string) => receipt<JobSourceRegistration | JobSourceScheduleReceipt>(key) }),
@@ -218,10 +262,11 @@ export class JobsSourceBroker {
     if (selected !== true) throw new JobsError('JOBS_STATE_INVALID');
     const { id, generation, policyHash } = admission.source, live = this.live.get(id);
     if (!live) throw new JobsError('JOBS_NOT_READY');
+    if (live.quiescedBy) throw new JobsError('JOBS_NOT_READY');
     if (live.registration.generation !== generation || live.registration.policyHash !== policyHash) throw new JobsError('JOBS_AUTHORITY_RETIRED');
     const source = requireJobSource(live.source);
     const guard = () => {
-      this.assertReady(); if (this.live.get(id) !== live) throw new JobsError('JOBS_NOT_READY');
+      this.assertReady(); if (this.live.get(id) !== live || live.quiescedBy) throw new JobsError('JOBS_NOT_READY');
       assertJobSourceEligible(source);
     };
     guard(); await confirmJobSource(source, true); guard();
@@ -230,15 +275,19 @@ export class JobsSourceBroker {
   }
   private requireLive(source: TrustedJobSource, id: string): LiveBinding {
     this.assertReady(); const live = this.live.get(id);
-    if (!live || live.source !== source) throw new JobsError('JOBS_AUTHORITY_RETIRED');
+    if (!live || live.source !== source || live.quiescedBy) throw new JobsError('JOBS_AUTHORITY_RETIRED');
     assertJobSourceEligible(requireJobSource(source)); return live;
   }
-  private beginActivation(id: string): { retired: boolean } {
+  private assertActivationCurrent(token: ActivationToken): void {
+    if (token.retired) throw new JobsError('JOBS_AUTHORITY_RETIRED');
+    for (const retirement of token.retirements) if (retirement.active && !retirement.signal.aborted) throw new JobsError('JOBS_AUTHORITY_RETIRED');
+  }
+  private beginActivation(id: string, expectedRevision: number): ActivationToken {
     this.assertReady(); if (this.pendingActivationCount >= 1024) throw new JobsError('JOBS_CAPACITY');
     let pending = this.pendingActivations.get(id); if (!pending) this.pendingActivations.set(id, pending = new Set());
-    const token = { retired: false }; pending.add(token); this.pendingActivationCount++; return token;
+    const token: ActivationToken = { expectedRevision, retired: false, retirements: new Set() }; pending.add(token); this.pendingActivationCount++; return token;
   }
-  private endActivation(id: string, token: { retired: boolean }): void {
+  private endActivation(id: string, token: ActivationToken): void {
     const pending = this.pendingActivations.get(id);
     if (!pending?.delete(token)) return;
     this.pendingActivationCount--; if (!pending.size) this.pendingActivations.delete(id);

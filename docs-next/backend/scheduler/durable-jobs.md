@@ -147,6 +147,13 @@ Raw inputs, authority seals, claim nonces and actor handles never appear in
 public schedule/run views. Trusted setup receives the lifecycle owner; ordinary
 handlers receive only the admitted `zero.jobs` facade.
 
+Request-owned and native source-owned mutations both preserve write uncertainty
+when pool/caller cancellation races a commit. An aborted request is not proof of
+rollback. Once a writer may have started, reconcile `JOBS_OUTCOME_UNKNOWN` using
+the original idempotency key/receipt; never generate a replacement key to retry.
+Pre-admission cancellation and proven revision/transaction rejection keep their
+known non-acceptance outcome.
+
 ## Operator reads and action discovery
 
 `zero.jobs.definitions.list()` and `client.jobs.definitions.list()` use native

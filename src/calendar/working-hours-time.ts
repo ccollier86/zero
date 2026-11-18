@@ -34,8 +34,12 @@ function utc(milliseconds: number): string {
 }
 function boundary(engine: NativeTemporal, date: PlainDate, minute: number, timeZone: string, fold: 'earlier' | 'later'): ZonedTime | null {
   const day = minute === 1440 ? date.add({ days: 1 }) : date, actualMinute = minute === 1440 ? 0 : minute;
+  // 1440 is this date's exclusive end, never the later occurrence of tomorrow's
+  // midnight. Otherwise yesterday's hours can leak into a closed next date or
+  // exceed coverage. Authored same-date boundaries still honor the chosen fold.
+  const disambiguation = minute === 1440 ? 'earlier' : fold;
   const value = engine.ZonedDateTime.from({ year: day.year, month: day.month, day: day.day, timeZone,
-    hour: Math.floor(actualMinute / 60), minute: actualMinute % 60, second: 0, millisecond: 0 }, { disambiguation: fold, overflow: 'reject' });
+    hour: Math.floor(actualMinute / 60), minute: actualMinute % 60, second: 0, millisecond: 0 }, { disambiguation, overflow: 'reject' });
   // Temporal's earlier/later choices shift gaps. Roundtrip admission deliberately rejects that normalization.
   return sameDate(value, day) && value.hour === Math.floor(actualMinute / 60) && value.minute === actualMinute % 60
     && value.second === 0 && value.millisecond === 0 ? value : null;

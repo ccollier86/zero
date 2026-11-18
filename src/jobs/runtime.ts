@@ -216,13 +216,30 @@ export class JobsRuntime {
   private filePresent(id: string): boolean { return existsSync(resolveDatabaseFile(this.options.config.rootDirectory, id).path); }
   private async execute<T>(id: string, kind: 'query' | 'command', name: string, input: unknown, requestId: string | undefined, guard: () => void, signal?: AbortSignal, existingOnly = false): Promise<T> {
     const check = () => { if (this.state === 'closed') throw new JobsError('JOBS_NOT_READY'); guard(); };
-    check(); const commitAuthority = createDatabaseCommitAuthority(this.options.authority.coordinator, id, () => { check(); return undefined; });
+    check();
+    const retained = kind === 'query' && existingOnly
+      ? this.options.system.prepare('SELECT * FROM _jobs_owners WHERE id=?').get(id) as JobsOwnerRecord | null : null;
+    if (kind === 'query' && existingOnly) {
+      if (!retained || retained.established !== 1) throw new JobsError('JOBS_STATE_INVALID');
+      this.assertRetained(retained);
+    }
+    const commitAuthority = createDatabaseCommitAuthority(this.options.authority.coordinator, id, () => { check(); return undefined; });
     const lease = existingOnly || this.bound.has(id) ? await this.owner.acquireExisting(id, { commitAuthority }) : await this.owner.acquire(id, { commitAuthority });
     if (!lease) throw new JobsError('JOBS_STATE_INVALID');
     let commandAttempted = false;
     try {
       check(); signal?.throwIfAborted();
       const data = createAsyncDatabaseClient({ executor: lease as AsyncDatabaseOperationExecutor, assertReadAuthority: () => { check(); return undefined; } });
+      if (retained) {
+        // A Fabric file proves its logical database/realm, not its retained Jobs
+        // owner. Check this exact acquired lease on every existing-only read;
+        // a process-local proof must not survive actor eviction or restoration.
+        const proof = await data.query('jobs.owner.check', { ownerId: retained.owner_id, scopeId: retained.scope_id },
+          { consistency: { mode: 'strong' }, ...(signal ? { signal } : {}) });
+        const envelope = proof.value as { ok?: boolean; value?: unknown } | null;
+        if (envelope?.ok !== true || envelope.value !== true) throw new JobsError('JOBS_STATE_INVALID');
+        check(); signal?.throwIfAborted();
+      }
       if (kind === 'command') commandAttempted = true;
       const result = kind === 'query' ? await data.query(name, input as DatabaseSerializableValue, { consistency: { mode: 'strong' }, ...(signal ? { signal } : {}) })
         : await data.command(name, input as DatabaseSerializableValue, { idempotencyKey: requestId!, ...(signal ? { signal } : {}) });

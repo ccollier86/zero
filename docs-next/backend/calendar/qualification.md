@@ -18,6 +18,70 @@ This is feature-branch evidence, not a release certificate. No calendar backend
 archive has been selected by normal `zero-update`, and no application deployment
 or data migration is authorized by these checks.
 
+## November 18 follow-up review and polish
+
+The requested review of source-owned Jobs and the preceding working-hours stage
+found and corrected four concrete boundaries before adding new calendar features:
+
+- **Policy transition retries.** A replacement used to discard its prior live
+  epoch while awaiting its writer. A historical retirement could then fence the
+  wrong pending activation. The prior binding now stays explicitly quiesced with
+  its observed revision; provisional retirement fences match the intended epoch
+  and honor queued cancellation. Owner/receipt/durable-CAS preflight returns old
+  evidence or rejects obsolete retirement before it can affect newer work,
+  including a newer registration already committed but awaiting acknowledgment.
+  Known rejected replacements restore their prior binding. Unknown replacements
+  remain quiesced until original-receipt reconciliation. All pending activation
+  and retirement preparation is bounded, and final writer fences remain intact.
+- **Read-only file ownership.** Cold existing-only Jobs reads checked SYSTEM and
+  physical Fabric identity, but not the private file's permanent Jobs owner.
+  Every existing-only read lease now verifies the exact owner ID and scope using
+  the registered native query on that same lease before returning evidence.
+  Missing/mismatched owners reject without binding, provisioning or repair; the
+  proof is not cached across subsequent acquisitions or actor eviction. Tests use
+  actual owner-check SQL and verify rejection before evidence and lease release.
+- **Request write settlement.** The source mutation gate protected post-commit
+  cancellation, but the ordinary request Jobs facade still leaked a raw abort
+  after a successful actor write. Both now use the shared execution signal and
+  write-phase contract. Create, update and cancel report unknown after potential
+  acceptance, with the original receipt retained. Pre-admission aborts perform no
+  work. Completed native Jobs/Database errors with proven non-acceptance retain
+  that result; unknown/null outcomes and forged plain outcome objects do not
+  acquire permission to replay. The native actor reproducer failed before the
+  correction with a raw DOMException and passes with truthful uncertainty.
+- **Repeated-midnight closure.** `fold: 'later'` previously applied to a previous
+  date's `endMinute: 1440`, leaking its tail into an explicitly closed next date
+  or exceeding exclusive coverage. The exclusive date end now uses the earlier
+  next-midnight occurrence; authored same-date boundaries still honor fold and
+  nonexistent-boundary rules remain unchanged. Native Temporal and actual
+  Guardian/service/realm regressions cover both repeated hours, buffered spill,
+  SQL publication and no receipt/source mutation on rejection. The before-fix
+  test reported three failures, including an incorrectly accepted closed-date
+  booking. Retained snapshots/no-ops are not silently rematerialized.
+
+The combined memory regression baseline passed **935 tests, 16,183 assertions,
+118 files** in 113.30 seconds. The final Jobs/Torrent, existing-owner, settlement,
+working-hours and populated-upgrade set passed **192 tests, 2,028 assertions,
+27 files** in 19.70 seconds after the last settlement corrections. These counts
+are distinct runs, not additive coverage or a claim of whole-framework testing.
+The final no-emit graph covers 336 roots and 3,945 imported source files with zero
+diagnostics. One test-only generic inference diagnostic was corrected without
+weakening the expected owner proof. The documentation graph remains 906 pages,
+all reachable with zero structural problems.
+
+Independent source reviews did not identify another concrete defect in the
+reviewed historical migration retention, scope isolation, quotas, indexed
+availability containment or canonical replay. That is a scoped review, not a
+claim of perfection or deployment qualification. Memory databases, query
+sessions, pools and Torrent owners close in `finally`; no dependency trees,
+builds, file-backed fixtures or retained test processes were created.
+
+No new calendar feature, app change, live-data conversion, main-branch merge,
+hosted-demo change or updater selection accompanies this polish. The external
+filesystem integrity hold remains active. Physical actor/file recovery, real
+Chromium, managed compliance workers, bundled Linux/amd64 and the exact
+archive/updater checks remain unqualified, not bypassed.
+
 ## November 18 source-owned Jobs/Torrent foundation
 
 The [native source-owned Jobs guide](../scheduler/source-owned-jobs.md) records

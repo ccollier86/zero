@@ -3,6 +3,7 @@ import { expect, test } from 'bun:test';
 import { WorkPool } from '../workers/work-pool';
 import { JobsError } from './error';
 import { sourceGateMutation } from './source-gate';
+import { DatabaseError } from '../databases/database-error';
 
 function deferred() {
   let resolve!: () => void;
@@ -86,4 +87,29 @@ test('the callback receives the actual pool signal and shutdown during a writer 
     await expect(task).rejects.toMatchObject({ code: 'JOBS_OUTCOME_UNKNOWN', outcome: 'unknown' });
     expect(observed?.aborted).toBe(true); expect(controller.signal.aborted).toBe(false); blocked.resolve(); await closing;
   } finally { blocked.resolve(); await pool.close(); }
+});
+
+for (const outcome of ['not-started', 'not-committed'] as const) test('native DatabaseError preserves its proven ' + outcome + ' outcome', async () => {
+  const pool = new WorkPool({ concurrency: 1 }), controller = new AbortController();
+  const reason = new DatabaseError('DATABASE_BACKPRESSURE', 'Synthetic known admission rejection.', { outcome });
+  try {
+    await expect(sourceGateMutation(pool, context => { context.markWriteAttempted(); throw reason; },
+      { key: 'source', signal: controller.signal })).rejects.toBe(reason);
+  } finally { await pool.close(); }
+});
+
+for (const outcome of [null, 'unknown'] as const) test('DatabaseError without proven non-acceptance remains unknown: ' + outcome, async () => {
+  const pool = new WorkPool({ concurrency: 1 }), controller = new AbortController();
+  try {
+    await expect(sourceGateMutation(pool, context => { context.markWriteAttempted(); throw new DatabaseError('DATABASE_EXECUTOR_FAILED', 'Synthetic missing settlement.', { outcome }); },
+      { key: 'source', signal: controller.signal })).rejects.toMatchObject({ code: 'JOBS_OUTCOME_UNKNOWN', outcome: 'unknown' });
+  } finally { await pool.close(); }
+});
+
+test('a plain forged non-commit outcome never authorizes replay after writer admission', async () => {
+  const pool = new WorkPool({ concurrency: 1 }), controller = new AbortController();
+  try {
+    await expect(sourceGateMutation(pool, context => { context.markWriteAttempted(); throw { code: 'DATABASE_BACKPRESSURE', outcome: 'not-committed' }; },
+      { key: 'source', signal: controller.signal })).rejects.toMatchObject({ code: 'JOBS_OUTCOME_UNKNOWN', outcome: 'unknown' });
+  } finally { await pool.close(); }
 });

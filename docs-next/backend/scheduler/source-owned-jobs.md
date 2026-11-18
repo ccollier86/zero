@@ -76,7 +76,14 @@ Activation replay alone never reinstalls a retired/superseded generation.
 Source controls and the existing runner share the same per-schedule gate.
 Retirement quiesces live dispatch at writer admission and fences an activation
 already awaiting its own writer/acknowledgment. A pre-aborted or invalid control
-does not quiesce healthy work. In-flight activation tracking is
+does not quiesce healthy work. Provisional retirement fences are tied to the
+target CAS epoch and honor cancellation; an old retirement receipt retry cannot
+fence a newer activation while its prior binding is quiesced. A proven rejected
+activation may restore its prior live binding; an unknown write stays quiesced
+until reconciled. Retirement preflight reads the original receipt and durable
+current revision before fencing, so an obsolete CAS cannot poison a newer
+registration which already committed but is still awaiting acknowledgment.
+In-flight activation tracking is
 bounded and removed on settlement; retired source history is durable in Jobs,
 not an ever-growing process-local retirement cache.
 
@@ -85,6 +92,10 @@ and stop controls use existing-only writes. Missing established storage is a
 state failure, not an opportunity to create an empty replacement. Only a new
 registration may establish a previously unowned Jobs scope normally. An orphan
 file or malformed retained owner is rejected rather than treated as absence.
+Each existing-only read lease also verifies the file's immutable Jobs owner ID
+and scope against SYSTEM, with a read-only primary-key lookup on that same lease.
+The proof is not cached across later acquisitions or actor eviction. A missing
+or mismatched private owner never triggers owner binding or repair during a read.
 
 ## Handoff and recovery
 
@@ -123,8 +134,9 @@ the original key. Do not automatically replay unknown work with a new key.
 Source work shares existing Jobs budgets: 10,000 schedules, 100,000 command
 receipts and 100,000 occurrences per private file. A source additionally has a
 1,000-schedule retained envelope. Each file admits at most 1,024 source identities
-and 10,000 policy generations. Live sources and concurrent native activation
-preparation are each bounded to 1,024 per broker. Exhaustion fails visibly; no
+and 10,000 policy generations. Live sources, concurrent native activation
+preparation and concurrent retirement preparation are each bounded to 1,024 per
+broker. Exhaustion fails visibly; no
 evidence is silently pruned and scopes are not rotated to evade limits.
 
 Canonical schedule changes use the existing native logging source/outbox. Events

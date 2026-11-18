@@ -100,7 +100,12 @@ implementation. Replay and source no-op checks precede conversion. Unsupported
 runtime support produces `CALENDAR_TIME_RULES_UNAVAILABLE`, not guessed offsets
 or fallback unrestricted policy. No dependency download or provider call occurs.
 
-Repeated boundaries use the stored `earlier` or `later` choice. Nonexistent
+Same-date repeated boundaries use the stored `earlier` or `later` choice.
+`endMinute: 1440` is different: it is the exclusive boundary of the following
+civil date, so a repeated next midnight uses its **earlier** occurrence. Yesterday's
+window therefore cannot spill into the first occurrence of an explicitly closed
+next date, or exceed coverage ending on that date. An authored same-date boundary
+such as minute `0` still honors `fold`. Nonexistent
 boundaries are detected by roundtrip: a generated weekly window is skipped as a
 whole and its date appears in bounded `skippedDates`; an explicitly authored date
 override with that defect rejects for correction. Valid boundaries spanning a

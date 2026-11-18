@@ -460,16 +460,18 @@ November 17 source review makes the next bridge slice explicit:
 Required bridge tests include both crash boundaries, cancellation during every
 await/pool wait, policy A → B → A retirement, source/tenant disablement, forged
 source/scope/definition rejection, unavailable old pins, capacity exhaustion and
-receipt reconciliation after retirement. This review is planning evidence, not
-an implemented bridge or permission to enable recurrence/reminders.
+receipt reconciliation after retirement. This list originated as planning
+requirements; the implemented shared source foundation is documented above.
+It does not complete calendar dispatch or authorize recurrence/reminders.
 
 November 18 source review preserves two additional gates before that bridge:
 
 - A source command delayed past its original once-due time must either be visibly
   expired/suppressed or admit that original due identity within its lateness
-  budget. Current Jobs creation rejects past-due admission even though an already
-  admitted occurrence can materialize within lateness. Never change the due time
-  to a retry's current time merely to make admission pass.
+  budget. The source-owned Jobs path now admits that original due instant within
+  lateness; ordinary request-owned Jobs creation retains its existing rejection
+  of past-due initial admission. Neither path moves a nominal occurrence to a
+  retry's current time merely to make admission pass.
 - `calendar:false` intentionally mounts no calendar lifecycle or state writes.
   A fully disabled startup therefore cannot itself persist retirement of policy A.
   Durable A → disabled/B → A retirement requires a reviewed separate source-lifecycle

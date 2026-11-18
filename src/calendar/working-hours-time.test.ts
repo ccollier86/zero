@@ -51,6 +51,32 @@ test('explicit fold choices select distinct repeated boundaries and spanning fol
     .toEqual([{ startAt: '2026-11-01T06:30:00.000Z', endAt: '2026-11-01T06:45:00.000Z' }]);
 });
 
+test('endMinute1440 is the exclusive next-date boundary even when its midnight repeats', () => {
+  for (const fold of ['earlier', 'later'] as const) {
+    const source = weekly('2026-10-24', '2026-10-25', 0, 1440, fold);
+    const expected = [{ startAt: '2026-10-24T00:00:00.000Z', endAt: '2026-10-25T00:00:00.000Z' }];
+    expect(materializeCalendarWorkingHours(source, 'Atlantic/Azores').windows).toEqual(expected);
+    // A later fold must not carry yesterday's hours into either occurrence of a closed date.
+    expect(materializeCalendarWorkingHours({ ...source, coverage: { from: '2026-10-24', until: '2026-10-26' },
+      overrides: [{ date: '2026-10-25', windows: [] }] }, 'Atlantic/Azores').windows).toEqual(expected);
+  }
+  // An authored midnight inside the date still honors the explicit fold choice.
+  expect(materializeCalendarWorkingHours(weekly('2026-10-25', '2026-10-26', 0, 30, 'earlier'), 'Atlantic/Azores').windows)
+    .toEqual([{ startAt: '2026-10-25T00:00:00.000Z', endAt: '2026-10-25T00:30:00.000Z' }]);
+  expect(materializeCalendarWorkingHours(weekly('2026-10-25', '2026-10-26', 0, 30, 'later'), 'Atlantic/Azores').windows)
+    .toEqual([{ startAt: '2026-10-25T01:00:00.000Z', endAt: '2026-10-25T01:30:00.000Z' }]);
+});
+
+test('endMinute1440 still rejects nonexistent midnight rather than shifting to the next day start', () => {
+  for (const fold of ['earlier', 'later'] as const) {
+    const source = weekly('2018-11-03', '2018-11-05', 0, 1440, fold);
+    const result = materializeCalendarWorkingHours(source, 'America/Sao_Paulo');
+    expect(result.windows).toEqual([]); expect(result.skippedDates).toEqual(['2018-11-03', '2018-11-04']);
+    rejects(() => materializeCalendarWorkingHours({ ...source,
+      overrides: [{ date: '2018-11-03', windows: [{ startMinute: 0, endMinute: 1440 }] }] }, 'America/Sao_Paulo'));
+  }
+});
+
 test('Lord Howe non-hour gap and fold use real zone transitions', () => {
   const gap = materializeCalendarWorkingHours(weekly('2026-10-04', '2026-10-05', 135, 180), 'Australia/Lord_Howe');
   expect(gap.windows).toEqual([]); expect(gap.skippedDates).toEqual(['2026-10-04']);

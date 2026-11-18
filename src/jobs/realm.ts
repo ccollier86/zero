@@ -5,7 +5,7 @@ import { JobsError } from './error';
 import { JOB_TABLES } from './realm-schema';
 import { bindJobOwner, changeJobSchedule, createJobSchedule } from './realm-control';
 import { blockJobOccurrence, claimJobOccurrence, completeJobOccurrence, materializeJobOccurrences, receiveJobDispatch, blockJobCursor, deferJobOccurrenceClaim } from './realm-dispatch';
-import { dueJobSchedules, listJobOccurrences, listJobSchedules, pendingJobOccurrences, readJobDispatchContext, readJobIntent, readJobSchedule, readJobScheduleContext, dispatchedJobOccurrences, readJobWake } from './realm-queries';
+import { dueJobSchedules, listJobOccurrences, listJobSchedules, pendingJobOccurrences, readJobDispatchContext, readJobIntent, readJobOwner, readJobSchedule, readJobScheduleContext, dispatchedJobOccurrences, readJobWake } from './realm-queries';
 import { withJobCommitHints } from './commit-hints';
 import { CURRENT_JOB_TABLES } from './realm-source-schema';
 import { JOB_SOURCE_MIGRATION } from './realm-source-migration';
@@ -79,7 +79,7 @@ export const jobsRealm = defineDatabaseRealm({
     'jobs.block': blockJobOccurrence, 'jobs.complete': completeJobOccurrence, 'jobs.cursor.block': blockJobCursor,
     'jobs.source.register': registerJobSource, 'jobs.source.retire': retireJobSource,
     'jobs.source.schedule.create': createSourceJobSchedule, 'jobs.source.schedule.change': changeSourceJobSchedule }),
-  queries: { 'jobs.schedule': query(readJobSchedule), 'jobs.schedules': query(listJobSchedules), 'jobs.receipt': query(readJobIntent), 'jobs.occurrences': query(listJobOccurrences),
+  queries: { 'jobs.owner.check': query(readJobOwner), 'jobs.schedule': query(readJobSchedule), 'jobs.schedules': query(listJobSchedules), 'jobs.receipt': query(readJobIntent), 'jobs.occurrences': query(listJobOccurrences),
     'jobs.due': query(dueJobSchedules), 'jobs.pending': query(pendingJobOccurrences), 'jobs.context': query(readJobDispatchContext),
     'jobs.schedule.context': query(readJobScheduleContext), 'jobs.dispatched': query(dispatchedJobOccurrences), 'jobs.wake': query(readJobWake),
     'jobs.source': query(getJobSource), 'jobs.source.schedule': query(readSourceJobSchedule),

@@ -19,6 +19,7 @@ import { normalizeScheduleTiming, type ScheduleTiming } from './schedule-time';
 import { admitJobRequest, type JobRequestAuthority, type JobsAuthority } from './service-authority';
 import { jobHash, jobInput, jobInteger, jobKey, jobRecord, jobText } from './validation';
 import { watchJobSchedules } from './watch';
+import { sourceGateMutation as jobGateMutation } from './source-gate';
 
 interface ServiceOptions {
   readonly config: ResolvedJobsConfig;
@@ -112,13 +113,13 @@ export class JobsService {
   }
   private async create(context: JobRequestAuthority, request: JobsAuthority, patch: SchedulePatch, key: string, intentHash: string, when: (now: number) => ScheduleTiming): Promise<JobScheduleView> {
     const id = scheduleId(context, key);
-    return this.gate.run(async () => {
-      await context.confirm();
-      const replay = await this.receipt(context, key, ['create', intentHash]); if (replay) return replay;
+    return jobGateMutation(this.gate, async operation => {
+      await context.confirm(); operation.signal.throwIfAborted();
+      const replay = await this.receipt(context, key, ['create', intentHash]); operation.signal.throwIfAborted(); if (replay) return replay;
       const definition = this.options.config.catalog.resolve(patch.definition!); request.access.authorize(definition.access);
       const now = this.now(), prepared = prepareJobAdmission(this.options.bridge, definition, context.authority, context.scope, context.actor,
         { id, input: patch.input === undefined ? {} : patch.input, timing: when(now), overlap: patch.overlap ?? 'skip', runAs: patch.ownership ?? 'actor', generation: 1 });
-      return this.write(context, 'jobs.schedule.create', { actor: context.actor, requestId: key, ...prepared, intentHash, now });
+      return this.write(context, 'jobs.schedule.create', { actor: context.actor, requestId: key, ...prepared, intentHash, now }, operation);
     }, { key: jobGateKey(context.scope, id), signal: context.signal });
   }
   private async control(request: JobsAuthority, action: Control, suppliedId: string, input: Partial<JobScheduleInput>, options: JobControlOptions): Promise<JobScheduleView> {
@@ -126,16 +127,16 @@ export class JobsService {
     const context = await admitJobRequest(request, this.options.bridge, this.options.config, this.abort.signal, opts.signal);
     const id = jobText(suppliedId, 96), patch = this.patch(input), key = opts.idempotencyKey;
     const intentHash = jobHash([action, id, expectedRevision, this.intentPatch(patch)]);
-    return this.gate.run(async () => {
-      await context.confirm();
+    return jobGateMutation(this.gate, async operation => {
+      await context.confirm(); operation.signal.throwIfAborted();
       const realmAction = action === 'pause' || action === 'cancel' ? action : 'readmit';
       const intent = action === 'runNow' ? ['create', intentHash] : ['change', id, expectedRevision, realmAction, intentHash];
-      const replay = await this.receipt(context, key, intent); if (replay) return replay;
+      const replay = await this.receipt(context, key, intent); operation.signal.throwIfAborted(); if (replay) return replay;
       const source = await this.read<ScheduleContext>(context, 'jobs.schedule.context', { actor: context.actor, id });
       if (source.schedule.revision !== expectedRevision) throw new JobsError('JOBS_REVISION_CONFLICT');
       if (source.schedule.control === 'cancelled') throw new JobsError('JOBS_STAGE_CONFLICT');
       if (action === 'pause' || action === 'cancel') return this.write(context, 'jobs.schedule.change', {
-        actor: context.actor, requestId: key, id, expectedRevision, action, intentHash, now: this.now() });
+        actor: context.actor, requestId: key, id, expectedRevision, action, intentHash, now: this.now() }, operation);
       if (patch.ownership !== undefined && patch.ownership !== source.admission.runAs) throw new JobsError('JOBS_INPUT_INVALID');
       const definition = patch.definition === undefined ? this.options.config.catalog.resolve(source.admission.definition, source.admission.definitionVersion)
         : this.options.config.catalog.resolve(patch.definition);
@@ -148,7 +149,7 @@ export class JobsService {
         ...(runNow ? {} : { ownerId: source.schedule.actor_id, ownerPrincipal: source.schedule.principal }),
       });
       return this.write(context, runNow ? 'jobs.schedule.create' : 'jobs.schedule.change', { actor: context.actor, requestId: key,
-        ...(runNow ? {} : { id, expectedRevision, action: 'readmit' }), ...prepared, intentHash, now });
+        ...(runNow ? {} : { id, expectedRevision, action: 'readmit' }), ...prepared, intentHash, now }, operation);
     }, { key: jobGateKey(context.scope, id), signal: context.signal });
   }
   private patch(input: unknown): SchedulePatch {
@@ -179,9 +180,11 @@ export class JobsService {
     context.guard(); const result = await this.options.runtime.read<T>(context.scope, name, input, context.guard, context.signal);
     await context.confirm(); return result;
   }
-  private async write(context: JobRequestAuthority, name: string, input: unknown): Promise<JobScheduleView> {
-    context.guard(); const result = await this.options.runtime.write<JobScheduleView>(context.scope, name, input, crypto.randomUUID(), context.guard, context.signal);
-    try { await context.confirm(); } catch { throw new JobsError('JOBS_OUTCOME_UNKNOWN'); }
+  private async write(context: JobRequestAuthority, name: string, input: unknown, operation: { signal: AbortSignal; markWriteAttempted(): void }): Promise<JobScheduleView> {
+    const guard = () => { context.guard(); operation.signal.throwIfAborted(); };
+    guard(); operation.markWriteAttempted();
+    const result = await this.options.runtime.write<JobScheduleView>(context.scope, name, input, crypto.randomUUID(), guard, operation.signal);
+    try { await context.confirm(); operation.signal.throwIfAborted(); } catch { throw new JobsError('JOBS_OUTCOME_UNKNOWN'); }
     this.runner.wake(); return result;
   }
 }

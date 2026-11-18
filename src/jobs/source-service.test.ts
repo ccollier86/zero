@@ -3,6 +3,7 @@ import { expect, test } from 'bun:test';
 import { trustedSystemServiceDataScope } from '../auth/service-data-scope';
 import { jobBinding, jobDispatchKey } from './admission';
 import { JobsError } from './error';
+import { DatabaseError } from '../databases/database-error';
 import { jobOccurrenceId, type JobAdmissionRow, type JobOccurrenceRow } from './model';
 import type { TrustedJobSource } from './source-authority';
 import { jobSourceScheduleId } from './source-model';
@@ -146,6 +147,150 @@ test('historical registration and retirement retries cannot evict a later health
   } finally { await f.close(); }
 });
 
+test('a historical retirement retry cannot fence a newer activation while its prior binding is quiesced at the writer', async () => {
+  const barrier = latch(); let hold = false;
+  const f = await memorySourceJobsFixture({ async beforeWrite(operation) {
+    if (hold && operation.name === 'jobs.source.register') { hold = false; await barrier.wait(); }
+  } });
+  let activating: Promise<unknown> | undefined, retiring: Promise<unknown> | undefined;
+  try {
+    const a = f.source(), b = f.source({ policyVersion: 'B' }), c = f.source({ policyVersion: 'C' });
+    await a.api.registration.activate(activate);
+    const historical = await a.api.registration.retire({ expectedRevision: 1, idempotencyKey: 'historical-retirement' });
+    a.retireEligibility();
+    await b.api.registration.activate({ ...activate, expectedRevision: 2, idempotencyKey: 'register-B-after-retirement' });
+    hold = true;
+    activating = c.api.registration.activate({ ...activate, expectedRevision: 3, idempotencyKey: 'register-C-at-writer' });
+    const activationResult = activating.then(value => ({ value }), error => ({ error }));
+    await barrier.entered;
+    let retiredSettled = false;
+    retiring = a.api.registration.retire({ expectedRevision: 1, idempotencyKey: 'historical-retirement' });
+    const retirementResult = retiring.then(value => { retiredSettled = true; return { value }; }, error => { retiredSettled = true; return { error }; });
+    await untilMemoryJobs(() => retiredSettled);
+    expect(await retirementResult).toEqual({ value: historical });
+    barrier.release();
+    expect(await activationResult).toMatchObject({ value: { generation: 3, revision: 4, state: 'active' } });
+    expect(await c.api.registration.get()).toMatchObject({ generation: 3, revision: 4, state: 'active' });
+    await c.api.schedules.create({ input: { value: 3 }, at: new Date(f.now()).toISOString() }, { idempotencyKey: 'healthy-C' });
+    await f.tick(); await untilMemoryJobs(() => f.calls.length === 1);
+    expect(f.calls).toEqual([{ value: 3 }]); expect(f.failures).toEqual([]);
+  } finally { barrier.release(); await Promise.allSettled([activating, retiring].filter((value): value is Promise<unknown> => !!value)); await f.close(); }
+});
+
+test('an aborted queued retirement cannot permanently fence the activation already waiting at its writer', async () => {
+  const barrier = latch(); let hold = false;
+  const f = await memorySourceJobsFixture({ async beforeWrite(operation) {
+    if (hold && operation.name === 'jobs.source.register') { hold = false; await barrier.wait(); }
+  } });
+  let activating: Promise<unknown> | undefined, retiring: Promise<unknown> | undefined;
+  try {
+    const a = f.source(), b = f.source({ policyVersion: 'B' });
+    await a.api.registration.activate(activate); hold = true;
+    activating = b.api.registration.activate({ ...activate, expectedRevision: 1, idempotencyKey: 'register-B-after-aborted-retire' });
+    const activationResult = activating.then(value => ({ value }), error => ({ error }));
+    await barrier.entered;
+    const abort = new AbortController(), reason = new JobsError('JOBS_NOT_READY');
+    retiring = a.api.registration.retire({ expectedRevision: 1, idempotencyKey: 'abort-queued-retire', signal: abort.signal });
+    const retirementResult = retiring.then(value => ({ value }), error => ({ error }));
+    await untilMemoryJobs(() => f.service.diagnostics().gate.queued === 1); abort.abort(reason);
+    expect(await retirementResult).toEqual({ error: reason });
+    barrier.release();
+    expect(await activationResult).toMatchObject({ value: { generation: 2, revision: 2, state: 'active' } });
+    expect(await b.api.receipts.get('abort-queued-retire')).toBeNull();
+    await b.api.schedules.create({ input: { value: 2 }, at: new Date(f.now()).toISOString() }, { idempotencyKey: 'healthy-after-queued-abort' });
+    await f.tick(); await untilMemoryJobs(() => f.calls.length === 1);
+    expect(f.calls).toEqual([{ value: 2 }]); expect(f.failures).toEqual([]);
+  } finally { barrier.release(); await Promise.allSettled([activating, retiring].filter((value): value is Promise<unknown> => !!value)); await f.close(); }
+});
+
+test('a retirement with an obsolete CAS cannot poison an activation whose policy committed before its reply', async () => {
+  const barrier = latch(); let hold = false;
+  const f = await memorySourceJobsFixture({ async afterWrite(operation) {
+    if (hold && operation.name === 'jobs.source.register') { hold = false; await barrier.wait(); }
+  } });
+  let activating: Promise<unknown> | undefined, retiring: Promise<unknown> | undefined;
+  try {
+    const a = f.source(), b = f.source({ policyVersion: 'B' });
+    await a.api.registration.activate(activate); hold = true;
+    activating = b.api.registration.activate({ ...activate, expectedRevision: 1, idempotencyKey: 'B-committed-held-reply' });
+    const activationResult = activating.then(value => ({ value }), error => ({ error }));
+    await barrier.entered;
+    expect(await a.api.registration.get()).toMatchObject({ generation: 2, revision: 2, state: 'active' });
+    let retiredSettled = false;
+    retiring = a.api.registration.retire({ expectedRevision: 1, idempotencyKey: 'retire-A-after-B-commit' });
+    const retirementResult = retiring.then(value => { retiredSettled = true; return { value }; }, error => { retiredSettled = true; return { error }; });
+    // The stale command must settle from durable evidence without waiting for
+    // B's delayed acknowledgment or revoking B's pending live installation.
+    await untilMemoryJobs(() => retiredSettled);
+    expect(await retirementResult).toMatchObject({ error: { code: 'JOBS_REVISION_CONFLICT' } });
+    barrier.release();
+    expect(await activationResult).toMatchObject({ value: { generation: 2, revision: 2, state: 'active' } });
+    expect(await b.api.receipts.get('retire-A-after-B-commit')).toBeNull();
+    await b.api.schedules.create({ input: { value: 2 }, at: new Date(f.now()).toISOString() }, { idempotencyKey: 'healthy-B-after-held-reply' });
+    await f.tick(); await untilMemoryJobs(() => f.calls.length === 1);
+    expect(f.calls).toEqual([{ value: 2 }]); expect(f.failures).toEqual([]);
+  } finally { barrier.release(); await Promise.allSettled([activating, retiring].filter((value): value is Promise<unknown> => !!value)); await f.close(); }
+});
+
+for (const kind of ['jobs', 'database'] as const) test('a proved ' + kind + ' rejection restores the quiesced prior binding without another activation', async () => {
+  let reject = false;
+  const reason = kind === 'jobs' ? new JobsError('JOBS_CAPACITY', 'not-committed')
+    : new DatabaseError('DATABASE_BACKPRESSURE', 'Synthetic known writer rejection.', { outcome: 'not-committed' });
+  const f = await memorySourceJobsFixture({ beforeWrite(operation) {
+    if (reject && operation.name === 'jobs.source.register') { reject = false; throw reason; }
+  } });
+  try {
+    const a = f.source(), b = f.source({ policyVersion: 'B' });
+    await a.api.registration.activate(activate); reject = true;
+    await expect(b.api.registration.activate({ ...activate, expectedRevision: 1, idempotencyKey: 'proved-rejected-B' }))
+      .rejects.toBe(reason);
+    expect(await a.api.registration.get()).toMatchObject({ generation: 1, revision: 1, state: 'active' });
+    expect(await b.api.receipts.get('proved-rejected-B')).toBeNull();
+    await a.api.schedules.create({ input: { value: 1 }, at: new Date(f.now()).toISOString() }, { idempotencyKey: 'restored-A' });
+    await f.tick(); await untilMemoryJobs(() => f.calls.length === 1);
+    expect(f.calls).toEqual([{ value: 1 }]); expect(f.failures).toEqual([]);
+  } finally { await f.close(); }
+});
+
+test('pending retirement saturation fails without quiescing a healthy binding and releases its slot after settlement', async () => {
+  const f = await memorySourceJobsFixture();
+  // Set only the private accounting boundary, avoiding a thousand suspended
+  // trusted callbacks or changing the production capacity for this test.
+  const broker = Reflect.get(f.service, 'sources') as { pendingRetirementCount: number };
+  try {
+    const source = f.source(); await source.api.registration.activate(activate);
+    broker.pendingRetirementCount = 1024;
+    await expect(source.api.registration.retire({ expectedRevision: 1, idempotencyKey: 'saturated-retire' })).rejects.toMatchObject({ code: 'JOBS_CAPACITY' });
+    expect(broker.pendingRetirementCount).toBe(1024); broker.pendingRetirementCount = 0;
+    expect(await source.api.registration.get()).toMatchObject({ generation: 1, revision: 1, state: 'active' });
+    expect(await source.api.receipts.get('saturated-retire')).toBeNull();
+    await source.api.schedules.create({ input: { value: 1 }, at: new Date(f.now()).toISOString() }, { idempotencyKey: 'healthy-after-saturation' });
+    await f.tick(); await untilMemoryJobs(() => f.calls.length === 1); expect(f.calls).toEqual([{ value: 1 }]);
+    await source.api.registration.retire({ expectedRevision: 1, idempotencyKey: 'retire-after-capacity-release' });
+    expect(broker.pendingRetirementCount).toBe(0); expect(f.failures).toEqual([]);
+  } finally { broker.pendingRetirementCount = 0; await f.close(); }
+});
+
+test('an uncertain replacement keeps the prior binding quiesced until the original receipt hydrates the committed epoch', async () => {
+  let lose = false;
+  const f = await memorySourceJobsFixture({ afterWrite(operation) {
+    if (lose && operation.name === 'jobs.source.register') { lose = false; throw new JobsError('JOBS_OUTCOME_UNKNOWN'); }
+  } });
+  try {
+    const a = f.source(), b = f.source({ policyVersion: 'B' });
+    await a.api.registration.activate(activate); lose = true;
+    const replacement = { ...activate, expectedRevision: 1, idempotencyKey: 'uncertain-B' };
+    await expect(b.api.registration.activate(replacement)).rejects.toMatchObject({ code: 'JOBS_OUTCOME_UNKNOWN' });
+    expect(await b.api.receipts.get('uncertain-B')).toMatchObject({ generation: 2, revision: 2, state: 'active' });
+    const input = { input: { value: 2 }, at: new Date(f.now()).toISOString() };
+    await expect(a.api.schedules.create(input, { idempotencyKey: 'old-A-stays-quiesced' })).rejects.toMatchObject({ code: 'JOBS_AUTHORITY_RETIRED' });
+    expect(await b.api.registration.activate(replacement)).toMatchObject({ generation: 2, revision: 2, state: 'active' });
+    await b.api.schedules.create(input, { idempotencyKey: 'hydrated-B' });
+    await f.tick(); await untilMemoryJobs(() => f.calls.length === 1);
+    expect(f.calls).toEqual([{ value: 2 }]); expect(f.failures).toEqual([]);
+  } finally { await f.close(); }
+});
+
 test('cancellation queues on the same schedule gate as materialization and prevents never-started handoff', async () => {
   const barrier = latch(); let hold = true;
   const f = await memorySourceJobsFixture({ async beforeWrite(operation) { if (hold && operation.name === 'jobs.materialize') { hold = false; await barrier.wait(); } } });
@@ -194,6 +339,7 @@ test('retirement fences an activation waiting at the actual Jobs writer, not onl
     // Native promise handling must not block before the held writer is released.
     const rejected = activating.then(() => null, error => error);
     retiring = a.api.registration.retire({ expectedRevision: 1, idempotencyKey: 'retire-A-before-B-commit' });
+    await untilMemoryJobs(() => f.service.diagnostics().gate.queued === 1);
     barrier.release(); expect(await rejected).toMatchObject({ code: 'JOBS_AUTHORITY_RETIRED' });
     expect(await retiring).toMatchObject({ generation: 1, revision: 2, state: 'retired' });
     expect(await b.api.receipts.get('pending-B-write')).toBeNull();

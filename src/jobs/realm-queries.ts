@@ -11,6 +11,13 @@ function owner(context: DatabaseReadQueryContext, scope: string): void {
   const row = context.database.query<{ scope_id: string }>("SELECT scope_id FROM _jobs_owner WHERE id='application'").get();
   if (!row || row.scope_id !== scope) throw new JobsError('JOBS_STATE_INVALID');
 }
+/** Existing-only broker reads must prove the retained SYSTEM owner without binding or provisioning it. */
+export function readJobOwner(context: DatabaseReadQueryContext, input: unknown): true {
+  const r = jobRecord(input, ['ownerId', 'scopeId']), ownerId = jobText(r.ownerId, 128), scopeId = jobScope(r.scopeId);
+  const row = context.database.query<{ owner_id: string; scope_id: string }>("SELECT owner_id,scope_id FROM _jobs_owner WHERE id='application'").get();
+  if (!row || row.owner_id !== ownerId || row.scope_id !== scopeId) throw new JobsError('JOBS_STATE_INVALID');
+  return true;
+}
 function readSchedule(context: DatabaseReadQueryContext, actor: JobActor, id: unknown): ActorJobScheduleRow {
   owner(context, actor.scopeId);
   const row = context.database.query<JobScheduleRow>('SELECT * FROM job_schedules WHERE id=? AND scope_id=?').get(jobText(id, 96), actor.scopeId);
