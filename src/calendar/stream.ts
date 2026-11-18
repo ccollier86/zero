@@ -70,6 +70,10 @@ export function calendarAvailabilityStream(calendar: ScopedCalendar, id: string,
   return calendarSnapshotStream({ read: options => calendar.availability.get(id, options),
     watch: (listener, options) => calendar.availability.watch(id, listener, options) }, signal);
 }
+export function calendarAvailabilityPolicyStream(calendar: ScopedCalendar, id: string, signal: AbortSignal): ReadableStream<Uint8Array> {
+  return calendarSnapshotStream({ read: options => calendar.availability.policy.get(id, options),
+    watch: (listener, options) => calendar.availability.policy.watch(id, listener, options) }, signal);
+}
 /** Trusted fixed-operation closures only; deferred publication always performs another current-authority read. */
 function calendarSnapshotStream<T>(source: {
   read(options: CalendarReadOptions): Promise<T>;

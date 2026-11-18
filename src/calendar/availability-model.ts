@@ -4,6 +4,7 @@ import type { CalendarAvailabilityInput, CalendarAvailabilityWindow } from './co
 import { CalendarError } from './error';
 import { normalizeCalendarInstant, type CalendarTimedInterval } from './time';
 import { calendarInteger, calendarRecord, calendarValue } from './validation';
+import { assertCalendarAvailabilityPolicy, currentCalendarAvailabilityPolicy } from './working-hours';
 
 export const CALENDAR_AVAILABILITY_WINDOW_LIMIT = 100;
 /** Policy window length does not change the bounded occupied-interval lookup invariant. */
@@ -45,6 +46,12 @@ export function readCalendarAvailabilityPolicy(row: { mode: unknown; windows_jso
 }
 
 export function currentCalendarAvailability(context: DatabaseWriteCommandContext, scopeId: string, resourceId: string): CalendarAvailabilityInput {
+  const policy = currentCalendarAvailabilityPolicy(context, scopeId, resourceId);
+  if (policy?.kind === 'weekly-local-v1') throw new CalendarError('CALENDAR_AVAILABILITY_FORMAT_UNSUPPORTED');
+  return policy ? { mode: policy.mode, windows: policy.windows } : currentLegacyCalendarAvailability(context, scopeId, resourceId);
+}
+/** Retained pre-009 policy only. Callers must explicitly select it rather than override a current local policy. */
+export function currentLegacyCalendarAvailability(context: DatabaseWriteCommandContext, scopeId: string, resourceId: string): CalendarAvailabilityInput {
   const pointer = context.db.get('_calendar_availability', resourceId);
   if (!pointer) return { mode: 'unrestricted', windows: [] };
   if (pointer.scope_id !== scopeId || pointer.resource_id !== resourceId) throw new CalendarError('CALENDAR_STATE_INVALID');
@@ -60,6 +67,7 @@ export function currentCalendarAvailability(context: DatabaseWriteCommandContext
 export function assertCalendarAvailability(context: DatabaseWriteCommandContext, scopeId: string,
   resourceIds: readonly string[], interval: CalendarTimedInterval): void {
   for (const resourceId of resourceIds) {
+    if (assertCalendarAvailabilityPolicy(context, scopeId, resourceId, interval)) continue;
     const policy = currentCalendarAvailability(context, scopeId, resourceId);
     if (policy.mode === 'windows' && !policy.windows.some(w => Date.parse(w.startAt) <= interval.occupiedStartMs
       && Date.parse(w.endAt) >= interval.occupiedEndMs)) throw new CalendarError('CALENDAR_AVAILABILITY_CONFLICT');

@@ -3,7 +3,9 @@ import { defineDatabaseRealm, type DatabaseReadQueryHandler } from '../databases
 import { CALENDAR_TABLES } from './realm-schema';
 import { migrateCalendarLifecycle } from './realm-lifecycle-migration';
 import { migrateCalendarVisitBindings } from './realm-visit-bindings-migration';
-import { CALENDAR_PARTICIPANT_TABLES, migrateCalendarParticipantBindings } from './realm-participant-bindings-migration';
+import { migrateCalendarParticipantBindings } from './realm-participant-bindings-migration';
+import { CALENDAR_AVAILABILITY_POLICY_TABLES, migrateCalendarWorkingHours } from './realm-working-hours-migration';
+import { readCalendarAvailabilityPolicyView, replaceCalendarAvailabilityPolicy } from './working-hours';
 import { migrateCalendarScheduling } from './realm-scheduling-migration';
 import { migrateCalendarHolds } from './realm-holds-migration';
 import { migrateCalendarLocations } from './realm-locations-migration';
@@ -26,7 +28,7 @@ function query(handler: (context: Parameters<DatabaseReadQueryHandler>[0], input
 }
 
 export const calendarRealm = defineDatabaseRealm({
-  name: 'zero.calendar.internal', version: '8', tables: CALENDAR_PARTICIPANT_TABLES,
+  name: 'zero.calendar.internal', version: '9', tables: CALENDAR_AVAILABILITY_POLICY_TABLES,
   // Preserve the inline historical expression layout: Bun's method reprinting
   // participates in the pinned 001 checksum. New entries must not reformat it.
   migrations: [{ version: '001', description: 'Private one-off calendar conflict domain', up(database) {
@@ -61,10 +63,10 @@ export const calendarRealm = defineDatabaseRealm({
     database.run(`CREATE TRIGGER calendar_reservation_identity BEFORE UPDATE OF appointment_id,resource_id ON _calendar_reservations WHEN OLD.appointment_id IS NOT NEW.appointment_id OR OLD.resource_id IS NOT NEW.resource_id BEGIN SELECT RAISE(ABORT,'Private reservation identity is immutable'); END`);
     database.run(`CREATE TRIGGER calendar_resource_revision BEFORE UPDATE ON calendar_resources WHEN NEW.revision<>OLD.revision+1 OR OLD.owner_id IS NOT NEW.owner_id OR OLD.kind IS NOT NEW.kind BEGIN SELECT RAISE(ABORT,'Private resource revision is inconsistent'); END`);
     database.run(`CREATE TRIGGER calendar_appointment_revision BEFORE UPDATE ON calendar_appointments WHEN NEW.revision<>OLD.revision+1 OR OLD.created_by IS NOT NEW.created_by OR OLD.status='cancelled' BEGIN SELECT RAISE(ABORT,'Private appointment revision is inconsistent'); END`);
-  } }, { version: '002', description: 'Versioned availability and one-off resource blocks', up: migrateCalendarScheduling }, { version: '003', description: 'Authenticated expiring calendar booking holds', up: migrateCalendarHolds }, { version: '004', description: 'Versioned calendar locations and resource assignments', up: migrateCalendarLocations }, { version: '005', description: 'Versioned appointment types and resource admission policies', up: migrateCalendarTypes }, { version: '006', description: 'Versioned lifecycle policy and private appointment outcomes', up: migrateCalendarLifecycle }, { version: '007', description: 'Private versioned visit and location bindings', up: migrateCalendarVisitBindings }, { version: '008', description: 'Private versioned canonical participant references', up: migrateCalendarParticipantBindings }],
+  } }, { version: '002', description: 'Versioned availability and one-off resource blocks', up: migrateCalendarScheduling }, { version: '003', description: 'Authenticated expiring calendar booking holds', up: migrateCalendarHolds }, { version: '004', description: 'Versioned calendar locations and resource assignments', up: migrateCalendarLocations }, { version: '005', description: 'Versioned appointment types and resource admission policies', up: migrateCalendarTypes }, { version: '006', description: 'Versioned lifecycle policy and private appointment outcomes', up: migrateCalendarLifecycle }, { version: '007', description: 'Private versioned visit and location bindings', up: migrateCalendarVisitBindings }, { version: '008', description: 'Private versioned canonical participant references', up: migrateCalendarParticipantBindings }, { version: '009', description: 'Versioned availability sources and frozen weekly working hours', up: migrateCalendarWorkingHours }],
   commands: { 'calendar.owner.bind': bindCalendarOwner, 'calendar.resource.create': createCalendarResource, 'calendar.resource.grant': changeCalendarGrant,
     'calendar.appointment.create': createCalendarAppointment, 'calendar.appointment.reschedule': rescheduleCalendarAppointment, 'calendar.appointment.cancel': cancelCalendarAppointment,
-    'calendar.resource.availability': replaceCalendarAvailability, 'calendar.block.create': createCalendarBlock,
+    'calendar.resource.availability': replaceCalendarAvailability, 'calendar.resource.availability-policy': replaceCalendarAvailabilityPolicy, 'calendar.block.create': createCalendarBlock,
     'calendar.block.reschedule': rescheduleCalendarBlock, 'calendar.block.cancel': cancelCalendarBlock,
     'calendar.hold.acquire': acquireCalendarHold, 'calendar.hold.release': releaseCalendarHold, 'calendar.hold.confirm': confirmCalendarHold,
     'calendar.location.create': createCalendarLocation, 'calendar.location.replace': replaceCalendarLocation, 'calendar.resource.locations': replaceCalendarResourceLocations,
@@ -73,7 +75,7 @@ export const calendarRealm = defineDatabaseRealm({
     'calendar.appointment.participants': replaceCalendarAppointmentParticipants },
   queries: { 'calendar.resources': query(listCalendarResources), 'calendar.busy': query(queryCalendarBusy), 'calendar.appointments': query(queryCalendarAppointments),
     'calendar.appointment': query(readCalendarAppointment), 'calendar.receipt': query(readCalendarReceipt),
-    'calendar.availability': query(readCalendarAvailability), 'calendar.blocks': query(queryCalendarBlocks), 'calendar.block': query(readCalendarBlock),
+    'calendar.availability': query(readCalendarAvailability), 'calendar.availabilityPolicy': query(readCalendarAvailabilityPolicyView), 'calendar.blocks': query(queryCalendarBlocks), 'calendar.block': query(readCalendarBlock),
     'calendar.holds': query(queryCalendarHolds), 'calendar.hold': query(readCalendarHold),
     'calendar.locations': query(listCalendarLocations), 'calendar.location': query(readCalendarLocation), 'calendar.resourceLocations': query(readCalendarResourceLocations),
     'calendar.locationAssignmentWitnesses': query(queryCalendarLocationAssignmentWitnesses),

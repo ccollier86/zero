@@ -16,7 +16,12 @@ implemented core and its explicit limitations. This is not the complete plan:
 - Availability is an explicit unrestricted policy or at most 100 positive UTC
   windows normalized by merging overlap/adjacency. Full buffered appointment
   occupancy must fit current policy on each resource; restrictive changes
-  preserve existing appointments. This is not recurring working hours or slots.
+  preserve existing appointments. Versioned `availability.policy` also admits
+  weekly-local rules with finite date coverage and explicit exceptions; the source
+  freezes their UTC expansion once, then bookings use an indexed current window.
+  The legacy whole-policy facade cannot silently overwrite weekly state. This
+  is not an automatic horizon, appointment series or slot-offer API. See
+  [working hours](../../docs-next/backend/calendar/working-hours.md).
 - Private one-off blocks share appointment conflicts, require current all-resource
   manage for writes and details for private reads, and retain cancelled history.
   They have no buffers and cannot overlap or silently cancel other reservations.
@@ -133,7 +138,7 @@ browser UI entry; `calendar/server` and `calendar/client` are separate entries.
 Still required before release: actual file/actor, managed compliance, real-browser,
 official JS bundle, Linux/amd64 installed archive and normal updater qualification.
 Compiled executables fail closed with the default source actor launch. Recurrence,
-recurring working-hours/holiday expansion, slot offers/public booking proofs, domain-contact/guest participants,
+automatic working-hours coverage extension, slot offers/public booking proofs, domain-contact/guest participants,
 clinical visit/lobby/attention states, invitations, reminders, AI and public self-booking are not
 implemented; unsupported enablement rejects. Authenticated holds do not enable
 `selfBooking`; public booking remains off. Availability/block/hold management is

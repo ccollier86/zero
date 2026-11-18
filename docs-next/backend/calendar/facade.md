@@ -78,6 +78,8 @@ identity are rejected, not normalized away.
 | `types.watchForResource(id, listener, options?)` | Live current resource type policy |
 | `resources.setAppointmentTypes(id, {mode, typeIds}, control)` | Versioned resource policy; scope calendar manager only |
 | `availability.get(resourceId, {signal?}?)` | Current explicit policy and resource revision; book or details right |
+| `availability.policy.get(resourceId, options?)` / `watch(resourceId, listener, options?)` | Versioned selected source and bounded materialization metadata; current book/detail rights |
+| `availability.policy.replace(resourceId, policy, control)` | Complete explicit-UTC or weekly-local replacement, exact resource revision and manage rights |
 | `availability.replace(resourceId, policy, control)` | Replace bounded windows/unrestricted policy; current manage right |
 | `availability.watch(resourceId, listener, {signal?, onError?}?)` | Current authorized policy snapshots; returns unsubscribe |
 | `appointments.query(range, {signal?}?)` | Authorized confirmed-appointment page; all co-resources must allow details |
@@ -288,6 +290,13 @@ work; the rich demo's local type picker is not a backend adapter. See the
 [connected workspace](../../frontend/calendar/connected-workspace.md).
 
 ## Explicit availability and one-off blocks
+
+The versioned [working-hours facade](./working-hours.md) additionally supports
+weekly-local source rules, finite coverage and exact-date exceptions. It is one
+selected whole policy, not a hidden intersection with old explicit state. The
+older methods below remain compatible for selected explicit policy; weekly state
+requires the new policy facade. Historical accepted command replay remains valid
+under current target authorization and never switches the active format back.
 
 Each resource starts with unrestricted availability for backward compatibility.
 `availability.replace` supplies the complete policy: either

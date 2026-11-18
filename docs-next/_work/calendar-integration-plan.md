@@ -454,6 +454,20 @@ source/scope/definition rejection, unavailable old pins, capacity exhaustion and
 receipt reconciliation after retirement. This review is planning evidence, not
 an implemented bridge or permission to enable recurrence/reminders.
 
+November 18 source review preserves two additional gates before that bridge:
+
+- A source command delayed past its original once-due time must either be visibly
+  expired/suppressed or admit that original due identity within its lateness
+  budget. Current Jobs creation rejects past-due admission even though an already
+  admitted occurrence can materialize within lateness. Never change the due time
+  to a retry's current time merely to make admission pass.
+- `calendar:false` intentionally mounts no calendar lifecycle or state writes.
+  A fully disabled startup therefore cannot itself persist retirement of policy A.
+  Durable A → disabled/B → A retirement requires a reviewed separate source-lifecycle
+  registry or an explicit durable-disable protocol. A matching config hash or new
+  AbortSignal is insufficient. Do not silently weaken disabled inertness or claim
+  an unobserved retirement was recorded. This decision remains open before stage 4.
+
 ### Ownership and fresh eligibility
 
 Recommended organizational reminders are explicitly service-owned, with original
@@ -1046,6 +1060,31 @@ Jobs/Torrent delivery and public scheduling remain separate stages. Memory
 ReactDOM/controller checks are not physical, installed-browser or Linux/archive
 qualification. The [qualification record](../backend/calendar/qualification.md)
 keeps those unexecuted gates explicit.
+
+### November 18 authoritative weekly availability
+
+The next implemented stage-3 increment is
+[weekly working hours and date exceptions](../backend/calendar/working-hours.md),
+not automatic recurring appointments or stage-4 handoff. The canonical policy
+facade selects either complete explicit UTC availability or versioned weekly-local
+source with bounded local-date coverage and explicit fold/override rules. A meaningful
+policy write freezes normalized UTC windows using native Temporal; booking reads
+only indexed current generations and refuses unqualified buffered occupancy.
+No weekly expansion, provider wait or background scheduler runs during booking.
+
+Additive `009` preserves `001`–`008` source functions, full prior declarations,
+accepted evidence and application state without backfill. Source no-ops/replay
+precede conversion; runtime/ICU metadata is provenance, not an IANA database pin.
+Legacy whole-policy APIs cannot overwrite active weekly format accidentally.
+Current scope/resource checks, resource revisions, hold staleness, atomic multi-resource
+booking and private source audit remain on their canonical paths. The new SDK
+and hook provide current authorized policy views, not a management UI or slot offer.
+
+Automatic coverage extension, general holiday feeds, series/exception materialization,
+public booking and reminders remain later stages. The source-owned Jobs review
+above is not an implemented bridge. The approved demo is unchanged, and the
+[qualification guide](../backend/calendar/qualification.md) keeps memory/source
+checks distinct from unexecuted physical, browser and archive qualification.
 
 ## 15. Documentation deliverables and open decisions
 

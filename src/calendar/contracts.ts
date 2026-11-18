@@ -1,4 +1,7 @@
 /** Private, scope-admitted calendar contracts shared by native server and browser facades. */
+import type { CalendarAvailabilityPolicyInput, CalendarAvailabilityPolicyView } from './working-hours-contracts';
+export type { CalendarAvailabilityPolicyInput, CalendarAvailabilityPolicyView, CalendarExplicitAvailabilityPolicyInput,
+  CalendarWeeklyAvailabilityPolicyInput, CalendarWorkingHoursSnapshot } from './working-hours-contracts';
 export interface CalendarActor {
   readonly scopeId: string;
   readonly userId: string;
@@ -232,6 +235,7 @@ export interface CalendarAppointmentView {
 export interface CalendarCommandReceipt {
   readonly requestId: string;
   readonly operation: 'resource.created' | 'resource.grant-changed' | 'resource.availability-changed' | 'resource.locations-changed'
+    | 'resource.availability-policy-changed'
     | 'location.created' | 'location.updated'
     | 'type.created' | 'type.updated' | 'resource.types-changed'
     | 'appointment.created' | 'appointment.rescheduled' | 'appointment.cancelled' | 'appointment.transitioned' | 'appointment.participants-changed'
@@ -386,6 +390,13 @@ export interface ScopedCalendar {
       options?: CalendarWatchOptions): () => void;
   };
   readonly availability: {
+    /** Versioned source policy. Weekly UTC coverage is frozen by the canonical writer, not supplied by the browser. */
+    readonly policy: {
+      get(resourceId: string, options?: CalendarReadOptions): Promise<CalendarAvailabilityPolicyView>;
+      replace(resourceId: string, policy: CalendarAvailabilityPolicyInput, options: CalendarControlOptions): Promise<CalendarCommandReceipt>;
+      watch(resourceId: string, listener: (policy: CalendarAvailabilityPolicyView, update?: CalendarWatchUpdate) => void,
+        options?: CalendarWatchOptions): () => void;
+    };
     get(resourceId: string, options?: CalendarReadOptions): Promise<CalendarAvailabilityView>;
     replace(resourceId: string, availability: CalendarAvailabilityInput, options: CalendarControlOptions): Promise<CalendarCommandReceipt>;
     watch(resourceId: string, listener: (availability: CalendarAvailabilityView, update?: CalendarWatchUpdate) => void,

@@ -57,6 +57,14 @@ discovery. See the [connected workspace guide](../frontend/calendar/connected-wo
 Domain contacts/guests and invitations remain later work. None of these stages
 implies a newly selected archive.
 
+The subsequent source increment adds versioned
+[weekly working hours and date exceptions](../backend/calendar/working-hours.md).
+It freezes finite UTC policy coverage at a meaningful policy write and enforces
+it through ordinary booking/hold admission, preserving the legacy whole-policy
+format explicitly. It does not enable automatic recurrence or reminders; the
+source-owned Jobs bridge remains a separate prerequisite. No new management UI
+or hosted-demo change accompanies that backend increment.
+
 ## Checkpoints and places to resume
 
 - Historical starting baseline: `05344d46a5d0178cdb5df3ab02bbe763ef6aa3cd`, Zero 2.10.5.

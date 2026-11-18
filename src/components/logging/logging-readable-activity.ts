@@ -46,6 +46,7 @@ export const LOGGING_ACTIVITY_LABELS: Readonly<Record<string, LoggingActivityLab
   'calendar.resource.created': { label: 'Created a calendar', description: 'The private calendar domain committed a new scheduling resource.' },
   'calendar.resource.grant-changed': { label: 'Changed calendar permissions', description: 'The calendar committed a changed permission set. Grantee and private values are not copied into this event.' },
   'calendar.resource.availability-changed': { label: 'Changed calendar availability', description: 'The calendar committed a versioned availability policy. Existing appointments were not cancelled.' },
+  'calendar.resource.availability-policy-changed': { label: 'Changed calendar working hours', description: 'The calendar committed an explicit availability or weekly working-hours policy. Existing appointments were not cancelled.' },
   'calendar.resource.locations-changed': { label: 'Changed calendar locations', description: 'The calendar committed a versioned resource-location assignment. Locations are filters, not permission grants.' },
   'calendar.location.created': { label: 'Created a scheduling location', description: 'The calendar committed a scope-owned scheduling location.' },
   'calendar.location.updated': { label: 'Updated a scheduling location', description: 'The calendar committed a new location revision. Historical names and assignments remain retained.' },

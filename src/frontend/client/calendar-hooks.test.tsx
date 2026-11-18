@@ -3,14 +3,14 @@ import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { act, createElement } from 'react';
 import type { Root } from 'react-dom/client';
 import type { CalendarAppointmentPage, CalendarAppointmentView, CalendarAppointmentTypePage, CalendarAppointmentTypePageQuery, CalendarAppointmentTypeView,
-  CalendarLifecyclePolicy, CalendarAppointmentTransitions, CalendarParticipantDirectoryQuery, CalendarParticipantDirectoryPage, CalendarParticipantsView,
+  CalendarLifecyclePolicy, CalendarAppointmentTransitions, CalendarParticipantDirectoryQuery, CalendarParticipantDirectoryPage, CalendarParticipantsView, CalendarAvailabilityPolicyView,
   CalendarResourceTypesView, CalendarLocationPage, CalendarLocationPageQuery, CalendarVisitLocationQuery, CalendarRangeQuery, CalendarReadOptions, CalendarResourcePage, CalendarResourcePageQuery, CalendarWatchOptions, CalendarWatchUpdate } from '../../calendar/contracts';
 import { ClientProvider } from './client-context';
 import type { Client } from './sdk';
 import { CalendarReadError } from './calendar-mutation';
 import { useCalendarAppointment, useCalendarAppointments, useCalendarResources, useCalendarLocations, useCalendarAppointmentTypes,
   useCalendarAppointmentType, useCalendarResourceTypes, useCalendarLifecycle, useCalendarAppointmentTransitions, useCalendarVisitLocations,
-  useCalendarParticipantDirectory, useCalendarAppointmentParticipants, useCalendarHoldParticipants, type CalendarReadResult, type UseCalendarAppointmentsResult } from './calendar-hooks';
+  useCalendarParticipantDirectory, useCalendarAppointmentParticipants, useCalendarHoldParticipants, useCalendarAvailabilityPolicy, type CalendarReadResult, type UseCalendarAppointmentsResult } from './calendar-hooks';
 import { createHookContainer, installMinimalHookDom } from './test-fixtures/react-hook-dom';
 const roots = new Set<Root>(); let restore: () => void;
 beforeEach(() => { restore = installMinimalHookDom(); });
@@ -291,6 +291,38 @@ test('appointment and hold participant hooks retain only the current target and 
   expect(current.appointment.value).toBeNull(); expect(current.hold.value).toBeNull();
 });
 
+test('availability policy live owners replace targets and withdraw denied or retired scope data before callbacks can restore it', async () => {
+  const f = fixture(), { createRoot } = await import('react-dom/client'), root = createRoot(createHookContainer()); roots.add(root);
+  let id: string | null = 'resource-a', revision = 0, current!: CalendarReadResult<CalendarAvailabilityPolicyView>;
+  const renders: { id: string | null; revision: number; value: CalendarReadResult<CalendarAvailabilityPolicyView> }[] = [];
+  function Capture() { current = useCalendarAvailabilityPolicy(id, revision); renders.push({ id, revision, value: current }); return null; }
+  const render = () => root.render(createElement(ClientProvider, { client: f.client, children: createElement(Capture) }));
+  await act(async () => { render(); });
+  const first: CalendarAvailabilityPolicyView = { resourceId: 'resource-a', resourceRevision: 2, timeZone: 'UTC',
+    policy: { kind: 'explicit-utc-v1', mode: 'windows', windows: [] }, materialization: null };
+  await act(async () => { f.availabilityPolicies[0]!.resolve(first); }); expect(current.value).toBe(first);
+  id = 'resource-b'; await act(async () => { render(); });
+  expect(renders.find(value => value.id === 'resource-b')!.value).toMatchObject({ status: 'loading', value: null });
+  expect(f.availabilityPolicies[0]!.removals).toBe(1); expect(f.availabilityPolicies[0]!.options.signal!.aborted).toBe(true);
+  await act(async () => { f.availabilityPolicies[0]!.resolve(first); }); expect(current.value).toBeNull();
+  const second = { ...first, resourceId: 'resource-b' };
+  await act(async () => { f.availabilityPolicies[1]!.resolve(second); }); expect(current.value).toBe(second);
+  revision = 1; await act(async () => { render(); });
+  expect(renders.find(value => value.revision === 1)!.value).toMatchObject({ status: 'loading', value: null });
+  await act(async () => { f.availabilityPolicies[2]!.options.onError?.(new CalendarReadError('CALENDAR_NOT_FOUND', 404)); });
+  expect(current).toMatchObject({ status: 'error', value: null });
+  await act(async () => { f.availabilityPolicies[2]!.resolve(second); }); expect(current.value).toBeNull();
+  await act(async () => { current.refresh(); });
+  await act(async () => { f.availabilityPolicies[3]!.resolve(second); }); expect(current.value).toBe(second);
+  const refresh = current.refresh; f.auth.authorizationScopeKey = 'other-scope';
+  await act(async () => { f.availabilityPolicies[3]!.resolve(first); refresh(); });
+  expect(current.value).toBe(second); expect(f.availabilityPolicies).toHaveLength(4);
+  await act(async () => { f.notify(); }); expect(current).toMatchObject({ status: 'loading', value: null });
+  expect(f.availabilityPolicies[3]!.options.signal!.aborted).toBe(true);
+  id = null; await act(async () => { render(); }); expect(current).toMatchObject({ status: 'idle', value: null });
+  await act(async () => { f.availabilityPolicies[4]!.resolve(first); }); expect(current.value).toBeNull();
+});
+
 function fixture() {
   const observers = new Set<() => void>(), subscribe = (observer: () => void) => { observers.add(observer); return () => { observers.delete(observer); }; };
   const auth = { authorizationScopeKey: 'original-scope', user: { userId: 'synthetic-user' }, activeTenant: { tenantId: 'synthetic-tenant' }, isLoading: false,
@@ -308,7 +340,10 @@ function fixture() {
   const participantDirectories: { query: CalendarParticipantDirectoryQuery; options: CalendarWatchOptions; resolve(value: CalendarParticipantDirectoryPage): void; removals: number }[] = [];
   const appointmentParticipants: { id: string; options: CalendarWatchOptions; resolve(value: CalendarParticipantsView): void; removals: number }[] = [];
   const holdParticipants: { id: string; options: CalendarWatchOptions; resolve(value: CalendarParticipantsView): void; removals: number }[] = [];
-  const client = { auth, calendar: { participants: { watchDirectory(query: CalendarParticipantDirectoryQuery, listener: (value: CalendarParticipantDirectoryPage) => void, options: CalendarWatchOptions) {
+  const availabilityPolicies: { id: string; options: CalendarWatchOptions; resolve(value: CalendarAvailabilityPolicyView): void; removals: number }[] = [];
+  const client = { auth, calendar: { availability: { policy: { watch(id: string, listener: (value: CalendarAvailabilityPolicyView) => void, options: CalendarWatchOptions) {
+    const item = { id, options, resolve: listener, removals: 0 }; availabilityPolicies.push(item); return () => { item.removals++; };
+  } } }, participants: { watchDirectory(query: CalendarParticipantDirectoryQuery, listener: (value: CalendarParticipantDirectoryPage) => void, options: CalendarWatchOptions) {
     const item = { query, options, resolve: listener, removals: 0 }; participantDirectories.push(item); return () => { item.removals++; };
   }, watchForAppointment(id: string, listener: (value: CalendarParticipantsView) => void, options: CalendarWatchOptions) {
     const item = { id, options, resolve: listener, removals: 0 }; appointmentParticipants.push(item); return () => { item.removals++; };
@@ -334,7 +369,7 @@ function fixture() {
     subscriptions.push({ query, listener, options }); return () => {};
   } } } } as unknown as Client;
   return { client, auth, subscriptions, resources, locations, visits, types, typeDetails, typePolicies, details, lifecycle, transitions,
-    participantDirectories, appointmentParticipants, holdParticipants, notify() { for (const observer of observers) observer(); } };
+    participantDirectories, appointmentParticipants, holdParticipants, availabilityPolicies, notify() { for (const observer of observers) observer(); } };
 }
 async function renderReads(client: Client) {
   const { createRoot } = await import('react-dom/client'), root = createRoot(createHookContainer()); roots.add(root);

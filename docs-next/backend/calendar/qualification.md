@@ -18,6 +18,75 @@ This is feature-branch evidence, not a release certificate. No calendar backend
 archive has been selected by normal `zero-update`, and no application deployment
 or data migration is authorized by these checks.
 
+## November 18 versioned working-hours checkpoint
+
+The [working-hours guide](./working-hours.md) describes the new whole-policy
+facade, bounded weekly-local/date-exception dialect and retained UTC snapshot.
+Policy writes use native Temporal once, after replay/CAS/no-op checks. Ordinary
+bookings/holds use the current selector and an indexed single-window containment
+probe, without expansion or provider waits. Unqualified coverage is not free.
+The new facade, native authenticated routes/SSE, SDK, scope-owned hook and semantic
+audit share the existing Guardian/Fabric and accepted/unknown boundaries.
+
+Additive `009` preserves all eight earlier function identities and the full `008`
+declaration. Before modification, actual `008` function hash was
+`1dd8c3a24f0710f6e2e2f19304d9e0e318dd42bbb3230fa1107ee9cbe7f2eb94`;
+the complete declared `008` table hash was
+`7ce743df06584e0c59f1da3f839796c000daf3fe29d3abc282e2ed3eaf7117dd`.
+The populated upgrade covers every prior table family, participant/type/visit
+generation, receipt/digest, SQL definition/index/trigger, ledger and source
+sequence. The new source/selector/window tables begin empty, without backfill.
+
+Review closed these concrete issues:
+
+- Successive legacy saves across a legitimate grant-revision gap initially failed:
+  selector activation revalidated old-pointer equality after that same transaction
+  had advanced the legacy pointer. The publication path now checks the correct
+  intermediate identity/resource fence, with SQL enforcing the exact new parent.
+  The untouched regression body passes; new corrupt/missing old-pointer cases
+  still fail closed.
+- A missing selector with retained new-policy history could otherwise become
+  implicit legacy/unrestricted state. An indexed existence probe now rejects
+  that damage; first publication captures its prior selector before history append.
+- New table declarations and identity arrays are frozen so the migration's closure
+  cannot silently drift after import. Incomplete, unordered, stale or post-seal
+  window publication rejects, and all source/receipt/quota/audit writes roll back.
+- Compatibility never hides weekly policy behind old explicit data. Existing
+  command replay precedes the format gate, retaining truthful receipts without
+  switching current state. Unknown accepted results never authorize a new-key replay.
+- Actual HTTP tests reject forged authority, engine/expansion fields, unknown and
+  duplicate query parameters. SDK projections reject private expanded windows,
+  noncanonical rules, forged resources and impossible receipt revisions.
+
+The first broad run reported 755 passing and 15 failing tests in 94 files. Those
+failures were stale cumulative migration-list expectations and one old upgrade
+allocator not declaring the new target tables. Fixtures now admit the full target
+schema and append `009`; none of the historical checksum/schema/row/receipt pins
+were changed. A subsequent focused upgrade run exposed the genuine successive
+legacy-save bug above; it was fixed in runtime, not by weakening the old test.
+These failed runs remain recorded rather than relabelled as successful evidence.
+
+The initial qualification command in a worker accidentally selected the package
+suite wrapper and an unpinned Bun 1.3.14 child without Temporal. The corrected
+commands use native pinned Bun 1.4.4 with `test` before its flags and transpiler
+cache disabled. The wrapper's exact temporary failure report self-cleaned; its
+absence and owned process shutdown were verified. All actual source/HTTP fixtures
+are memory-only and close databases, read snapshots, streams and runtime owners
+in `finally`.
+
+The successful combined runtime sweep reports 790 tests, 0 failures, 15,204
+assertions across 96 files in 98.85 seconds. After a final test-only null assertion
+for type safety, the final policy/upgrade/SDK/hook set passed 94 tests and 4,292
+assertions across 15 files in 17.34 seconds. The final no-emit review covers 263
+roots and 3,851 imported source files with zero diagnostics; the documentation
+graph has 905 pages, all reachable, with zero problems. No emit or incremental
+compiler cache was generated. These are scoped source/memory checks, not an
+entire-framework or installed-archive qualification. Physical process/file recovery,
+real Chromium, bundled managed compliance, Linux/amd64 and exact archive/updater
+checks remain unexecuted under the existing filesystem integrity hold. No working-
+hours management UI, automatic coverage extension, appointment series or reminders
+are enabled by this stage. The selected archive and hosted demo remain unchanged.
+
 ## November 18 connected type and participant workspace checkpoint
 
 The [connected workspace](../../frontend/calendar/connected-workspace.md) now
@@ -631,7 +700,7 @@ Then complete performance measurements, package exports/Doctor/adoption, the
 repository's applicable suite, artifact hashing and updater selection. A compiled
 executable with the default source actor remains deliberately unavailable.
 
-Recurring working-hours/holiday expansion, offer/slot generation, public booking proofs,
+Automatic working-hours coverage extension, offer/slot generation, public booking proofs,
 domain-contact/guest participant adapters, type-catalog/resource-policy administration, effective-dated location eligibility,
 recurrence, clinical visit/lobby/attention transitions,
 source-bound Jobs/Torrent effects, reminders,

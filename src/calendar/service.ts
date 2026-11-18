@@ -14,6 +14,7 @@ import type { CalendarParticipantDirectory } from './participants-directory';
 import { calendarParticipantBroker, calendarParticipantCommitGuard, calendarParticipantQuery } from './participants-service';
 import { calendarParticipantReferences } from './participants-validation';
 import { calendarCapabilitiesBroker } from './capabilities';
+import { normalizeCalendarAvailabilityPolicy } from './working-hours-model';
 
 export interface CalendarServiceBroker {
   read<T>(scope: ServiceDataScope, name: string, input: unknown, guard: () => void, signal?: AbortSignal): Promise<T>;
@@ -145,7 +146,16 @@ export class CalendarService {
             queryName: 'calendar.resources', query: detached, listener, options, track: task => this.track(task) });
         },
       }),
-      availability: Object.freeze({
+      availability: Object.freeze<ScopedCalendar['availability']>({
+        policy: Object.freeze<ScopedCalendar['availability']['policy']>({
+          get: (id, options) => this.read(request, 'availabilityPolicy', () => ({ id: calendarKey(id) }), options),
+          replace: (id, input, options) => this.write(request, 'resource.availability-policy', input, options, id),
+          watch: (id, listener, options: CalendarWatchOptions = {}) => {
+            const query = Object.freeze({ id: calendarKey(id) }); this.ready();
+            return watchCalendarPage({ request, broker: this.broker, config: this.config, closing: this.signal,
+              queryName: 'calendar.availabilityPolicy', query, listener, options, track: task => this.track(task) });
+          },
+        }),
         get: (id, options) => this.read(request, 'availability', () => ({ id: calendarKey(id) }), options),
         replace: (id, input, options) => this.write(request, 'resource.availability', input, options, id),
         watch: (id, listener, options: CalendarWatchOptions = {}) => {
@@ -246,6 +256,7 @@ export class CalendarService {
     return this.track((async () => {
       this.ready();
       const fields = operation === 'resource.create' ? ['label', 'kind', 'ownerId', 'timeZone']
+        : operation === 'resource.availability-policy' ? ['kind', 'mode', 'windows', 'coverage', 'fold', 'weekly', 'overrides']
         : operation === 'appointment.participants' ? ['references']
         : operation === 'lifecycle.replace' ? ['extended', 'cancellationReason', 'noShowReason']
         : operation === 'appointment.transition' ? ['status', 'policyRevision', 'reason']
@@ -273,6 +284,7 @@ export class CalendarService {
       if (operation === 'type.create' || operation === 'type.replace') calendarAppointmentTypeInput(body, operation === 'type.replace');
       if (operation === 'resource.types') Object.assign(body, calendarResourceTypesInput(body));
       if (operation === 'lifecycle.replace') Object.assign(body, calendarLifecyclePolicyInput(body));
+      if (operation === 'resource.availability-policy') Object.assign(body, normalizeCalendarAvailabilityPolicy(body));
       if (operation === 'appointment.transition') Object.assign(body, calendarAppointmentTransitionInput(body));
       if (Object.hasOwn(body, 'appointmentType')) {
         if (body.appointmentType === null) { if (operation !== 'appointment.reschedule') throw new CalendarError('CALENDAR_INPUT_INVALID'); }

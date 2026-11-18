@@ -122,6 +122,7 @@ export function calendarReceipt(input: unknown, requestId: string, operation: st
   const r = calendarRecord(input, ['requestId', 'operation', 'id', 'revision', 'changed']);
   const expected = { 'resource.create': 'resource.created', 'resource.grant': 'resource.grant-changed',
     'resource.availability': 'resource.availability-changed',
+    'resource.availability-policy': 'resource.availability-policy-changed',
     'resource.locations': 'resource.locations-changed', 'location.create': 'location.created', 'location.replace': 'location.updated',
     'type.create': 'type.created', 'type.replace': 'type.updated', 'resource.types': 'resource.types-changed',
     'block.create': 'block.created', 'block.reschedule': 'block.rescheduled', 'block.cancel': 'block.cancelled',

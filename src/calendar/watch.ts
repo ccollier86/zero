@@ -20,7 +20,7 @@ type CalendarWatchQuery = { queryName?: 'calendar.appointments'; query: Calendar
   | { queryName: 'calendar.types'; query: CalendarAppointmentTypePageQuery }
   | { queryName: 'calendar.type' | 'calendar.resourceTypes'; query: { readonly id: string } }
   | { queryName: 'calendar.location' | 'calendar.resourceLocations'; query: { readonly id: string } }
-  | { queryName: 'calendar.availability'; query: { readonly id: string } };
+  | { queryName: 'calendar.availability' | 'calendar.availabilityPolicy'; query: { readonly id: string } };
 export function watchCalendarPage<T>(input: {
   request: CalendarAuthority; broker: CalendarServiceBroker; config: ResolvedCalendarConfig; closing: AbortSignal;
   /** Fixed by the canonical facade, never selected by authored input. Omission preserves appointment callers. */
@@ -29,7 +29,7 @@ export function watchCalendarPage<T>(input: {
 } & CalendarWatchQuery): () => void {
   const options = calendarRecord(input.options, ['signal', 'onError']);
   const queryName = input.queryName ?? 'calendar.appointments';
-  if (!['calendar.capabilities', 'calendar.appointments', 'calendar.blocks', 'calendar.holds', 'calendar.availability', 'calendar.resources', 'calendar.locations', 'calendar.location', 'calendar.resourceLocations',
+  if (!['calendar.capabilities', 'calendar.appointments', 'calendar.blocks', 'calendar.holds', 'calendar.availability', 'calendar.availabilityPolicy', 'calendar.resources', 'calendar.locations', 'calendar.location', 'calendar.resourceLocations',
     'calendar.types', 'calendar.type', 'calendar.resourceTypes', 'calendar.lifecycle', 'calendar.appointmentTransitions', 'calendar.visitLocations',
     'calendar.participantDirectory', 'calendar.participantsForAppointment', 'calendar.participantsForHold'].includes(queryName)) throw new CalendarError('CALENDAR_INPUT_INVALID');
   if (typeof input.listener !== 'function' || options.onError !== undefined && typeof options.onError !== 'function'

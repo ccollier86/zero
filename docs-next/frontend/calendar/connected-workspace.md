@@ -64,6 +64,13 @@ additional separately bounded reads.
 
 ## Booking and type selection
 
+Canonical booking/hold admission also enforces the selected
+[working-hours policy](../../backend/calendar/working-hours.md), when configured.
+`useCalendarAvailabilityPolicy(id, readRevision?)` supports an app-owned setup
+surface through the same native live boundary. This pass adds no hours/holiday
+editor to the connected workspace or rich local preview. Missing coverage is a
+real server rejection, not a request to guess availability or bypass the policy.
+
 `CalendarCoreEditor` is separately composable, using `CalendarCoreSession` and
 `CalendarCoreDraft`. The workspace owns the opening/base and original-request
 recovery ledger. The richer recovered `AppointmentEditor` remains a separate

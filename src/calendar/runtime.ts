@@ -45,9 +45,9 @@ export interface CalendarRuntimeOptions {
 const QUERIES = new Set(['calendar.resources', 'calendar.busy', 'calendar.appointments', 'calendar.appointment',
   'calendar.locations', 'calendar.location', 'calendar.resourceLocations', 'calendar.locationAssignmentWitnesses', 'calendar.visitLocations',
   'calendar.types', 'calendar.type', 'calendar.resourceTypes', 'calendar.lifecycle', 'calendar.appointmentTransitions',
-  'calendar.availability', 'calendar.blocks', 'calendar.block', 'calendar.holds', 'calendar.hold', 'calendar.receipt',
+  'calendar.availability', 'calendar.availabilityPolicy', 'calendar.blocks', 'calendar.block', 'calendar.holds', 'calendar.hold', 'calendar.receipt',
   'calendar.appointmentParticipants', 'calendar.holdParticipants', 'calendar.holdParticipantAdmission']);
-const COMMANDS = new Set(['calendar.resource.create', 'calendar.resource.grant', 'calendar.resource.availability',
+const COMMANDS = new Set(['calendar.resource.create', 'calendar.resource.grant', 'calendar.resource.availability', 'calendar.resource.availability-policy',
   'calendar.location.create', 'calendar.location.replace', 'calendar.resource.locations',
   'calendar.type.create', 'calendar.type.replace', 'calendar.resource.types', 'calendar.lifecycle.replace', 'calendar.appointment.transition',
   'calendar.block.create', 'calendar.block.reschedule', 'calendar.block.cancel',
@@ -369,7 +369,7 @@ export function emptyCalendarRead(name: string, input: unknown): unknown {
     : name === 'calendar.visitLocations' ? ['actor', 'resourceIds', 'limit', 'after']
     : name === 'calendar.locationAssignmentWitnesses' ? ['actor', 'locationIds']
     : name === 'calendar.lifecycle' ? ['actor']
-    : name === 'calendar.receipt' ? ['actor', 'requestId'] : ['calendar.appointment', 'calendar.appointmentTransitions', 'calendar.appointmentParticipants', 'calendar.holdParticipants', 'calendar.holdParticipantAdmission', 'calendar.block', 'calendar.hold', 'calendar.availability', 'calendar.location', 'calendar.resourceLocations', 'calendar.type', 'calendar.resourceTypes'].includes(name) ? ['actor', 'id']
+    : name === 'calendar.receipt' ? ['actor', 'requestId'] : ['calendar.appointment', 'calendar.appointmentTransitions', 'calendar.appointmentParticipants', 'calendar.holdParticipants', 'calendar.holdParticipantAdmission', 'calendar.block', 'calendar.hold', 'calendar.availability', 'calendar.availabilityPolicy', 'calendar.location', 'calendar.resourceLocations', 'calendar.type', 'calendar.resourceTypes'].includes(name) ? ['actor', 'id']
     : name === 'calendar.busy' || name === 'calendar.appointments' || name === 'calendar.blocks' || name === 'calendar.holds' ? ['actor', 'resourceIds', 'startAt', 'endAt', 'limit'] : null;
   if (!fields) throw new CalendarError('CALENDAR_INPUT_INVALID');
   const r = calendarRecord(input, fields); calendarActor(r.actor);
@@ -408,7 +408,7 @@ export function emptyCalendarRead(name: string, input: unknown): unknown {
     if (!calendarActor(r.actor).manageAll) throw new CalendarError('CALENDAR_FORBIDDEN');
     throw new CalendarError('CALENDAR_NOT_FOUND');
   }
-  if (['calendar.appointment', 'calendar.appointmentTransitions', 'calendar.holdParticipantAdmission', 'calendar.block', 'calendar.hold', 'calendar.availability', 'calendar.location', 'calendar.resourceLocations', 'calendar.resourceTypes'].includes(name)) { calendarKey(r.id); throw new CalendarError('CALENDAR_NOT_FOUND'); }
+  if (['calendar.appointment', 'calendar.appointmentTransitions', 'calendar.holdParticipantAdmission', 'calendar.block', 'calendar.hold', 'calendar.availability', 'calendar.availabilityPolicy', 'calendar.location', 'calendar.resourceLocations', 'calendar.resourceTypes'].includes(name)) { calendarKey(r.id); throw new CalendarError('CALENDAR_NOT_FOUND'); }
   const ids = calendarSelection(r.resourceIds);
   const start = Date.parse(normalizeCalendarInstant(r.startAt)), end = Date.parse(normalizeCalendarInstant(r.endAt));
   calendarInteger(end - start, 1, CALENDAR_LIMITS.rangeMs); calendarInteger(r.limit ?? 100, 1, CALENDAR_LIMITS.page);

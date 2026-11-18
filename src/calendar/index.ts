@@ -2,6 +2,8 @@
 export type { CalendarConfig, ResolvedCalendarConfig } from './config';
 export type { CalendarResourceKind, CalendarResourceView, CalendarResourceInput, CalendarGrant,
   CalendarCapabilities,
+  CalendarAvailabilityPolicyInput, CalendarAvailabilityPolicyView, CalendarExplicitAvailabilityPolicyInput,
+  CalendarWeeklyAvailabilityPolicyInput, CalendarWorkingHoursSnapshot,
   CalendarParticipantReference, CalendarParticipantView, CalendarParticipantDirectoryQuery, CalendarParticipantDirectoryPage, CalendarParticipantsView,
   CalendarVisitMode, CalendarVisitInput, CalendarVisitSnapshot, CalendarLocationReference, CalendarLocationSnapshot, CalendarVisitLocationQuery,
   CalendarAppointmentStatus, CalendarAppointmentLifecycle, CalendarAppointmentTransitionInput, CalendarAppointmentTransitions,

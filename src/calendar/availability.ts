@@ -7,6 +7,7 @@ import { calendarActor, calendarIntent, calendarResource, calendarRevision, gran
 import { currentCalendarAvailability, normalizeCalendarAvailability, readCalendarAvailabilityPolicy } from './availability-model';
 import { appendCalendarSemanticAudit } from './semantic-audit';
 import { calendarHash, calendarInteger, calendarJson, calendarKey, calendarRecord } from './validation';
+import { activateLegacyCalendarAvailability, assertLegacyCalendarAvailabilityWritable, readCurrentCalendarAvailabilityPolicy } from './working-hours';
 
 export function readCalendarAvailability(context: DatabaseReadQueryContext, input: unknown): CalendarAvailabilityView {
   const r = calendarRecord(input, ['actor', 'id']), actor = calendarActor(r.actor), id = calendarKey(r.id);
@@ -17,6 +18,9 @@ export function readCalendarAvailability(context: DatabaseReadQueryContext, inpu
   const grant = context.database.query<Record<string, string | number | null>>('SELECT * FROM _calendar_grants WHERE id=? AND scope_id=?')
     .get(grantId(actor.scopeId, id, actor.userId), actor.scopeId);
   if (!hasCalendarRight(actor, resource, grant, 'book') && !hasCalendarRight(actor, resource, grant, 'details')) throw new CalendarError('CALENDAR_NOT_FOUND');
+  const policy = readCurrentCalendarAvailabilityPolicy(context, actor.scopeId, id);
+  if (policy?.kind === 'weekly-local-v1') throw new CalendarError('CALENDAR_AVAILABILITY_FORMAT_UNSUPPORTED');
+  if (policy) return { resourceId: id, resourceRevision: resource.revision, timeZone: resource.time_zone, mode: policy.mode, windows: policy.windows };
   const pointer = context.database.query<{ policy_revision: number }>('SELECT policy_revision FROM _calendar_availability WHERE id=? AND scope_id=? AND resource_id=?').get(id, actor.scopeId, id);
   const history = pointer ? context.database.query<{ mode: string; windows_json: string }>(
     'SELECT mode,windows_json FROM _calendar_availability_history WHERE scope_id=? AND resource_id=? AND policy_revision=?').get(actor.scopeId, id, pointer.policy_revision) : null;
@@ -32,6 +36,7 @@ export function replaceCalendarAvailability(context: DatabaseWriteCommandContext
     const resource = calendarResource(context, actor, r.id); requireCalendarRight(context, actor, resource, 'manage');
     const expectedRevision = calendarInteger(r.expectedRevision, 1), policy = normalizeCalendarAvailability({ mode: r.mode, windows: r.windows });
     return calendarIntent(context, actor, r.requestId, ['resource.availability', resource.id, expectedRevision, policy], 'resource', 'manage', requestId => {
+      assertLegacyCalendarAvailabilityWritable(context, actor.scopeId, resource.id);
       calendarRevision(resource, expectedRevision);
       const prior = currentCalendarAvailability(context, actor.scopeId, resource.id);
       if (calendarJson(prior) === calendarJson(policy)) return { requestId, operation: 'resource.availability-changed', id: resource.id, revision: resource.revision, changed: false };
@@ -40,6 +45,7 @@ export function replaceCalendarAvailability(context: DatabaseWriteCommandContext
         resource_id: resource.id, policy_revision: revision, mode: policy.mode, windows_json: calendarJson(policy.windows) });
       if (context.db.get('_calendar_availability', resource.id)) context.db.update('_calendar_availability', resource.id, { policy_revision: revision });
       else context.db.createStrict('_calendar_availability', { id: resource.id, scope_id: actor.scopeId, resource_id: resource.id, policy_revision: revision });
+      activateLegacyCalendarAvailability(context, actor.scopeId, resource.id, revision);
       appendCalendarSemanticAudit(context, 'resource.availability-changed', change, { revision });
       return { requestId, operation: 'resource.availability-changed', id: resource.id, revision, changed: true };
     });

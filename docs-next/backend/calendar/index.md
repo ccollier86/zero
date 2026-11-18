@@ -36,6 +36,8 @@ working on an application; do not assume this branch is available through update
   bindings, current assignment compatibility, hold transfer and selector privacy.
 - [Native account participants](./participants.md): explicit Guardian eligibility,
   private bindings, exact hold transfer, live names/tombstones and reusable picker.
+- [Weekly working hours](./working-hours.md): finite local-date coverage, explicit
+  exceptions, frozen UTC policy snapshots and compatible legacy format handling.
 - [Qualification and remaining gates](./qualification.md): current source review,
   completed memory checks and explicitly unexecuted physical/deployment scenarios.
 - [Frontend composition](../../frontend/calendar/index.md): connected core versus
@@ -57,8 +59,10 @@ Single-tenant applications retain an application-scoped calendar domain;
 multi-tenant applications get a private domain per currently admitted tenant.
 Enabling calendar does not convert the app's data topology or change its theme.
 
-Availability is deliberately bounded to explicit UTC windows or an explicit
-unrestricted policy; it is not recurring local working hours or a slot-offer API.
+Availability now supports an explicit UTC policy or a separate versioned weekly-local
+source with finite coverage and date overrides. The latter freezes UTC windows at
+policy write; it is not an automatic horizon or slot-offer API. The legacy facade
+cannot silently overwrite weekly policy. See the working-hours guide above.
 Policy changes preserve existing appointments. New bookings and UTC-occupancy
 changes must fit the current policy, including appointment buffers. Blocks need
 current manage rights on every resource and reject existing live occupancy;
@@ -108,7 +112,7 @@ cancellation releases reservations. The connected workspace uses native managed
 review/reason dialogs and shows effective outcomes. This is not yet clinical visit
 progress, lobby tracking, arbitrary state machines or automatic workflow delivery.
 
-Recurrence, all-day and floating dates, recurring working-hours/holiday expansion,
+Recurrence, all-day and floating dates, automatic working-hours coverage extension,
 public booking proofs/offers, participant invitations,
 effective-dated location eligibility,
 clinical visit/lobby/attention state, delivery channels, public self-booking and AI

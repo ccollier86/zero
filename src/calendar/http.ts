@@ -6,12 +6,12 @@ import type { CalendarAppointmentInput, CalendarAvailabilityInput, CalendarBlock
   CalendarAppointmentTypeInput, CalendarAppointmentTypeReplacement, CalendarAppointmentTypePageQuery, CalendarResourceTypesInput,
   CalendarLifecyclePolicyInput, CalendarAppointmentTransitionInput, CalendarCancellationOptions,
   CalendarControlOptions, CalendarGrant, CalendarHoldInput, CalendarHoldConfirmationInput, CalendarLocationInput, CalendarLocationPageQuery, CalendarLocationReplacement,
-  CalendarRangeQuery, CalendarRequestOptions, CalendarRescheduleInput, CalendarResourcePageQuery, CalendarVisitLocationQuery, CalendarParticipantReference } from './contracts';
+  CalendarRangeQuery, CalendarRequestOptions, CalendarRescheduleInput, CalendarResourcePageQuery, CalendarVisitLocationQuery, CalendarParticipantReference, CalendarAvailabilityPolicyInput } from './contracts';
 import { CalendarError } from './error';
 import { calendarRecord } from './validation';
 import { calendarAppointmentStream, calendarAvailabilityStream, calendarBlockStream, calendarHoldStream, calendarLocationStream, calendarResourceStream,
   calendarLocationDetailStream, calendarResourceLocationsStream, calendarTypeStream, calendarTypeDetailStream, calendarResourceTypesStream,
-  calendarLifecycleStream, calendarAppointmentTransitionsStream, calendarVisitLocationStream, calendarParticipantDirectoryStream, calendarParticipantsStream, calendarCapabilitiesStream } from './stream';
+  calendarLifecycleStream, calendarAppointmentTransitionsStream, calendarVisitLocationStream, calendarParticipantDirectoryStream, calendarParticipantsStream, calendarCapabilitiesStream, calendarAvailabilityPolicyStream } from './stream';
 
 const key = t.String({ minLength: 1, maxLength: 128 });
 // Query strings stay wire strings through composed native validators; convert
@@ -213,6 +213,17 @@ export async function createCalendarHttp(runtime: ZeroAppRuntime) {
       defineEndpoint({ method: 'POST', path: '/resources/:id/grants', params: t.Object({ id: key }), body: t.Unknown(), async handler({ zero, params, body }) {
         if (!zero.calendar) throw new CalendarError('CALENDAR_NOT_READY'); const r = calendarRecord(body, ['userId', 'grants', 'options']);
         return zero.calendar.resources.setGrants(params.id, r.userId as string, r.grants as CalendarGrant[], r.options as CalendarControlOptions);
+      } }),
+      ...([false, true] as const).map(live => defineEndpoint({ method: 'GET', path: '/availability/:id/policy' + (live ? '/live' : ''), params: t.Object({ id: key }), async handler({ zero, params, request }) {
+        if (!zero.calendar) throw new CalendarError('CALENDAR_NOT_READY'); admitQueryKeys(request, []);
+        const value = await zero.calendar.availability.policy.get(params.id);
+        return live ? new Response(calendarAvailabilityPolicyStream(zero.calendar, params.id, request.signal), {
+          headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'private, no-store', 'X-Accel-Buffering': 'no' },
+        }) : value;
+      } })),
+      defineEndpoint({ method: 'PUT', path: '/availability/:id/policy', params: t.Object({ id: key }), body: t.Unknown(), async handler({ zero, params, body, request }) {
+        if (!zero.calendar) throw new CalendarError('CALENDAR_NOT_READY'); admitQueryKeys(request, []); const r = calendarRecord(body, ['policy', 'options']);
+        return zero.calendar.availability.policy.replace(params.id, r.policy as CalendarAvailabilityPolicyInput, r.options as CalendarControlOptions);
       } }),
       defineEndpoint({ method: 'GET', path: '/availability/:id', params: t.Object({ id: key }), async handler({ zero, params }) {
         if (!zero.calendar) throw new CalendarError('CALENDAR_NOT_READY'); return zero.calendar.availability.get(params.id);

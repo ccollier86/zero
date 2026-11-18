@@ -2,7 +2,7 @@
 import type { CalendarAppointmentInput, CalendarAppointmentPage, CalendarAppointmentView, CalendarBusyPage, CalendarCommandReceipt, CalendarCapabilities,
   CalendarAppointmentStatus, CalendarAppointmentLifecycle, CalendarAppointmentTransitionInput, CalendarAppointmentTransitions,
   CalendarLifecyclePolicyInput, CalendarLifecyclePolicy, CalendarCancellationOptions,
-  CalendarAvailabilityInput, CalendarAvailabilityView, CalendarAvailabilityWindow, CalendarBlockInput, CalendarBlockPage, CalendarBlockRescheduleInput, CalendarBlockView,
+  CalendarAvailabilityInput, CalendarAvailabilityView, CalendarAvailabilityWindow, CalendarAvailabilityPolicyInput, CalendarAvailabilityPolicyView, CalendarBlockInput, CalendarBlockPage, CalendarBlockRescheduleInput, CalendarBlockView,
   CalendarHoldInput, CalendarHoldView, CalendarHoldPage, CalendarHoldConfirmationInput,
   CalendarVisitInput, CalendarVisitSnapshot, CalendarVisitLocationQuery,
   CalendarParticipantReference, CalendarParticipantView, CalendarParticipantDirectoryQuery, CalendarParticipantDirectoryPage, CalendarParticipantsView,
@@ -14,6 +14,7 @@ import type { CalendarAppointmentInput, CalendarAppointmentPage, CalendarAppoint
 import type { FetchInit } from './sdk';
 import { calendarFailureDetails, calendarMutationFailure, CalendarReadError } from './calendar-mutation';
 import { watchCalendarRange } from './calendar-client-watch';
+import { calendarAvailabilityPolicyInput, calendarAvailabilityPolicyView } from './calendar-client-availability-policy';
 export interface CalendarClient extends ScopedCalendar { clear(): void }
 export function createCalendarClient(fetch: <T = unknown>(path: string, init?: FetchInit) => Promise<T>,
   open?: (path: string, init: RequestInit) => Promise<Response>): CalendarClient {
@@ -225,6 +226,26 @@ export function createCalendarClient(fetch: <T = unknown>(path: string, init?: F
       },
     }),
     availability: Object.freeze({
+      policy: Object.freeze({
+        get(id: string, supplied?: CalendarReadOptions) {
+          const resourceId = requestKey(id);
+          return read('/availability/' + encodeURIComponent(resourceId) + '/policy', value => {
+            const accepted = calendarAvailabilityPolicyView(value); if (accepted.resourceId !== resourceId) throw invalid(); return accepted;
+          }, 'GET', undefined, readSignal(supplied));
+        },
+        replace(id: string, input: CalendarAvailabilityPolicyInput, supplied: CalendarControlOptions) {
+          const resourceId = requestKey(id), control = options(supplied, true);
+          return mutation('/availability/' + encodeURIComponent(resourceId) + '/policy',
+            { policy: calendarAvailabilityPolicyInput(input), options: control }, supplied, 'resource.availability-policy-changed', resourceId,
+            undefined, 'PUT', Number(control.expectedRevision));
+        },
+        watch(id: string, listener: (policy: CalendarAvailabilityPolicyView, update?: CalendarWatchUpdate) => void, supplied: CalendarWatchOptions = {}) {
+          const resourceId = requestKey(id);
+          return watch('/availability/' + encodeURIComponent(resourceId) + '/policy/live', value => {
+            const accepted = calendarAvailabilityPolicyView(value); if (accepted.resourceId !== resourceId) throw invalid(); return accepted;
+          }, listener, supplied);
+        },
+      }),
       get(id: string, readOptions?: CalendarReadOptions) {
         const resourceId = requestKey(id);
         return read('/availability/' + encodeURIComponent(resourceId), value => {
@@ -737,7 +758,7 @@ function busyPage(value: unknown): CalendarBusyPage {
 }
 function calendarReceipt(value: unknown): CalendarCommandReceipt {
   const r = record(value, ['requestId', 'operation', 'id', 'revision', 'changed']);
-  if (Object.keys(r).length !== 5 || typeof r.operation !== 'string' || !['resource.created', 'resource.grant-changed', 'resource.availability-changed', 'resource.locations-changed',
+  if (Object.keys(r).length !== 5 || typeof r.operation !== 'string' || !['resource.created', 'resource.grant-changed', 'resource.availability-changed', 'resource.availability-policy-changed', 'resource.locations-changed',
     'location.created', 'location.updated',
     'type.created', 'type.updated', 'resource.types-changed',
     'block.created', 'block.rescheduled', 'block.cancelled', 'hold.acquired', 'hold.released',
