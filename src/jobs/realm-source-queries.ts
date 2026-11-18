@@ -1,12 +1,46 @@
 /** Trusted-broker-only source evidence. None of these private records are HTTP/client projections. */
 import type { DatabaseReadQueryContext } from '../databases/database-realm';
 import { JobsError } from './error';
-import { digest, jobAdmissionId, type JobAdmissionRow, type JobScheduleRow } from './model';
-import { decodeJobAdmission } from './realm-model';
+import { digest, jobAdmissionId, jobOccurrenceId, type JobAdmission, type JobAdmissionRow, type JobOccurrenceRow, type JobScheduleRow, type JobSeal } from './model';
+import { decodeJobAdmission, normalizeJobSeal } from './realm-model';
 import { jobSourceId, normalizeJobSourceIdentity, normalizeJobSourceOrigin, type JobSourceIdentity } from './source-model';
 import { assertSourceAdmission, assertSourceRow, assertSourceSchedule, decodeSourceIntent, decodeSourcePolicy,
   sourceIntentId, sourcePolicyId, sourceRegistration, sourceScheduleReceipt, type JobSourceIntentRow, type JobSourcePolicyRow, type JobSourceRow } from './source-realm-model';
-import { jobInteger, jobRecord, jobScope, jobText } from './validation';
+import { jobInteger, jobRecord, jobScope, jobText, jobTime } from './validation';
+
+/** Broker-only transport. The native facade never returns admission input or a seal to its caller. */
+export interface JobSourceExecutionContext {
+  readonly scheduleId: string; readonly generation: number; readonly scheduledAt: number; readonly occurrenceId: string;
+  readonly admission: JobAdmission; readonly seal: JobSeal;
+  readonly recordedInstanceId: string | null; readonly recordedReceipt: unknown;
+}
+
+/** One primary-key occurrence lookup; historical source epochs and cancelled schedules remain reconcilable. */
+export function readSourceJobExecution(context: DatabaseReadQueryContext, input: unknown): JobSourceExecutionContext | null {
+  const r = jobRecord(input, ['identity', 'id', 'generation', 'scheduledAt']), identity = normalizeJobSourceIdentity(r.identity);
+  source(context, identity, true);
+  const id = jobText(r.id, 96), generation = jobInteger(r.generation, 1), scheduledAt = jobTime(r.scheduledAt);
+  const schedule = context.database.query<JobScheduleRow>('SELECT * FROM job_schedules WHERE id=? AND scope_id=?').get(id, identity.scopeId);
+  if (!schedule) throw new JobsError('JOBS_NOT_FOUND'); assertSourceSchedule(schedule, identity);
+  const occurrenceId = jobOccurrenceId(id, generation, scheduledAt);
+  const occurrence = context.database.query<JobOccurrenceRow>('SELECT * FROM _jobs_occurrences WHERE id=? AND scope_id=?').get(occurrenceId, identity.scopeId);
+  if (!occurrence) return null;
+  const admissionId = jobAdmissionId(id, generation);
+  if (occurrence.schedule_id !== id || occurrence.generation !== generation || occurrence.scheduled_at !== scheduledAt
+    || occurrence.admission_id !== admissionId || (occurrence.workflow_id === null) !== (occurrence.receipt_json === null)) throw new JobsError('JOBS_STATE_INVALID');
+  const row = context.database.query<JobAdmissionRow>('SELECT * FROM _jobs_admissions WHERE id=? AND scope_id=?').get(admissionId, identity.scopeId);
+  if (!row || row.schedule_id !== id || row.generation !== generation) throw new JobsError('JOBS_STATE_INVALID');
+  const admission = decodeJobAdmission(row);
+  if (!admission.source || admission.timing.kind !== 'once' || Date.parse(admission.timing.at) !== scheduledAt) throw new JobsError('JOBS_STATE_INVALID');
+  assertSourceAdmission(admission, identity, policy(context, identity, admission.source.generation));
+  let recordedReceipt: unknown = null;
+  if (occurrence.receipt_json !== null) {
+    try { recordedReceipt = JSON.parse(occurrence.receipt_json); } catch { throw new JobsError('JOBS_STATE_INVALID'); }
+  }
+  return { scheduleId: id, generation, scheduledAt, occurrenceId, admission,
+    seal: normalizeJobSeal({ authorityJson: row.authority_json, authorityMac: row.authority_mac }),
+    recordedInstanceId: occurrence.workflow_id, recordedReceipt };
+}
 
 export function getJobSource(context: DatabaseReadQueryContext, input: unknown) {
   const r = jobRecord(input, ['identity']), identity = normalizeJobSourceIdentity(r.identity), row = source(context, identity);

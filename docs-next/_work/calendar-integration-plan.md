@@ -484,6 +484,48 @@ November 18 source review preserves two additional gates before that bridge:
 
 ### Ownership and fresh eligibility
 
+November 18 dispatch implementation decision: keep the first calendar bridge
+private and unactivated while qualifying its cross-file protocol. Add separate
+calendar policy history/current, immutable integration intents, bounded mutable
+claims, Jobs receipt associations and final effect-admission/outcome evidence in
+additive migration `010`. Do not alter the six historical effect-reference
+families: those references also seal appointment binding generations.
+
+The canonical changed-appointment receipt writer captures work after all bindings
+and its historical effect reference exist, in the same source transaction. Only
+explicitly installed policies participate; old appointments are not backfilled.
+Every new appointment revision supersedes earlier integration eligibility without
+erasing an accepted Jobs receipt or an already-admitted effect. A claim nonce and
+lease generation identify an attempt, never a new logical effect or due instant.
+
+The initial downstream adapter is **observation only**. It proves the durable
+handoff and source-local cutoff without enabling email, notifications, AI,
+recurrence or public booking. Jobs schedule acceptance is not Torrent acceptance,
+provider acceptance, delivery or human attention. A replayed effect admission is
+historical evidence, not permission to execute again.
+
+Dispatchers use a distinct private, fixed-operation calendar owner facade. They
+do not invent a `CalendarActor`, retain request authority or expose raw Jobs to
+request code. Source acquisitions are existing-only, require established/current
+SYSTEM ownership, and verify the physical `_calendar_owner` on the acquired
+lease. The native cold actor still runs its existing schema-open/validation path;
+this source facade does not itself prove that schema preparation happens only
+after physical owner verification. Physical startup/ownership qualification
+remains a gate before managed activation.
+
+The cross-file protocol is explicit: local activating epoch → exact Jobs source
+registration → local activation acknowledgment. Retirement closes local intake
+first; old receipts remain reconcilable. A missing receipt during unknown writer
+settlement never proves rejection: retry the exact original operation through
+its Jobs gate. New admission must also bind the exact expected registration,
+not whichever later policy generation happens to be live after a wait.
+
+This private protocol alone does **not** complete stage 4. Managed fixed-workflow
+registration, dormant startup/hydration, dependency-ordered shutdown, durable
+retire-before-disable operations, sustainable retained-capacity handling and
+physical/package qualification must be connected and reviewed before exposing
+automatic calendar integrations as an application feature.
+
 Recommended organizational reminders are explicitly service-owned, with original
 human initiation retained as provenance. The scheduler's later logout does not
 cancel an independently valid organizational appointment. Actor-owned custom work

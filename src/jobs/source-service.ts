@@ -1,8 +1,9 @@
 /** Internal native-service facade over the SAME Jobs runner, pool and Torrent receipts. */
 import type { ServiceDataScope } from '../auth/service-data-scope';
 import type { WorkPool } from '../workers/work-pool';
+import { SchedulerError } from '../scheduler/scheduler-error';
 import type { WorkflowDeferredStartBridge } from '../workflows/workflow-deferred-start-bridge';
-import { jobBinding } from './admission';
+import { assertJobExecutionIdentity, jobBinding, jobDispatchKey } from './admission';
 import type { ResolvedJobsConfig } from './config';
 import { JobsError } from './error';
 import { normalizeJobAdmission, type JobAdmission, type JobScheduleRow } from './model';
@@ -11,12 +12,18 @@ import type { JobsRuntime } from './runtime';
 import { normalizeScheduleTiming } from './schedule-time';
 import { assertJobSourceEligible, assertJobSourceOwner, confirmJobSource, requireJobSource, type TrustedJobSource } from './source-authority';
 import { jobSourceId, jobSourcePrincipal, jobSourceScheduleId, normalizeJobSourceContract, normalizeJobSourceInitiator,
-  type JobSourceContract, type JobSourceRegistration, type JobSourceScheduleReceipt } from './source-model';
-import { jobHash, jobInput, jobInteger, jobKey, jobRecord, jobText } from './validation';
+  type JobSourceContract, type JobSourceExecutionEvidence, type JobSourceRegistration, type JobSourceScheduleReceipt } from './source-model';
+import type { JobSourceExecutionContext } from './realm-source-queries';
+import { jobDigest, jobHash, jobInput, jobInteger, jobKey, jobRecord, jobText, jobTime } from './validation';
 import { isKnownJobMutationRejection, sourceGateMutation } from './source-gate';
 
 interface SourceOptions { readonly idempotencyKey: string; readonly signal?: AbortSignal }
+interface SourceScheduleOptions extends SourceOptions {
+  /** Optional immutable source-epoch mapping. Historical command replay still precedes this fence. */
+  readonly expectedRegistration?: JobSourceRegistration;
+}
 interface SourceRevisionOptions extends SourceOptions { readonly expectedRevision: number }
+interface SourceScheduleRevisionOptions extends SourceScheduleOptions { readonly expectedRevision: number }
 export interface SourceJobInput { readonly input: unknown; readonly at: string; readonly maxLatenessMs?: number; readonly initiatedBy?: string }
 /** Private evidence/control surface; it is not a request API or an alternative general scheduler. */
 export interface SourceJobs {
@@ -26,9 +33,13 @@ export interface SourceJobs {
     retire(options: SourceRevisionOptions): Promise<JobSourceRegistration>;
   };
   readonly receipts: { get(key: string): Promise<JobSourceRegistration | JobSourceScheduleReceipt | null> };
+  readonly executions: {
+    /** Exact permanent Torrent evidence, including before Jobs acknowledges dispatch. Never reauthorizes an effect. */
+    get(id: string, options: { readonly generation: number; readonly scheduledAt: number }): Promise<JobSourceExecutionEvidence | null>;
+  };
   readonly schedules: {
-    create(input: SourceJobInput, options: SourceOptions): Promise<JobSourceScheduleReceipt>;
-    replace(id: string, input: SourceJobInput, options: SourceRevisionOptions): Promise<JobSourceScheduleReceipt>;
+    create(input: SourceJobInput, options: SourceScheduleOptions): Promise<JobSourceScheduleReceipt>;
+    replace(id: string, input: SourceJobInput, options: SourceScheduleRevisionOptions): Promise<JobSourceScheduleReceipt>;
     cancel(id: string, options: SourceRevisionOptions): Promise<JobSourceScheduleReceipt>;
     get(id: string): Promise<{ schedule: JobScheduleRow; admission: JobAdmission; receipt: JobSourceScheduleReceipt }>;
   };
@@ -75,16 +86,17 @@ export class JobsSourceBroker {
       this.options.wake(); return value;
     };
     const current = () => this.requireLive(capability, id);
-    const normalizeOptions = (input: unknown, revision: boolean, pin = false) => {
-      const r = jobRecord(input, ['idempotencyKey', 'signal', ...(revision ? ['expectedRevision'] : []), ...(pin ? ['pinInput'] : [])]);
+    const normalizeOptions = (input: unknown, revision: boolean, pin = false, mapping = false) => {
+      const r = jobRecord(input, ['idempotencyKey', 'signal', ...(revision ? ['expectedRevision'] : []), ...(pin ? ['pinInput'] : []), ...(mapping ? ['expectedRegistration'] : [])]);
       if (r.signal !== undefined && !(r.signal instanceof AbortSignal)) throw new JobsError('JOBS_INPUT_INVALID');
       return { key: jobKey(r.idempotencyKey), signal: signal(r.signal as AbortSignal | undefined),
-        expectedRevision: revision ? jobInteger(r.expectedRevision, 0) : 0, pinInput: r.pinInput };
+        expectedRevision: revision ? jobInteger(r.expectedRevision, 0) : 0, pinInput: r.pinInput,
+        expectedRegistration: r.expectedRegistration === undefined ? undefined : expectedSourceRegistration(r.expectedRegistration) };
     };
     const change = async (action: 'create' | 'readmit', suppliedId: string | undefined, input: unknown, options: unknown) => {
-      const opts = normalizeOptions(options, action !== 'create'), r = jobRecord(input, ['input', 'at', 'maxLatenessMs', 'initiatedBy']);
+      const opts = normalizeOptions(options, action !== 'create', false, true), r = jobRecord(input, ['input', 'at', 'maxLatenessMs', 'initiatedBy']);
       if (action !== 'create') jobInteger(opts.expectedRevision, 1);
-      const timing = normalizeScheduleTiming({ kind: 'once', at: r.at, maxLatenessMs: r.maxLatenessMs ?? 60_000 });
+      const timing = sourceScheduleTiming({ kind: 'once', at: r.at, maxLatenessMs: r.maxLatenessMs ?? 60_000 });
       const value = jobInput(r.input), initiatedBy = normalizeJobSourceInitiator(r.initiatedBy);
       const scheduleId = action === 'create' ? jobSourceScheduleId(source.identity, opts.key) : jobText(suppliedId, 96);
       const intentHash = jobHash(['once', id, source.policyVersion, source.semanticsVersion,
@@ -93,6 +105,10 @@ export class JobsSourceBroker {
       return sourceGateMutation(this.options.gate, async operation => {
         await confirm(); const prior = await receipt<JobSourceScheduleReceipt>(opts.key, intent); operation.signal.throwIfAborted(); if (prior) return prior;
         await confirm(true); const live = current();
+        const assertMapped = () => {
+          if (opts.expectedRegistration && !sameSourceRegistration(live.registration, opts.expectedRegistration)) throw new JobsError('JOBS_AUTHORITY_RETIRED');
+        };
+        assertMapped();
         const previous = action === 'create' ? null : await read<{ schedule: JobScheduleRow }>('jobs.source.schedule', { identity: source.identity, id: scheduleId });
         if (previous && previous.schedule.revision !== opts.expectedRevision) throw new JobsError('JOBS_REVISION_CONFLICT');
         const generation = previous ? jobInteger(previous.schedule.generation, 1, Number.MAX_SAFE_INTEGER - 1) + 1 : 1;
@@ -107,7 +123,7 @@ export class JobsSourceBroker {
           ...(initiatedBy === undefined ? {} : { initiatedBy }), definition: definition.name, definitionVersion: definition.version,
           definitionHash: definition.fingerprint, workflow: pin, input: parsed, timing, overlap: 'skip', runAs: 'service' });
         const seal = this.options.bridge.seal(authority, jobBinding(admission, generation));
-        const check = () => { if (this.requireLive(capability, id) !== live) throw new JobsError('JOBS_AUTHORITY_RETIRED'); };
+        const check = () => { if (this.requireLive(capability, id) !== live) throw new JobsError('JOBS_AUTHORITY_RETIRED'); assertMapped(); };
         check();
         // Use the live token as the final Jobs writer fence too. No source SQL
         // lease is held while waiting for this separate-file commit.
@@ -231,6 +247,29 @@ export class JobsSourceBroker {
         },
       }),
       receipts: Object.freeze({ get: (key: string) => receipt<JobSourceRegistration | JobSourceScheduleReceipt>(key) }),
+      executions: Object.freeze({ get: async (scheduleId: string, input: { generation: number; scheduledAt: number }): Promise<JobSourceExecutionEvidence | null> => {
+        const opts = jobRecord(input, ['generation', 'scheduledAt']);
+        const context = await read<JobSourceExecutionContext | null>('jobs.source.execution', { identity: source.identity,
+          id: jobText(scheduleId, 96), generation: jobInteger(opts.generation, 1), scheduledAt: jobTime(opts.scheduledAt) });
+        if (!context) return null;
+        const binding = jobBinding(context.admission, context.generation), authority = this.options.bridge.open(context.seal, binding);
+        assertJobExecutionIdentity(context.admission, authority);
+        const accepted = this.options.bridge.inspect(authority, context.admission.workflow, context.admission.input,
+          jobDispatchKey(context.occurrenceId), binding);
+        if (!accepted) {
+          if (context.recordedInstanceId !== null || context.recordedReceipt !== null) throw new JobsError('JOBS_STATE_INVALID');
+          return null;
+        }
+        if (context.recordedInstanceId !== null && (context.recordedInstanceId !== accepted.receipt.instanceId
+          || jobHash(context.recordedReceipt) !== jobHash(accepted.receipt))) throw new JobsError('JOBS_STATE_INVALID');
+        await confirm();
+        const origin = context.admission.source;
+        if (!origin) throw new JobsError('JOBS_STATE_INVALID');
+        return Object.freeze({ scheduleId: context.scheduleId, generation: context.generation, scheduledAt: context.scheduledAt,
+          occurrenceId: context.occurrenceId, sourceId: origin.id, policyGeneration: origin.generation, policyHash: origin.policyHash,
+          workflow: Object.freeze({ ...context.admission.workflow }), inputHash: jobHash(context.admission.input),
+          instanceId: accepted.receipt.instanceId, status: accepted.status });
+      } }),
       schedules: Object.freeze({ create: (input: SourceJobInput, opts: SourceOptions) => change('create', undefined, input, opts),
         replace: (scheduleId: string, input: SourceJobInput, opts: SourceRevisionOptions) => change('readmit', scheduleId, input, opts),
         get: async (scheduleId: string) => {
@@ -295,3 +334,21 @@ export class JobsSourceBroker {
   private assertReady(): void { if (this.closed || this.options.signal.aborted) throw new JobsError('JOBS_NOT_READY'); }
 }
 function sourceGateKey(id: string): string { return 'source:' + id; }
+/** Time parsing occurs before the gate/writer. Only the native typed input refusal proves no write began. */
+function sourceScheduleTiming(input: unknown): ReturnType<typeof normalizeScheduleTiming> {
+  try { return normalizeScheduleTiming(input); }
+  catch (error) {
+    if (error instanceof SchedulerError && error.code === 'SCHEDULER_JOB_INVALID') throw new JobsError('JOBS_INPUT_INVALID', 'not-started');
+    throw error;
+  }
+}
+function expectedSourceRegistration(input: unknown): JobSourceRegistration {
+  const r = jobRecord(input, ['id', 'generation', 'revision', 'state', 'policyHash']), id = jobText(r.id, 68);
+  if (!/^src_[a-f0-9]{64}$/.test(id) || r.state !== 'active') throw new JobsError('JOBS_INPUT_INVALID');
+  return Object.freeze({ id, generation: jobInteger(r.generation, 1), revision: jobInteger(r.revision, 1),
+    state: 'active', policyHash: jobDigest(r.policyHash) });
+}
+function sameSourceRegistration(a: JobSourceRegistration, b: JobSourceRegistration): boolean {
+  return a.id === b.id && a.generation === b.generation && a.revision === b.revision && a.state === 'active'
+    && b.state === 'active' && a.policyHash === b.policyHash;
+}

@@ -1,5 +1,6 @@
 /** Private source-owned scheduling contracts. No browser input can mint source authority. */
 import type { JobWorkflowPin } from './model';
+import type { WorkflowDeferredStartInspection } from '../workflows/workflow-deferred-start-contract';
 import { JobsError } from './error';
 import { jobDigest as digest, jobHash, jobInteger, jobRecord, jobScope, jobText } from './validation';
 
@@ -24,6 +25,13 @@ export interface JobSourceScheduleReceipt {
   readonly id: string; readonly sourceId: string; readonly policyGeneration: number;
   readonly control: 'active' | 'paused' | 'cancelled'; readonly revision: number; readonly generation: number;
   readonly createdAt: number; readonly updatedAt: number;
+}
+/** Read-only proof of the original permanent Torrent start, never permission for a new effect. */
+export interface JobSourceExecutionEvidence {
+  readonly scheduleId: string; readonly generation: number; readonly scheduledAt: number; readonly occurrenceId: string;
+  readonly sourceId: string; readonly policyGeneration: number; readonly policyHash: string;
+  readonly workflow: JobWorkflowPin; readonly inputHash: string;
+  readonly instanceId: string; readonly status: WorkflowDeferredStartInspection['status'];
 }
 export function normalizeJobSourceIdentity(input: unknown): JobSourceIdentity {
   const r = jobRecord(input, ['domain', 'databaseId', 'ownerId', 'rootHash', 'scopeId']);

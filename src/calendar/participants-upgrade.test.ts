@@ -10,7 +10,7 @@ import { createReactiveDB } from '../sync/reactive-db';
 import type { CalendarActor, CalendarAppointmentView, CalendarCommandReceipt, CalendarHoldView, CalendarParticipantReference } from './contracts';
 import { calendarRealm } from './realm';
 import { CALENDAR_PARTICIPANT_ADDITIONS, CALENDAR_PARTICIPANT_TABLES } from './realm-participant-bindings-migration';
-import { CALENDAR_AVAILABILITY_POLICY_TABLES } from './realm-working-hours-migration';
+import { CALENDAR_INTEGRATION_ADDITIONS, CALENDAR_INTEGRATION_TABLES } from './realm-integrations-migration';
 import { CALENDAR_VISIT_TABLES } from './realm-visit-bindings-migration';
 
 // Recorded from actual functions and the complete declaration before 008 was
@@ -43,6 +43,9 @@ function fixture() {
     // handles. Register closure before any seeding; setup failure compensates.
     const raw = db.getRawDatabase(); raw.run('PRAGMA temp_store=MEMORY');
     for (const [name, schema] of Object.entries(CALENDAR_VISIT_TABLES)) db.defineTable(name, schema);
+    // Empty current-handler support only; not historical migration evidence.
+    db.defineTable('_calendar_integration_policy_history', CALENDAR_INTEGRATION_ADDITIONS._calendar_integration_policy_history!);
+    db.defineTable('_calendar_integration_policy_current', CALENDAR_INTEGRATION_ADDITIONS._calendar_integration_policy_current!);
     const historical = new Migrator({ database: raw, dbPath: ':memory:', migrations: calendarRealm.migrations.slice(0, 7), createBackups: false, log() {} });
     try { expect(historical.run()).toEqual(['001', '002', '003', '004', '005', '006', '007']); } finally { historical.dispose(); }
     expect(raw.query("SELECT name FROM sqlite_master WHERE name LIKE '%participant%'").all()).toEqual([]);
@@ -104,7 +107,7 @@ function fixture() {
 }
 
 test('008 is additive over pinned seven migration functions, registered checksums and the full 007 declaration', () => {
-  expect(calendarRealm.migrations.map(migration => migration.version)).toEqual(['001', '002', '003', '004', '005', '006', '007', '008', '009']);
+  expect(calendarRealm.migrations.map(migration => migration.version)).toEqual(['001', '002', '003', '004', '005', '006', '007', '008', '009', '010']);
   expect(calendarRealm.migrations.slice(0, 7).map(hashMigration)).toEqual([...ORIGINAL_007_CHECKSUMS]);
   expect(calendarRealm.migrationChecksums.slice(0, 7)).toEqual(ORIGINAL_007_CHECKSUMS.map((checksum, index) => ({ version: String(index + 1).padStart(3, '0'), checksum })));
   expect(hashSchemaSnapshot(snapshotDeclaredTables(CALENDAR_VISIT_TABLES))).toBe(ORIGINAL_007_TABLES);
@@ -112,7 +115,7 @@ test('008 is additive over pinned seven migration functions, registered checksum
   expect(Object.keys(CALENDAR_PARTICIPANT_TABLES).filter(name => !(name in CALENDAR_VISIT_TABLES))).toEqual([
     '_calendar_appointment_participant_bindings', '_calendar_appointment_participant_current', '_calendar_hold_participant_bindings',
   ]);
-  expect(calendarRealm.tables).toEqual(CALENDAR_AVAILABILITY_POLICY_TABLES);
+  expect(calendarRealm.tables).toEqual(CALENDAR_INTEGRATION_TABLES);
 });
 
 test('real populated 007 upgrade preserves every row, definition, ledger, sequence, typed visit and accepted digest without participant backfill', () => {
@@ -121,7 +124,7 @@ test('real populated 007 upgrade preserves every row, definition, ledger, sequen
     const before = f.legacy(), seq = f.db.currentSeq, ledger = f.raw.query('SELECT * FROM _migrations ORDER BY version').all();
     const definitions = f.raw.query<{ type: string; name: string; sql: string }, []>("SELECT type,name,sql FROM sqlite_master WHERE type IN ('table','index','trigger') AND name NOT LIKE 'sqlite_%' ORDER BY type,name").all();
     for (const table of Object.keys(CALENDAR_VISIT_TABLES)) expect(before[table]!.length).toBeGreaterThan(0);
-    expect(f.upgrade()).toEqual(['008', '009']); expect(f.legacy()).toEqual(before); expect(f.db.currentSeq).toBe(seq);
+    expect(f.upgrade()).toEqual(['008', '009', '010']); expect(f.legacy()).toEqual(before); expect(f.db.currentSeq).toBe(seq);
     expect(f.raw.query("SELECT * FROM _migrations WHERE version IN ('001','002','003','004','005','006','007') ORDER BY version").all()).toEqual(ledger);
     for (const definition of definitions) expect(f.raw.query('SELECT type,name,sql FROM sqlite_master WHERE type=? AND name=?').get(definition.type, definition.name)).toEqual(definition);
     expect(f.query<CalendarAppointmentView>('appointment', { actor, id: 'legacy-typed-visit' })).toMatchObject({ id: 'legacy-typed-visit', revision: 3,

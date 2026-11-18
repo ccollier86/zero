@@ -10,7 +10,7 @@ import { withJobCommitHints } from './commit-hints';
 import { CURRENT_JOB_TABLES } from './realm-source-schema';
 import { JOB_SOURCE_MIGRATION } from './realm-source-migration';
 import { registerJobSource, retireJobSource, createSourceJobSchedule, changeSourceJobSchedule } from './realm-source-control';
-import { getJobSource, readSourceJobSchedule, readSourceJobIntent, readJobSourceDispatch } from './realm-source-queries';
+import { getJobSource, readSourceJobSchedule, readSourceJobIntent, readJobSourceDispatch, readSourceJobExecution } from './realm-source-queries';
 
 function query(handler: (context: Parameters<DatabaseReadQueryHandler>[0], input: unknown) => unknown): DatabaseReadQueryHandler {
   return (context, input) => {
@@ -83,5 +83,6 @@ export const jobsRealm = defineDatabaseRealm({
     'jobs.due': query(dueJobSchedules), 'jobs.pending': query(pendingJobOccurrences), 'jobs.context': query(readJobDispatchContext),
     'jobs.schedule.context': query(readJobScheduleContext), 'jobs.dispatched': query(dispatchedJobOccurrences), 'jobs.wake': query(readJobWake),
     'jobs.source': query(getJobSource), 'jobs.source.schedule': query(readSourceJobSchedule),
-    'jobs.source.receipt': query(readSourceJobIntent), 'jobs.source.dispatch': query(readJobSourceDispatch) },
+    'jobs.source.receipt': query(readSourceJobIntent), 'jobs.source.dispatch': query(readJobSourceDispatch),
+    'jobs.source.execution': query(readSourceJobExecution) },
 });

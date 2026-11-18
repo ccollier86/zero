@@ -10,6 +10,7 @@ import { createReactiveDB } from '../sync/reactive-db';
 import type { CalendarActor, CalendarAppointmentView, CalendarCommandReceipt, CalendarHoldView } from './contracts';
 import { calendarRealm } from './realm';
 import { CALENDAR_PARTICIPANT_TABLES } from './realm-participant-bindings-migration';
+import { CALENDAR_INTEGRATION_ADDITIONS } from './realm-integrations-migration';
 
 // Captured from the actual clean HEAD 3dbb524 functions and complete 008
 // declaration before the working-hours implementation began. These are not
@@ -38,6 +39,10 @@ function fixture() {
   try {
     const raw = db.getRawDatabase(); raw.run('PRAGMA temp_store=MEMORY');
     for (const [name, schema] of Object.entries(CALENDAR_PARTICIPANT_TABLES)) db.defineTable(name, schema);
+    // Empty lookup supports today's disabled-integration handlers only. The
+    // separate 009->010 fixture seeds actual historical storage without it.
+    db.defineTable('_calendar_integration_policy_history', CALENDAR_INTEGRATION_ADDITIONS._calendar_integration_policy_history!);
+    db.defineTable('_calendar_integration_policy_current', CALENDAR_INTEGRATION_ADDITIONS._calendar_integration_policy_current!);
     const historical = new Migrator({ database: raw, dbPath: ':memory:', migrations: calendarRealm.migrations.slice(0, 8), createBackups: false, log() {} });
     try { expect(historical.run()).toEqual(versions); } finally { historical.dispose(); }
     const accepted: { name: string; input: Record<string, unknown>; receipt: CalendarCommandReceipt }[] = [];
@@ -93,7 +98,7 @@ function fixture() {
 }
 
 test('009 is additive over the actual pinned eight migration functions, registered checksums and complete 008 schema', () => {
-  expect(calendarRealm.migrations.map(migration => migration.version)).toEqual([...versions, '009']);
+  expect(calendarRealm.migrations.map(migration => migration.version)).toEqual([...versions, '009', '010']);
   expect(calendarRealm.migrations.slice(0, 8).map(hashMigration)).toEqual([...ORIGINAL_008_CHECKSUMS]);
   expect(calendarRealm.migrationChecksums.slice(0, 8)).toEqual(ORIGINAL_008_CHECKSUMS.map((checksum, index) => ({ version: versions[index], checksum })));
   expect(hashSchemaSnapshot(snapshotDeclaredTables(CALENDAR_PARTICIPANT_TABLES))).toBe(ORIGINAL_008_TABLES);
@@ -111,7 +116,7 @@ test('populated 008 upgrade retains all families, exact receipts, sequences, SQL
     const hold = f.query<CalendarHoldView>('hold', { actor, id: 'legacy-hold' });
     const availability = f.query('availability', { actor, id: 'person' });
     for (const [table, rows] of Object.entries(before)) expect(rows.length, 'Seed every 008 family: ' + table).toBeGreaterThan(0);
-    expect(f.upgrade()).toEqual(['009']); expect(f.oldRows()).toEqual(before); expect(f.db.currentSeq).toBe(seq);
+    expect(f.upgrade()).toEqual(['009', '010']); expect(f.oldRows()).toEqual(before); expect(f.db.currentSeq).toBe(seq);
     expect(f.raw.query("SELECT * FROM _migrations WHERE version<='008' ORDER BY version").all()).toEqual(ledger);
     for (const definition of definitions) expect(f.raw.query('SELECT type,name,sql FROM sqlite_master WHERE type=? AND name=?').get(definition.type, definition.name)).toEqual(definition);
     for (const table of f.additions) expect(f.raw.query(`SELECT * FROM ${table}`).all()).toEqual([]);

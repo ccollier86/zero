@@ -74,6 +74,18 @@ calendar dispatch/acknowledgment and authoritative effect admission, plus lifecy
 composition and explicit durable retirement before disable. Automatic reminders,
 calendar recurrence, provider sends and archive selection remain off.
 
+The next private source stage now implements that bounded dispatch/acknowledgment
+protocol and a unique final observation cutoff, with actual Jobs/Torrent evidence
+and memory regressions across both files. See the
+[private integration guide](../backend/calendar/integrations.md) and latest
+[qualification](../backend/calendar/qualification.md). The original historical
+effect references remain seals; a separate additive realm `010` captures explicit
+installed policy epochs and new appointment revisions without backfill. This is
+not a managed or public automation feature yet. Resume with fixed workflow/config
+registration, dormant owner hydration, dependency-ordered shutdown, durable
+retire-before-disable operations, fair restart/retry discovery and retained-capacity
+management. Physical/package qualification still requires storage recovery.
+
 ## Checkpoints and places to resume
 
 - Historical starting baseline: `05344d46a5d0178cdb5df3ab02bbe763ef6aa3cd`, Zero 2.10.5.

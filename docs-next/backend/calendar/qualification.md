@@ -18,6 +18,82 @@ This is feature-branch evidence, not a release certificate. No calendar backend
 archive has been selected by normal `zero-update`, and no application deployment
 or data migration is authorized by these checks.
 
+## November 18 private calendar dispatch and effect protocol
+
+The [private integration foundation](./integrations.md) now adds calendar realm
+`010`, source-atomic appointment integration intents, separate mutable claims,
+immutable Jobs receipt associations, exact source-registration mapping and a
+unique source-local effect cutoff. The initial adapter records an observation
+only; no managed activation, provider send, reminder or recurrence was enabled.
+
+The actual memory integration uses the native Guardian/calendar facade and realm,
+source Jobs service/realm/runner, real Torrent authority seals and permanent start
+receipts, then re-enters the private owner-bound calendar writer. Physical actor,
+filesystem and process transport are explicitly simulated, not qualified.
+
+Reviewed and corrected boundaries include:
+
+- Exact original Jobs reconciliation across both acknowledgment boundaries;
+  stale nonce/generation cannot revive obsolete work, and a null receipt during
+  an unknown writer never grants no-commit or rekey permission.
+- Expected source-registration fencing after pool waits, including A → B → A;
+  immutable historical mapping and receipts remain readable after retirement.
+- Original occurrence/Torrent proof before Jobs' own dispatch acknowledgment;
+  an unrelated SYSTEM start with the same principal/pin/input is rejected.
+- Cancellation before versus after the cutoff; transport replay cannot grant a
+  second effect. Lost admission acknowledgment remains admitted/unsettled, while
+  lost outcome acknowledgment can reconcile an existing observed result.
+- Final deadline checks use the actual source-writer clock after queue waits,
+  not an activity's pre-await timestamp. Derived due dates must fit Jobs' actual
+  four-digit-year contract before the appointment commits.
+- Bounded indexed ready/expired/retirement probes, safe blocked backoff, first
+  proven no-invocation/non-commit recovery and fresh-work timestamps that do not
+  continually jump older same-class retries. Mixed-class fairness still gates
+  managed activation.
+- Exact private owner/root/database/realm/scope admission, existing-only access
+  and same-lease physical owner proof; source logging composition retains all
+  close/partial-start cleanup. The shared cold-actor schema-open caveat is
+  documented rather than claimed read-only.
+- Business audit facts remain exactly once and private; protocol bookkeeping
+  creates no false human activity. Late integration failure rolls back business
+  records, ordinary receipts/seals, source accounting and logging outbox/context
+  evidence together.
+
+The final scoped calendar plus related Jobs regression set passed **557 tests,
+11,343 assertions, 67 files**, in 116.74 seconds on pinned Bun 1.4.4. It excludes
+the physical calendar-file test deliberately. The true populated `009` → `010`
+native-memory migration preserves all nine previously recorded checksums, the
+complete `009` declaration hash, existing rows/guards/ledger/sequence, no-backfill
+semantics and rollback after a late migration failure. Older upgrade tests that
+seed current handlers explicitly identify their empty integration-policy support
+scaffold; they are not substituted for that real historical-storage test.
+
+An earlier broad run had 552 passes and one fixture failure: its new expiry
+probe advanced time beyond Torrent's owner lease and therefore tested a different
+authority retirement. The final probe uses a one-second effect deadline within
+the still-valid runtime lease, proving refusal by calendar expiry itself. That
+original failure is not relabelled as a pass; the final complete scoped rerun
+above passed after the fixture correction.
+
+The final no-emit TypeScript graph includes **348 roots and 3,958 source files**,
+including calendar, Jobs, calendar components, SDK/hooks and regression fixtures;
+zero diagnostics, no emit or incremental output. Documentation validation covers
+**907 pages**, all reachable with zero structural problems.
+
+Test sources: `integration-protocol.test.ts`, `integration-dispatcher.test.ts`,
+`integration-runtime.test.ts`, `integrations-service.test.ts`,
+`integrations-upgrade.test.ts` and the source Jobs regression family. Every
+database, query session, pool, workflow owner and clock spy closes/restores in
+`finally`, including setup failure. These runs allocated no disk fixtures,
+dependencies, builds, Docker resources, previews or packaged artifacts.
+
+Still pending before activation/release: fixed native workflow registration and
+configuration, dormant hydration/start/stop composition, durable operator
+retire-before-disable, startup/retry discovery and mixed-class fairness,
+sustainable retained capacity, physical actor recovery/ownership qualification,
+real browser, managed logging workers, Linux bundles, package/archive and updater
+selection. Main, applications, live state and the hosted demo are unchanged.
+
 ## November 18 follow-up review and polish
 
 The requested review of source-owned Jobs and the preceding working-hours stage

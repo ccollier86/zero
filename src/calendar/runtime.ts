@@ -1,6 +1,6 @@
 /** Private, bounded Fabric owner. Request code receives only the scoped service, never this setup broker. */
 import { existsSync, lstatSync } from 'node:fs';
-import { serviceDataScopeKey, type ServiceDataScope } from '../auth/service-data-scope';
+import { serviceDataScopeKey, trustedSystemServiceDataScope, type ServiceDataScope } from '../auth/service-data-scope';
 import { DatabaseCoordinator, type DatabaseCoordinatorLease } from '../databases/database-coordinator';
 import { createAsyncDatabaseClient } from '../databases/database-client';
 import { createDatabaseCommitAuthority } from '../databases/database-commit-authority';
@@ -27,6 +27,8 @@ import { calendarAppointmentTypeInput, calendarAppointmentTypePageQuery, calenda
 import { normalizeCalendarInstant, normalizeCalendarTimeZone } from './time';
 import { calendarHash, calendarInteger, calendarKey, calendarRecord, calendarScope, calendarText, calendarValue } from './validation';
 import { calendarParticipantReferences, requireCalendarParticipantManager } from './participant-bindings';
+import { calendarIntegrationInput, calendarIntegrationOptions, type CalendarIntegrationCommandOptions,
+  type CalendarIntegrationOwner, type CalendarIntegrationReadOptions } from './integration-runtime';
 
 export interface CalendarRuntimeSource {
   prepare(owner: CalendarOwnerRecord): void;
@@ -40,7 +42,7 @@ export interface CalendarRuntimeOptions {
   readonly installAllowed: boolean;
   readonly authority: { coordinator: AuthorityCommitCoordinator; actorContext: DatabaseActorAuthorityContext | null };
   readonly observability?: PlatformObservabilityRuntime;
-  readonly source?: (coordinator: DatabaseCoordinator) => CalendarRuntimeSource;
+  readonly source?: (coordinator: DatabaseCoordinator) => CalendarRuntimeSource | Promise<CalendarRuntimeSource>;
 }
 const QUERIES = new Set(['calendar.resources', 'calendar.busy', 'calendar.appointments', 'calendar.appointment',
   'calendar.locations', 'calendar.location', 'calendar.resourceLocations', 'calendar.locationAssignmentWitnesses', 'calendar.visitLocations',
@@ -87,7 +89,7 @@ export class CalendarRuntime implements CalendarServiceBroker {
     try {
       const records = runtime.records();
       for (const record of records) runtime.assertRetained(record);
-      runtime.source = options.source?.(owner) ?? null;
+      runtime.source = await options.source?.(owner) ?? null;
       for (const record of records) runtime.source?.prepare(record);
       // The native owner alone announces actual commits, including commits whose
       // caller loses authority before acknowledgment. Replays produce no hint.
@@ -177,6 +179,55 @@ export class CalendarRuntime implements CalendarServiceBroker {
 
   diagnostics() { return { state: this.state, activeOperations: this.active.size, initializingScopes: this.initializers.size, fabric: this.owner.diagnostics() }; }
 
+  /** @internal Detached metadata only. Enumeration never provisions a file, binds an owner or acquires an actor. */
+  integrationOwners(): readonly CalendarOwnerRecord[] {
+    this.assertReady();
+    const owners: CalendarOwnerRecord[] = [];
+    for (const record of this.records()) {
+      this.assertRetained(record);
+      if (record.established !== 1) continue;
+      this.assertIntegrationOwner(record);
+      owners.push(Object.freeze({ ...record }));
+    }
+    return Object.freeze(owners);
+  }
+
+  /** @internal Native lifecycle only; this capability is never projected through CalendarService. */
+  forIntegrationOwner(input: CalendarOwnerRecord): CalendarIntegrationOwner {
+    const owner = Object.freeze({ ...calendarRecord(calendarValue(input), ['id', 'scope_id', 'owner_id', 'root_hash', 'realm_fingerprint', 'established']) }) as unknown as CalendarOwnerRecord;
+    this.assertIntegrationOwner(owner);
+    const scope = trustedSystemServiceDataScope(owner.scope_id === 'application' ? { scopeKind: 'application' }
+      : { scopeKind: 'tenant', tenantId: owner.scope_id.slice('tenant:'.length) });
+    const run = <T>(kind: 'verify' | 'query' | 'command', name: string, input: unknown,
+      options?: CalendarIntegrationReadOptions | CalendarIntegrationCommandOptions): Promise<T> => this.track(async () => {
+      const opts = calendarIntegrationOptions(options, kind === 'command');
+      const signal = opts.signal ? AbortSignal.any([this.stop.signal, opts.signal]) : this.stop.signal;
+      const guard = this.guard(() => { this.assertIntegrationOwner(owner); return opts.assertCurrent(); }, signal);
+      guard();
+      const body = kind === 'verify' ? null : calendarIntegrationInput(owner, scope, kind, name, input, opts.key);
+      // Existing-only admission is not an explicit migration API. On a cold
+      // acquisition the shared Fabric actor still performs its native schema
+      // open/validation (including its existing migration preparation) BEFORE
+      // the same-lease owner proof below/in execute(). SYSTEM fingerprint
+      // matching is not proof of a stale physical ledger; that lower-layer
+      // ordering remains a qualification gate for this unactivated boundary.
+      if (kind !== 'verify') return await this.execute<T>(owner, kind, name, body, guard,
+        kind === 'command' ? 'calendar-integration:' + calendarHash([calendarRealm.fingerprint, owner.id, owner.owner_id, name, opts.key!]) : undefined,
+        false, signal);
+      const authority = createDatabaseCommitAuthority(this.options.authority.coordinator, owner.id, () => { guard(); return undefined; });
+      const lease = await this.owner.acquireExisting(owner.id, { commitAuthority: authority });
+      if (!lease) throw new CalendarError('CALENDAR_STATE_INVALID');
+      try { guard(); await this.verifyOwner(lease, owner, guard, signal); guard(); return undefined as T; }
+      finally { lease.release(); }
+    });
+    return Object.freeze({ owner, scope: Object.freeze(scope), signal: this.stop.signal,
+      assertCurrent: () => { this.assertIntegrationOwner(owner); },
+      verify: options => run<void>('verify', '', null, options),
+      read: (name, input, options) => run('query', name, input, options),
+      command: (name, input, options) => run('command', name, input, options),
+    } satisfies CalendarIntegrationOwner);
+  }
+
   close(): Promise<void> {
     if (this.closeTask) return this.closeTask;
     this.state = 'closing'; this.listeners.clear(); this.pendingHints.clear();
@@ -213,6 +264,16 @@ export class CalendarRuntime implements CalendarServiceBroker {
   private assertRetained(record: CalendarOwnerRecord): void {
     assertCalendarOwnerRecord(record, this.rootHash, calendarRealm.fingerprint, this.options.installAllowed);
     if (record.established === 1 && !this.filePresent(record.id)) throw new CalendarError('CALENDAR_STATE_INVALID');
+  }
+  private assertIntegrationOwner(owner: CalendarOwnerRecord): void {
+    this.assertReady();
+    if (calendarHash(canonicalDatabaseRootIdentity(this.options.config.rootDirectory)) !== this.rootHash) throw new CalendarError('CALENDAR_STATE_INVALID');
+    assertCalendarOwnerRecord(owner, this.rootHash, calendarRealm.fingerprint, false);
+    if (owner.established !== 1) throw new CalendarError('CALENDAR_NOT_READY');
+    const current = this.record(owner.id);
+    if (!current || current.id !== owner.id || current.scope_id !== owner.scope_id || current.owner_id !== owner.owner_id
+      || current.root_hash !== owner.root_hash || current.realm_fingerprint !== owner.realm_fingerprint || current.established !== 1
+      || !this.filePresent(owner.id)) throw new CalendarError('CALENDAR_STATE_INVALID');
   }
   private input(scopeId: string, name: string, input: unknown, write: boolean): Record<string, unknown> {
     if (!(write ? COMMANDS : QUERIES).has(name)) throw new CalendarError('CALENDAR_INPUT_INVALID');

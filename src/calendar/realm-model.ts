@@ -9,6 +9,7 @@ import { calendarBlock } from './blocks-model';
 import { calendarHold } from './holds-model';
 import { calendarLocation, requireCalendarLocationManager } from './locations-model';
 import { calendarType, requireCalendarTypeManager } from './appointment-types-model';
+import { recordCalendarIntegrationMutation } from './integration-model';
 
 export const CALENDAR_LIMITS = Object.freeze({ resources: 10_000, appointments: 100_000, blocks: 100_000, holds: 100_000, locations: 10_000,
   locationHistory: 100_000, resourceLocationHistory: 100_000, types: 10_000, typeHistory: 100_000, resourceTypeHistory: 100_000,
@@ -148,5 +149,6 @@ export function calendarIntent(context: DatabaseWriteCommandContext, actor: Cale
     result_json: calendarJson(result), target_kind: targetKind, target_id: result.id, required_right: requiredRight });
   if (result.changed) context.db.createStrict(targetKind === 'lifecycle' ? '_calendar_lifecycle_effect_intents' : targetKind === 'type' ? '_calendar_type_effect_intents' : targetKind === 'location' ? '_calendar_location_effect_intents' : targetKind === 'hold' ? '_calendar_hold_effect_intents' : targetKind === 'block' ? '_calendar_block_effect_intents' : '_calendar_effect_intents', { id, scope_id: actor.scopeId, receipt_id: id,
     operation: result.operation, target_kind: targetKind, target_id: result.id, revision: result.revision });
+  recordCalendarIntegrationMutation(context, actor, result, id);
   return result;
 }

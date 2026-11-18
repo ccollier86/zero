@@ -38,6 +38,9 @@ working on an application; do not assume this branch is available through update
   private bindings, exact hold transfer, live names/tombstones and reusable picker.
 - [Weekly working hours](./working-hours.md): finite local-date coverage, explicit
   exceptions, frozen UTC policy snapshots and compatible legacy format handling.
+- [Private integration protocol](./integrations.md): source-atomic intents, bounded
+  Jobs handoff, exact Torrent execution proof and observation-only cutoff; not
+  yet activated or a public reminders API.
 - [Qualification and remaining gates](./qualification.md): current source review,
   completed memory checks and explicitly unexecuted physical/deployment scenarios.
 - [Frontend composition](../../frontend/calendar/index.md): connected core versus
@@ -151,8 +154,9 @@ Logging disabled remains disabled; calendar does not install another logger.
 
 Private effect-reference intents are retained foundations, **not a dispatch
 pipeline**. No Jobs, Torrent, scheduler, provider or AI service is enabled by core
-calendar. The full plan records the additional source-bound Jobs admission,
-eligibility and retained-capacity work needed for real reminders and future effects.
+calendar. A separate private integration protocol now exercises source-owned
+handoff and final observation admission; managed activation, retained-capacity
+operations and real reminder/provider adapters remain gates in the full plan.
 
 ## Qualification boundary
 

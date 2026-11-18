@@ -71,6 +71,17 @@ The private `JobsService.forSource` surface supports:
   Cron/source recurrence is deliberately rejected by this first integration.
 - Current schedule inspection and original command-receipt reconciliation, even
   after retirement or cancellation. Evidence reads do not run current parsers.
+- Bounded original occurrence execution evidence: `executions.get` proves the
+  exact MAC-sealed Torrent start key, including before Jobs' dispatch
+  acknowledgment. It returns safe IDs/pin/hash/status, never authority seals or
+  input. A different native start with the same principal/pin/input is not proof.
+
+Private source create/replace can also supply `expectedRegistration`. Original
+receipt replay precedes that fence; new admission must match its exact active
+ID/generation/revision/policy hash after waits and retain the same live binding
+at the final writer edge. This prevents delayed old work acquiring a newer epoch.
+See the [private calendar protocol](../calendar/integrations.md) for a concrete
+observation-only consumer, not an activated application adapter.
 
 Activation replay alone never reinstalls a retired/superseded generation.
 Source controls and the existing runner share the same per-schedule gate.

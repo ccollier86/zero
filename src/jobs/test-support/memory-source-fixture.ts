@@ -19,6 +19,7 @@ import { workflowDeferredStarts } from '../../workflows/workflow-deferred-start-
 import { WorkflowRegistry } from '../../workflows/workflow-registry';
 import { defineWorkflowTables } from '../../workflows/workflow-schema';
 import { WorkflowService } from '../../workflows/workflow-service';
+import type { StepContext } from '../../workflows/types';
 import { resolveJobsConfig } from '../config';
 import { defineJob } from '../definition';
 import { JobsError, readJobRejection } from '../error';
@@ -35,7 +36,7 @@ interface Options {
   readonly beforeWrite?: (operation: MemoryJobsOperation) => void | Promise<void>;
   readonly afterWrite?: (operation: MemoryJobsOperation) => void | Promise<void>;
   readonly beforeRead?: (operation: MemoryJobsOperation) => void | Promise<void>;
-  readonly activity?: (input: unknown) => void | Promise<void>;
+  readonly activity?: (input: unknown, context: StepContext) => void | Promise<void>;
 }
 export async function memorySourceJobsFixture(options: Options = {}) {
   const auth = resolveAuthBehaviorConfig({ tenancy: options.tenancy ?? 'single' }), kernel = createAuthorizationKernel(auth);
@@ -58,7 +59,7 @@ export async function memorySourceJobsFixture(options: Options = {}) {
     const registry = new WorkflowRegistry();
     registry.registerActivity({ name: 'synthetic.source.activity', version: '1', databaseCallable: true,
       handler: async activity => { if (activeLeases || backendLeases) throw new Error('Source/Jobs SQL lease escaped into Torrent activity.');
-        calls.push(cloneDatabaseSerializableValue(activity.input)); await options.activity?.(activity.input); return activity.input; } });
+        calls.push(cloneDatabaseSerializableValue(activity.input)); await options.activity?.(activity.input, activity); return activity.input; } });
     registry.create({ name: 'synthetic.source.workflow', version: 1, flow: flow(step('execute', { name: 'synthetic.source.activity', version: '1' })) });
     const store = new WorkflowExecutionAuthorityStore(torrentDb, () => now);
     const actor = (): WorkflowActorExecutionAuthority => ({ version: 1, kind: 'actor',

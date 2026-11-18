@@ -6,7 +6,8 @@ import { JobsError } from './error';
 import { DatabaseError } from '../databases/database-error';
 import { jobOccurrenceId, type JobAdmissionRow, type JobOccurrenceRow } from './model';
 import type { TrustedJobSource } from './source-authority';
-import { jobSourceScheduleId } from './source-model';
+import { jobSourcePrincipal, jobSourceScheduleId } from './source-model';
+import { jobHash } from './validation';
 import { memorySourceJobsFixture, untilMemoryJobs } from './test-support/memory-source-fixture';
 
 const activate = { expectedRevision: 0, idempotencyKey: 'register-A', pinInput: { value: 1 } };
@@ -15,6 +16,96 @@ function latch() {
   const promise = new Promise<void>(resolve => { release = resolve; }), entered = new Promise<void>(resolve => { enter = resolve; });
   return { entered, release, async wait() { enter(); await promise; } };
 }
+
+test('invalid source timing is a typed known no-start Jobs rejection before any source writer', async () => {
+  const f = await memorySourceJobsFixture();
+  try {
+    const source = f.source(); await source.api.registration.activate(activate); const writes = f.commands.length;
+    for (const [index, timing] of [
+      { at: 'not-an-instant' },
+      { at: '+010000-01-01T00:00:00.000Z' },
+      { at: new Date(f.now()).toISOString(), maxLatenessMs: 366 * 86_400_000 + 1 },
+    ].entries()) {
+      await expect(source.api.schedules.create({ input: { value: 1 }, ...timing }, { idempotencyKey: 'invalid-source-time-' + index }))
+        .rejects.toMatchObject({ code: 'JOBS_INPUT_INVALID', outcome: 'not-started' });
+    }
+    expect(f.commands).toHaveLength(writes); expect(f.rows(source.scope, 'job_schedules')).toHaveLength(0);
+  } finally { await f.close(); }
+});
+
+test('source schedules fence an exact expected registration but historical replay remains original evidence', async () => {
+  const f = await memorySourceJobsFixture();
+  try {
+    const a = f.source(), b = f.source({ policyVersion: 'B' });
+    const first = await a.api.registration.activate(activate);
+    const input = { input: { value: 1 }, at: new Date(f.now() + 5_000).toISOString() };
+    const receipt = await a.api.schedules.create(input, { idempotencyKey: 'mapped-original', expectedRegistration: first });
+    await b.api.registration.activate({ ...activate, expectedRevision: 1, idempotencyKey: 'mapped-B' });
+    const third = await a.api.registration.activate({ ...activate, expectedRevision: 2, idempotencyKey: 'mapped-A-again' });
+    expect(third.policyHash).toBe(first.policyHash);
+    await expect(a.api.schedules.create(input, { idempotencyKey: 'stale-mapping', expectedRegistration: first }))
+      .rejects.toMatchObject({ code: 'JOBS_AUTHORITY_RETIRED' });
+    expect(await a.api.schedules.create(input, { idempotencyKey: 'mapped-original', expectedRegistration: third })).toEqual(receipt);
+    await expect(a.api.schedules.create({ ...input, input: { value: 2 } }, { idempotencyKey: 'mapped-original', expectedRegistration: third }))
+      .rejects.toMatchObject({ code: 'JOBS_INTENT_CONFLICT' });
+    expect(f.rows(a.scope, 'job_schedules')).toHaveLength(1);
+    await expect(a.api.registration.activate({ ...activate, expectedRevision: 3, idempotencyKey: 'mapping-not-a-registration-option', expectedRegistration: third }))
+      .rejects.toMatchObject({ code: 'JOBS_INPUT_INVALID' });
+    await expect(a.api.schedules.cancel(receipt.id, { expectedRevision: 1, idempotencyKey: 'mapping-not-a-cancel-option', expectedRegistration: third }))
+      .rejects.toMatchObject({ code: 'JOBS_INPUT_INVALID' });
+  } finally { await f.close(); }
+});
+
+test('a mapped source create waiting at its writer cannot slide into a newer A to B to A generation', async () => {
+  const barrier = latch(); let hold = false;
+  const f = await memorySourceJobsFixture({ async beforeWrite(operation) {
+    if (hold && operation.name === 'jobs.source.schedule.create') { hold = false; await barrier.wait(); }
+  } });
+  let creating: Promise<unknown> | undefined;
+  try {
+    const a = f.source(), b = f.source({ policyVersion: 'B' });
+    const first = await a.api.registration.activate(activate); hold = true;
+    creating = a.api.schedules.create({ input: { value: 1 }, at: new Date(f.now() + 5_000).toISOString() },
+      { idempotencyKey: 'mapped-await', expectedRegistration: first });
+    const result = creating.then(value => ({ value }), error => ({ error }));
+    await barrier.entered;
+    await b.api.registration.activate({ ...activate, expectedRevision: 1, idempotencyKey: 'mapped-await-B' });
+    await a.api.registration.activate({ ...activate, expectedRevision: 2, idempotencyKey: 'mapped-await-A' });
+    barrier.release();
+    expect(await result).toMatchObject({ error: { code: 'JOBS_AUTHORITY_RETIRED' } });
+    expect(await a.api.receipts.get('mapped-await')).toBeNull(); expect(f.rows(a.scope, 'job_schedules')).toHaveLength(0);
+  } finally { barrier.release(); await Promise.allSettled(creating ? [creating] : []); await f.close(); }
+});
+
+test('source execution evidence proves the original Torrent key before Jobs dispatch acknowledgment and survives retirement', async () => {
+  const barrier = latch(); let hold = true;
+  const f = await memorySourceJobsFixture({ async beforeWrite(operation) {
+    if (hold && operation.name === 'jobs.dispatch') { hold = false; await barrier.wait(); }
+  } });
+  let ticking: Promise<unknown> | undefined;
+  try {
+    const source = f.source(), registration = await source.api.registration.activate(activate), due = f.now();
+    const input = { value: 1 }, created = await source.api.schedules.create({ input, at: new Date(due).toISOString() }, { idempotencyKey: 'execution-evidence' });
+    const authority = f.bridge.system({ principal: jobSourcePrincipal(registration.id), reason: 'Synthetic same-principal non-Jobs start', scope: source.scope });
+    const pin = f.bridge.pin(authority, f.definition.workflow.name, input, f.definition.workflow.version);
+    const unrelated = await f.bridge.enqueue(authority, pin, input, 'synthetic-unrelated-execution', 'synthetic-unrelated-binding', () => {});
+    expect(await source.api.executions.get(created.id, { generation: 1, scheduledAt: due })).toBeNull();
+    ticking = f.tick(); await barrier.entered;
+    expect(f.rows(source.scope, '_jobs_occurrences')[0]).toMatchObject({ state: 'claimed', receipt_json: null, workflow_id: null });
+    const evidence = await source.api.executions.get(created.id, { generation: 1, scheduledAt: due });
+    expect(evidence).toMatchObject({ scheduleId: created.id, generation: 1, scheduledAt: due, occurrenceId: jobOccurrenceId(created.id, 1, due),
+      sourceId: registration.id, policyGeneration: registration.generation, policyHash: registration.policyHash, workflow: pin, inputHash: jobHash(input) });
+    expect(evidence!.instanceId).not.toBe(unrelated.instanceId);
+    expect(Object.keys(evidence!).sort()).toEqual(['generation', 'inputHash', 'instanceId', 'occurrenceId', 'policyGeneration', 'policyHash', 'scheduleId', 'scheduledAt', 'sourceId', 'status', 'workflow'].sort());
+    await source.api.registration.retire({ expectedRevision: 1, idempotencyKey: 'retire-execution-evidence' }); source.retireEligibility();
+    expect((await source.api.executions.get(created.id, { generation: 1, scheduledAt: due }))!.instanceId).toBe(evidence!.instanceId);
+    expect(await source.api.executions.get(created.id, { generation: 1, scheduledAt: due + 1 })).toBeNull();
+    const other = f.source({ identity: { ownerId: 'different-synthetic-owner' } });
+    await expect(other.api.executions.get(created.id, { generation: 1, scheduledAt: due })).rejects.toMatchObject({ code: 'JOBS_NOT_FOUND' });
+    barrier.release(); await ticking;
+    expect((await source.api.executions.get(created.id, { generation: 1, scheduledAt: due }))!.instanceId).toBe(evidence!.instanceId);
+  } finally { barrier.release(); await Promise.allSettled(ticking ? [ticking] : []); await f.close(); }
+});
 
 test('source once keeps the original due instant and durable identity, then the real runner obtains one real Torrent receipt and terminal activity', async () => {
   const f = await memorySourceJobsFixture();
