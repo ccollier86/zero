@@ -7,7 +7,7 @@ import { resolveAuthBehaviorConfig } from '../../auth/auth-config';
 import { authContextAuthorityFingerprint } from '../../auth/auth-context-authority';
 import { createRequestAuthorizationAccess } from '../../auth/authorization-access';
 import { createAuthorizationKernel } from '../../auth/authorization-kernel';
-import { requireRequestServiceDataScope, type ServiceDataScope } from '../../auth/service-data-scope';
+import { requireRequestServiceDataScope, serviceDataScopeKey, type ServiceDataScope } from '../../auth/service-data-scope';
 import { AuthError, type AuthContext } from '../../auth/types';
 import { AuthorityCommitCoordinator } from '../../databases/authority-commit-coordinator';
 import { assertDatabaseCommitAuthorityCurrent, type DatabaseCommitAuthority } from '../../databases/database-commit-authority';
@@ -26,9 +26,10 @@ import type { ScopedCalendar } from '../contracts';
 import { installCalendarOwnerSchema } from '../owner-schema';
 import { resolveCalendarPersistenceConfig } from '../persistence-config';
 import { calendarRealm } from '../realm';
-import { CalendarRuntime, type CalendarRuntimeOptions } from '../runtime';
+import { calendarDatabaseId, CalendarRuntime, type CalendarRuntimeOptions } from '../runtime';
 import { CalendarService } from '../service';
 import { calendarHash } from '../validation';
+import type { CalendarParticipantDirectory } from '../participants-directory';
 
 interface MemoryPlane {
   readonly db: ReactiveDB;
@@ -43,7 +44,9 @@ export interface MemoryCalendarSession {
   replaceScope(tenantId: string): void;
 }
 
-export function memoryCalendarServiceFixture(options: { tenancy?: 'single' | 'multi'; config?: CalendarConfig } = {}) {
+export function memoryCalendarServiceFixture(options: { tenancy?: 'single' | 'multi'; config?: CalendarConfig;
+  participantDirectory?: CalendarParticipantDirectory; beforeDispatch?: (operation: DatabaseOperation) => void;
+  afterCommand?: (operation: DatabaseOperation) => void } = {}) {
   const tenancy = options.tenancy ?? 'multi', project = '/synthetic-memory-calendar-service-never-created';
   const auth = resolveAuthBehaviorConfig({ tenancy }), kernel = createAuthorizationKernel(auth);
   const config = resolveCalendarConfig({ timezone: 'UTC', ...options.config }, project, auth);
@@ -74,8 +77,10 @@ export function memoryCalendarServiceFixture(options: { tenancy?: 'single' | 'mu
         async execute(operation: DatabaseOperation, operationOptions?: DatabaseOperationExecutionOptions): Promise<DatabaseReadResult | DatabaseCommitResult> {
           if (released) throw new Error('Synthetic physical lease is closed.');
           operationOptions?.signal?.throwIfAborted();
-          // Exercise the real final-edge opaque authority binding, not a permissive broker guard.
-          assertDatabaseCommitAuthorityCurrent(commitAuthority, authorityCoordinator, createDatabaseRef(id));
+          options.beforeDispatch?.(operation);
+          // Production strong reads do not carry writer commit authority. Only
+          // commands exercise the real opaque final writer admission boundary.
+          if (operation.type === 'command') assertDatabaseCommitAuthorityCurrent(commitAuthority, authorityCoordinator, createDatabaseRef(id));
           const db = plane.db;
           if (operation.type === 'get') return { value: cloneDatabaseSerializableValue(db.get(operation.table, operation.id)), sequence: { seq: db.currentSeq } };
           if (operation.type === 'query') {
@@ -96,6 +101,7 @@ export function memoryCalendarServiceFixture(options: { tenancy?: 'single' | 'mu
             return { ...prior.result, replayed: true };
           }
           const before = db.currentSeq, output = runDatabaseRealmCommand(calendarRealm, db, operation.name, operation.input);
+          options.afterCommand?.(operation);
           const result: DatabaseCommitResult = { value: { kind: 'command', name: operation.name, output },
             sequence: { seq: db.currentSeq }, replayed: false, idempotencyKey: operation.idempotencyKey };
           plane.transport.set(operation.idempotencyKey, { fingerprint, result });
@@ -122,7 +128,7 @@ export function memoryCalendarServiceFixture(options: { tenancy?: 'single' | 'mu
     const internal = runtime as unknown as { filePresent(id: string): boolean; queueHint(ref: string): void; listeners: Map<string, Set<() => void>> };
     internal.filePresent = id => planes.has(id);
     removeCommit = observeDatabaseCoordinatorCommits(owner, ref => internal.queueHint(ref));
-    service = new CalendarService(runtime, config, lifetime.signal);
+    service = new CalendarService(runtime, config, lifetime.signal, options.participantDirectory);
     const session = (userId: string, sessionOptions: { tenantId?: string; manager?: boolean; context?: Partial<AuthContext> } = {}): MemoryCalendarSession => {
       const tenantId = sessionOptions.tenantId ?? 'tenant-a';
       let live: AuthContext | null = { userId, email: userId + '@synthetic.example.test', role: sessionOptions.manager ? 'admin' : 'user',
@@ -147,6 +153,8 @@ export function memoryCalendarServiceFixture(options: { tenancy?: 'single' | 'mu
       };
     };
     return { config, runtime, service, system, session,
+      sourceRows(scope: ServiceDataScope, table: string) { return planes.get(calendarDatabaseId(serviceDataScopeKey(scope)))?.db.list(table) ?? []; },
+      sourceSequence(scope: ServiceDataScope) { return planes.get(calendarDatabaseId(serviceDataScopeKey(scope)))?.db.currentSeq ?? 0; },
       stats: () => ({ planes: planes.size, ownerRows: (system.prepare('SELECT count(*) AS count FROM _calendar_owners').get() as { count: number }).count,
         acquisitions, releases, activeLeases, appointmentQueries: queryCounts.get('calendar.appointments') ?? 0,
         subscriptions: [...internal.listeners.values()].reduce((total, listeners) => total + listeners.size, 0) }),

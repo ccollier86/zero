@@ -1,12 +1,14 @@
 /** Commit-driven invalidation with bounded authority checks. Never publishes rows from a raw database subscription. */
 import { admitCalendarRequest, type CalendarAuthority } from './authority';
 import type { ResolvedCalendarConfig } from './config';
-import type { CalendarAppointmentTypePageQuery, CalendarLocationPageQuery, CalendarRangeQuery, CalendarResourcePageQuery, CalendarVisitLocationQuery, CalendarWatchOptions, CalendarWatchUpdate } from './contracts';
+import type { CalendarAppointmentTypePageQuery, CalendarLocationPageQuery, CalendarRangeQuery, CalendarResourcePageQuery, CalendarVisitLocationQuery, CalendarWatchOptions, CalendarWatchUpdate, CalendarParticipantDirectoryQuery } from './contracts';
 import type { CalendarServiceBroker } from './service';
 import { CalendarError } from './error';
 import { calendarRecord } from './validation';
 
 type CalendarWatchQuery = { queryName?: 'calendar.appointments'; query: CalendarRangeQuery }
+  | { queryName: 'calendar.participantDirectory'; query: CalendarParticipantDirectoryQuery }
+  | { queryName: 'calendar.participantsForAppointment' | 'calendar.participantsForHold'; query: { readonly id: string } }
   | { queryName: 'calendar.lifecycle'; query: Record<string, never> }
   | { queryName: 'calendar.appointmentTransitions'; query: { readonly id: string } }
   | { queryName: 'calendar.blocks'; query: CalendarRangeQuery }
@@ -27,7 +29,8 @@ export function watchCalendarPage<T>(input: {
   const options = calendarRecord(input.options, ['signal', 'onError']);
   const queryName = input.queryName ?? 'calendar.appointments';
   if (!['calendar.appointments', 'calendar.blocks', 'calendar.holds', 'calendar.availability', 'calendar.resources', 'calendar.locations', 'calendar.location', 'calendar.resourceLocations',
-    'calendar.types', 'calendar.type', 'calendar.resourceTypes', 'calendar.lifecycle', 'calendar.appointmentTransitions', 'calendar.visitLocations'].includes(queryName)) throw new CalendarError('CALENDAR_INPUT_INVALID');
+    'calendar.types', 'calendar.type', 'calendar.resourceTypes', 'calendar.lifecycle', 'calendar.appointmentTransitions', 'calendar.visitLocations',
+    'calendar.participantDirectory', 'calendar.participantsForAppointment', 'calendar.participantsForHold'].includes(queryName)) throw new CalendarError('CALENDAR_INPUT_INVALID');
   if (typeof input.listener !== 'function' || options.onError !== undefined && typeof options.onError !== 'function'
     || options.signal !== undefined && !(options.signal instanceof AbortSignal)
     || input.request.signal !== undefined && !(input.request.signal instanceof AbortSignal)) throw new CalendarError('CALENDAR_INPUT_INVALID');
@@ -67,15 +70,17 @@ export function watchCalendarPage<T>(input: {
           // Guardian generation change. Never publish a page already known to
           // predate that commit while the final authority check was awaiting.
           if (pending) { invalidated ||= changed; continue; }
-          const serialized = JSON.stringify(page);
-          if (serialized !== last || changed) { last = serialized; input.listener(page, { invalidated: changed }); }
+          const published = input.broker.publish?.(authority.scope, queryName,
+            { ...input.query, actor: authority.actor }, page, authority.guard) ?? page;
+          const serialized = JSON.stringify(published);
+          if (serialized !== last || changed) { last = serialized; input.listener(published, { invalidated: changed }); }
         }
       })()).catch(failure).finally(() => {
         active = false;
         if (!closed) { clearTimeout(timer); timer = setTimeout(refresh, 5_000); timer.unref?.(); }
       });
     };
-    const unsubscribe = input.broker.subscribe?.(authority.scope, () => { invalidated = true; refresh(); });
+    const unsubscribe = input.broker.subscribe?.(authority.scope, () => { invalidated = true; refresh(); }, queryName);
     // Installation may synchronously retire this request. Its returned removal
     // capability still belongs to this watch, even if close ran before assignment.
     if (closed) { unsubscribe?.(); return; }

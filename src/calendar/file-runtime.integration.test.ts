@@ -13,23 +13,38 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveAuthBehaviorConfig } from '../auth/auth-config';
-import { installAuthAuthorityRevision } from '../auth/auth-authority-revision';
-import { applicationServiceDataScope, serviceDataScopeKey, trustedSystemServiceDataScope, type ServiceDataScope } from '../auth/service-data-scope';
+import { installAuthAuthorityRevision, readAuthAuthorityRevision } from '../auth/auth-authority-revision';
+import { createRequestAuthorizationAccess } from '../auth/authorization-access';
+import { createAuthorizationKernel } from '../auth/authorization-kernel';
+import { defineAuthTables } from '../auth/auth-schema';
+import { AuthSessionService } from '../auth/auth-session-service';
+import { AuthSessionStore } from '../auth/auth-session-store';
+import { AuthError } from '../auth/types';
+import type { WebSessionBinding } from '../auth/auth-session-types';
+import { UserStore } from '../auth/user-store';
+import { TokenService } from '../auth/token-service';
+import { TenantStore, TenancyService } from '../auth/tenancy';
+import { applicationServiceDataScope, requireRequestServiceDataScope, serviceDataScopeKey, trustedSystemServiceDataScope, type ServiceDataScope } from '../auth/service-data-scope';
 import { AuthorityCommitCoordinator } from '../databases/authority-commit-coordinator';
 import { DatabaseActorAuthorityContext } from '../databases/database-actor-authority-context';
+import { registerDatabaseAuthorityCommitGuard } from '../databases/database-authority-commit-guard';
+import { DatabaseAuthorityCommitFileFence } from '../databases/database-authority-commit-file-fence';
 import { canonicalDatabaseRootIdentity, resolveDatabaseFile } from '../databases/database-file';
 import type { SubprocessDatabaseExecutor } from '../databases/subprocess-database-executor';
 import { databaseActorFactoryLaunch, type DatabaseActorExecutorFactoryContext, type SubprocessDatabaseExecutorFactory } from '../databases/subprocess-database-executor-factory';
 import { createReactiveDB } from '../sync/reactive-db';
 import { allocateSyntheticFixture } from '../test-support/synthetic-fixture';
 import { resolveCalendarConfig, type ResolvedCalendarConfig } from './config';
-import type { CalendarActor, CalendarAppointmentPage, CalendarAppointmentView, CalendarAppointmentTypeView, CalendarAvailabilityView, CalendarBlockPage, CalendarBusyPage, CalendarCommandReceipt, CalendarHoldPage, CalendarHoldView, CalendarLocationPage, CalendarLocationView, CalendarResourceLocationsView, CalendarResourcePage, CalendarLifecyclePolicy, CalendarAppointmentTransitions } from './contracts';
+import type { CalendarActor, CalendarAppointmentPage, CalendarAppointmentView, CalendarAppointmentTypeView, CalendarAvailabilityView, CalendarBlockPage, CalendarBusyPage, CalendarCommandReceipt, CalendarHoldPage, CalendarHoldView, CalendarLocationPage, CalendarLocationView, CalendarResourceLocationsView, CalendarResourcePage, CalendarLifecyclePolicy, CalendarAppointmentTransitions, CalendarParticipantReference } from './contracts';
+import type { CalendarAuthority } from './authority';
 import { CalendarError } from './error';
 import { inspectCalendarOwnerSchema } from './owner-schema';
 import { resolveCalendarPersistenceConfig, type ResolvedCalendarPersistenceConfig } from './persistence-config';
 import { calendarRealm } from './realm';
 import { calendarDatabaseId, CalendarRuntime, type CalendarRuntimeOptions } from './runtime';
 import { calendarHash } from './validation';
+import { CalendarService } from './service';
+import { ManagedCalendarParticipantDirectory, type CalendarParticipantDirectory } from './participants-directory';
 
 const fixtureParent = process.platform === 'darwin'
   ? '/Volumes/code-bank/tmp/scratch/zero-platform/calendar-file-runtime'
@@ -55,14 +70,17 @@ const block = (scope: ServiceDataScope, id: string, resourceIds = ['person', 'ro
 type OwnedActor = { readonly context: DatabaseActorExecutorFactoryContext; readonly executor: SubprocessDatabaseExecutor };
 type PersistenceProbe = (defaults: ResolvedCalendarPersistenceConfig, root: string, config: ResolvedCalendarConfig) => ResolvedCalendarPersistenceConfig;
 
-async function fixture(probe?: PersistenceProbe) {
+async function fixture(probe?: PersistenceProbe, participantMode?: 'single' | 'multi') {
   // This is a new allocator label. Immediate finally cleanup is mandatory;
   // scheduled maintenance's existing family allowlist is NOT claimed to cover it.
   const owned = await allocateSyntheticFixture(fixtureParent, 'calendar-runtime');
   const systemPath = join(owned.root, 'system.sqlite');
   let config: ResolvedCalendarConfig;
   try {
-    const resolved = resolveCalendarConfig({ rootDirectory: 'calendar', timezone: 'UTC', maxActiveDatabases: 2 }, owned.root, resolveAuthBehaviorConfig());
+    const resolved = resolveCalendarConfig({ rootDirectory: 'calendar', timezone: 'UTC', maxActiveDatabases: 2,
+      ...(participantMode ? { manage: { properties: { scheduler: 'yes' } },
+        participants: { userEligibility: { properties: { staff: 'yes' } } } } : {}) }, owned.root,
+    participantMode ? participantAuth(participantMode) : resolveAuthBehaviorConfig());
     if (!resolved) throw new Error('Synthetic calendar configuration was not resolved.');
     config = resolved;
   } catch (error) {
@@ -140,6 +158,151 @@ async function fixture(probe?: PersistenceProbe) {
   } catch (error) {
     try { await close(); }
     catch (cleanup) { throw new AggregateError([error, cleanup], 'Synthetic calendar setup and cleanup failed; preserving ' + owned.root); }
+    throw error;
+  }
+}
+
+/**
+ * Participant-only extension of the existing exact-owned physical allocator.
+ * Canonical users, memberships, durable browser tokens, SYSTEM policy reads,
+ * CalendarService and every calendar actor remain their real implementations.
+ * No invocation of this helper is permitted while the integrity hold exists.
+ */
+function participantAuth(mode: 'single' | 'multi') {
+  return resolveAuthBehaviorConfig({ tenancy: mode, userProperties: {
+    staff: { editableBy: 'admin', useInPolicies: true }, scheduler: { editableBy: 'admin', useInPolicies: true },
+  } });
+}
+
+async function participantFixture(mode: 'single' | 'multi' = 'single') {
+  const f = await fixture(undefined, mode), systemPath = join(f.root, 'system.sqlite');
+  const auth = participantAuth(mode), config = f.config;
+  const kernel = createAuthorizationKernel(auth);
+  let afterFinalTargetCheck: (() => void) | undefined;
+  let observedFinalEdges = 0;
+  let retirementUnproven = false;
+
+  const openGuardian = async () => {
+    const lifetime = new AbortController();
+    let directory: ManagedCalendarParticipantDirectory | undefined, service: CalendarService | undefined;
+    let fence: DatabaseAuthorityCommitFileFence | undefined, remove: (() => void) | undefined;
+    try {
+      defineAuthTables(f.system);
+      const users = new UserStore(f.system, { tenancyMode: mode });
+      const tenancy = new TenancyService(new TenantStore(f.system));
+      installAuthAuthorityRevision(f.system);
+      const sessions = new AuthSessionService(new AuthSessionStore(f.system), mode, tenancy);
+      const tokens = await TokenService.create({ db: f.system, authSessionService: sessions }); tokens.setUserStore(users);
+      fence = new DatabaseAuthorityCommitFileFence(systemPath);
+      remove = registerDatabaseAuthorityCommitGuard(f.system, f.options.authority.coordinator, fence);
+      directory = new ManagedCalendarParticipantDirectory({ db: f.system, users, tenancy, kernel, roles: null, config,
+        assertCurrent: () => tokens.assertCurrentProfile() });
+      const native = directory;
+      const observed: CalendarParticipantDirectory = {
+        list: (scope, query) => native.list(scope, query), resolve: (scope, refs) => native.resolve(scope, refs),
+        subscribe: (scope, listener) => native.subscribe(scope, listener),
+        assertBindable(scope, refs) {
+          native.assertBindable(scope, refs);
+          // Forward-only interleaving at the actual FIFO final callback. The
+          // coordinator has already captured SYSTEM revision on this stack.
+          // Ordinary service/preflight guard calls have no shared writer lease.
+          if (afterFinalTargetCheck && f.options.authority.coordinator.diagnostics().activeShared > 0) {
+            const interleave = afterFinalTargetCheck; afterFinalTargetCheck = undefined;
+            observedFinalEdges++; interleave();
+          }
+        },
+      };
+      service = new CalendarService(f.runtime, config, lifetime.signal, observed);
+      const currentService = service;
+      const forToken = async (token: string) => {
+        const original = await tokens.resolveAuthContext(token);
+        if (!original) throw new Error('Synthetic durable browser token was not admitted.');
+        const reference = tokens.captureAuthContextAuthority(original);
+        if (!reference) throw new Error('Synthetic browser authority reference was not captured.');
+        const current = () => {
+          const value = tokens.resolveAuthContextAuthority(reference);
+          if (!value) throw new AuthError('Synthetic browser authority retired.', 'AUTH_STATE_CHANGED', 409);
+          return value;
+        };
+        const access = () => createRequestAuthorizationAccess({ kernel, authContext: current(), propertyStore: users,
+          assertCurrentProfile: () => tokens.assertCurrentProfile() });
+        const scope = requireRequestServiceDataScope(access(), () => kernel);
+        const request: CalendarAuthority = { get access() { return access(); }, scope,
+          assertCurrentAuthoritySync() { current(); },
+          async assertCurrentAuthority() {
+            if (!await tokens.resolveAuthContext(token)) throw new AuthError('Synthetic token retired.', 'AUTH_STATE_CHANGED', 409);
+            current();
+          },
+        };
+        return { token, scope, api: currentService.forAuthority(request) };
+      };
+      return { users, tenancy, tokens, forToken,
+        async session(userId: string, binding?: WebSessionBinding) {
+          const user = users.getUserById(userId); if (!user) throw new Error('Synthetic session subject missing.');
+          const issued = await tokens.issueTokenPair(user, binding ? { binding } : {});
+          return forToken(issued.accessToken);
+        },
+        async close() { lifetime.abort(); await currentService.close(); native.close(); remove?.(); fence?.close(); },
+      };
+    } catch (error) {
+      lifetime.abort();
+      try { await service?.close(); directory?.close(); remove?.(); fence?.close(); }
+      catch (cleanup) { retirementUnproven = true; throw new AggregateError([error, cleanup], 'Synthetic participant owner shutdown failed; preserving ' + f.root); }
+      throw error;
+    }
+  };
+  type Guardian = Awaited<ReturnType<typeof openGuardian>>;
+  let guardian: Guardian | undefined;
+  let foreign: ReturnType<typeof createReactiveDB> | undefined;
+  let foreignUsers: UserStore | undefined, foreignTenancy: TenancyService | undefined;
+  let foreignCoordinator: AuthorityCommitCoordinator | undefined;
+  let foreignFence: DatabaseAuthorityCommitFileFence | undefined, removeForeign: (() => void) | undefined;
+  const openForeign = () => {
+    foreign = createReactiveDB({ mode: 'file', path: systemPath });
+    foreignUsers = new UserStore(foreign, { tenancyMode: mode }); foreignTenancy = new TenancyService(new TenantStore(foreign));
+    foreignCoordinator = new AuthorityCommitCoordinator(); foreignFence = new DatabaseAuthorityCommitFileFence(systemPath);
+    removeForeign = registerDatabaseAuthorityCommitGuard(foreign, foreignCoordinator, foreignFence);
+  };
+  const retire = async () => {
+    afterFinalTargetCheck = undefined;
+    const errors: unknown[] = [];
+    try { await guardian?.close(); guardian = undefined; } catch (error) { errors.push(error); }
+    try { removeForeign?.(); removeForeign = undefined; foreignFence?.close(); foreignFence = undefined; } catch (error) { errors.push(error); }
+    try { foreign?.dispose(); foreign = undefined; foreignUsers = undefined; foreignTenancy = undefined; } catch (error) { errors.push(error); }
+    try { await foreignCoordinator?.close(); foreignCoordinator = undefined; } catch (error) { errors.push(error); }
+    if (errors.length) { retirementUnproven = true; throw new AggregateError(errors, 'Synthetic participant dependencies did not retire; preserving ' + f.root); }
+  };
+  const close = async () => {
+    const errors: unknown[] = [];
+    try { await retire(); } catch (error) { errors.push(error); }
+    try { await f.stop(); } catch (error) { errors.push(error); }
+    if (errors.length || retirementUnproven) throw new AggregateError(errors, 'Synthetic participant physical resources did not settle; preserving ' + f.root);
+    await f.close();
+  };
+  try {
+    guardian = await openGuardian(); openForeign();
+    return {
+      base: f, config,
+      get users() { if (!guardian) throw new Error('Synthetic Guardian stopped.'); return guardian.users; },
+      get tenancy() { if (!guardian) throw new Error('Synthetic Guardian stopped.'); return guardian.tenancy; },
+      get foreignUsers() { if (!foreignUsers) throw new Error('Synthetic foreign Guardian stopped.'); return foreignUsers; },
+      get foreignTenancy() { if (!foreignTenancy) throw new Error('Synthetic foreign Guardian stopped.'); return foreignTenancy; },
+      session(userId: string, binding?: WebSessionBinding) { if (!guardian) throw new Error('Synthetic Guardian stopped.'); return guardian.session(userId, binding); },
+      forToken(token: string) { if (!guardian) throw new Error('Synthetic Guardian stopped.'); return guardian.forToken(token); },
+      armFinalEdge(interleave: () => void) { if (afterFinalTargetCheck) throw new Error('Synthetic participant final edge already armed.'); afterFinalTargetCheck = interleave; },
+      get finalEdges() { return observedFinalEdges; },
+      addRegistrationMarker(userId: string, markerId: string) {
+        if (!foreign) throw new Error('Synthetic foreign SYSTEM stopped.');
+        const source = foreign;
+        source.transaction(() => source.prepare(`INSERT INTO _auth_registration_provisioning
+          (registration_id,user_id,is_bootstrap,created_at) VALUES(?,?,0,?)`).run(markerId, userId, Date.now()));
+      },
+      async restart() { await retire(); await f.restart(false); guardian = await openGuardian(); openForeign(); },
+      async stop() { await retire(); await f.stop(); }, close,
+    };
+  } catch (error) {
+    try { await close(); }
+    catch (cleanup) { throw new AggregateError([error, cleanup], 'Synthetic participant setup/cleanup failed; preserving ' + f.root); }
     throw error;
   }
 }
@@ -675,4 +838,116 @@ test('real dedicated actor loads the matching realm with an empty inherited envi
     try { await f?.close(); }
     finally { if (previous === undefined) delete process.env[name]; else process.env[name] = previous; }
   }
+}, 120_000);
+
+/** Prepared physical gate only: not executed during the external integrity hold. */
+test('native participant final-edge account/property/marker races reject the actual actor commit without any partial binding or receipt', async () => {
+  const f = await participantFixture();
+  try {
+    const manager = await f.users.createUser({ username: 'participant-manager', email: 'manager@example.test', password: 'Synthetic-password1!', role: 'user' });
+    const target = await f.users.createUser({ username: 'participant-target', email: 'target@example.test', password: 'Synthetic-password1!', firstName: 'PRIVATE_SYNTHETIC_PARTICIPANT', role: 'user' });
+    f.users.setProperty(manager.userId, 'scheduler', 'yes'); f.users.setProperty(target.userId, 'staff', 'yes');
+    const session = await f.session(manager.userId);
+    const reference: CalendarParticipantReference = { kind: 'guardian-user', userId: target.userId };
+    const resource = await session.api.resources.create({ label: 'Synthetic participant room', kind: 'room', timeZone: 'UTC' }, { idempotencyKey: 'participant-room' });
+    const mutations = [
+      { key: 'participant-status-race', change() { f.foreignUsers.updateUser(target.userId, { status: 'suspended' }); }, restore() { f.users.updateUser(target.userId, { status: 'active' }); } },
+      { key: 'participant-property-race', change() { f.foreignUsers.setProperty(target.userId, 'staff', 'no'); }, restore() { f.users.setProperty(target.userId, 'staff', 'yes'); } },
+      { key: 'participant-marker-race', change() { f.addRegistrationMarker(target.userId, 'synthetic-restored-marker'); }, restore() {} },
+    ];
+    for (const mutation of mutations) {
+      expect((await session.api.participants.directory({ search: 'PRIVATE_SYNTHETIC_PARTICIPANT' })).items.map(item => item.ref)).toEqual([reference]);
+      const captured = readAuthAuthorityRevision(f.base.system)!, edges = f.finalEdges;
+      f.armFinalEdge(() => {
+        expect(readAuthAuthorityRevision(f.base.system)).toBe(captured);
+        mutation.change(); expect(readAuthAuthorityRevision(f.base.system)).toBeGreaterThan(captured);
+      });
+      // A proven actor authority denial maps to public FORBIDDEN. Preflight
+      // NOT_FOUND, an unknown outcome or an unfired final interleave does not
+      // satisfy this physical actor-commit gate.
+      await expect(session.api.appointments.create({ resourceIds: [resource.id], title: 'PRIVATE_SYNTHETIC_REJECTED_PARTICIPANT_APPOINTMENT',
+        startAt: '2030-01-01T10:00:00.000Z', endAt: '2030-01-01T11:00:00.000Z', timeZone: 'UTC', participants: [reference] },
+      { idempotencyKey: mutation.key })).rejects.toMatchObject({ code: 'CALENDAR_FORBIDDEN', outcome: 'not-committed' });
+      expect(f.finalEdges).toBe(edges + 1);
+      expect(await session.api.receipts.get(mutation.key)).toBeNull();
+      expect((await session.api.appointments.query({ resourceIds: [resource.id], startAt: '2030-01-01T00:00:00.000Z', endAt: '2030-01-02T00:00:00.000Z' })).items).toEqual([]);
+      mutation.restore();
+    }
+    const path = f.base.path(session.scope); await f.stop();
+    inspect(path, database => {
+      expect(database.query('SELECT count(*) AS n FROM calendar_appointments').get()).toEqual({ n: 0 });
+      expect(database.query('SELECT count(*) AS n FROM _calendar_reservations').get()).toEqual({ n: 0 });
+      expect(database.query('SELECT count(*) AS n FROM _calendar_appointment_participant_bindings').get()).toEqual({ n: 0 });
+      expect(database.query("SELECT count(*) AS n FROM _calendar_effect_intents WHERE target_kind='appointment'").get()).toEqual({ n: 0 });
+      for (const mutation of mutations) expect(database.query('SELECT count(*) AS n FROM _calendar_receipts WHERE request_id=?').get(mutation.key)).toEqual({ n: 0 });
+      expect(database.query('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' });
+      expect(database.query('PRAGMA foreign_key_check').all()).toEqual([]);
+    });
+  } finally { await f.close(); }
+}, 120_000);
+
+/** Prepared physical gate only: not executed during the external integrity hold. */
+test('native participant tenant membership fence, fixed hold transfer, token revocation and current tombstones survive full SYSTEM/actor restart', async () => {
+  const f = await participantFixture('multi');
+  try {
+    const makeUser = (name: string) => f.users.createUser({ username: name, email: name + '@example.test', password: 'Synthetic-password1!', firstName: 'PRIVATE_SYNTHETIC_' + name, role: 'user' });
+    const manager = await makeUser('participant-manager'), first = await makeUser('participant-first'), second = await makeUser('participant-second'), foreign = await makeUser('participant-foreign');
+    f.users.setProperty(manager.userId, 'scheduler', 'yes');
+    for (const user of [first, second, foreign]) f.users.setProperty(user.userId, 'staff', 'yes');
+    const tenant = f.tenancy.createTenant({ slug: 'participant-first', name: 'Synthetic first tenant', ownerUserId: manager.userId });
+    const otherTenant = f.tenancy.createTenant({ slug: 'participant-second', name: 'Synthetic second tenant', ownerUserId: manager.userId });
+    f.tenancy.addMembership({ tenantId: tenant.tenant.tenantId, userId: first.userId, roleKey: 'member', createdBy: manager.userId });
+    const membership = f.tenancy.addMembership({ tenantId: tenant.tenant.tenantId, userId: second.userId, roleKey: 'member', createdBy: manager.userId });
+    f.tenancy.addMembership({ tenantId: otherTenant.tenant.tenantId, userId: foreign.userId, roleKey: 'member', createdBy: manager.userId });
+    const managerSession = await f.session(manager.userId, { tenantId: tenant.tenant.tenantId, membershipId: tenant.ownerMembership.membershipId });
+    const otherSession = await f.session(manager.userId, { tenantId: otherTenant.tenant.tenantId, membershipId: otherTenant.ownerMembership.membershipId });
+    const references: CalendarParticipantReference[] = [first, second].map(user => ({ kind: 'guardian-user', userId: user.userId }));
+    references.sort((a, b) => a.userId < b.userId ? -1 : a.userId > b.userId ? 1 : 0);
+    expect((await managerSession.api.participants.directory()).items.map(item => item.ref)).toEqual(references);
+    const resource = await managerSession.api.resources.create({ label: 'Synthetic participant hold room', kind: 'room', timeZone: 'UTC' }, { idempotencyKey: 'participant-hold-room' });
+    const now = Date.now(), time = { startAt: new Date(now + 3_600_000).toISOString(), endAt: new Date(now + 7_200_000).toISOString(), timeZone: 'UTC' };
+    await expect(managerSession.api.holds.acquire({ ...time, resourceIds: [resource.id], participants: [{ kind: 'guardian-user', userId: foreign.userId }] },
+      { idempotencyKey: 'foreign-participant' })).rejects.toMatchObject({ code: 'CALENDAR_NOT_FOUND' });
+    expect(await managerSession.api.receipts.get('foreign-participant')).toBeNull();
+    const held = await managerSession.api.holds.acquire({ ...time, resourceIds: [resource.id], ttlSeconds: 900, participants: [...references].reverse() }, { idempotencyKey: 'participant-hold' });
+    const edges = f.finalEdges;
+    f.armFinalEdge(() => { f.foreignTenancy.suspendMembership(membership.membershipId); });
+    await expect(managerSession.api.holds.confirm(held.id, { title: 'PRIVATE_SYNTHETIC_PARTICIPANT_CONFIRM' },
+      { idempotencyKey: 'participant-confirm-race', expectedRevision: 1 })).rejects.toMatchObject({ code: 'CALENDAR_FORBIDDEN', outcome: 'not-committed' });
+    expect(f.finalEdges).toBe(edges + 1);
+    expect(await managerSession.api.receipts.get('participant-confirm-race')).toBeNull();
+    expect(await managerSession.api.holds.get(held.id)).toMatchObject({ status: 'held', revision: 1, appointmentId: null });
+    f.tenancy.reactivateMembership(membership.membershipId);
+    const input = { title: 'PRIVATE_SYNTHETIC_PARTICIPANT_CONFIRM' }, options = { idempotencyKey: 'participant-confirm', expectedRevision: 1 };
+    const accepted = await managerSession.api.holds.confirm(held.id, input, options);
+    expect((await managerSession.api.participants.forAppointment(accepted.id)).participants.map(item => item.ref)).toEqual(references);
+    f.users.updateUser(first.userId, { status: 'suspended' });
+    expect(await managerSession.api.holds.confirm(held.id, input, options)).toEqual(accepted);
+    const otherOwnersBefore = f.base.system.prepare('SELECT count(*) AS n FROM _calendar_owners').get();
+    await expect(otherSession.api.participants.forAppointment(accepted.id)).rejects.toMatchObject({ code: 'CALENDAR_NOT_FOUND' });
+    expect(f.base.system.prepare('SELECT count(*) AS n FROM _calendar_owners').get()).toEqual(otherOwnersBefore);
+    const path = f.base.path(managerSession.scope), token = managerSession.token;
+    await f.restart();
+    const restored = await f.forToken(token);
+    expect(await restored.api.receipts.get('participant-confirm')).toEqual(accepted);
+    const expected = references.map(ref => ref.userId === first.userId ? { ref, availability: 'unavailable' as const }
+      : { ref, availability: 'available' as const, name: 'PRIVATE_SYNTHETIC_participant-second' });
+    expect((await restored.api.participants.forAppointment(accepted.id)).participants).toEqual(expected);
+    expect((await restored.api.participants.forHold(held.id)).participants).toEqual(expected);
+    const busy = await restored.api.busy.query({ resourceIds: [resource.id], ...time });
+    expect(JSON.stringify(busy)).not.toContain(first.userId); expect(JSON.stringify(busy)).not.toContain(second.userId); expect(JSON.stringify(busy)).not.toContain('PRIVATE_SYNTHETIC');
+    expect(await restored.api.appointments.get(accepted.id)).not.toHaveProperty('participants');
+    f.users.revokeAllUserTokens(manager.userId);
+    await expect(restored.api.participants.forAppointment(accepted.id)).rejects.toMatchObject({ code: 'AUTH_STATE_CHANGED' });
+    await f.stop();
+    inspect(path, database => {
+      const holdBinding = database.query('SELECT references_json FROM _calendar_hold_participant_bindings WHERE hold_id=?').get(held.id) as { references_json: string };
+      const appointmentBinding = database.query('SELECT references_json FROM _calendar_appointment_participant_bindings WHERE appointment_id=?').get(accepted.id) as { references_json: string };
+      expect(JSON.parse(holdBinding.references_json)).toEqual(references); expect(appointmentBinding.references_json).toBe(holdBinding.references_json);
+      expect(database.query('SELECT count(*) AS n FROM calendar_appointments').get()).toEqual({ n: 1 });
+      expect(database.query('SELECT count(*) AS n FROM _calendar_receipts WHERE request_id=?').get('participant-confirm-race')).toEqual({ n: 0 });
+      expect(database.query('SELECT status,revision,appointment_id FROM calendar_holds WHERE id=?').get(held.id)).toEqual({ status: 'confirmed', revision: 2, appointment_id: accepted.id });
+      expect(database.query('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' }); expect(database.query('PRAGMA foreign_key_check').all()).toEqual([]);
+    });
+  } finally { await f.close(); }
 }, 120_000);

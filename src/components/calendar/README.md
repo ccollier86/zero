@@ -18,6 +18,15 @@ selected 2.11.0 archive remains frontend-only. See the
 [backend guide](../../../docs-next/backend/calendar/index.md) for the exact source
 capabilities, configuration and still-required release gates.
 
+The participant stage additionally exports `CalendarParticipantFields`: a controlled,
+compact native-account multi-picker using current authorized directory pages,
+retained names/tombstones, server-driven search/pagination, native surfaces,
+magnetic highlights and edge fades. It hides old identities on read retirement.
+Compose it with the new scoped participant hooks; the connected one-off editor
+does not automatically enable it, and rich-demo patient/contact/manual guest UI
+is not a native backend adapter. See the
+[participant guide](../../../docs-next/backend/calendar/participants.md).
+
 ```tsx
 import { ConnectedCalendarWorkspace } from '@zero/framework/calendar';
 <ConnectedCalendarWorkspace displayTimeZone="America/New_York" />

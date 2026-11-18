@@ -164,7 +164,7 @@ describe('calendar internal service boundary (in-memory broker, not Fabric)', ()
   test('only fixed commands are exposed, and reserved authority/routing/identity fields cannot be client-selected', async () => {
     const f = fixture(), api = f.service.forAuthority(f.request);
     expect(Object.isFrozen(api)).toBe(true);
-    expect(Object.keys(api).sort()).toEqual(['appointments', 'availability', 'blocks', 'busy', 'createAppointment', 'createResource', 'holds', 'lifecycle', 'locations', 'receipts', 'resources', 'types']);
+    expect(Object.keys(api).sort()).toEqual(['appointments', 'availability', 'blocks', 'busy', 'createAppointment', 'createResource', 'holds', 'lifecycle', 'locations', 'participants', 'receipts', 'resources', 'types']);
     const baselineChecks = f.syncChecks;
     for (const field of ['actor', 'scope', 'scopeId', 'tenantId', 'userId', 'principal', 'manageAll', 'createOwn',
       'operation', 'name', 'id', 'requestId', 'createdBy', 'revision']) {
@@ -181,6 +181,11 @@ describe('calendar internal service boundary (in-memory broker, not Fabric)', ()
 
   test('hold facades detach input, reject authored authority and derive a distinct confirmation appointment identity', async () => {
     const f = fixture(), api = f.service.forAuthority(f.request);
+    f.setOnRead(async call => {
+      if (call.name === 'calendar.receipt') return null;
+      if (call.name === 'calendar.holdParticipantAdmission') return { id: call.input.id, revision: 1, references: null };
+      throw new Error('Unexpected synthetic participant preflight.');
+    });
     const hold = { resourceIds: ['synthetic-resource'], startAt: appointment().startAt, endAt: appointment().endAt,
       timeZone: 'UTC', ttlSeconds: 120, bufferBeforeMinutes: 5 };
     let release!: () => void;

@@ -26,6 +26,7 @@ import type { CalendarServiceBroker } from './service';
 import { calendarAppointmentTypeInput, calendarAppointmentTypePageQuery, calendarLocationInput, calendarPageQuery, calendarRange, calendarResourcePageQuery, calendarVisitLocationQuery } from './service-validation';
 import { normalizeCalendarInstant, normalizeCalendarTimeZone } from './time';
 import { calendarHash, calendarInteger, calendarKey, calendarRecord, calendarScope, calendarText, calendarValue } from './validation';
+import { calendarParticipantReferences, requireCalendarParticipantManager } from './participant-bindings';
 
 export interface CalendarRuntimeSource {
   prepare(owner: CalendarOwnerRecord): void;
@@ -44,13 +45,14 @@ export interface CalendarRuntimeOptions {
 const QUERIES = new Set(['calendar.resources', 'calendar.busy', 'calendar.appointments', 'calendar.appointment',
   'calendar.locations', 'calendar.location', 'calendar.resourceLocations', 'calendar.locationAssignmentWitnesses', 'calendar.visitLocations',
   'calendar.types', 'calendar.type', 'calendar.resourceTypes', 'calendar.lifecycle', 'calendar.appointmentTransitions',
-  'calendar.availability', 'calendar.blocks', 'calendar.block', 'calendar.holds', 'calendar.hold', 'calendar.receipt']);
+  'calendar.availability', 'calendar.blocks', 'calendar.block', 'calendar.holds', 'calendar.hold', 'calendar.receipt',
+  'calendar.appointmentParticipants', 'calendar.holdParticipants', 'calendar.holdParticipantAdmission']);
 const COMMANDS = new Set(['calendar.resource.create', 'calendar.resource.grant', 'calendar.resource.availability',
   'calendar.location.create', 'calendar.location.replace', 'calendar.resource.locations',
   'calendar.type.create', 'calendar.type.replace', 'calendar.resource.types', 'calendar.lifecycle.replace', 'calendar.appointment.transition',
   'calendar.block.create', 'calendar.block.reschedule', 'calendar.block.cancel',
   'calendar.hold.acquire', 'calendar.hold.release', 'calendar.hold.confirm',
-  'calendar.appointment.create', 'calendar.appointment.reschedule', 'calendar.appointment.cancel']);
+  'calendar.appointment.create', 'calendar.appointment.reschedule', 'calendar.appointment.cancel', 'calendar.appointment.participants']);
 
 export class CalendarRuntime implements CalendarServiceBroker {
   private state: 'ready' | 'closing' | 'closed' | 'close-failed' = 'ready';
@@ -126,7 +128,8 @@ export class CalendarRuntime implements CalendarServiceBroker {
     });
   }
 
-  write<T>(scope: ServiceDataScope, name: string, input: unknown, requestId: string, assertCurrent: () => void, signal?: AbortSignal): Promise<T> {
+  write<T>(scope: ServiceDataScope, name: string, input: unknown, requestId: string, assertCurrent: () => void, signal?: AbortSignal,
+    finalCommitGuard?: () => void): Promise<T> {
     return this.track(async () => {
       const operationSignal = signal ? AbortSignal.any([this.stop.signal, signal]) : this.stop.signal;
       const guard = this.guard(assertCurrent, operationSignal); guard();
@@ -147,7 +150,8 @@ export class CalendarRuntime implements CalendarServiceBroker {
       // calendarIntent still compares the original scope/principal/key digest.
       const transportKey = 'calendar-command:' + calendarHash([calendarRealm.fingerprint, actor, key, name,
         ...(name === 'calendar.resource.locations' ? [body.locationWitnesses ?? null] : [])]);
-      const result = await this.execute<CalendarCommandReceipt>(record, 'command', name, body, guard, transportKey, false, operationSignal);
+      const result = await this.execute<CalendarCommandReceipt>(record, 'command', name, body, guard, transportKey, false, operationSignal,
+        finalCommitGuard ? this.guard(finalCommitGuard, operationSignal) : undefined);
       try {
         guard();
         // Native exact replay does not rerun a command handler. Reauthorize the
@@ -223,6 +227,12 @@ export class CalendarRuntime implements CalendarServiceBroker {
     if (name === 'calendar.busy' || name === 'calendar.appointments' || name === 'calendar.blocks' || name === 'calendar.holds') return { ...calendarRange(query, this.options.config), actor };
     if ((name === 'calendar.appointment.create' || name === 'calendar.block.create' || name === 'calendar.hold.acquire')
       && (!Array.isArray(body.resourceIds) || body.resourceIds.length > this.options.config.maxResources)) throw new CalendarError('CALENDAR_INPUT_INVALID');
+    if (name === 'calendar.appointment.participants' || (name === 'calendar.appointment.create' || name === 'calendar.hold.acquire') && Object.hasOwn(body, 'participants')) {
+      requireCalendarParticipantManager(actor);
+      const references = calendarParticipantReferences(name === 'calendar.appointment.participants' ? body.references : body.participants);
+      if (references.length > this.options.config.maxParticipants) throw new CalendarError('CALENDAR_INPUT_INVALID');
+      body[name === 'calendar.appointment.participants' ? 'references' : 'participants'] = references;
+    }
     return body;
   }
   private async ensure(id: string, scopeId: string, guard: () => void, signal?: AbortSignal): Promise<CalendarOwnerRecord> {
@@ -264,9 +274,14 @@ export class CalendarRuntime implements CalendarServiceBroker {
   }
 
   private async execute<T>(record: CalendarOwnerRecord, kind: 'query' | 'command', name: string, input: unknown,
-    guard: () => void, requestId?: string, provision = false, signal?: AbortSignal): Promise<T> {
+    guard: () => void, requestId?: string, provision = false, signal?: AbortSignal, finalCommitGuard?: () => void): Promise<T> {
     guard();
-    const authority = createDatabaseCommitAuthority(this.options.authority.coordinator, record.id, () => { guard(); return undefined; });
+    // Target eligibility authorizes this commit, not the immutable historical
+    // receipt. Later target changes cannot retroactively revoke accepted work;
+    // ordinary viewer authority still fences every wait and result settlement.
+    const authority = createDatabaseCommitAuthority(this.options.authority.coordinator, record.id, () => {
+      guard(); finalCommitGuard?.(); return undefined;
+    });
     // Existing-only admission closes the check/open race: established storage
     // can NEVER be replaced with a newly allocated empty file.
     const lease = provision ? await this.owner.acquire(record.id, { commitAuthority: authority })
@@ -290,6 +305,11 @@ export class CalendarRuntime implements CalendarServiceBroker {
       return envelope.value as T;
     } catch (error) {
       if (kind === 'command' && (accepted || error instanceof DatabaseError && error.outcome === 'unknown')) throw new CalendarError('CALENDAR_OUTCOME_UNKNOWN');
+      // A proven final-edge refusal is not an uncertain provider/write outcome.
+      // Do not expose the private guard cause or promise a replay is safe after
+      // unknown settlement. The caller must obtain current calendar authority.
+      if (error instanceof DatabaseError && error.code === 'DATABASE_AUTHORITY_CHANGED'
+        && (error.outcome === 'not-started' || error.outcome === 'not-committed')) throw new CalendarError('CALENDAR_FORBIDDEN', error.outcome);
       const rejection = readCalendarRejection(error); if (rejection) throw rejection;
       if (error instanceof DatabaseError && error.code === 'DATABASE_CONFLICT' && error.outcome === 'not-committed'
         && error.details.conflictType === 'idempotency-key-reused') throw new CalendarError('CALENDAR_INTENT_CONFLICT', 'not-committed');
@@ -349,10 +369,13 @@ export function emptyCalendarRead(name: string, input: unknown): unknown {
     : name === 'calendar.visitLocations' ? ['actor', 'resourceIds', 'limit', 'after']
     : name === 'calendar.locationAssignmentWitnesses' ? ['actor', 'locationIds']
     : name === 'calendar.lifecycle' ? ['actor']
-    : name === 'calendar.receipt' ? ['actor', 'requestId'] : ['calendar.appointment', 'calendar.appointmentTransitions', 'calendar.block', 'calendar.hold', 'calendar.availability', 'calendar.location', 'calendar.resourceLocations', 'calendar.type', 'calendar.resourceTypes'].includes(name) ? ['actor', 'id']
+    : name === 'calendar.receipt' ? ['actor', 'requestId'] : ['calendar.appointment', 'calendar.appointmentTransitions', 'calendar.appointmentParticipants', 'calendar.holdParticipants', 'calendar.holdParticipantAdmission', 'calendar.block', 'calendar.hold', 'calendar.availability', 'calendar.location', 'calendar.resourceLocations', 'calendar.type', 'calendar.resourceTypes'].includes(name) ? ['actor', 'id']
     : name === 'calendar.busy' || name === 'calendar.appointments' || name === 'calendar.blocks' || name === 'calendar.holds' ? ['actor', 'resourceIds', 'startAt', 'endAt', 'limit'] : null;
   if (!fields) throw new CalendarError('CALENDAR_INPUT_INVALID');
   const r = calendarRecord(input, fields); calendarActor(r.actor);
+  if (name === 'calendar.appointmentParticipants' || name === 'calendar.holdParticipants') {
+    calendarKey(r.id); requireCalendarParticipantManager(calendarActor(r.actor)); throw new CalendarError('CALENDAR_NOT_FOUND');
+  }
   if (name === 'calendar.lifecycle') { requireCalendarLifecycleManager(calendarActor(r.actor)); return { ...CALENDAR_DEFAULT_LIFECYCLE_POLICY }; }
   if (name === 'calendar.visitLocations') {
     calendarInteger(r.limit ?? 25, 1, CALENDAR_LIMITS.page); if (r.after !== undefined) calendarKey(r.after);
@@ -385,7 +408,7 @@ export function emptyCalendarRead(name: string, input: unknown): unknown {
     if (!calendarActor(r.actor).manageAll) throw new CalendarError('CALENDAR_FORBIDDEN');
     throw new CalendarError('CALENDAR_NOT_FOUND');
   }
-  if (['calendar.appointment', 'calendar.appointmentTransitions', 'calendar.block', 'calendar.hold', 'calendar.availability', 'calendar.location', 'calendar.resourceLocations', 'calendar.resourceTypes'].includes(name)) { calendarKey(r.id); throw new CalendarError('CALENDAR_NOT_FOUND'); }
+  if (['calendar.appointment', 'calendar.appointmentTransitions', 'calendar.holdParticipantAdmission', 'calendar.block', 'calendar.hold', 'calendar.availability', 'calendar.location', 'calendar.resourceLocations', 'calendar.resourceTypes'].includes(name)) { calendarKey(r.id); throw new CalendarError('CALENDAR_NOT_FOUND'); }
   const ids = calendarSelection(r.resourceIds);
   const start = Date.parse(normalizeCalendarInstant(r.startAt)), end = Date.parse(normalizeCalendarInstant(r.endAt));
   calendarInteger(end - start, 1, CALENDAR_LIMITS.rangeMs); calendarInteger(r.limit ?? 100, 1, CALENDAR_LIMITS.page);

@@ -87,10 +87,14 @@ test('location admission detaches inputs/facets before authority waits and rejec
     const writing = api.locations.create(input, options), reading = api.resources.list(query);
     await ready; input.label = 'Changed'; options.idempotencyKey = 'changed'; ids[0] = 'retargeted'; query.regions[0] = 'retargeted'; release();
     const result = await writing; await reading;
-    expect(calls[0]!.input).toMatchObject({ label: 'Original', region: 'US.NY', requestId: 'original' });
-    const actor = calls[0]!.input.actor as { scopeId: string; principal: string };
+    // These independent operations need not resume in invocation order after
+    // admission. Correlate each detached envelope by its fixed broker name.
+    expect(calls.map(call => call.name).sort()).toEqual(['calendar.location.create', 'calendar.resources']);
+    const write = calls.find(call => call.name === 'calendar.location.create')!, read = calls.find(call => call.name === 'calendar.resources')!;
+    expect(write.input).toMatchObject({ label: 'Original', region: 'US.NY', requestId: 'original' });
+    const actor = write.input.actor as { scopeId: string; principal: string };
     expect(result.id).toBe(calendarHash([actor.scopeId, actor.principal, 'original']));
-    expect(calls[1]!.input).toMatchObject({ locationIds: ['location-a', 'location-b'], regions: ['US.NY'] });
+    expect(read.input).toMatchObject({ locationIds: ['location-a', 'location-b'], regions: ['US.NY'] });
     const count = calls.length;
     for (const input of [{ label: 'Location', actor: {} }, { label: '', region: null }, { label: 'Location', region: 'US NY' }, { label: 'Location', active: 1 }]) {
       await expect(api.locations.create(input as never, { idempotencyKey: 'invalid' })).rejects.toMatchObject({ code: 'CALENDAR_INPUT_INVALID' });

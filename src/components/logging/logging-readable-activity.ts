@@ -62,6 +62,7 @@ export const LOGGING_ACTIVITY_LABELS: Readonly<Record<string, LoggingActivityLab
   'calendar.appointment.rescheduled': { label: 'Rescheduled an appointment', description: 'The requested revision and all affected reservations committed together.' },
   'calendar.appointment.cancelled': { label: 'Cancelled an appointment', description: 'The calendar committed cancellation and released its resource reservations. This does not imply a notification was delivered.' },
   'calendar.appointment.transitioned': { label: 'Changed an appointment status', description: 'The calendar accepted the current lifecycle transition and any required private reason. Only cancellation releases reservations; this does not imply notification delivery.' },
+  'calendar.appointment.participants-changed': { label: 'Changed appointment participants', description: 'The calendar accepted a revision-controlled change to private account references. This neither grants calendar access nor confirms invitation delivery.' },
   'calendar.lifecycle.policy-changed': { label: 'Changed calendar status rules', description: 'An authorized calendar manager changed the versioned lifecycle and reason policy. Existing appointment outcomes were not rewritten.' },
 });
 const own = <T,>(map: Readonly<Record<string, T>> | undefined, code: string): T | undefined => map && Object.hasOwn(map, code) ? map[code] : undefined;

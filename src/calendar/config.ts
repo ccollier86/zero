@@ -18,6 +18,8 @@ export interface CalendarConfig {
   readonly maxPageSize?: number;
   readonly maxResources?: number;
   readonly maxParticipants?: number;
+  /** Native canonical participants are closed unless an offline-provable subject policy is explicit. */
+  readonly participants?: false | { readonly userEligibility: AccessRequirement };
   readonly maxActiveDatabases?: number;
   readonly maxDatabaseFiles?: number;
   /** These capabilities are not implemented. Explicit enablement fails closed, never reports readiness. */
@@ -38,6 +40,7 @@ export interface ResolvedCalendarConfig {
   readonly maxPageSize: number;
   readonly maxResources: number;
   readonly maxParticipants: number;
+  readonly participants: false | { readonly userEligibility: AccessRequirement };
   readonly maxActiveDatabases: number;
   readonly maxDatabaseFiles: number;
   readonly recurrence: false;
@@ -47,7 +50,7 @@ export interface ResolvedCalendarConfig {
 
 const CONFIG_FIELDS = [
   'rootDirectory', 'timezone', 'createOwn', 'manage', 'maxRangeDays', 'maxPageSize',
-  'maxResources', 'maxParticipants', 'maxActiveDatabases', 'maxDatabaseFiles',
+  'maxResources', 'maxParticipants', 'participants', 'maxActiveDatabases', 'maxDatabaseFiles',
   'recurrence', 'reminders', 'selfBooking',
 ] as const;
 const ACCESS_FIELDS = [
@@ -89,6 +92,7 @@ export function resolveCalendarConfig(
       maxPageSize: calendarInteger(record.maxPageSize === undefined ? 100 : record.maxPageSize, 1, 100),
       maxResources: calendarInteger(record.maxResources === undefined ? 16 : record.maxResources, 1, 16),
       maxParticipants: calendarInteger(record.maxParticipants === undefined ? 100 : record.maxParticipants, 1, 100),
+      participants: admitParticipants(record.participants, kernel),
       maxActiveDatabases, maxDatabaseFiles: calendarInteger(record.maxDatabaseFiles === undefined ? 1000 : record.maxDatabaseFiles, maxActiveDatabases, 10_000),
       recurrence: false, reminders: false, selfBooking: false,
     };
@@ -98,6 +102,23 @@ export function resolveCalendarConfig(
     if (error instanceof CalendarError && error.code === 'CALENDAR_NOT_READY') throw error;
     throw new CalendarError('CALENDAR_CONFIG_INVALID');
   }
+}
+
+function admitParticipants(input: unknown, kernel: AuthorizationKernel): ResolvedCalendarConfig['participants'] {
+  if (input === undefined || input === false) return false;
+  const record = calendarRecord(input, ['userEligibility']);
+  // Guardian's true scalar authenticates a request. Offline eligibility needs
+  // a deliberate account rule; no credential/session/MFA assertion can be proved.
+  if (record.userEligibility === undefined || record.userEligibility === true || record.userEligibility === false) {
+    throw new CalendarError('CALENDAR_CONFIG_INVALID');
+  }
+  const requirement = calendarValue(record.userEligibility) as AccessRequirement;
+  if (requirement && typeof requirement === 'object') {
+    const rule = calendarRecord(requirement, ACCESS_FIELDS);
+    if (rule.credentials !== undefined) throw new CalendarError('CALENDAR_CONFIG_INVALID');
+  }
+  if (kernel.compile(requirement).user !== 'required') throw new CalendarError('CALENDAR_CONFIG_INVALID');
+  return Object.freeze({ userEligibility: deepFreeze(requirement) });
 }
 
 function admitAccess(input: unknown, kernel: AuthorizationKernel, management: boolean): AccessRequirement {

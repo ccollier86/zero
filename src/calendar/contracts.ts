@@ -8,6 +8,23 @@ export interface CalendarActor {
   readonly createOwn: boolean;
 }
 export type CalendarResourceKind = 'person' | 'room' | 'equipment';
+/** Native account identity only. Calendar files never duplicate Guardian profiles or credentials. */
+export interface CalendarParticipantReference { readonly kind: 'guardian-user'; readonly userId: string }
+export type CalendarParticipantView =
+  | { readonly ref: CalendarParticipantReference; readonly availability: 'available'; readonly name: string }
+  | { readonly ref: CalendarParticipantReference; readonly availability: 'unavailable' };
+export interface CalendarParticipantDirectoryQuery { readonly search?: string; readonly after?: string; readonly limit?: number }
+export interface CalendarParticipantDirectoryPage {
+  readonly items: readonly CalendarParticipantView[];
+  readonly truncated: boolean;
+  readonly nextAfter: string | null;
+}
+/** Private manager-only projection, separate from appointment details and free/busy. */
+export interface CalendarParticipantsView {
+  readonly id: string;
+  readonly revision: number;
+  readonly participants: readonly CalendarParticipantView[];
+}
 export type CalendarVisitMode = 'in-person' | 'video' | 'phone';
 export interface CalendarLocationReference { readonly id: string; readonly revision: number }
 export interface CalendarLocationSnapshot extends CalendarLocationReference { readonly label: string; readonly region: string | null }
@@ -157,6 +174,7 @@ export interface CalendarBlockView extends CalendarBlockInput {
 export interface CalendarBlockPage { readonly items: readonly CalendarBlockView[]; readonly truncated: boolean }
 /** Authenticated transient reservation; this does not enable public self-booking. */
 export interface CalendarHoldInput {
+  readonly participants?: readonly CalendarParticipantReference[];
   readonly visit?: CalendarVisitInput;
   readonly appointmentType?: CalendarAppointmentTypeReference;
   readonly resourceIds: readonly string[];
@@ -207,7 +225,7 @@ export interface CalendarCommandReceipt {
   readonly operation: 'resource.created' | 'resource.grant-changed' | 'resource.availability-changed' | 'resource.locations-changed'
     | 'location.created' | 'location.updated'
     | 'type.created' | 'type.updated' | 'resource.types-changed'
-    | 'appointment.created' | 'appointment.rescheduled' | 'appointment.cancelled' | 'appointment.transitioned'
+    | 'appointment.created' | 'appointment.rescheduled' | 'appointment.cancelled' | 'appointment.transitioned' | 'appointment.participants-changed'
     | 'lifecycle.policy-changed'
     | 'block.created' | 'block.rescheduled' | 'block.cancelled' | 'hold.acquired' | 'hold.released';
   readonly id: string;
@@ -228,6 +246,7 @@ export interface CalendarResourceInput {
   readonly timeZone: string;
 }
 export interface CalendarAppointmentInput {
+  readonly participants?: readonly CalendarParticipantReference[];
   readonly visit?: CalendarVisitInput;
   readonly appointmentType?: CalendarAppointmentTypeReference;
   readonly resourceIds: readonly string[];
@@ -288,6 +307,18 @@ export interface CalendarWatchOptions extends CalendarReadOptions {
   readonly onError?: (error: unknown) => void;
 }
 export interface ScopedCalendar {
+  readonly participants: {
+    directory(query?: CalendarParticipantDirectoryQuery, options?: CalendarReadOptions): Promise<CalendarParticipantDirectoryPage>;
+    forAppointment(id: string, options?: CalendarReadOptions): Promise<CalendarParticipantsView>;
+    forHold(id: string, options?: CalendarReadOptions): Promise<CalendarParticipantsView>;
+    replace(id: string, references: readonly CalendarParticipantReference[], options: CalendarControlOptions): Promise<CalendarCommandReceipt>;
+    watchDirectory(query: CalendarParticipantDirectoryQuery, listener: (page: CalendarParticipantDirectoryPage, update?: CalendarWatchUpdate) => void,
+      options?: CalendarWatchOptions): () => void;
+    watchForAppointment(id: string, listener: (page: CalendarParticipantsView, update?: CalendarWatchUpdate) => void,
+      options?: CalendarWatchOptions): () => void;
+    watchForHold(id: string, listener: (page: CalendarParticipantsView, update?: CalendarWatchUpdate) => void,
+      options?: CalendarWatchOptions): () => void;
+  };
   readonly lifecycle: {
     get(options?: CalendarReadOptions): Promise<CalendarLifecyclePolicy>;
     replace(input: CalendarLifecyclePolicyInput, options: CalendarControlOptions): Promise<CalendarCommandReceipt>;

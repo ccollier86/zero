@@ -12,7 +12,8 @@ import { calendarType, requireCalendarTypeManager } from './appointment-types-mo
 
 export const CALENDAR_LIMITS = Object.freeze({ resources: 10_000, appointments: 100_000, blocks: 100_000, holds: 100_000, locations: 10_000,
   locationHistory: 100_000, resourceLocationHistory: 100_000, types: 10_000, typeHistory: 100_000, resourceTypeHistory: 100_000,
-  appointmentTypeHistory: 100_000, appointmentVisitHistory: 100_000, policyHistory: 100_000, appointmentLifecycleHistory: 100_000, receipts: 200_000, selection: 16, page: 100, rangeMs: 31 * 86_400_000 });
+  appointmentTypeHistory: 100_000, appointmentVisitHistory: 100_000, appointmentParticipantHistory: 100_000, holdParticipantBindings: 100_000,
+  policyHistory: 100_000, appointmentLifecycleHistory: 100_000, receipts: 200_000, selection: 16, page: 100, rangeMs: 31 * 86_400_000 });
 export interface CalendarResourceRow extends Row { id: string; scope_id: string; label: string; kind: CalendarResourceView['kind']; owner_id: string | null; time_zone: string; revision: number; active: number }
 export interface CalendarAppointmentRow extends Row { id: string; scope_id: string; title: string; start_at: string; end_at: string; start_ms: number; end_ms: number; time_zone: string; buffer_before: number; buffer_after: number; occupied_start_ms: number; occupied_end_ms: number; status: CalendarAppointmentView['status']; revision: number; created_by: string }
 export interface CalendarReceiptRow extends Row { id: string; scope_id: string; principal: string; request_id: string; digest: string; result_json: string; target_kind: 'resource' | 'appointment' | 'block' | 'hold' | 'location' | 'type' | 'lifecycle'; target_id: string; required_right: 'book' | 'manage' }
@@ -75,7 +76,7 @@ export function calendarRevision(row: { revision: number }, input: unknown): voi
 }
 export function nextCalendarRevision(revision: number): number { return calendarInteger(revision, 1, Number.MAX_SAFE_INTEGER - 1) + 1; }
 export function calendarBudget(context: DatabaseWriteCommandContext, key: 'resources' | 'appointments' | 'blocks' | 'holds' | 'locations' | 'locationHistory' | 'resourceLocationHistory'
-  | 'types' | 'typeHistory' | 'resourceTypeHistory' | 'appointmentTypeHistory' | 'appointmentVisitHistory' | 'policyHistory' | 'appointmentLifecycleHistory' | 'receipts'): void {
+  | 'types' | 'typeHistory' | 'resourceTypeHistory' | 'appointmentTypeHistory' | 'appointmentVisitHistory' | 'appointmentParticipantHistory' | 'holdParticipantBindings' | 'policyHistory' | 'appointmentLifecycleHistory' | 'receipts'): void {
   const prior = context.db.get('_calendar_usage', key), count = prior ? calendarInteger(prior.count) : 0;
   if (count >= CALENDAR_LIMITS[key]) throw new CalendarError('CALENDAR_CAPACITY');
   if (prior) context.db.update('_calendar_usage', key, { count: count + 1 });
@@ -92,6 +93,7 @@ export function authorizeCalendarReceipt(context: DatabaseWriteCommandContext, a
   else if (prior.target_kind === 'location') { requireCalendarLocationManager(actor); calendarLocation(context, actor, prior.target_id); }
   else if (prior.target_kind === 'type') { requireCalendarTypeManager(actor); calendarType(context, actor, prior.target_id); }
   else {
+    if (parseCalendarReceipt(prior).operation === 'appointment.participants-changed' && !actor.manageAll) throw new CalendarError('CALENDAR_FORBIDDEN');
     calendarAppointment(context, actor, prior.target_id, prior.required_right);
     if (parseCalendarReceipt(prior).operation === 'appointment.created') {
       const holds = context.db.find('calendar_holds', { filters: [eq('scope_id', actor.scopeId), eq('appointment_id', prior.target_id)], limit: 2 });
@@ -107,7 +109,7 @@ export function parseCalendarReceipt(row: CalendarReceiptRow): CalendarCommandRe
   try {
     const r = calendarRecord(JSON.parse(row.result_json), ['requestId', 'operation', 'id', 'revision', 'changed']);
     const operations = { resource: ['resource.created', 'resource.grant-changed', 'resource.availability-changed', 'resource.locations-changed', 'resource.types-changed'],
-      appointment: ['appointment.created', 'appointment.rescheduled', 'appointment.cancelled', 'appointment.transitioned'], block: ['block.created', 'block.rescheduled', 'block.cancelled'],
+      appointment: ['appointment.created', 'appointment.rescheduled', 'appointment.cancelled', 'appointment.transitioned', 'appointment.participants-changed'], block: ['block.created', 'block.rescheduled', 'block.cancelled'],
       hold: ['hold.acquired', 'hold.released'], location: ['location.created', 'location.updated'], type: ['type.created', 'type.updated'], lifecycle: ['lifecycle.policy-changed'] };
     if (r.requestId !== row.request_id || r.id !== row.target_id || typeof r.changed !== 'boolean'
       || !operations[row.target_kind]?.includes(r.operation as string)

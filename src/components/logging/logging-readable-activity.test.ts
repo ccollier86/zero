@@ -38,6 +38,8 @@ test('calendar controls have readable semantic labels without claiming delivery 
   expect(loggingActivityCode('calendar.appointment.rescheduled').label).toBe('Rescheduled an appointment');
   expect(loggingActivityCode('calendar.appointment.cancelled').label).toBe('Cancelled an appointment');
   expect(loggingActivityCode('calendar.appointment.transitioned').label).toBe('Changed an appointment status');
+  expect(loggingActivityCode('calendar.appointment.participants-changed').label).toBe('Changed appointment participants');
+  expect(loggingActivityCode('calendar.appointment.participants-changed').description).toContain('neither grants calendar access');
   expect(loggingActivityCode('calendar.lifecycle.policy-changed').label).toBe('Changed calendar status rules');
   expect(loggingActivityCode('calendar.appointment.created').description).toContain('does not confirm');
   expect(loggingResourceLabel({ target: { type: 'calendar.appointment', id: 'opaque' } }, [])).toBe('Calendar appointment');

@@ -93,6 +93,13 @@ implemented core and its explicit limitations. This is not the complete plan:
   generations/current pointers plus fixed hold capture, without a new receipt
   family or backfill. Confirmation exactly transfers the captured visit; a stale
   location rejects atomically. Earlier no-visit command digests stay unchanged.
+- Optional native participants require an explicit offline Guardian subject policy
+  and current scope management. Additive `008` retains only opaque references,
+  seals immutable appointment generations and exactly transfers held sets. Current
+  SYSTEM names/tombstones resolve separately after the final authority wait; busy
+  and ordinary detail DTOs never include them. New target admission joins the real
+  synchronous final commit guard and canonical provisioning eligibility clock.
+  There is no guest/contact/invitation adapter or copied identity projection.
 - Private effect references are handoff groundwork, not another audit system or
   a working notification pipeline.
 
@@ -120,7 +127,7 @@ browser UI entry; `calendar/server` and `calendar/client` are separate entries.
 Still required before release: actual file/actor, managed compliance, real-browser,
 official JS bundle, Linux/amd64 installed archive and normal updater qualification.
 Compiled executables fail closed with the default source actor launch. Recurrence,
-recurring working-hours/holiday expansion, slot offers/public booking proofs, participants,
+recurring working-hours/holiday expansion, slot offers/public booking proofs, domain-contact/guest participants,
 clinical visit/lobby/attention states, invitations, reminders, AI and public self-booking are not
 implemented; unsupported enablement rejects. Authenticated holds do not enable
 `selfBooking`; public booking remains off. Availability/block/hold management is

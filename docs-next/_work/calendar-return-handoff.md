@@ -42,14 +42,17 @@ The latest source stage adds optional generic lifecycle/reason policy and native
 managed transition review, with old cancel/reschedule bypasses closed. See
 [Lifecycle and reasons](../backend/calendar/lifecycle.md) and the
 [qualification record](../backend/calendar/qualification.md). Clinical progress,
-lobby/attention, participants, recurrence and Jobs/Torrent effect dispatch remain
+lobby/attention, recurrence and Jobs/Torrent effect dispatch remain
 separate pending stages. The approved hosted demo was not changed by this work.
 
 The subsequent source stage adds [visit/location bindings](../backend/calendar/visits.md)
 and a native connected mode/location field family, including historical generation
-preservation and exact hold transfer. The next participant implementation should
-start from the preserved [admission notes](./calendar-participant-admission-notes.md),
-not the demo's fictional directory. Neither stage implies a newly selected archive.
+preservation and exact hold transfer. The native participant stage now follows
+the preserved [admission notes](./calendar-participant-admission-notes.md), not
+the demo's fictional directory. See the [implemented boundaries](../backend/calendar/participants.md)
+for opt-in Guardian discovery, private bindings and separately composable picker.
+Domain contacts/guests, invitations and connected-editor integration are still
+later work. None of these stages implies a newly selected archive.
 
 ## Checkpoints and places to resume
 

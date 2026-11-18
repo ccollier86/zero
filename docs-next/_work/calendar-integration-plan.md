@@ -1012,12 +1012,18 @@ location selector, rather than retaining local demo mode values without persiste
 The reviewed theme/demo is unchanged. Source/model/memory checks do not replace
 physical, managed compliance, real-browser or installed Linux qualification.
 
-The next participant implementation has separately preserved
-[admission/final-fence notes](./calendar-participant-admission-notes.md). It must
-use canonical SYSTEM identities and final target revalidation, not fake preview
-users or asynchronous app lookups claimed as cross-file transactions. Directory,
-participant-detail and binding permissions remain distinct; app contacts/guests
-require their own reviewed adapters/proofs. These notes do not implement the API.
+The native-account participant stage now follows the separately preserved
+[admission/final-fence notes](./calendar-participant-admission-notes.md). Its
+[source guide](../backend/calendar/participants.md) records the explicit offline
+Guardian subject policy, scope-manager-only discovery/private binding surfaces,
+opaque cursors, fixed hold captures and source version `008`. Ordinary details
+and busy views remain redacted. New target checks run under opaque final commit
+authority, not after accepted work; current presentation resolves after the last
+asynchronous viewer check. The reusable picker and live hooks are exported but
+the connected editor is not yet wired to them. No preview user, copied profile,
+async app lookup or invitation is treated as authoritative identity. Domain
+contacts/guests require later reviewed adapters/proofs. Physical/browser/archive
+qualification remains outstanding; these source APIs are not selected for update.
 
 ## 15. Documentation deliverables and open decisions
 

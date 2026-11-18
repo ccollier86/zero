@@ -7,6 +7,7 @@ import { AuthorizationScopeBoundaryFence, useAuthorizationScopeBoundary, readAut
 import type { Client, InternalClient } from './sdk';
 import type { CalendarAppointmentPage, CalendarAppointmentView, CalendarAppointmentTypePage, CalendarAppointmentTypePageQuery, CalendarAppointmentTypeView, CalendarResourceTypesView,
   CalendarLifecyclePolicy, CalendarAppointmentTransitions,
+  CalendarParticipantDirectoryQuery, CalendarParticipantDirectoryPage, CalendarParticipantsView,
   CalendarLocationPage, CalendarLocationPageQuery, CalendarLocationView, CalendarResourceLocationsView, CalendarVisitLocationQuery,
   CalendarRangeQuery, CalendarResourcePage, CalendarResourcePageQuery, CalendarWatchOptions, CalendarWatchUpdate } from '../../calendar/contracts';
 import { CalendarReadError } from './calendar-mutation';
@@ -20,6 +21,18 @@ export interface CalendarReadResult<T> {
 export interface UseCalendarAppointmentsResult extends CalendarReadResult<CalendarAppointmentPage> {
   readonly invalidationRevision: number;
   readonly reconnectRevision: number;
+}
+export function useCalendarParticipantDirectory(query: CalendarParticipantDirectoryQuery | null): CalendarReadResult<CalendarParticipantDirectoryPage> {
+  return useCalendarLive<CalendarParticipantDirectoryPage>(query === null ? null : JSON.stringify(['participant-directory', query.search ?? '', query.limit ?? null, query.after ?? null]),
+    (client, listener, options) => client.calendar.participants.watchDirectory(query!, listener, options));
+}
+export function useCalendarAppointmentParticipants(id: string | null, readRevision?: string | number): CalendarReadResult<CalendarParticipantsView> {
+  return useCalendarLive<CalendarParticipantsView>(id === null ? null : JSON.stringify(['appointment-participants', id, readRevision ?? null]),
+    (client, listener, options) => client.calendar.participants.watchForAppointment(id!, listener, options));
+}
+export function useCalendarHoldParticipants(id: string | null, readRevision?: string | number): CalendarReadResult<CalendarParticipantsView> {
+  return useCalendarLive<CalendarParticipantsView>(id === null ? null : JSON.stringify(['hold-participants', id, readRevision ?? null]),
+    (client, listener, options) => client.calendar.participants.watchForHold(id!, listener, options));
 }
 export function useCalendarResources(query: CalendarResourcePageQuery = {}): CalendarReadResult<CalendarResourcePage> {
   return useCalendarLive<CalendarResourcePage>(JSON.stringify(['resources', query.limit ?? null, query.after ?? null, query.locationIds ?? [], query.regions ?? []]),

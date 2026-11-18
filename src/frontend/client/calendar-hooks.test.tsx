@@ -3,13 +3,14 @@ import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { act, createElement } from 'react';
 import type { Root } from 'react-dom/client';
 import type { CalendarAppointmentPage, CalendarAppointmentView, CalendarAppointmentTypePage, CalendarAppointmentTypePageQuery, CalendarAppointmentTypeView,
-  CalendarLifecyclePolicy, CalendarAppointmentTransitions,
+  CalendarLifecyclePolicy, CalendarAppointmentTransitions, CalendarParticipantDirectoryQuery, CalendarParticipantDirectoryPage, CalendarParticipantsView,
   CalendarResourceTypesView, CalendarLocationPage, CalendarLocationPageQuery, CalendarVisitLocationQuery, CalendarRangeQuery, CalendarReadOptions, CalendarResourcePage, CalendarResourcePageQuery, CalendarWatchOptions, CalendarWatchUpdate } from '../../calendar/contracts';
 import { ClientProvider } from './client-context';
 import type { Client } from './sdk';
 import { CalendarReadError } from './calendar-mutation';
 import { useCalendarAppointment, useCalendarAppointments, useCalendarResources, useCalendarLocations, useCalendarAppointmentTypes,
-  useCalendarAppointmentType, useCalendarResourceTypes, useCalendarLifecycle, useCalendarAppointmentTransitions, useCalendarVisitLocations, type CalendarReadResult, type UseCalendarAppointmentsResult } from './calendar-hooks';
+  useCalendarAppointmentType, useCalendarResourceTypes, useCalendarLifecycle, useCalendarAppointmentTransitions, useCalendarVisitLocations,
+  useCalendarParticipantDirectory, useCalendarAppointmentParticipants, useCalendarHoldParticipants, type CalendarReadResult, type UseCalendarAppointmentsResult } from './calendar-hooks';
 import { createHookContainer, installMinimalHookDom } from './test-fixtures/react-hook-dom';
 const roots = new Set<Root>(); let restore: () => void;
 beforeEach(() => { restore = installMinimalHookDom(); });
@@ -221,6 +222,75 @@ test('visit location hooks mask selection replacement, empty and null states, do
   query = null; await act(async () => { render(); }); expect(current).toMatchObject({ status: 'idle', value: null }); expect(f.visits[3]!.removals).toBe(1);
   await act(async () => { f.visits[3]!.resolve(page); }); expect(current.value).toBeNull();
 });
+test('participant directory hooks mask opaque continuation and search replacement, denial, scope changes and retired callbacks', async () => {
+  const f = fixture(), { createRoot } = await import('react-dom/client'), root = createRoot(createHookContainer()); roots.add(root);
+  let query: CalendarParticipantDirectoryQuery | null = { search: 'Synthetic', limit: 1 }, current!: CalendarReadResult<CalendarParticipantDirectoryPage>;
+  const renders: { query: string; value: CalendarReadResult<CalendarParticipantDirectoryPage> }[] = [];
+  function Capture() { current = useCalendarParticipantDirectory(query); renders.push({ query: JSON.stringify(query), value: current }); return null; }
+  const render = () => root.render(createElement(ClientProvider, { client: f.client, children: createElement(Capture) }));
+  await act(async () => { render(); });
+  const page: CalendarParticipantDirectoryPage = { items: [{ ref: { kind: 'guardian-user', userId: 'account-a' }, availability: 'available', name: 'Synthetic account' }],
+    truncated: true, nextAfter: 'pc_opaque-next' };
+  await act(async () => { f.participantDirectories[0]!.resolve(page); }); expect(current.value).toBe(page);
+  query = { search: 'Synthetic', limit: 1, after: page.nextAfter! };
+  await act(async () => { render(); });
+  expect(renders.find(value => value.query.includes('pc_opaque-next'))!.value).toMatchObject({ status: 'loading', value: null });
+  expect(f.participantDirectories[0]!.options.signal!.aborted).toBe(true); expect(f.participantDirectories[0]!.removals).toBe(1);
+  expect(f.participantDirectories[1]!.query).toEqual(query);
+  await act(async () => { f.participantDirectories[0]!.resolve(page); }); expect(current.value).toBeNull();
+  const empty = { items: [], truncated: false, nextAfter: null };
+  await act(async () => { f.participantDirectories[1]!.resolve(empty); }); expect(current.value).toBe(empty);
+  query = { search: 'Other' }; await act(async () => { render(); }); expect(current).toMatchObject({ status: 'loading', value: null });
+  await act(async () => { f.participantDirectories[2]!.options.onError?.(new CalendarReadError('CALENDAR_FORBIDDEN', 403, true)); });
+  expect(current).toMatchObject({ status: 'error', value: null, code: 'CALENDAR_FORBIDDEN' }); expect(f.participantDirectories[2]!.removals).toBe(1);
+  await act(async () => { f.participantDirectories[2]!.resolve(page); }); expect(current.value).toBeNull();
+  await act(async () => { current.refresh(); }); expect(f.participantDirectories).toHaveLength(4);
+  await act(async () => { f.participantDirectories[3]!.resolve(empty); });
+  const refresh = current.refresh; f.auth.authorizationScopeKey = 'replacement-participant-scope';
+  await act(async () => { f.participantDirectories[3]!.resolve(page); refresh(); }); expect(current.value).toBe(empty); expect(f.participantDirectories).toHaveLength(4);
+  await act(async () => { f.notify(); }); expect(current).toMatchObject({ status: 'loading', value: null });
+  expect(f.participantDirectories[3]!.options.signal!.aborted).toBe(true); expect(f.participantDirectories[3]!.removals).toBe(1);
+  query = null; await act(async () => { render(); }); expect(current).toMatchObject({ status: 'idle', value: null });
+  expect(f.participantDirectories[4]!.removals).toBe(1);
+  await act(async () => { f.participantDirectories[4]!.resolve(page); }); expect(current.value).toBeNull();
+});
+
+test('appointment and hold participant hooks retain only the current target and scope, including ref-only tombstones', async () => {
+  const f = fixture(), { createRoot } = await import('react-dom/client'), root = createRoot(createHookContainer()); roots.add(root);
+  let appointmentId: string | null = 'appointment-a', holdId: string | null = 'hold-a';
+  let current!: { appointment: CalendarReadResult<CalendarParticipantsView>; hold: CalendarReadResult<CalendarParticipantsView> };
+  const renders: { id: string | null; appointment: CalendarReadResult<CalendarParticipantsView> }[] = [];
+  function Capture() { current = { appointment: useCalendarAppointmentParticipants(appointmentId), hold: useCalendarHoldParticipants(holdId) };
+    renders.push({ id: appointmentId, appointment: current.appointment }); return null; }
+  const render = () => root.render(createElement(ClientProvider, { client: f.client, children: createElement(Capture) }));
+  await act(async () => { render(); });
+  const appointment: CalendarParticipantsView = { id: 'appointment-a', revision: 2, participants: [{ ref: { kind: 'guardian-user', userId: 'retired-account' }, availability: 'unavailable' }] };
+  const held: CalendarParticipantsView = { id: 'hold-a', revision: 1, participants: [] };
+  await act(async () => { f.appointmentParticipants[0]!.resolve(appointment); f.holdParticipants[0]!.resolve(held); });
+  expect(current.appointment.value).toBe(appointment); expect(current.hold.value).toBe(held);
+  appointmentId = 'appointment-b'; await act(async () => { render(); });
+  expect(renders.find(value => value.id === 'appointment-b')!.appointment).toMatchObject({ status: 'loading', value: null });
+  expect(current.hold.value).toBe(held); expect(f.appointmentParticipants[0]!.removals).toBe(1);
+  expect(f.appointmentParticipants[0]!.options.signal!.aborted).toBe(true);
+  await act(async () => { f.appointmentParticipants[0]!.resolve(appointment); }); expect(current.appointment.value).toBeNull();
+  await act(async () => { f.appointmentParticipants[1]!.options.onError?.(new CalendarReadError('CALENDAR_NOT_FOUND', 404)); });
+  expect(current.appointment).toMatchObject({ status: 'error', value: null, code: 'CALENDAR_NOT_FOUND' });
+  expect(f.appointmentParticipants[1]!.removals).toBe(1);
+  await act(async () => { current.appointment.refresh(); }); expect(current.appointment).toMatchObject({ status: 'loading', value: null });
+  const replacement = { ...appointment, id: 'appointment-b', revision: 3 };
+  await act(async () => { f.appointmentParticipants[2]!.resolve(replacement); }); expect(current.appointment.value).toBe(replacement);
+  const refresh = current.hold.refresh; f.auth.authorizationScopeKey = 'new-scope';
+  await act(async () => { f.appointmentParticipants[2]!.resolve(appointment); f.holdParticipants[0]!.resolve(appointment); refresh(); });
+  expect(current.appointment.value).toBe(replacement); expect(current.hold.value).toBe(held); expect(f.holdParticipants).toHaveLength(1);
+  await act(async () => { f.notify(); });
+  expect(current.appointment.value).toBeNull(); expect(current.hold.value).toBeNull();
+  expect(f.appointmentParticipants[2]!.options.signal!.aborted).toBe(true); expect(f.holdParticipants[0]!.options.signal!.aborted).toBe(true);
+  appointmentId = null; holdId = null; await act(async () => { render(); });
+  expect(current.appointment).toMatchObject({ status: 'idle', value: null }); expect(current.hold).toMatchObject({ status: 'idle', value: null });
+  await act(async () => { f.appointmentParticipants[3]!.resolve(replacement); f.holdParticipants[1]!.resolve(held); });
+  expect(current.appointment.value).toBeNull(); expect(current.hold.value).toBeNull();
+});
+
 function fixture() {
   const observers = new Set<() => void>(), subscribe = (observer: () => void) => { observers.add(observer); return () => { observers.delete(observer); }; };
   const auth = { authorizationScopeKey: 'original-scope', user: { userId: 'synthetic-user' }, activeTenant: { tenantId: 'synthetic-tenant' }, isLoading: false,
@@ -235,7 +305,16 @@ function fixture() {
   const details: { options: CalendarReadOptions; resolve(value: CalendarAppointmentView): void; reject(error: unknown): void }[] = [];
   const lifecycle: { options: CalendarWatchOptions; resolve(value: CalendarLifecyclePolicy): void; removals: number }[] = [];
   const transitions: { id: string; options: CalendarWatchOptions; resolve(value: CalendarAppointmentTransitions): void; removals: number }[] = [];
-  const client = { auth, calendar: { lifecycle: { watch(listener: (value: CalendarLifecyclePolicy) => void, options: CalendarWatchOptions) {
+  const participantDirectories: { query: CalendarParticipantDirectoryQuery; options: CalendarWatchOptions; resolve(value: CalendarParticipantDirectoryPage): void; removals: number }[] = [];
+  const appointmentParticipants: { id: string; options: CalendarWatchOptions; resolve(value: CalendarParticipantsView): void; removals: number }[] = [];
+  const holdParticipants: { id: string; options: CalendarWatchOptions; resolve(value: CalendarParticipantsView): void; removals: number }[] = [];
+  const client = { auth, calendar: { participants: { watchDirectory(query: CalendarParticipantDirectoryQuery, listener: (value: CalendarParticipantDirectoryPage) => void, options: CalendarWatchOptions) {
+    const item = { query, options, resolve: listener, removals: 0 }; participantDirectories.push(item); return () => { item.removals++; };
+  }, watchForAppointment(id: string, listener: (value: CalendarParticipantsView) => void, options: CalendarWatchOptions) {
+    const item = { id, options, resolve: listener, removals: 0 }; appointmentParticipants.push(item); return () => { item.removals++; };
+  }, watchForHold(id: string, listener: (value: CalendarParticipantsView) => void, options: CalendarWatchOptions) {
+    const item = { id, options, resolve: listener, removals: 0 }; holdParticipants.push(item); return () => { item.removals++; };
+  } }, lifecycle: { watch(listener: (value: CalendarLifecyclePolicy) => void, options: CalendarWatchOptions) {
     const item = { options, resolve: listener, removals: 0 }; lifecycle.push(item); return () => { item.removals++; };
   } }, resources: { watch(query: CalendarResourcePageQuery, listener: (value: CalendarResourcePage) => void, options: CalendarWatchOptions) {
     const item = { query, options, resolve: listener, removals: 0 }; resources.push(item); return () => { item.removals++; };
@@ -254,7 +333,8 @@ function fixture() {
   }, get(_id: string, options: CalendarReadOptions) { return new Promise<CalendarAppointmentView>((resolve, reject) => details.push({ options, resolve, reject })); }, watch(query: CalendarRangeQuery, listener: (page: CalendarAppointmentPage, update?: CalendarWatchUpdate) => void, options: CalendarWatchOptions) {
     subscriptions.push({ query, listener, options }); return () => {};
   } } } } as unknown as Client;
-  return { client, auth, subscriptions, resources, locations, visits, types, typeDetails, typePolicies, details, lifecycle, transitions, notify() { for (const observer of observers) observer(); } };
+  return { client, auth, subscriptions, resources, locations, visits, types, typeDetails, typePolicies, details, lifecycle, transitions,
+    participantDirectories, appointmentParticipants, holdParticipants, notify() { for (const observer of observers) observer(); } };
 }
 async function renderReads(client: Client) {
   const { createRoot } = await import('react-dom/client'), root = createRoot(createHookContainer()); roots.add(root);

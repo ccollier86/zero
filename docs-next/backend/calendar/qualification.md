@@ -18,6 +18,83 @@ This is feature-branch evidence, not a release certificate. No calendar backend
 archive has been selected by normal `zero-update`, and no application deployment
 or data migration is authorized by these checks.
 
+## November 18 native participant checkpoint
+
+Additive `008` preserves actual migration function identities `001`–`007` and
+the complete `007` table declaration. A genuinely populated native-memory upgrade
+retains every preceding table family, row, SQL definition, ledger, sequence,
+receipt/digest and historical type/visit generation without participant backfill.
+Indexed current binding reads remain bounded independently of retained history.
+
+Native account discovery is explicitly enabled and scope-manager-only. Eligibility
+uses canonical finalized/token-eligible SYSTEM accounts, actual active tenancy
+and compiled offline Guardian role/permission/trusted-property policy. Opaque
+query/scope-bound cursors hide skipped identities. Names remain minimal current
+presentation; unavailable retained refs carry no former name or contact fields.
+Directory watchers reuse existing quiet revalidation, not another polling timer.
+
+The review closed these concrete integration gaps:
+
+- A bounded-scan continuation could disclose an ineligible account ID. Tokens are
+  now opaque, bounded, expiring and reusable for equivalent live continuations.
+- Subject revocation/name changes during the final asynchronous viewer check
+  could publish stale identity. One-shot/live reads now resolve again synchronously
+  after that wait. This is not a cross-database atomic snapshot claim.
+- SDK normalization attempted to assign into immutable detached records; valid
+  participant create/acquire now produce separate normalized objects.
+- Combining target admission with every runtime guard could turn a later target
+  change into uncertainty after an accepted source write. A separate internal
+  final-commit guard now fences new work only; ordinary viewer checks still fence
+  every wait, accepted receipt and publication. Post-acceptance target revocation
+  is covered and remains a truthful accepted receipt.
+- Proven final-edge authority refusal maps to a safe calendar denial with the
+  original known noncommit outcome. Unknown settlement is classified first and
+  never relabelled as a rejection; no private callback cause is exposed.
+- Provisioning-marker insert/delete/retarget previously lacked clock coverage.
+  The canonical clock now includes them; lease metadata stays quiet. Native
+  finalization/retirement checks use `RETURNING`, excluding trigger-inclusive
+  SQLite change counts. Actual UserStore lifecycle regressions cover rollback.
+- Native HTTP reads initially returned `503 CALENDAR_NOT_READY`: unchanged SYSTEM
+  transaction completions caused the directory to invalidate its own final Guardian
+  confirmation repeatedly. A connection-local, constant-time `total_changes()`
+  wake watermark now suppresses unchanged completions without altering generic
+  ReactiveDB commit semantics or caching eligibility. The exact failing native
+  reproducer and all five connected HTTP scenarios pass after this correction.
+  Twenty read-only root transactions remain quiet while actual profile/property/
+  provisioning mutations still wake; the owned statement is finalized on teardown.
+
+The first broad memory sweep reported 649 passing and one failing test across
+79 files. The failure was an old location fixture assuming independent read/write
+microtasks settled in invocation order. It now correlates exact fixed operation
+names while preserving detachment/invalid-command checks; both focused files
+passed 21 tests/193 assertions. This history is retained, not relabelled as a pass.
+
+| Final participant-stage evidence | Result | Boundary |
+| --- | --- | --- |
+| Integrated calendar, native-memory HTTP/SDK/hooks/upgrade/UI/readable-audit/modal/transform set | 657 passed, 0 failed, 12,969 assertions, 80 files; Bun 1.4.4, 87.44 seconds | Transpiler cache disabled; native memory databases with explicit physical coordinator/actor simulation, not installed package/browser/Linux |
+| Connected SYSTEM directory/service/native HTTP regression | 27 passed, 0 failed, 325 assertions | Includes all five actual auth + app.handle HTTP/SSE scenarios; no network listener, physical file or actor |
+| Populated upgrade family | 25 passed, 2,732 assertions across seven files; retained-history participant follow-up 4 passed/828 assertions | Real memory migrator and actual 001–007 function/full 007 schema pins; not physical WAL upgrade/recovery |
+| Full scoped no-emit review | 233 roots, 3,821 imported source files, zero diagnostics | Includes prepared file-backed source; does not execute it |
+| Final changed-directory/HTTP/public-barrel no-emit check | 4 roots, 3,180 imported source files, zero diagnostics | Rechecked after wake-filter fix; no emit or incremental cache |
+| Documentation graph | 903 pages, 903 reachable, zero problems | Updated native contracts, configuration, UI/plan handoffs and background-work orientation |
+
+The separately composable participant picker preserves token/native-surface
+anatomy, masks retired names/actions and represents unavailable references without
+an ID fallback. It is not yet integrated into the connected one-off editor.
+Domain contacts/guests, invitations, avatar delivery and broader participant grants
+remain separate later capabilities.
+
+Two additional physical fixture definitions are prepared on the existing owned
+allocator/finally boundary: actual SYSTEM/Guardian service/native actor commit
+races via an independent SYSTEM connection/coordinator/file fence, plus tenant
+membership, exact held transfer and retained refs/tombstones across full restart.
+The original thirteen test bodies remain unchanged. All fifteen file-backed tests
+remain **unexecuted** under the filesystem integrity hold, as do installed-browser,
+managed-compliance bundle, Linux/amd64/archive/updater and performance qualification.
+The independent Guardian writer here is a second real connection with its own
+coordinator, not a separately spawned Guardian process. No generated disk state,
+new dependencies, build caches, processes or release archive were created.
+
 ## November 17 visit/location binding checkpoint
 
 Additive `007` preserves the six earlier migration functions/checksums and complete
@@ -486,7 +563,7 @@ repository's applicable suite, artifact hashing and updater selection. A compile
 executable with the default source actor remains deliberately unavailable.
 
 Recurring working-hours/holiday expansion, offer/slot generation, public booking proofs,
-participants, connected type-selection/management controls, effective-dated location eligibility,
+domain-contact/guest participant adapters, connected type-selection/management controls, effective-dated location eligibility,
 recurrence, clinical visit/lobby/attention transitions,
 source-bound Jobs/Torrent effects, reminders,
 outbound channels, public self-booking and AI remain later stages of the approved

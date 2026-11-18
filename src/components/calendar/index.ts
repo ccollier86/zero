@@ -16,6 +16,8 @@ export { CalendarDateField } from './components/calendar-date-field';
 export { CalendarSelect } from './components/calendar-select';
 export { CalendarVisitFields } from './components/calendar-visit-fields';
 export type { CalendarVisitFieldsProps } from './components/calendar-visit-fields';
+export { CalendarParticipantFields } from './components/calendar-participant-fields';
+export type { CalendarParticipantFieldsProps } from './components/calendar-participant-fields';
 export { CalendarHeader as CalendarToolbar } from './recovered/calendar/components/calendar-header';
 export { MiniCalendar } from './recovered/calendar/components/mini-calendar';
 export { ScopePicker } from './components/scope-picker';

@@ -87,6 +87,10 @@ identity are rejected, not normalized away.
 | `appointments.transitions(id, options?)` | Current effective status, policy/appointment revisions and allowed changes; manage on all co-resources |
 | `appointments.transition(id, {status, policyRevision, reason?}, control)` | Canonical status transition, exact current policy and appointment revisions |
 | `appointments.watchTransitions(id, listener, options?)` | Live allowed-action projection; current all-co-resource manage rights |
+| `participants.directory(query?, options?)` / `watchDirectory(query, listener, options?)` | Explicitly enabled, scope-manager-only native Guardian discovery; opaque bounded continuations |
+| `participants.forAppointment(id, options?)` / `forHold(id, options?)` | Private manager-only references with fresh names or unavailable tombstones |
+| `participants.replace(id, references, control)` | Revisioned replacement; fresh admission for additions, retained unavailable identities removable |
+| `participants.watchForAppointment(id, listener, options?)` / `watchForHold(id, listener, options?)` | Private live binding presentation with SYSTEM and calendar invalidation |
 | `blocks.query(range, {signal?}?)` | Active private blocks; all co-resources must allow details before pagination |
 | `blocks.get(id, {signal?}?)` | Current private block, including cancelled history; all co-resources allow details |
 | `blocks.create(input, options)` | Current manage right on every selected resource; atomically reject occupied time |
@@ -111,6 +115,8 @@ See [Lifecycle and required reasons](./lifecycle.md) for simple defaults, richer
 confirmation/outcomes, private reasons and legacy cancellation compatibility.
 See [Visit modes and retained locations](./visits.md) for optional `visit` on
 creation/hold acquisition and reschedule preserve/replace/clear semantics.
+See [Native account participants](./participants.md) for explicit configuration,
+the additional private permission boundary, hold transfer and unavailable targets.
 
 A range is `{resourceIds, startAt, endAt, limit?}`. It is half-open, positive,
 bounded at 31 days / 16 resources / 100 results (or narrower config). Empty

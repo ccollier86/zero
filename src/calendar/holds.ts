@@ -17,6 +17,7 @@ import { calendarInteger, calendarKey, calendarRecord, calendarText } from './va
 import { assertCalendarBookingType, bindCalendarHoldType, calendarAppointmentTypeReference, calendarHoldAppointmentType,
   assertCalendarTypePolicy, normalizeCalendarTypedBooking, normalizeCalendarTypedIntentInterval, readCalendarHoldTypeSnapshot } from './appointment-type-bindings';
 import { assertCalendarBookingVisit, assertCalendarVisitPolicy, bindCalendarHoldVisit, calendarHoldVisit, calendarVisitInput, readCalendarHoldVisitSnapshot } from './visit-bindings';
+import { bindCalendarHoldParticipants, calendarHoldParticipants, calendarParticipantReferences, requireCalendarParticipantManager } from './participant-bindings';
 
 function receipt(requestId: string, operation: CalendarCommandReceipt['operation'], id: string, revision: number, changed = true): CalendarCommandReceipt {
   return { requestId, operation, id, revision, changed };
@@ -40,7 +41,7 @@ function assertLiveQuota(context: DatabaseWriteCommandContext, actor: CalendarAc
 
 export function acquireCalendarHold(context: DatabaseWriteCommandContext, input: unknown) {
   return calendarCommand(() => {
-    const r = calendarRecord(input, ['actor', 'requestId', 'id', 'resourceIds', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'ttlSeconds', 'appointmentType', 'visit']);
+    const r = calendarRecord(input, ['actor', 'requestId', 'id', 'resourceIds', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'ttlSeconds', 'appointmentType', 'visit', 'participants']);
     const actor = calendarActor(r.actor); assertCalendarOwner(context, actor.scopeId);
     const id = calendarKey(r.id), resourceIds = calendarSelection(r.resourceIds);
     const ttl = calendarInteger(r.ttlSeconds === undefined ? CALENDAR_HOLD_LIMITS.ttl : r.ttlSeconds, 1, CALENDAR_HOLD_LIMITS.maxTtl);
@@ -50,8 +51,11 @@ export function acquireCalendarHold(context: DatabaseWriteCommandContext, input:
       if (!resource.active) throw new CalendarError('CALENDAR_FORBIDDEN');
     }
     const typeRef = calendarAppointmentTypeReference(r.appointmentType), visitRef = calendarVisitInput(r.visit);
+    const participants = Object.hasOwn(r, 'participants') ? calendarParticipantReferences(r.participants) : undefined;
+    if (participants !== undefined) requireCalendarParticipantManager(actor);
     const interval = typeRef ? undefined : timed(r);
-    const intent: unknown[] = visitRef ? ['hold.acquire.visit.v1', id, resourceIds, normalizeCalendarTypedIntentInterval(r), ttl, typeRef ?? null, visitRef]
+    const intent: unknown[] = participants !== undefined ? ['hold.acquire.participants.v1', id, resourceIds, normalizeCalendarTypedIntentInterval(r), ttl, typeRef ?? null, visitRef ?? null, participants]
+      : visitRef ? ['hold.acquire.visit.v1', id, resourceIds, normalizeCalendarTypedIntentInterval(r), ttl, typeRef ?? null, visitRef]
       : typeRef ? ['hold.acquire.typed.v1', id, resourceIds, normalizeCalendarTypedIntentInterval(r), ttl, typeRef]
       : ['hold.acquire', id, resourceIds, interval, ttl];
     return calendarIntent(context, actor, r.requestId, intent, 'hold', 'book', requestId => {
@@ -74,12 +78,14 @@ export function acquireCalendarHold(context: DatabaseWriteCommandContext, input:
         created_by: actor.userId, created_ms: now, revision: 1, ...intervalFields(acceptedInterval), status: 'held', expires_ms: expiresMs, appointment_id: null });
       if (appointmentType) bindCalendarHoldType(context, actor.scopeId, id, appointmentType);
       if (visit) bindCalendarHoldVisit(context, actor.scopeId, id, visit);
+      if (participants !== undefined) bindCalendarHoldParticipants(context, actor.scopeId, id, participants);
       for (const resourceId of resourceIds) context.db.createStrict('_calendar_hold_reservations', {
         id: holdReservationId(actor.scopeId, id, resourceId), scope_id: actor.scopeId, hold_id: id, resource_id: resourceId,
         resource_revision: calendarResource(context, actor, resourceId).revision,
         occupied_start_ms: acceptedInterval.occupiedStartMs, occupied_end_ms: acceptedInterval.occupiedEndMs, expires_ms: expiresMs, active: 1,
       });
-      appendCalendarSemanticAudit(context, 'hold.acquired', change, { revision: 1, resourceCount: resourceIds.length, status: 'held', ...(visit ? { visitMode: visit.mode } : {}) });
+      appendCalendarSemanticAudit(context, 'hold.acquired', change, { revision: 1, resourceCount: resourceIds.length, status: 'held', ...(visit ? { visitMode: visit.mode } : {}),
+        ...(participants !== undefined ? { participantCount: participants.length } : {}) });
       return receipt(requestId, 'hold.acquired', id, 1);
     });
   });
@@ -123,7 +129,8 @@ export function confirmCalendarHold(context: DatabaseWriteCommandContext, input:
         bufferBeforeMinutes: row.buffer_before, bufferAfterMinutes: row.buffer_after });
       // The trusted exception is only this hold. The appointment helper still freshly checks every book/active/policy/conflict boundary.
       commitCalendarAppointment(context, actor, appointmentId, title, resourceIds, interval,
-        { now, exceptHoldId: row.id, appointmentType: calendarHoldAppointmentType(context, actor.scopeId, row.id), visit: calendarHoldVisit(context, actor.scopeId, row.id) });
+        { now, exceptHoldId: row.id, appointmentType: calendarHoldAppointmentType(context, actor.scopeId, row.id), visit: calendarHoldVisit(context, actor.scopeId, row.id),
+          participants: calendarHoldParticipants(context, actor.scopeId, row.id) });
       const revision = nextCalendarRevision(row.revision), change = context.db.update('calendar_holds', row.id, { status: 'confirmed', revision, appointment_id: appointmentId });
       for (const reservation of reservations) context.db.update('_calendar_hold_reservations', reservation.id, { active: 0 });
       appendCalendarSemanticAudit(context, 'hold.confirmed', change, { revision, resourceCount: resourceIds.length, status: 'confirmed' });

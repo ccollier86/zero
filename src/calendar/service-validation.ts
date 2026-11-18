@@ -127,10 +127,10 @@ export function calendarReceipt(input: unknown, requestId: string, operation: st
     'block.create': 'block.created', 'block.reschedule': 'block.rescheduled', 'block.cancel': 'block.cancelled',
     'hold.acquire': 'hold.acquired', 'hold.release': 'hold.released', 'hold.confirm': 'appointment.created',
     'appointment.create': 'appointment.created', 'appointment.reschedule': 'appointment.rescheduled', 'appointment.cancel': 'appointment.cancelled',
-    'appointment.transition': 'appointment.transitioned', 'lifecycle.replace': 'lifecycle.policy-changed' }[operation];
+    'appointment.transition': 'appointment.transitioned', 'appointment.participants': 'appointment.participants-changed', 'lifecycle.replace': 'lifecycle.policy-changed' }[operation];
   if (!expected || r.requestId !== requestId || r.operation !== expected || r.id !== id || typeof r.changed !== 'boolean') throw new CalendarError('CALENDAR_STATE_INVALID');
   calendarInteger(r.revision, 1);
-  if (expectedRevision !== undefined && (operation === 'lifecycle.replace' || operation === 'appointment.transition')
+  if (expectedRevision !== undefined && (operation === 'lifecycle.replace' || operation === 'appointment.transition' || operation === 'appointment.participants')
     && (r.revision !== expectedRevision + (r.changed ? 1 : 0) || operation === 'appointment.transition' && !r.changed)) throw new CalendarError('CALENDAR_STATE_INVALID');
   return Object.freeze({ requestId, operation: expected as CalendarCommandReceipt['operation'], id, revision: r.revision as number, changed: r.changed });
 }

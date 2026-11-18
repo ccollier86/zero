@@ -14,7 +14,7 @@ import { createDatabaseReadQuerySession, withDatabaseReadQuerySession } from '..
 import { runDatabaseRealmCommand, runDatabaseRealmQuery } from '../databases/database-realm';
 import { createReactiveDB } from '../sync/reactive-db';
 import { resolveCalendarConfig, type ResolvedCalendarConfig } from './config';
-import type { CalendarActor, CalendarCommandReceipt, CalendarLifecyclePolicy } from './contracts';
+import type { CalendarActor, CalendarCommandReceipt, CalendarLifecyclePolicy, CalendarParticipantReference } from './contracts';
 import { CalendarError } from './error';
 import { installCalendarOwnerSchema, type CalendarOwnerRecord } from './owner-schema';
 import { resolveCalendarPersistenceConfig } from './persistence-config';
@@ -31,7 +31,7 @@ const range = { startAt: '2026-11-16T00:00:00.000Z', endAt: '2026-11-17T00:00:00
 const resource = { actor, requestId: 'create-resource', id: 'resource', label: 'Synthetic', kind: 'person', ownerId: actor.userId, timeZone: 'UTC' };
 const noop = () => {};
 
-function fixture() {
+function fixture(configOverrides: Partial<ResolvedCalendarConfig> = {}) {
   const system = createReactiveDB({ mode: 'memory' }), realm = createReactiveDB({ mode: 'memory' });
   let acquisitions = 0, releases = 0, closes = 0;
   let simulatedFilePresent = false;
@@ -71,7 +71,7 @@ function fixture() {
       return { execute, release() { releases++; } };
     };
     const owner = { acquire, acquireExisting: acquire, diagnostics: () => ({ synthetic: true }), close: async () => { closes++; await beforeClose?.(); } };
-    const options: CalendarRuntimeOptions = { config, persistence: resolveCalendarPersistenceConfig(config, project), system, installAllowed: true,
+    const options: CalendarRuntimeOptions = { config: { ...config, ...configOverrides }, persistence: resolveCalendarPersistenceConfig(config, project), system, installAllowed: true,
       authority: { coordinator: new AuthorityCommitCoordinator(), actorContext: null } };
     // Private constructor seam only; open() is intentionally not called because
     // its real root lock/liveness lifecycle requires disk qualification.
@@ -141,6 +141,33 @@ test('empty projections reject malformed inputs, forged physical scope and async
     await expect(f.runtime.read(trustedSystemServiceDataScope({ scopeKind: 'tenant', tenantId: 'other' }), 'calendar.resources', { actor }, noop)).rejects.toMatchObject({ code: 'CALENDAR_FORBIDDEN' });
     await expect(f.runtime.read(scope, 'calendar.resources', { actor }, async () => {})).rejects.toMatchObject({ code: 'CALENDAR_CONFIG_INVALID' });
     expect(f.stats().acquisitions).toBe(0);
+  } finally { await f.close(); }
+});
+
+test('participant broker names keep empty reads file-free, normalize native replay and enforce configured caps before dispatch', async () => {
+  const f = fixture({ maxParticipants: 2 });
+  const refs: readonly CalendarParticipantReference[] = [{ kind: 'guardian-user', userId: 'target-a' }, { kind: 'guardian-user', userId: 'target-z' }];
+  type BoundReferences = { readonly id: string; readonly revision: number; readonly references: readonly CalendarParticipantReference[] };
+  try {
+    for (const name of ['calendar.appointmentParticipants', 'calendar.holdParticipants']) {
+      await expect(f.runtime.read(scope, name, { actor, id: 'missing' }, noop)).rejects.toMatchObject({ code: 'CALENDAR_NOT_FOUND' });
+      await expect(f.runtime.read(scope, name, { actor: { ...actor, manageAll: false }, id: 'missing' }, noop)).rejects.toMatchObject({ code: 'CALENDAR_FORBIDDEN' });
+    }
+    await expect(f.runtime.read(scope, 'calendar.holdParticipantAdmission', { actor: { ...actor, manageAll: false }, id: 'missing' }, noop)).rejects.toMatchObject({ code: 'CALENDAR_NOT_FOUND' });
+    expect(f.stats().acquisitions).toBe(0);
+    await f.runtime.write(scope, 'calendar.resource.create', resource, resource.requestId, noop);
+    const booking = { actor, requestId: 'participants', id: 'participants', resourceIds: ['resource'], title: 'PRIVATE_TITLE',
+      startAt: '2030-01-01T10:00:00.000Z', endAt: '2030-01-01T11:00:00.000Z', timeZone: 'UTC', participants: refs };
+    const acquisitions = f.stats().acquisitions;
+    await expect(f.runtime.write(scope, 'calendar.appointment.create', { ...booking, participants: [...refs, { kind: 'guardian-user', userId: 'third' }] }, booking.requestId, noop))
+      .rejects.toMatchObject({ code: 'CALENDAR_INPUT_INVALID' });
+    expect(f.stats().acquisitions).toBe(acquisitions);
+    const first = await f.runtime.write<CalendarCommandReceipt>(scope, 'calendar.appointment.create', booking, booking.requestId, noop);
+    expect(await f.runtime.write<CalendarCommandReceipt>(scope, 'calendar.appointment.create', { ...booking, participants: refs.slice().reverse() }, booking.requestId, noop)).toEqual(first);
+    expect(await f.runtime.read<BoundReferences>(scope, 'calendar.appointmentParticipants', { actor, id: booking.id }, noop)).toEqual({ id: booking.id, revision: 1, references: refs });
+    const replace = { actor, requestId: 'participants-replace', id: booking.id, expectedRevision: 1, references: [] };
+    expect(await f.runtime.write(scope, 'calendar.appointment.participants', replace, replace.requestId, noop)).toMatchObject({ operation: 'appointment.participants-changed', revision: 2 });
+    expect(await f.runtime.read<BoundReferences>(scope, 'calendar.appointmentParticipants', { actor, id: booking.id }, noop)).toEqual({ id: booking.id, revision: 2, references: [] });
   } finally { await f.close(); }
 });
 

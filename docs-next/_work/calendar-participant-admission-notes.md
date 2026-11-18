@@ -17,7 +17,12 @@ maturity: experimental
 Date: November 17, 2026. Reviewed against feature branch
 `feature/calendar-backend-foundation`, baseline `ba6e941`; concurrent visit/location
 binding work is not part of this review. These are durable implementation notes,
-not a claim that participant APIs, bindings or permission grants are implemented.
+not a claim that participant APIs, bindings or permission grants were implemented
+at that baseline. The subsequent native-account implementation now follows these
+notes; use the [participant guide](../backend/calendar/participants.md) and
+[qualification record](../backend/calendar/qualification.md) for current source
+status and remaining release gates. The reviewed plan below is retained as the
+design record, not an assertion that every future adapter has shipped.
 
 The governing requirements are sections 4 and 5 of the
 [calendar integration plan](./calendar-integration-plan.md). This note records a

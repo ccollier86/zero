@@ -10,12 +10,18 @@ import { calendarLocationIds, calendarLocationInput, calendarPageQuery, calendar
   calendarAppointmentTypePageQuery, calendarAppointmentTypeInput, calendarTypeReference, calendarResourceTypesInput,
   calendarLifecyclePolicyInput, calendarAppointmentTransitionInput, calendarLifecycleReason, calendarVisitInput, calendarVisitLocationQuery } from './service-validation';
 import { watchCalendarPage } from './watch';
+import type { CalendarParticipantDirectory } from './participants-directory';
+import { calendarParticipantBroker, calendarParticipantCommitGuard, calendarParticipantQuery } from './participants-service';
+import { calendarParticipantReferences } from './participants-validation';
 
 export interface CalendarServiceBroker {
   read<T>(scope: ServiceDataScope, name: string, input: unknown, guard: () => void, signal?: AbortSignal): Promise<T>;
-  write<T>(scope: ServiceDataScope, name: string, input: unknown, requestId: string, guard: () => void, signal?: AbortSignal): Promise<T>;
+  write<T>(scope: ServiceDataScope, name: string, input: unknown, requestId: string, guard: () => void, signal?: AbortSignal,
+    finalCommitGuard?: () => void): Promise<T>;
   /** Payload-free hints after actual commits. Every consumer must make a fresh authorized query. */
-  subscribe?(scope: ServiceDataScope, listener: () => void): () => void;
+  subscribe?(scope: ServiceDataScope, listener: () => void, queryName?: string): () => void;
+  /** Trusted synchronous publication projection after the last asynchronous authority check. */
+  publish?<T>(scope: ServiceDataScope, name: string, input: unknown, value: T, guard: () => void): T;
 }
 
 /** No caller may choose an actor, scope or operation through this object. */
@@ -24,7 +30,10 @@ export class CalendarService {
   private readonly active = new Set<Promise<unknown>>();
   private readonly signal: AbortSignal;
   constructor(private readonly broker: CalendarServiceBroker, private readonly config: ResolvedCalendarConfig,
-    closing: AbortSignal) { this.signal = AbortSignal.any([closing, this.stop.signal]); }
+    closing: AbortSignal, private readonly participantDirectory?: CalendarParticipantDirectory) {
+    this.signal = AbortSignal.any([closing, this.stop.signal]);
+    this.broker = calendarParticipantBroker(broker, participantDirectory, config);
+  }
 
   forAuthority(request: CalendarAuthority): ScopedCalendar & {
     /** @internal Compatibility with the initial unexported foundation. */
@@ -34,6 +43,27 @@ export class CalendarService {
     const createResource = (input: unknown, options: CalendarRequestOptions) => this.write(request, 'resource.create', input, options);
     const createAppointment = (input: unknown, options: CalendarRequestOptions) => this.write(request, 'appointment.create', input, options);
     return Object.freeze({
+      participants: Object.freeze({
+        directory: (query = {}, options) => this.read(request, 'participantDirectory', () => calendarParticipantQuery(query, this.config), options),
+        forAppointment: (id, options) => this.read(request, 'participantsForAppointment', () => ({ id: calendarKey(id) }), options),
+        forHold: (id, options) => this.read(request, 'participantsForHold', () => ({ id: calendarKey(id) }), options),
+        replace: (id, references, options) => this.write(request, 'appointment.participants', { references }, options, id),
+        watchDirectory: (query, listener, options: CalendarWatchOptions = {}) => {
+          const detached = calendarParticipantQuery(query, this.config); this.ready();
+          return watchCalendarPage({ request, broker: this.broker, config: this.config, closing: this.signal,
+            queryName: 'calendar.participantDirectory', query: detached, listener, options, track: task => this.track(task) });
+        },
+        watchForAppointment: (id, listener, options: CalendarWatchOptions = {}) => {
+          const query = Object.freeze({ id: calendarKey(id) }); this.ready();
+          return watchCalendarPage({ request, broker: this.broker, config: this.config, closing: this.signal,
+            queryName: 'calendar.participantsForAppointment', query, listener, options, track: task => this.track(task) });
+        },
+        watchForHold: (id, listener, options: CalendarWatchOptions = {}) => {
+          const query = Object.freeze({ id: calendarKey(id) }); this.ready();
+          return watchCalendarPage({ request, broker: this.broker, config: this.config, closing: this.signal,
+            queryName: 'calendar.participantsForHold', query, listener, options, track: task => this.track(task) });
+        },
+      }),
       lifecycle: Object.freeze({
         get: (options) => this.read(request, 'lifecycle', () => ({}), options),
         replace: (input, options) => this.write(request, 'lifecycle.replace', input, options, 'policy'),
@@ -186,7 +216,7 @@ export class CalendarService {
       const authority = await admitCalendarRequest(request, this.config, this.signal, opts.signal as AbortSignal | undefined);
       authority.guard();
       let dirty = false;
-      const remove = this.broker.subscribe?.(authority.scope, () => { dirty = true; });
+      const remove = this.broker.subscribe?.(authority.scope, () => { dirty = true; }, 'calendar.' + name);
       try {
         // Strong SQL reads linearize at their query. If this owner observes a
         // newer domain commit during the final async Guardian check, do not
@@ -195,7 +225,8 @@ export class CalendarService {
           authority.guard(); dirty = false;
           const result = await this.broker.read<T>(authority.scope, 'calendar.' + name, { ...body, actor: authority.actor }, authority.guard, authority.signal);
           await authority.confirm(); authority.guard();
-          if (!dirty) return result;
+          if (!dirty) return this.broker.publish?.(authority.scope, 'calendar.' + name,
+            { ...body, actor: authority.actor }, result, authority.guard) ?? result;
         }
         throw new CalendarError('CALENDAR_NOT_READY');
       } finally { remove?.(); }
@@ -206,6 +237,7 @@ export class CalendarService {
     return this.track((async () => {
       this.ready();
       const fields = operation === 'resource.create' ? ['label', 'kind', 'ownerId', 'timeZone']
+        : operation === 'appointment.participants' ? ['references']
         : operation === 'lifecycle.replace' ? ['extended', 'cancellationReason', 'noShowReason']
         : operation === 'appointment.transition' ? ['status', 'policyRevision', 'reason']
         : operation === 'type.create' || operation === 'type.replace' ? ['label', 'durationMinutes', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'colorKey', 'active']
@@ -216,13 +248,17 @@ export class CalendarService {
         : operation === 'resource.availability' ? ['mode', 'windows']
         : operation === 'block.cancel' || operation === 'appointment.cancel' || operation === 'hold.release' ? []
         : operation === 'hold.confirm' ? ['title']
-        : operation === 'hold.acquire' ? ['resourceIds', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'ttlSeconds', 'appointmentType', 'visit']
+        : operation === 'hold.acquire' ? ['resourceIds', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'ttlSeconds', 'appointmentType', 'visit', 'participants']
         : operation === 'block.reschedule' ? ['startAt', 'endAt', 'timeZone']
         : operation === 'block.create' ? ['resourceIds', 'title', 'startAt', 'endAt', 'timeZone']
         : operation === 'appointment.reschedule' ? ['startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'appointmentType', 'visit']
-        : ['resourceIds', 'title', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'appointmentType', 'visit'];
+        : ['resourceIds', 'title', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'appointmentType', 'visit', 'participants'];
       // Detach before the first await; authored mutation cannot alter an admitted command.
       const body = calendarValue(calendarRecord(input, fields)) as Record<string, unknown>;
+      for (const field of ['participants', 'references'] as const) if (Object.hasOwn(body, field)) {
+        body[field] = calendarParticipantReferences(body[field]);
+        if ((body[field] as unknown[]).length > this.config.maxParticipants) throw new CalendarError('CALENDAR_INPUT_INVALID');
+      }
       if (operation === 'location.create' || operation === 'location.replace') calendarLocationInput(body, operation === 'location.replace');
       if (operation === 'resource.locations') body.locationIds = calendarLocationIds(body.locationIds);
       if (operation === 'type.create' || operation === 'type.replace') calendarAppointmentTypeInput(body, operation === 'type.replace');
@@ -247,6 +283,9 @@ export class CalendarService {
       if (operation === 'hold.acquire' && body.ttlSeconds !== undefined) calendarInteger(body.ttlSeconds, 1, 900);
       const authority = await admitCalendarRequest(request, this.config, this.signal, opts.signal as AbortSignal | undefined);
       authority.guard();
+      const commitGuard = await calendarParticipantCommitGuard({ broker: this.broker, directory: this.participantDirectory,
+        config: this.config, authority, operation, body, key, id, expectedRevision });
+      authority.guard();
       if (operation === 'resource.locations' && !authority.actor.manageAll) {
         // A location ID is metadata, not a visibility grant. Capture a currently
         // authorized assignment witness; the final writer checks its live rights
@@ -270,7 +309,7 @@ export class CalendarService {
         { ...body, actor: authority.actor, requestId: key, ...(operation === 'lifecycle.replace' ? {} : { id: resolvedId }),
           ...(expectedRevision === undefined ? {} : { expectedRevision }),
           ...(appointmentId === undefined ? {} : { appointmentId }),
-          ...(operation === 'appointment.cancel' || operation === 'block.cancel' || operation === 'hold.release' ? { confirmed: true } : {}) }, key, authority.guard, authority.signal);
+          ...(operation === 'appointment.cancel' || operation === 'block.cancel' || operation === 'hold.release' ? { confirmed: true } : {}) }, key, authority.guard, authority.signal, commitGuard);
       try { await authority.confirm(); authority.guard(); return calendarReceipt(result, key, operation, appointmentId ?? resolvedId, expectedRevision); }
       catch { throw new CalendarError('CALENDAR_OUTCOME_UNKNOWN'); }
     })());

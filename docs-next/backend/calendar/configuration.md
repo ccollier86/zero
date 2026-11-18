@@ -43,7 +43,8 @@ Torrent, workers, email, messaging, Storage, AI or providers.
 | `maxRangeDays` | 31; configurable 1–31 days per query |
 | `maxPageSize` | 100; configurable 1–100, resource pages normally 25 |
 | `maxResources` | 16 selected resources per query/booking; configurable 1–16 |
-| `maxParticipants` | 100 admitted as a reserved future ceiling; there is no participant API |
+| `maxParticipants` | 100 references; configurable 1–100 for new bindings |
+| `participants` | false; opt-in `{ userEligibility: AccessRequirement }` offline-provable native Guardian rule |
 | `maxActiveDatabases` | 4; configurable 1–64 active private domains |
 | `maxDatabaseFiles` | 1,000; configurable up to 10,000 and not below active-domain limit |
 | `recurrence`, `reminders`, `selfBooking` | false only; enabled declarations reject as unavailable |
@@ -105,7 +106,8 @@ deployment and custom actor launch are not qualified public managed options.
    normal migration path, not copied SQL or a private framework import.
 5. Create real resources through the scoped facade and assign grants deliberately.
    Owners/grantees are opaque existing identity references; this core does not
-   expose a user-directory discovery or invite API and never creates accounts.
+   creates accounts or invitations. The optional [native participant directory](./participants.md)
+   uses a separate explicit trusted subject policy and scope-manager admission.
    Optional appointment types/policies use the same managed scope. Catalog/policy
    editing requires scope management; restrictive policy does not cancel existing
    appointments or let a provider owner bypass type requirements.

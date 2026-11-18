@@ -148,10 +148,12 @@ export class AdminUserProvisioningStore {
       delete: db.prepare(`
         DELETE FROM ${ADMIN_USER_PROVISIONING_TABLE}
         WHERE provisioning_id = ? AND user_id = ? AND lease_owner_hash = ?
+        RETURNING provisioning_id
       `),
       deleteByIdentity: db.prepare(`
         DELETE FROM ${ADMIN_USER_PROVISIONING_TABLE}
         WHERE provisioning_id = ? AND user_id = ?
+        RETURNING provisioning_id
       `),
     };
   }
@@ -253,11 +255,12 @@ export class AdminUserProvisioningStore {
       }
       if (!row.setup_token_id) throw this.invariant('setup-token-unbound');
       this.requireActiveSetupToken(row.setup_token_id, row.user_id, now);
-      if (this.stmts.delete.run(
+      // RETURNING excludes the shared authority clock's trigger side effect.
+      if (!this.stmts.delete.get(
         row.provisioning_id,
         row.user_id,
         row.lease_owner_hash,
-      ).changes !== 1) throw this.invariant('marker-finalization-lost');
+      )) throw this.invariant('marker-finalization-lost');
       this.dependencies.activateIdentityProjection(row.user_id);
     });
   }
@@ -543,10 +546,10 @@ export class AdminUserProvisioningStore {
   }
 
   private retireMarker(row: AdminUserProvisioningRow): void {
-    if (this.stmts.deleteByIdentity.run(
+    if (!this.stmts.deleteByIdentity.get(
       row.provisioning_id,
       row.user_id,
-    ).changes !== 1) throw this.invariant('marker-retirement-lost');
+    )) throw this.invariant('marker-retirement-lost');
   }
 
   private invariant(invariant: string): AuthError {

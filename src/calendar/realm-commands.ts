@@ -1,6 +1,6 @@
 /** Short synchronous tracked commands. SQLite owns all-resource conflict decisions and rollback. */
 import type { DatabaseWriteCommandContext } from '../databases/database-realm';
-import type { CalendarActor, CalendarAppointmentTypeSnapshot, CalendarCommandReceipt, CalendarGrant, CalendarVisitInput } from './contracts';
+import type { CalendarActor, CalendarAppointmentTypeSnapshot, CalendarCommandReceipt, CalendarGrant, CalendarParticipantReference, CalendarVisitInput } from './contracts';
 import { CalendarError, calendarCommand } from './error';
 import { appointmentResources, calendarActor, calendarAppointment, calendarBudget, calendarIntent, calendarResource, calendarRevision,
   grantId, nextCalendarRevision, requireCalendarRight, reservationId } from './realm-model';
@@ -16,6 +16,7 @@ import { assertCalendarBookingType, bindCalendarAppointmentType, calendarAppoint
   assertCalendarTypePolicy, calendarCurrentAppointmentType, normalizeCalendarTypedBooking, normalizeCalendarTypedIntentInterval, sameCalendarAppointmentType } from './appointment-type-bindings';
 import { assertCalendarBookingVisit, assertCalendarVisitPolicy, bindCalendarAppointmentVisit, calendarAppointmentVisitAtRevision,
   calendarCurrentAppointmentVisit, calendarVisitInput, sameCalendarVisit } from './visit-bindings';
+import { bindCalendarAppointmentParticipants, calendarParticipantReferences, requireCalendarParticipantManager } from './participant-bindings';
 
 function owner(context: DatabaseWriteCommandContext, scopeId: string): void {
   if (context.db.get('_calendar_owner', 'application')?.scope_id !== scopeId) throw new CalendarError('CALENDAR_STATE_INVALID');
@@ -79,7 +80,7 @@ export function changeCalendarGrant(context: DatabaseWriteCommandContext, input:
 }
 export function createCalendarAppointment(context: DatabaseWriteCommandContext, input: unknown) {
   return calendarCommand(() => {
-    const r = calendarRecord(input, ['actor', 'requestId', 'id', 'resourceIds', 'title', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'appointmentType', 'visit']), actor = calendarActor(r.actor);
+    const r = calendarRecord(input, ['actor', 'requestId', 'id', 'resourceIds', 'title', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'appointmentType', 'visit', 'participants']), actor = calendarActor(r.actor);
     owner(context, actor.scopeId);
     const id = calendarKey(r.id), title = calendarText(r.title, 512), resourceIds = calendarSelection(r.resourceIds).sort();
     if (!resourceIds.length || new Set(resourceIds).size !== resourceIds.length) throw new CalendarError('CALENDAR_INPUT_INVALID');
@@ -89,9 +90,13 @@ export function createCalendarAppointment(context: DatabaseWriteCommandContext, 
     }
     // Catalog admission follows complete co-resource authorization, including on an invalid type reference.
     const typeRef = calendarAppointmentTypeReference(r.appointmentType), visitRef = calendarVisitInput(r.visit);
+    const participants = Object.hasOwn(r, 'participants') ? calendarParticipantReferences(r.participants) : undefined;
+    if (participants !== undefined) requireCalendarParticipantManager(actor);
     const interval = typeRef ? undefined : normalizeCalendarTimedInterval({ startAt: r.startAt, endAt: r.endAt, timeZone: r.timeZone,
       bufferBeforeMinutes: r.bufferBeforeMinutes, bufferAfterMinutes: r.bufferAfterMinutes });
-    const intent: unknown[] = visitRef
+    const intent: unknown[] = participants !== undefined
+      ? ['appointment.create.participants.v1', id, resourceIds, title, normalizeCalendarTypedIntentInterval(r), typeRef ?? null, visitRef ?? null, participants]
+      : visitRef
       ? ['appointment.create.visit.v1', id, resourceIds, title, normalizeCalendarTypedIntentInterval(r), typeRef ?? null, visitRef]
       : typeRef
       ? ['appointment.create.typed.v1', id, resourceIds, title, normalizeCalendarTypedIntentInterval(r), typeRef]
@@ -100,14 +105,15 @@ export function createCalendarAppointment(context: DatabaseWriteCommandContext, 
       // Finish both policy intersections before resolving either selected catalog generation/defaults.
       assertCalendarTypePolicy(context, actor, resourceIds, typeRef); assertCalendarVisitPolicy(context, actor, resourceIds, visitRef);
       const booking = typeRef ? normalizeCalendarTypedBooking(context, actor, resourceIds, r, typeRef) : { interval: interval!, appointmentType: undefined };
-      commitCalendarAppointment(context, actor, id, title, resourceIds, booking.interval, { appointmentType: booking.appointmentType, visit: visitRef });
+      commitCalendarAppointment(context, actor, id, title, resourceIds, booking.interval, { appointmentType: booking.appointmentType, visit: visitRef, participants });
       return receipt(requestId, 'appointment.created', id, 1);
     });
   });
 }
 /** Internal canonical writer shared with hold confirmation, always inside the caller's realm transaction. */
 export function commitCalendarAppointment(context: DatabaseWriteCommandContext, actor: CalendarActor, id: string, title: string,
-  resourceIds: readonly string[], interval: CalendarTimedInterval, options?: { readonly now?: number; readonly exceptHoldId?: string; readonly appointmentType?: CalendarAppointmentTypeSnapshot; readonly visit?: CalendarVisitInput }): void {
+  resourceIds: readonly string[], interval: CalendarTimedInterval, options?: { readonly now?: number; readonly exceptHoldId?: string; readonly appointmentType?: CalendarAppointmentTypeSnapshot; readonly visit?: CalendarVisitInput; readonly participants?: readonly CalendarParticipantReference[] }): void {
+  if (options?.participants !== undefined) requireCalendarParticipantManager(actor);
   if (context.db.get('calendar_appointments', id)) {
     calendarAppointment(context, actor, id, 'book');
     throw new CalendarError('CALENDAR_INTENT_CONFLICT');
@@ -126,9 +132,11 @@ export function commitCalendarAppointment(context: DatabaseWriteCommandContext, 
   const change = context.db.createStrict('calendar_appointments', { id, scope_id: actor.scopeId, title, ...intervalFields(interval), status: 'confirmed', revision: 1, created_by: actor.userId });
   if (options?.appointmentType) bindCalendarAppointmentType(context, actor.scopeId, id, 1, options.appointmentType);
   if (visit) bindCalendarAppointmentVisit(context, actor.scopeId, id, 1, visit);
+  if (options?.participants !== undefined) bindCalendarAppointmentParticipants(context, actor.scopeId, id, 1, options.participants);
   for (const resourceId of resourceIds) context.db.createStrict('_calendar_reservations', { id: reservationId(actor.scopeId, id, resourceId), scope_id: actor.scopeId,
     appointment_id: id, resource_id: resourceId, occupied_start_ms: interval.occupiedStartMs, occupied_end_ms: interval.occupiedEndMs, active: 1 });
-  appendCalendarSemanticAudit(context, 'appointment.created', change, { revision: 1, resourceCount: resourceIds.length, status: 'confirmed', ...(visit ? { visitMode: visit.mode } : {}) });
+  appendCalendarSemanticAudit(context, 'appointment.created', change, { revision: 1, resourceCount: resourceIds.length, status: 'confirmed', ...(visit ? { visitMode: visit.mode } : {}),
+    ...(options?.participants !== undefined ? { participantCount: options.participants.length } : {}) });
 }
 export function rescheduleCalendarAppointment(context: DatabaseWriteCommandContext, input: unknown) {
   return calendarCommand(() => {

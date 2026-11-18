@@ -36,7 +36,7 @@ test('enabled shorthand has private bounded defaults but does not claim runtime 
   expect(config).toEqual({
     rootDirectory: PROJECT + '/data/zero.calendar', timezone: null, readiness: 'setup-required',
     createOwn: 'user', manage: 'admin', maxRangeDays: 31, maxPageSize: 100, maxResources: 16,
-    maxParticipants: 100, maxActiveDatabases: 4, maxDatabaseFiles: 1000,
+    maxParticipants: 100, participants: false, maxActiveDatabases: 4, maxDatabaseFiles: 1000,
     recurrence: false, reminders: false, selfBooking: false,
   });
   expect(enabled({})).toEqual(config);
@@ -155,6 +155,26 @@ test('native/API-key access is not admitted before its separate calendar authori
       rejects({ [key]: { user: 'required', platformRole: 'admin', credentials } });
     }
   }
+});
+
+test('canonical participants require an explicit compiled offline account eligibility policy', () => {
+  const guardian = resolveAuthBehaviorConfig({ userProperties: {
+    staff: { editableBy: 'admin', useInPolicies: true }, preference: { editableBy: 'user' },
+  } });
+  expect(enabled({ participants: false }).participants).toBe(false);
+  expect(enabled({ participants: { userEligibility: 'user' } }).participants).toEqual({ userEligibility: 'user' });
+  const rule = { properties: { staff: { equals: true } } };
+  const result = enabled({ participants: { userEligibility: rule } }, guardian).participants;
+  expect(result).toEqual({ userEligibility: rule });
+  expect(Object.isFrozen(result)).toBe(true);
+  if (!result) throw new Error('Expected admitted synthetic participant rule.');
+  expect(Object.isFrozen((result.userEligibility as typeof rule).properties.staff)).toBe(true);
+  expect(Object.isFrozen(rule)).toBe(false);
+  for (const participants of [true, {}, { userEligibility: true }, { userEligibility: false }, { userEligibility: 'optional' },
+    { userEligibility: {} }, { userEligibility: { credentials: ['session'] } },
+    { userEligibility: { platformRole: 'admin', credentials: ['session'] } },
+    { userEligibility: { user: 'required', mfa: 'required' } }, { userEligibility: 'user', contacts: true },
+    { userEligibility: { properties: { preference: 'staff' } } }]) rejects({ participants }, 'CALENDAR_CONFIG_INVALID', guardian);
 });
 
 test('admitted requirements are deeply detached and frozen without freezing developer-owned inputs', () => {

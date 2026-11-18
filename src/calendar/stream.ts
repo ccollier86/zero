@@ -1,5 +1,15 @@
 /** One coalesced authorized page under backpressure. No permanent streams or raw change payloads. */
-import type { CalendarAppointmentTypePageQuery, CalendarLocationPageQuery, CalendarRangeQuery, CalendarResourcePageQuery, CalendarReadOptions, CalendarVisitLocationQuery, CalendarWatchOptions, CalendarWatchUpdate, ScopedCalendar } from './contracts';
+import type { CalendarAppointmentTypePageQuery, CalendarLocationPageQuery, CalendarRangeQuery, CalendarResourcePageQuery, CalendarReadOptions, CalendarVisitLocationQuery, CalendarWatchOptions, CalendarWatchUpdate, ScopedCalendar, CalendarParticipantDirectoryQuery } from './contracts';
+export function calendarParticipantDirectoryStream(calendar: ScopedCalendar, query: CalendarParticipantDirectoryQuery, signal: AbortSignal): ReadableStream<Uint8Array> {
+  return calendarSnapshotStream({ read: options => calendar.participants.directory(query, options),
+    watch: (listener, options) => calendar.participants.watchDirectory(query, listener, options) }, signal);
+}
+export function calendarParticipantsStream(calendar: ScopedCalendar, kind: 'appointment' | 'hold', id: string, signal: AbortSignal): ReadableStream<Uint8Array> {
+  return calendarSnapshotStream({
+    read: options => kind === 'appointment' ? calendar.participants.forAppointment(id, options) : calendar.participants.forHold(id, options),
+    watch: (listener, options) => kind === 'appointment' ? calendar.participants.watchForAppointment(id, listener, options) : calendar.participants.watchForHold(id, listener, options),
+  }, signal);
+}
 export function calendarVisitLocationStream(calendar: ScopedCalendar, query: CalendarVisitLocationQuery, signal: AbortSignal): ReadableStream<Uint8Array> {
   return calendarSnapshotStream({ read: options => calendar.locations.forVisit(query, options),
     watch: (listener, options) => calendar.locations.watchForVisit(query, listener, options) }, signal);

@@ -5,6 +5,7 @@ import type { CalendarAppointmentInput, CalendarAppointmentPage, CalendarAppoint
   CalendarAvailabilityInput, CalendarAvailabilityView, CalendarAvailabilityWindow, CalendarBlockInput, CalendarBlockPage, CalendarBlockRescheduleInput, CalendarBlockView,
   CalendarHoldInput, CalendarHoldView, CalendarHoldPage, CalendarHoldConfirmationInput,
   CalendarVisitInput, CalendarVisitSnapshot, CalendarVisitLocationQuery,
+  CalendarParticipantReference, CalendarParticipantView, CalendarParticipantDirectoryQuery, CalendarParticipantDirectoryPage, CalendarParticipantsView,
   CalendarAppointmentTypeInput, CalendarAppointmentTypeReplacement, CalendarAppointmentTypeReference, CalendarAppointmentTypeSnapshot,
   CalendarAppointmentTypeView, CalendarAppointmentTypePageQuery, CalendarAppointmentTypePage, CalendarResourceTypesInput, CalendarResourceTypesView,
   CalendarLocationInput, CalendarLocationReplacement, CalendarLocationView, CalendarLocationPageQuery, CalendarLocationPage, CalendarResourceLocationsView,
@@ -55,6 +56,37 @@ export function createCalendarClient(fetch: <T = unknown>(path: string, init?: F
     return watch('/' + kind + '/live?' + params, parse, listener, supplied);
   }
   return Object.freeze({
+    participants: Object.freeze({
+      directory(query: CalendarParticipantDirectoryQuery = {}, supplied?: CalendarReadOptions) {
+        const page = participantRequest(query);
+        return read('/participants' + page.search, value => participantDirectory(value, page.query), 'GET', undefined, readSignal(supplied));
+      },
+      forAppointment(id: string, supplied?: CalendarReadOptions) {
+        const target = requestKey(id);
+        return read('/appointments/' + encodeURIComponent(target) + '/participants', value => participantBindings(value, target), 'GET', undefined, readSignal(supplied));
+      },
+      forHold(id: string, supplied?: CalendarReadOptions) {
+        const target = requestKey(id);
+        return read('/holds/' + encodeURIComponent(target) + '/participants', value => participantBindings(value, target), 'GET', undefined, readSignal(supplied));
+      },
+      replace(id: string, references: readonly CalendarParticipantReference[], supplied: CalendarControlOptions) {
+        const target = requestKey(id), control = options(supplied, true);
+        return mutation('/appointments/' + encodeURIComponent(target) + '/participants', { references: participantReferences(references), options: control },
+          supplied, 'appointment.participants-changed', target, undefined, 'PUT', control.expectedRevision as number);
+      },
+      watchDirectory(query: CalendarParticipantDirectoryQuery, listener: (page: CalendarParticipantDirectoryPage, update?: CalendarWatchUpdate) => void, supplied: CalendarWatchOptions = {}) {
+        const page = participantRequest(query);
+        return watch('/participants/live' + page.search, value => participantDirectory(value, page.query), listener, supplied);
+      },
+      watchForAppointment(id: string, listener: (page: CalendarParticipantsView, update?: CalendarWatchUpdate) => void, supplied: CalendarWatchOptions = {}) {
+        const target = requestKey(id);
+        return watch('/appointments/' + encodeURIComponent(target) + '/participants/live', value => participantBindings(value, target), listener, supplied);
+      },
+      watchForHold(id: string, listener: (page: CalendarParticipantsView, update?: CalendarWatchUpdate) => void, supplied: CalendarWatchOptions = {}) {
+        const target = requestKey(id);
+        return watch('/holds/' + encodeURIComponent(target) + '/participants/live', value => participantBindings(value, target), listener, supplied);
+      },
+    }),
     lifecycle: Object.freeze({
       get(readOptions?: CalendarReadOptions) { return read('/lifecycle', lifecyclePolicy, 'GET', undefined, readSignal(readOptions)); },
       replace(input: CalendarLifecyclePolicyInput, supplied: CalendarControlOptions) {
@@ -489,8 +521,53 @@ function resourceLocationsView(value: unknown): CalendarResourceLocationsView {
   if (locationIds.some((id, index) => index > 0 && locationIds[index - 1]! >= id)) throw invalid();
   return Object.freeze({ resourceId: r.resourceId as string, resourceRevision: r.resourceRevision as number, locationIds: Object.freeze(locationIds) });
 }
+function participantReferences(value: unknown): readonly CalendarParticipantReference[] {
+  const refs = values(value, 100).map(item => {
+    const r = record(item, ['kind', 'userId']);
+    if (Object.keys(r).length !== 2 || r.kind !== 'guardian-user') throw invalid();
+    return Object.freeze({ kind: 'guardian-user' as const, userId: requestKey(r.userId) });
+  });
+  unique(refs.map(ref => ref.userId));
+  return Object.freeze(refs.sort((a, b) => a.userId < b.userId ? -1 : a.userId > b.userId ? 1 : 0));
+}
+function participantView(value: unknown): CalendarParticipantView {
+  const r = record(value, ['ref', 'availability', 'name']), ref = participantReferences([r.ref])[0]!;
+  if (r.availability === 'unavailable' && Object.keys(r).length === 2) return Object.freeze({ ref, availability: 'unavailable' });
+  if (r.availability !== 'available' || Object.keys(r).length !== 3) throw invalid();
+  return Object.freeze({ ref, availability: 'available', name: identifier(r.name, 241) });
+}
+function participantRequest(value: unknown): { search: string; query: CalendarParticipantDirectoryQuery } {
+  const r = record(value, ['search', 'limit', 'after']), params = new URLSearchParams();
+  const search = r.search === undefined ? undefined : typeof r.search === 'string' && r.search.length <= 100 && !/[\u0000-\u001f\u007f]/.test(r.search) ? r.search.trim() : (() => { throw invalid(); })();
+  const limit = r.limit === undefined ? undefined : integer(r.limit, 1, 100), after = r.after === undefined ? undefined : requestKey(r.after);
+  if (search !== undefined) params.set('search', search);
+  if (limit !== undefined) params.set('limit', String(limit));
+  if (after !== undefined) params.set('after', after);
+  return { search: params.size ? '?' + params : '', query: Object.freeze({ ...(search === undefined ? {} : { search }),
+    ...(limit === undefined ? {} : { limit }), ...(after === undefined ? {} : { after }) }) };
+}
+function participantDirectory(value: unknown, query: CalendarParticipantDirectoryQuery): CalendarParticipantDirectoryPage {
+  const r = record(value, ['items', 'truncated', 'nextAfter']);
+  if (Object.keys(r).length !== 3 || typeof r.truncated !== 'boolean') throw invalid();
+  const items = values(r.items, query.limit ?? 100).map(participantView);
+  if (items.some(item => item.availability !== 'available')) throw invalid();
+  unique(items.map(item => item.ref.userId));
+  for (let i = 1; i < items.length; i++) if (items[i - 1]!.ref.userId >= items[i]!.ref.userId) throw invalid();
+  const nextAfter = r.nextAfter === null ? null : requestKey(r.nextAfter);
+  if (r.truncated !== (nextAfter !== null) || nextAfter !== null && nextAfter === query.after) throw invalid();
+  return Object.freeze({ items: Object.freeze(items), truncated: r.truncated, nextAfter });
+}
+function participantBindings(value: unknown, id: string): CalendarParticipantsView {
+  const r = record(value, ['id', 'revision', 'participants']);
+  if (Object.keys(r).length !== 3 || requestKey(r.id) !== id) throw invalid();
+  const participants = values(r.participants, 100).map(participantView);
+  unique(participants.map(item => item.ref.userId));
+  for (let i = 1; i < participants.length; i++) if (participants[i - 1]!.ref.userId >= participants[i]!.ref.userId) throw invalid();
+  return Object.freeze({ id, revision: integer(r.revision, 1), participants: Object.freeze(participants) });
+}
 function appointmentInput(value: unknown, create: boolean): Record<string, unknown> {
-  const r = record(value, ['startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'appointmentType', 'visit', ...(create ? ['resourceIds', 'title'] : [])]);
+  const r = record(value, ['startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'appointmentType', 'visit', ...(create ? ['resourceIds', 'title', 'participants'] : [])]);
+  const participants = Object.hasOwn(r, 'participants') ? participantReferences(r.participants) : undefined;
   const resourceIds = create ? ids(r.resourceIds) : undefined;
   if (create) identifier(r.title, 512);
   instant(r.startAt); instant(r.endAt);
@@ -499,7 +576,7 @@ function appointmentInput(value: unknown, create: boolean): Record<string, unkno
   for (const key of ['bufferBeforeMinutes', 'bufferAfterMinutes']) if (!create || r[key] !== undefined) integer(r[key], 0, 1440);
   const appointmentType = Object.hasOwn(r, 'appointmentType') ? r.appointmentType === null && !create ? null : typeReference(r.appointmentType) : undefined;
   const visit = Object.hasOwn(r, 'visit') ? r.visit === null && !create ? null : visitInput(r.visit) : undefined;
-  return { ...r, ...(resourceIds === undefined ? {} : { resourceIds }), ...(appointmentType === undefined ? {} : { appointmentType }), ...(visit === undefined ? {} : { visit }) };
+  return { ...r, ...(participants === undefined ? {} : { participants }), ...(resourceIds === undefined ? {} : { resourceIds }), ...(appointmentType === undefined ? {} : { appointmentType }), ...(visit === undefined ? {} : { visit }) };
 }
 function blockInput(value: unknown, create: boolean): Record<string, unknown> {
   const r = record(value, ['startAt', 'endAt', 'timeZone', ...(create ? ['resourceIds', 'title'] : [])]);
@@ -509,14 +586,15 @@ function blockInput(value: unknown, create: boolean): Record<string, unknown> {
   return { ...r, ...(resourceIds === undefined ? {} : { resourceIds }) };
 }
 function holdInput(value: unknown): Record<string, unknown> {
-  const r = record(value, ['resourceIds', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'ttlSeconds', 'appointmentType', 'visit']);
+  const r = record(value, ['resourceIds', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'ttlSeconds', 'appointmentType', 'visit', 'participants']);
+  const participants = Object.hasOwn(r, 'participants') ? participantReferences(r.participants) : undefined;
   const resourceIds = ids(r.resourceIds);
   interval(r.startAt, r.endAt); zone(r.timeZone);
   for (const key of ['bufferBeforeMinutes', 'bufferAfterMinutes']) if (r[key] !== undefined) integer(r[key], 0, 1440);
   if (r.ttlSeconds !== undefined) integer(r.ttlSeconds, 1, 900);
   const appointmentType = Object.hasOwn(r, 'appointmentType') ? typeReference(r.appointmentType) : undefined;
   const visit = Object.hasOwn(r, 'visit') ? visitInput(r.visit) : undefined;
-  return { ...r, resourceIds, ...(appointmentType === undefined ? {} : { appointmentType }), ...(visit === undefined ? {} : { visit }) };
+  return { ...r, resourceIds, ...(participants === undefined ? {} : { participants }), ...(appointmentType === undefined ? {} : { appointmentType }), ...(visit === undefined ? {} : { visit }) };
 }
 function availabilityInput(value: unknown): CalendarAvailabilityInput {
   const r = record(value, ['mode', 'windows']);
@@ -648,7 +726,7 @@ function calendarReceipt(value: unknown): CalendarCommandReceipt {
     'location.created', 'location.updated',
     'type.created', 'type.updated', 'resource.types-changed',
     'block.created', 'block.rescheduled', 'block.cancelled', 'hold.acquired', 'hold.released',
-    'appointment.created', 'appointment.rescheduled', 'appointment.cancelled', 'appointment.transitioned', 'lifecycle.policy-changed'].includes(r.operation)
+    'appointment.created', 'appointment.rescheduled', 'appointment.cancelled', 'appointment.transitioned', 'appointment.participants-changed', 'lifecycle.policy-changed'].includes(r.operation)
     || r.operation === 'lifecycle.policy-changed' && r.id !== 'policy' || typeof r.changed !== 'boolean') throw invalid();
   if (r.operation === 'appointment.transitioned' && !r.changed) throw invalid();
   requestKey(r.requestId); requestKey(r.id); integer(r.revision, 1); return Object.freeze(r) as unknown as CalendarCommandReceipt;

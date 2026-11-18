@@ -34,6 +34,8 @@ working on an application; do not assume this branch is available through update
   server-supplied transitions, private reasons and canonical cancellation.
 - [Visit modes and retained locations](./visits.md): optional location/version
   bindings, current assignment compatibility, hold transfer and selector privacy.
+- [Native account participants](./participants.md): explicit Guardian eligibility,
+  private bindings, exact hold transfer, live names/tombstones and reusable picker.
 - [Qualification and remaining gates](./qualification.md): current source review,
   completed memory checks and explicitly unexecuted physical/deployment scenarios.
 - [Frontend composition](../../frontend/calendar/index.md): connected core versus

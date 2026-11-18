@@ -6,12 +6,12 @@ import type { CalendarAppointmentInput, CalendarAvailabilityInput, CalendarBlock
   CalendarAppointmentTypeInput, CalendarAppointmentTypeReplacement, CalendarAppointmentTypePageQuery, CalendarResourceTypesInput,
   CalendarLifecyclePolicyInput, CalendarAppointmentTransitionInput, CalendarCancellationOptions,
   CalendarControlOptions, CalendarGrant, CalendarHoldInput, CalendarHoldConfirmationInput, CalendarLocationInput, CalendarLocationPageQuery, CalendarLocationReplacement,
-  CalendarRangeQuery, CalendarRequestOptions, CalendarRescheduleInput, CalendarResourcePageQuery, CalendarVisitLocationQuery } from './contracts';
+  CalendarRangeQuery, CalendarRequestOptions, CalendarRescheduleInput, CalendarResourcePageQuery, CalendarVisitLocationQuery, CalendarParticipantReference } from './contracts';
 import { CalendarError } from './error';
 import { calendarRecord } from './validation';
 import { calendarAppointmentStream, calendarAvailabilityStream, calendarBlockStream, calendarHoldStream, calendarLocationStream, calendarResourceStream,
   calendarLocationDetailStream, calendarResourceLocationsStream, calendarTypeStream, calendarTypeDetailStream, calendarResourceTypesStream,
-  calendarLifecycleStream, calendarAppointmentTransitionsStream, calendarVisitLocationStream } from './stream';
+  calendarLifecycleStream, calendarAppointmentTransitionsStream, calendarVisitLocationStream, calendarParticipantDirectoryStream, calendarParticipantsStream } from './stream';
 
 const key = t.String({ minLength: 1, maxLength: 128 });
 // Query strings stay wire strings through composed native validators; convert
@@ -58,6 +58,32 @@ function attributed(endpoint: AnyZeroEndpointDefinition): AnyZeroEndpointDefinit
 export async function createCalendarHttp(runtime: ZeroAppRuntime) {
   return createServerExtensionApp({ runtime, name: 'zero.calendar.http', extensions: [defineRouter({ name: 'zero.calendar', prefix: '/api/calendar',
     auth: { user: 'required', credentials: ['session'] }, endpoints: [
+      ...([false, true] as const).map(live => defineEndpoint({ method: 'GET', path: '/participants' + (live ? '/live' : ''),
+        query: t.Object({ ...pageQuery, search: t.Optional(t.String({ maxLength: 100 })) }, { additionalProperties: false }),
+        async handler({ zero, query, request }) {
+          if (!zero.calendar) throw new CalendarError('CALENDAR_NOT_READY'); admitQueryKeys(request, ['search', 'limit', 'after']);
+          const filters = { ...pageFilters(query), ...(query.search === undefined ? {} : { search: query.search }) };
+          const page = await zero.calendar.participants.directory(filters);
+          return live ? new Response(calendarParticipantDirectoryStream(zero.calendar, filters, request.signal), {
+            headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'private, no-store', 'X-Accel-Buffering': 'no' },
+          }) : page;
+        },
+      })),
+      ...(['appointment', 'hold'] as const).flatMap(kind => ([false, true] as const).map(live => defineEndpoint({
+        method: 'GET', path: '/' + kind + 's/:id/participants' + (live ? '/live' : ''), params: t.Object({ id: key }),
+        async handler({ zero, params, request }) {
+          if (!zero.calendar) throw new CalendarError('CALENDAR_NOT_READY'); admitQueryKeys(request, []);
+          const page = await (kind === 'appointment' ? zero.calendar.participants.forAppointment(params.id) : zero.calendar.participants.forHold(params.id));
+          return live ? new Response(calendarParticipantsStream(zero.calendar, kind, params.id, request.signal), {
+            headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'private, no-store', 'X-Accel-Buffering': 'no' },
+          }) : page;
+        },
+      }))),
+      defineEndpoint({ method: 'PUT', path: '/appointments/:id/participants', params: t.Object({ id: key }), body: t.Unknown(), async handler({ zero, params, body, request }) {
+        if (!zero.calendar) throw new CalendarError('CALENDAR_NOT_READY'); admitQueryKeys(request, []);
+        const value = calendarRecord(body, ['references', 'options']);
+        return zero.calendar.participants.replace(params.id, value.references as CalendarParticipantReference[], value.options as CalendarControlOptions);
+      } }),
       defineEndpoint({ method: 'GET', path: '/lifecycle', async handler({ zero, request }) {
         if (!zero.calendar) throw new CalendarError('CALENDAR_NOT_READY'); admitQueryKeys(request, []);
         return zero.calendar.lifecycle.get();

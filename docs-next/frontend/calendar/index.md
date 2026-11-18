@@ -79,6 +79,14 @@ be silently treated as accepted history. Dates/visit changes still require final
 server admission. See [Visit modes and retained locations](../../backend/calendar/visits.md).
 No attendee, lobby, presence or telehealth-provider state is implied.
 
+The next unreleased participant stage adds `useCalendarParticipantDirectory`,
+`useCalendarAppointmentParticipants`, `useCalendarHoldParticipants` and separately
+composable `CalendarParticipantFields`. Native account references use explicit
+Guardian eligibility, private manager-only projections and current names or
+unavailable tombstones. The connected workspace is not yet wired to this picker;
+the rich demo's patient/contact/manual guests are not native account adapters.
+See [native participant boundaries](../../backend/calendar/participants.md).
+
 The private select wrapper now explicitly supplies its selected caption to the
 native value slot, so the server-rendered field does not depend on portal item
 effects just to display its selected text. This preserves native morphing and

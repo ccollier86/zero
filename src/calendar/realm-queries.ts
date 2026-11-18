@@ -31,13 +31,14 @@ function resourceIds(context: DatabaseReadQueryContext, scopeId: string, id: str
   if (!rows.length || rows.length > CALENDAR_LIMITS.selection) throw new CalendarError('CALENDAR_STATE_INVALID');
   return rows.map(row => row.resource_id);
 }
-function appointment(context: DatabaseReadQueryContext, actor: CalendarActor, id: string, right: CalendarGrant) {
+export function readCalendarAppointmentTarget(context: DatabaseReadQueryContext, actor: CalendarActor, id: string, right: CalendarGrant) {
   const row = context.database.query<CalendarAppointmentRow>('SELECT * FROM calendar_appointments WHERE id=? AND scope_id=?').get(id, actor.scopeId);
   if (!row) throw new CalendarError('CALENDAR_NOT_FOUND');
   const ids = resourceIds(context, actor.scopeId, row.id);
   for (const id of ids) resource(context, actor, id, right);
   return { row, ids };
 }
+const appointment = readCalendarAppointmentTarget;
 function rightSql(actor: CalendarActor, alias: string, right: 'any' | 'details') {
   if (actor.manageAll) return { sql: '1=1', params: [] as string[] };
   const grants = right === 'details' ? 'g.manage=1 OR g.details=1' : 'g.manage=1 OR g.details=1 OR g.busy=1 OR g.book=1';
@@ -115,6 +116,7 @@ export function readCalendarReceipt(context: DatabaseReadQueryContext, input: un
   if (rows.length > 1) throw new CalendarError('CALENDAR_STATE_INVALID');
   const row = rows[0];
   if (!row) return null;
+  if (parseCalendarReceipt(row).operation === 'appointment.participants-changed' && !actor.manageAll) throw new CalendarError('CALENDAR_FORBIDDEN');
   if (row.target_kind === 'lifecycle') requireCalendarLifecycleManager(actor);
   else if (row.target_kind === 'resource') { if (parseCalendarReceipt(row).operation === 'resource.types-changed') requireCalendarTypeManager(actor); resource(context, actor, row.target_id, row.required_right); }
   else if (row.target_kind === 'block') readCalendarBlockTarget(context, actor, row.target_id, row.required_right);

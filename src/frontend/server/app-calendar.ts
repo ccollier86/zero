@@ -8,10 +8,16 @@ import {
   ZERO_OBSERVABILITY_RUNTIME,
   ZERO_LOGGING_RUNTIME,
   ZERO_SYSTEM_DB,
+  ZERO_AUTH_STORE,
+  ZERO_AUTH_TOKEN_SERVICE,
+  ZERO_AUTH_TENANCY_SERVICE,
+  ZERO_AUTHORIZATION_KERNEL,
+  ZERO_AUTHORIZATION_ROLE_SERVICE,
 } from '../../runtime/service-keys';
 import { CalendarRuntime } from '../../calendar/runtime';
 import { resolveCalendarPersistenceConfig } from '../../calendar/persistence-config';
 import { CalendarService } from '../../calendar/service';
+import { ManagedCalendarParticipantDirectory } from '../../calendar/participants-directory';
 import { createCalendarHttp } from '../../calendar/http';
 import { installCalendarLogging } from '../../calendar/logging';
 import type { ResolvedConfig } from './types';
@@ -38,8 +44,17 @@ export async function mountManagedCalendar(input: {
     ...(logging ? { source: coordinator => installCalendarLogging(logging, coordinator, authority.coordinator) } : {}),
   });
   runtime.addCleanup(() => persistence.close());
+  // The dependency is composed once from canonical SYSTEM/Guardian owners.
+  // Disabled participants do not inspect those stores or install listeners.
+  const directory = config.calendar.participants ? new ManagedCalendarParticipantDirectory({
+    db: runtime.require(ZERO_SYSTEM_DB), users: runtime.require(ZERO_AUTH_STORE),
+    tenancy: runtime.get(ZERO_AUTH_TENANCY_SERVICE) ?? null,
+    kernel: runtime.require(ZERO_AUTHORIZATION_KERNEL), roles: runtime.get(ZERO_AUTHORIZATION_ROLE_SERVICE) ?? null,
+    config: config.calendar, assertCurrent: () => runtime.require(ZERO_AUTH_TOKEN_SERVICE).assertCurrentProfile(),
+  }) : undefined;
+  if (directory) runtime.addCleanup(() => directory.close());
   const lifetime = new AbortController();
-  const service = new CalendarService(persistence, config.calendar, lifetime.signal);
+  const service = new CalendarService(persistence, config.calendar, lifetime.signal, directory);
   runtime.addCleanup(async () => {
     // Retire captured facades before releasing their provider; retained calendar state is never removed.
     lifetime.abort();

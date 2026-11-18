@@ -45,6 +45,11 @@ const AUTHORITY_TABLES: readonly AuthorityTableTarget[] = [
     updateTriggerVersion: 2,
   },
   { table: 'user_properties', updateColumns: [] },
+  // Finalized directory eligibility excludes either unfinished marker. A
+  // marker-only INSERT/retarget must invalidate a captured participant fence;
+  // lease/setup metadata does not change eligibility and is intentionally quiet.
+  { table: '_auth_registration_provisioning', updateColumns: ['user_id'] },
+  { table: '_auth_admin_user_provisioning', updateColumns: ['user_id'] },
   { table: '_auth_user_generations', updateColumns: ['generation'] },
   {
     table: '_auth_sessions',

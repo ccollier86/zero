@@ -154,6 +154,7 @@ export class RegistrationProvisioningStore {
       delete: db.prepare(`
         DELETE FROM _auth_registration_provisioning
         WHERE registration_id = ? AND user_id = ? AND lease_owner_hash = ?
+        RETURNING registration_id
       `),
     };
   }
@@ -313,11 +314,12 @@ export class RegistrationProvisioningStore {
         }
         this.markBootstrapCompleted();
       }
-      if (this.stmts.delete.run(
+      // RETURNING counts only the marker, excluding authority-trigger writes.
+      if (!this.stmts.delete.get(
         row.registration_id,
         row.user_id,
         row.lease_owner_hash,
-      ).changes !== 1) {
+      )) {
         throw this.invariant(
           'marker-finalization-lost',
           '[auth] Registration provisioning finalization lost its marker.',
