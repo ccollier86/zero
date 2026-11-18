@@ -15,7 +15,7 @@ import { calendarRealm } from './realm';
 import { grantId, reservationId } from './realm-model';
 import { CALENDAR_LIFECYCLE_TABLES } from './realm-lifecycle-migration';
 import { CALENDAR_INTEGRATION_ADDITIONS } from './realm-integrations-migration';
-import { CALENDAR_INTEGRATION_OWNERSHIP_TABLES } from './realm-integration-ownership-migration';
+import { CALENDAR_INTEGRATION_CONTROL_TABLES } from './realm-integration-controls-migration';
 import { CALENDAR_TYPE_TABLES } from './realm-schema';
 import { normalizeCalendarTimedInterval, type CalendarTimedInterval } from './time';
 import { calendarHash, calendarJson } from './validation';
@@ -169,7 +169,7 @@ function fixture() {
 }
 
 test('006 is additive and preserves all five historical function, declaration and registered-checksum identities', () => {
-  expect(calendarRealm.migrations.map(migration => migration.version)).toEqual(['001', '002', '003', '004', '005', '006', '007', '008', '009', '010', '011']);
+  expect(calendarRealm.migrations.map(migration => migration.version)).toEqual(['001', '002', '003', '004', '005', '006', '007', '008', '009', '010', '011', '012']);
   expect(calendarRealm.migrations.slice(0, 5).map(hashMigration)).toEqual(ORIGINAL_005_CHECKSUMS);
   expect(calendarRealm.migrationChecksums.slice(0, 5)).toEqual(ORIGINAL_005_CHECKSUMS.map((checksum, index) => ({ version: String(index + 1).padStart(3, '0'), checksum })));
   expect(hashSchemaSnapshot(snapshotDeclaredTables(CALENDAR_TYPE_TABLES))).toBe(ORIGINAL_005_TABLES);
@@ -178,7 +178,7 @@ test('006 is additive and preserves all five historical function, declaration an
     '_calendar_lifecycle_policy_history', '_calendar_lifecycle_policy', '_calendar_appointment_lifecycle_history', '_calendar_appointment_lifecycle_current',
     '_calendar_lifecycle_receipts', '_calendar_lifecycle_effect_intents',
   ]);
-  expect(calendarRealm.tables).toEqual(CALENDAR_INTEGRATION_OWNERSHIP_TABLES);
+  expect(calendarRealm.tables).toEqual(CALENDAR_INTEGRATION_CONTROL_TABLES);
 });
 
 test('real populated 005 upgrade preserves every old row, trigger, ledger, sequence and accepted replay without lifecycle backfill', () => {
@@ -187,7 +187,7 @@ test('real populated 005 upgrade preserves every old row, trigger, ledger, seque
     const before = f.legacy(), seq = f.db.currentSeq, ledger = f.raw.query('SELECT * FROM _migrations ORDER BY version').all();
     const definitions = f.raw.query<{ type: string; name: string; sql: string }, []>("SELECT type,name,sql FROM sqlite_master WHERE type IN ('table','index','trigger') AND name NOT LIKE 'sqlite_%' ORDER BY type,name").all();
     for (const table of Object.keys(CALENDAR_TYPE_TABLES)) expect(before[table]!.length).toBeGreaterThan(0);
-    expect(f.upgrade()).toEqual(['006', '007', '008', '009', '010', '011']); expect(f.legacy()).toEqual(before); expect(f.db.currentSeq).toBe(seq);
+    expect(f.upgrade()).toEqual(['006', '007', '008', '009', '010', '011', '012']); expect(f.legacy()).toEqual(before); expect(f.db.currentSeq).toBe(seq);
     expect(f.raw.query("SELECT * FROM _migrations WHERE version IN ('001','002','003','004','005') ORDER BY version").all()).toEqual(ledger);
     for (const definition of definitions) expect(f.raw.query('SELECT type,name,sql FROM sqlite_master WHERE type=? AND name=?').get(definition.type, definition.name)).toEqual(definition);
     expect(f.query('lifecycle', { actor })).toEqual(virtualPolicy);

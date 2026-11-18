@@ -26,6 +26,15 @@ export function composeCalendarRuntimeSources(...factories: readonly CalendarRun
         if (closing) throw new CalendarError('CALENDAR_NOT_READY');
         for (const source of sources) source.prepare(record);
       },
+      // An entirely logging-only chain must not enable readiness preflight.
+      ...(sources.some(source => source.ready) ? { async ready(record: Parameters<CalendarRuntimeSource['prepare']>[0]) {
+        if (closing) throw new CalendarError('CALENDAR_NOT_READY');
+        for (const source of sources) {
+          if (closing) throw new CalendarError('CALENDAR_NOT_READY');
+          await source.ready?.(record);
+        }
+        if (closing) throw new CalendarError('CALENDAR_NOT_READY');
+      } } : {}),
       wake(ref) {
         if (closing) return;
         for (const source of sources) try { source.wake(ref); } catch { /* Advisory failures must not suppress another source's wake. */ }

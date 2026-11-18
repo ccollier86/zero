@@ -760,8 +760,35 @@ must distinguish dormant construction, recovery, dispatch admission, evidence
 availability and final physical close. Public config/automatic observation stays
 closed until those recovery, retry/fairness, capacity and shutdown gates pass.
 
-Each stage gets source/type tests and focused review before proceeding. These are
-future acceptance requirements, not results from this planning pass.
+The next private source phase now implements that fixed catalog, optional
+owner-readiness hook, original-key Jobs settlement barriers, genuinely dormant
+Jobs construction and an additive `012` registration-control journal/controller.
+The [integration contract](../backend/calendar/integrations.md) explains their
+exact boundaries; [qualification](../backend/calendar/qualification.md) records
+actual checks, not deployment claims. Readiness cannot hide accepted business
+receipts. Policy preparation makes no Jobs calls; activation/retirement record
+their exact CAS and operation key before crossing the file boundary. Local
+retirement and synchronous eligibility quiescence precede downstream retirement.
+Late accepted acknowledgments preserve history without restoring intake.
+
+Next is managed coordinator composition, not a new reminder/provider adapter:
+
+1. Construct inert Jobs evidence dependencies before Torrent recovery can run
+   a recovered observation. Do not put recovery behind an activity's own promise.
+2. Compose native owner readiness and logging; hydrate fixed current policies
+   and pending control keys without request-user authority or source-lease waits.
+3. Add indexed startup discovery and one coalesced scheduler wake, including
+   future retries/expired claims and durable fairness across work classes.
+4. Implement phased quiesce/drain/final close so Calendar and Jobs evidence stay
+   available until physical callbacks and recovered Torrent work settle. Current
+   controller/dispatcher close is not a shared physical drain certificate.
+5. Add explicit retire-before-disable/operator inspection, retained-capacity
+   handling and bounded/lazy owner hydration before opening configuration.
+6. Qualify actual actors, interruption/restart, managed logging, browser, Linux
+   bundle, exact archive and updater after storage integrity is verified.
+
+Each stage gets source/type tests and focused review before proceeding. Public
+activation and the physical/deployment gates above remain future requirements.
 
 1. **Contract decisions.** Approve private scope placement, visibility/delegation,
    generic/clinical defaults, dependency matrix, recurrence guarantees, guest proof

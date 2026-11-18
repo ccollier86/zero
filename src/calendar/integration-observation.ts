@@ -5,9 +5,10 @@ import { jobSourcePrincipal, jobSourceId, jobSourceScheduleId } from '../jobs/so
 import type { SourceJobs } from '../jobs/source-service';
 import type { StepContext, WorkflowInstanceRecord } from '../workflows/types';
 import { CalendarError } from './error';
+import { normalizeCalendarObservationInput as observationInput } from './integration-catalog';
 import type { CalendarIntegrationEffectView, CalendarIntegrationIntentView, CalendarIntegrationObservationInput } from './integration-model';
 import type { CalendarIntegrationOwner } from './integration-runtime';
-import { calendarHash, calendarInteger, calendarJson, calendarKey, calendarRecord } from './validation';
+import { calendarHash, calendarInteger, calendarJson, calendarKey } from './validation';
 
 export interface CalendarIntegrationObservationDependencies {
   readonly owner: CalendarIntegrationOwner;
@@ -71,10 +72,4 @@ export async function observeCalendarIntegration(deps: CalendarIntegrationObserv
   guard();
   if (effect.outcome !== 'observed') throw new CalendarError('CALENDAR_OUTCOME_UNKNOWN');
   return { intentId: input.intentId, state: 'observed' };
-}
-
-function observationInput(input: unknown): CalendarIntegrationObservationInput {
-  const r = calendarRecord(input, ['kind', 'intentId', 'appointmentRevision', 'policyEpoch']);
-  if (r.kind !== 'calendar-observation-v1') throw new CalendarError('CALENDAR_INPUT_INVALID');
-  return { kind: r.kind, intentId: calendarKey(r.intentId), appointmentRevision: calendarInteger(r.appointmentRevision, 1), policyEpoch: calendarInteger(r.policyEpoch, 1) };
 }

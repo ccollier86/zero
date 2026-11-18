@@ -32,6 +32,8 @@ import { calendarIntegrationInput, calendarIntegrationOptions, type CalendarInte
 
 export interface CalendarRuntimeSource {
   prepare(owner: CalendarOwnerRecord): void;
+  /** Optional native policy preparation. No source/SQL lease or request authority is retained across this await. */
+  ready?(owner: CalendarOwnerRecord): Promise<void>;
   wake(ref: string): void;
   close(): Promise<void>;
 }
@@ -61,6 +63,7 @@ export class CalendarRuntime implements CalendarServiceBroker {
   private closeTask: Promise<void> | null = null;
   private readonly stop = new AbortController();
   private readonly initializers = new Map<string, Promise<CalendarOwnerRecord>>();
+  private readonly sourceReadiness = new Map<string, { readonly owner: CalendarOwnerRecord; readonly task: Promise<void> }>();
   private readonly bindingRefs = new Set<string>();
   private readonly active = new Set<Promise<unknown>>();
   private readonly listeners = new Map<string, Set<() => void>>();
@@ -141,6 +144,15 @@ export class CalendarRuntime implements CalendarServiceBroker {
       if (!existing || existing.established === 0 && !this.filePresent(id)) assertCalendarProvisionAllowed(name, body);
       const record = await this.ensure(id, scopeId, guard, operationSignal); guard();
       const actor = calendarActor(body.actor);
+      if (this.source?.ready) {
+        // Readiness cannot hide an already accepted logical request. This is an
+        // authorized receipt lookup, not a replay shortcut: the ordinary command
+        // still compares its canonical digest and rechecks current object rights.
+        // Logging-only sources keep their historical acquisition/query cost.
+        const prior = await this.execute<CalendarCommandReceipt | null>(record, 'query', 'calendar.receipt', { actor, requestId: key }, guard, undefined, false, operationSignal);
+        guard();
+        if (prior === null) { await this.readySourceOwner(record); guard(); }
+      }
       // Fabric transport receipts are separate from the stable domain identity.
       // Changed actor capabilities must re-enter calendarIntent with current rights.
       // A reviewed realm upgrade gets a new native transport namespace, while
@@ -177,7 +189,8 @@ export class CalendarRuntime implements CalendarServiceBroker {
     return () => { entries!.delete(listener); if (!entries!.size && this.listeners.get(ref) === entries) this.listeners.delete(ref); };
   }
 
-  diagnostics() { return { state: this.state, activeOperations: this.active.size, initializingScopes: this.initializers.size, fabric: this.owner.diagnostics() }; }
+  diagnostics() { return { state: this.state, activeOperations: this.active.size, initializingScopes: this.initializers.size,
+    readyingOwners: this.sourceReadiness.size, fabric: this.owner.diagnostics() }; }
 
   /** @internal Detached metadata only. Enumeration never provisions a file, binds an owner or acquires an actor. */
   integrationOwners(): readonly CalendarOwnerRecord[] {
@@ -274,6 +287,43 @@ export class CalendarRuntime implements CalendarServiceBroker {
     if (!current || current.id !== owner.id || current.scope_id !== owner.scope_id || current.owner_id !== owner.owner_id
       || current.root_hash !== owner.root_hash || current.realm_fingerprint !== owner.realm_fingerprint || current.established !== 1
       || !this.filePresent(owner.id)) throw new CalendarError('CALENDAR_STATE_INVALID');
+  }
+  private readySourceOwner(record: CalendarOwnerRecord): Promise<void> {
+    try {
+      this.assertIntegrationOwner(record);
+      const source = this.source;
+      if (!source?.ready) return Promise.resolve();
+      const prior = this.sourceReadiness.get(record.id);
+      if (prior) {
+        if (calendarHash(prior.owner) !== calendarHash(record)) throw new CalendarError('CALENDAR_NOT_READY');
+        return prior.task;
+      }
+      if (this.sourceReadiness.size >= this.options.config.maxActiveDatabases) throw new CalendarError('CALENDAR_NOT_READY');
+      const owner = Object.freeze({ ...record });
+      // Defer execution until its exact entry is installed. Shared work belongs
+      // to the owner/runtime, never the first caller's session or abort signal.
+      const task = Promise.resolve().then(async () => {
+        const native = this.forIntegrationOwner(owner);
+        await native.verify(); // The existing-only proof lease is released before the source hook.
+        native.assertCurrent();
+        await source.ready!(owner);
+        native.assertCurrent();
+      }).catch(() => {
+        // A separate policy command may be uncertain, but the requested business
+        // command has NOT started. Its public result must not claim otherwise.
+        throw new CalendarError('CALENDAR_NOT_READY', 'not-started');
+      });
+      const entry = { owner, task };
+      this.sourceReadiness.set(owner.id, entry); this.active.add(task);
+      const settled = () => {
+        if (this.sourceReadiness.get(owner.id) === entry) this.sourceReadiness.delete(owner.id);
+        this.active.delete(task);
+      };
+      // Track physical hook settlement separately from every waiting request.
+      // There is deliberately no successful/failed readiness cache after it.
+      void task.then(settled, settled);
+      return task;
+    } catch { return Promise.reject(new CalendarError('CALENDAR_NOT_READY', 'not-started')); }
   }
   private input(scopeId: string, name: string, input: unknown, write: boolean): Record<string, unknown> {
     if (!(write ? COMMANDS : QUERIES).has(name)) throw new CalendarError('CALENDAR_INPUT_INVALID');

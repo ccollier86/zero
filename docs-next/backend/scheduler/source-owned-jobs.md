@@ -67,6 +67,14 @@ The private `JobsService.forSource` surface supports:
 
 - Registration get/activate/retire. Activation takes a canonical representative
   `pinInput` to validate the fixed workflow pin, not to execute it.
+- Owner-only `registration.reconcile(originalKey, { signal })` and
+  `schedules.reconcileCreate(originalCreateKey, { signal })` settlement barriers.
+  They join the same source/schedule mutation gate, then read existing evidence
+  without running parsers, eligibility or a writer. A returned null describes
+  settlement at that barrier, not absence against future or pre-gate writers;
+  native intake must first be quiesced. Cancelling/rejecting the barrier proves
+  nothing about its original mutation. Create reconciliation rejects receipt
+  families from cancel, replace or registration operations.
 - One-off schedule create, exact-revision replace/supersede and monotone cancel.
   Cron/source recurrence is deliberately rejected by this first integration.
 - Current schedule inspection and original command-receipt reconciliation, even
@@ -166,14 +174,21 @@ managed migration preparation; never rewrite old migration ledgers manually.
 
 ## Remaining calendar integration gates
 
-The calendar still needs its own bounded indexed dispatch state beside immutable
-effect references: claim in the source transaction, release the source lease,
-reconcile/create the exact Jobs command, then acknowledge its receipt in another
-short source transaction. Both cross-file crash boundaries require qualification.
-No cross-file transaction or cancellation recall is promised by this bridge.
+The [private calendar protocol](../calendar/integrations.md) now implements
+bounded indexed dispatch beside immutable effect references, exact Jobs/Torrent
+proof and a source-local observation cutoff. It also has a closed workflow
+catalog, readiness seam and durable registration controller. These are internal
+source foundations, not enabled managed automation. Both cross-file crash
+boundaries still require physical qualification. No cross-file transaction or
+cancellation recall is promised by this bridge.
 
 Native calendar lifecycle must compose this capability with logging, prove its
-actual established owner and hydrate before intended dispatch. A source-owned
+actual established owner and hydrate before intended dispatch. Jobs can now be
+constructed genuinely dormant: external mutation wakes remain disabled until
+successful scheduler startup, and failed startup callbacks never become live on
+retry. Explicit trusted ticks retain their internal refill behavior. Managed
+composition must still order this construction before Torrent recovery without
+enabling premature dispatch. A source-owned
 effect-admission commit must recheck appointment revision/status, recipients,
 channel policy and expiry after pool waits. Its committed claim defines the
 effect cutoff; release SQL/Guardian leases before waiting on a provider.

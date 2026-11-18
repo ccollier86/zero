@@ -19,6 +19,8 @@ interface RunnerOptions {
   runtime: JobsRuntime; bridge: WorkflowDeferredStartBridge; config: ResolvedJobsConfig; gate: WorkPool;
   now?: () => number; onFailure?: (stage: 'scope' | 'dispatch' | 'completion', code: string) => void;
   sources?: Pick<JobsSourceBroker, 'prepareDispatch'>;
+  /** Native service startup gate only; explicit ticks and their internal refill remain independent. */
+  autoReady?: () => boolean;
 }
 interface DispatchContext { occurrence: JobOccurrenceRow; admission: JobAdmission; seal: JobSeal; dispatchAllowed: boolean }
 export class JobsRunner {
@@ -37,13 +39,33 @@ export class JobsRunner {
   private readonly reported = new Set<string>();
   private suppressedFailures = 0;
   private scheduler: SchedulerService | null = null;
-  private readonly timerRun = async () => { await this.tick(); };
+  private timerRun: (() => Promise<void>) | null = null;
+  private startAttempt: object | null = null;
   private readonly now: () => number;
   constructor(private readonly options: RunnerOptions) { this.now = options.now ?? Date.now; }
   start(scheduler: SchedulerService): void {
-    if (this.scheduler || this.state !== 'ready') throw new JobsError('JOBS_NOT_READY');
-    scheduler.register({ name: 'zero-durable-jobs', pattern: '* * * * * *', timezone: 'UTC', protect: true, run: this.timerRun });
-    this.scheduler = scheduler; this.wake();
+    if (this.scheduler || this.startAttempt || this.state !== 'ready') throw new JobsError('JOBS_NOT_READY');
+    const attempt = {}; this.startAttempt = attempt;
+    const run = async () => {
+      if (this.state !== 'ready' || this.startAttempt !== attempt || this.scheduler !== scheduler
+        || this.options.autoReady && this.options.autoReady() !== true) return;
+      await this.tick();
+    };
+    try {
+      scheduler.register({ name: 'zero-durable-jobs', pattern: '* * * * * *', timezone: 'UTC', protect: true, run });
+      if (this.state !== 'ready' || this.startAttempt !== attempt) throw new JobsError('JOBS_NOT_READY');
+      this.scheduler = scheduler; this.timerRun = run;
+      if (!this.options.autoReady || this.options.autoReady() === true) this.wake();
+    } catch (error) {
+      if (this.startAttempt === attempt) this.startAttempt = null;
+      if (this.timerRun === run) { this.timerRun = null; this.scheduler = null; }
+      // A registration may publish then throw. Retire only this attempt's
+      // callback; never remove a replacement or turn the failed callback live
+      // when a later retry enables automatic intake.
+      try { scheduler.unregister('zero-durable-jobs', run); }
+      catch (cleanup) { throw new AggregateError([error, cleanup], 'Jobs scheduler registration and cleanup failed.'); }
+      throw error;
+    }
   }
   wake(): void {
     if (this.state === 'ready') withoutLoggingAttribution(() => queueMicrotask(() => { void this.tick().catch(error => this.report('scope', error)); }));
@@ -90,7 +112,9 @@ export class JobsRunner {
   }
   close(): Promise<void> {
     if (this.closeTask) return this.closeTask;
-    this.state = 'closing'; this.scheduler?.unregister('zero-durable-jobs', this.timerRun); this.scheduler = null;
+    this.state = 'closing'; this.startAttempt = null;
+    const scheduler = this.scheduler, timerRun = this.timerRun; this.scheduler = null; this.timerRun = null;
+    if (scheduler && timerRun) scheduler.unregister('zero-durable-jobs', timerRun);
     this.abort.abort();
     this.closeTask = (async () => {
       await Promise.allSettled([...(this.tickTask ? [this.tickTask] : []), ...this.scopeTasks.values()]);

@@ -18,6 +18,8 @@ import { jobDigest, jobHash, jobInput, jobInteger, jobKey, jobRecord, jobText, j
 import { isKnownJobMutationRejection, sourceGateMutation } from './source-gate';
 
 interface SourceOptions { readonly idempotencyKey: string; readonly signal?: AbortSignal }
+/** Cancelling/refusing the read barrier proves nothing about its original mutation. */
+interface SourceEvidenceOptions { readonly signal?: AbortSignal }
 interface SourceScheduleOptions extends SourceOptions {
   /** Optional immutable source-epoch mapping. Historical command replay still precedes this fence. */
   readonly expectedRegistration?: JobSourceRegistration;
@@ -29,6 +31,8 @@ export interface SourceJobInput { readonly input: unknown; readonly at: string; 
 export interface SourceJobs {
   readonly registration: {
     get(): Promise<JobSourceRegistration | null>;
+    /** Owner-only original register/retire receipt after earlier source-gate callbacks settle. Does not quiesce future/pre-gate admission. */
+    reconcile(key: string, options?: SourceEvidenceOptions): Promise<JobSourceRegistration | null>;
     activate(options: SourceRevisionOptions & { readonly pinInput: unknown }): Promise<JobSourceRegistration>;
     retire(options: SourceRevisionOptions): Promise<JobSourceRegistration>;
   };
@@ -38,6 +42,8 @@ export interface SourceJobs {
     get(id: string, options: { readonly generation: number; readonly scheduledAt: number }): Promise<JobSourceExecutionEvidence | null>;
   };
   readonly schedules: {
+    /** Original CREATE key only. Null proves past keyed callbacks settled at this barrier, not that a future writer is forbidden. */
+    reconcileCreate(key: string, options?: SourceEvidenceOptions): Promise<JobSourceScheduleReceipt | null>;
     create(input: SourceJobInput, options: SourceScheduleOptions): Promise<JobSourceScheduleReceipt>;
     replace(id: string, input: SourceJobInput, options: SourceScheduleRevisionOptions): Promise<JobSourceScheduleReceipt>;
     cancel(id: string, options: SourceRevisionOptions): Promise<JobSourceScheduleReceipt>;
@@ -75,6 +81,32 @@ export class JobsSourceBroker {
     };
     const receipt = <T>(key: string, intent?: unknown) => read<T | null>('jobs.source.receipt', { identity: source.identity, requestId: jobKey(key),
       ...(intent === undefined ? {} : { intentDigest: jobHash(intent) }) });
+    const reconcile = async (kind: 'registration' | 'create', suppliedKey: string, input?: SourceEvidenceOptions) => {
+      const key = jobKey(suppliedKey), opts = jobRecord(input === undefined ? {} : input, ['signal']);
+      if (opts.signal !== undefined && !(opts.signal instanceof AbortSignal)) throw new JobsError('JOBS_INPUT_INVALID');
+      const operationSignal = signal(opts.signal as AbortSignal | undefined);
+      // Pre-abort must neither enqueue a barrier nor call owner/database code.
+      operationSignal.throwIfAborted();
+      const scheduleId = kind === 'create' ? jobSourceScheduleId(source.identity, key) : null;
+      return this.options.gate.run(async executionSignal => {
+        const check = () => { executionSignal.throwIfAborted(); guard(); };
+        check(); await confirm(); check();
+        // The SAME one-at-a-time mutation gate waits for physical callback
+        // settlement, even when its cancelled caller already observed unknown.
+        // Read existing evidence only: no parser, live policy or writer runs.
+        const value = await this.options.runtime.readExisting<JobSourceRegistration | JobSourceScheduleReceipt>(source.scope,
+          'jobs.source.receipt', { identity: source.identity, requestId: key }, check, executionSignal);
+        check(); await confirm(); check();
+        if (value === null) return null;
+        if (kind === 'registration') {
+          if ('sourceId' in value || value.id !== id) throw new JobsError('JOBS_INTENT_CONFLICT');
+          return value;
+        }
+        if (!('sourceId' in value) || value.id !== scheduleId || value.sourceId !== id
+          || value.control !== 'active' || value.revision !== 1 || value.generation !== 1) throw new JobsError('JOBS_INTENT_CONFLICT');
+        return value;
+      }, { key: scheduleId === null ? sourceGateKey(id) : jobGateKey(source.scope, scheduleId), signal: operationSignal });
+    };
     const write = async <T>(name: string, input: unknown, operation: { signal: AbortSignal; markWriteAttempted(): void }, eligible: boolean,
       fence: () => void = () => {}, beforeWrite: () => void = () => {}): Promise<T> => {
       const operationSignal = operation.signal;
@@ -141,6 +173,7 @@ export class JobsSourceBroker {
     return Object.freeze({
       registration: Object.freeze({
         get: () => read<JobSourceRegistration | null>('jobs.source', { identity: source.identity }),
+        reconcile: (key: string, options?: SourceEvidenceOptions) => reconcile('registration', key, options) as Promise<JobSourceRegistration | null>,
         activate: async (input: SourceRevisionOptions & { pinInput: unknown }) => {
           const opts = normalizeOptions(input, true, true), token = this.beginActivation(id, opts.expectedRevision);
           try {
@@ -271,6 +304,7 @@ export class JobsSourceBroker {
           instanceId: accepted.receipt.instanceId, status: accepted.status });
       } }),
       schedules: Object.freeze({ create: (input: SourceJobInput, opts: SourceOptions) => change('create', undefined, input, opts),
+        reconcileCreate: (key: string, options?: SourceEvidenceOptions) => reconcile('create', key, options) as Promise<JobSourceScheduleReceipt | null>,
         replace: (scheduleId: string, input: SourceJobInput, opts: SourceRevisionOptions) => change('readmit', scheduleId, input, opts),
         get: async (scheduleId: string) => {
           const result = await read<{ schedule: JobScheduleRow; admission: JobAdmission; receipt: JobSourceScheduleReceipt } | null>('jobs.source.schedule', { identity: source.identity, id: jobText(scheduleId, 96) });

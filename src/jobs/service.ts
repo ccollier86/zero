@@ -37,22 +37,30 @@ export class JobsService {
   private readonly sources: JobsSourceBroker;
   private readonly abort = new AbortController();
   private readonly now: () => number;
+  private automaticWakes = false;
   private closeTask: Promise<void> | null = null;
   constructor(private readonly options: ServiceOptions) {
     this.now = options.now ?? Date.now;
     this.gate = new WorkPool({ concurrency: options.config.concurrency, maxConcurrentPerKey: 1,
       maxQueued: options.config.concurrency * 4, maxQueuedPerKey: Math.min(16, options.config.concurrency * 4), queueTimeoutMs: 5000 });
-    this.sources = new JobsSourceBroker({ ...options, gate: this.gate, signal: this.abort.signal, now: this.now, wake: () => this.runner.wake() });
-    this.runner = new JobsRunner({ ...options, gate: this.gate, sources: this.sources });
+    this.sources = new JobsSourceBroker({ ...options, gate: this.gate, signal: this.abort.signal, now: this.now, wake: () => this.wakeAutomatically() });
+    this.runner = new JobsRunner({ ...options, gate: this.gate, sources: this.sources,
+      autoReady: () => this.automaticWakes && !this.abort.signal.aborted });
   }
-  start(scheduler: SchedulerService): void { this.runner.start(scheduler); }
+  start(scheduler: SchedulerService): void {
+    if (this.abort.signal.aborted) throw new JobsError('JOBS_NOT_READY');
+    // Registration must succeed before mutation hints or scheduler callbacks
+    // gain automatic intake. A failed attempt cannot enable a later callback.
+    this.runner.start(scheduler); this.automaticWakes = true; this.wakeAutomatically();
+  }
   /** Trusted lifecycle/test composition. Request code only receives forAuthority(). */
   tick(): Promise<void> { return this.runner.tick(); }
   /** @internal Native source lifecycle only; never project this method to a request/activity. */
   forSource(source: TrustedJobSource): SourceJobs { return this.sources.forSource(source); }
-  diagnostics() { return { gate: this.gate.status(), runner: this.runner.diagnostics(), persistence: this.options.runtime.diagnostics() }; }
+  diagnostics() { return { automaticWakes: this.automaticWakes, gate: this.gate.status(), runner: this.runner.diagnostics(), persistence: this.options.runtime.diagnostics() }; }
   close(): Promise<void> {
     if (this.closeTask) return this.closeTask;
+    this.automaticWakes = false;
     this.abort.abort(new JobsError('JOBS_NOT_READY'));
     this.sources.close();
     this.closeTask = (async () => {
@@ -185,8 +193,9 @@ export class JobsService {
     guard(); operation.markWriteAttempted();
     const result = await this.options.runtime.write<JobScheduleView>(context.scope, name, input, crypto.randomUUID(), guard, operation.signal);
     try { await context.confirm(); operation.signal.throwIfAborted(); } catch { throw new JobsError('JOBS_OUTCOME_UNKNOWN'); }
-    this.runner.wake(); return result;
+    this.wakeAutomatically(); return result;
   }
+  private wakeAutomatically(): void { if (this.automaticWakes && !this.abort.signal.aborted) this.runner.wake(); }
 }
 function scheduleId(context: JobRequestAuthority, key: string): string { return 'job_' + jobHash([context.actor.scopeId, context.actor.principal, key]); }
 function requestOptions(input: unknown, extra: readonly string[] = []): JobRequestOptions & Record<string, unknown> {

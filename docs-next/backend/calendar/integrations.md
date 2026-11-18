@@ -20,8 +20,9 @@ This is the **private protocol foundation**, not a supported application reminde
 configuration. It connects the canonical calendar writer, an owner-bound native
 dispatcher, source-owned Jobs, original sealed Torrent execution evidence and a
 source-local effect cutoff. The only effect adapter is an internal observation;
-it does not send messages or call providers. Managed activation, public
-configuration and lifecycle/operator integration remain pending. Do not import
+it does not send messages or call providers. A fixed native catalog, readiness
+hook and durable policy controller are now implemented internally; managed
+startup/recovery, public configuration and operator integration remain pending. Do not import
 these internal modules into an application to bypass that boundary.
 
 ## Source truth and retained identities
@@ -37,6 +38,15 @@ one Jobs source identity, and each source to one rule. Neither retirement nor a
 new policy epoch frees or rotates that binding. Consistent `010` history derives
 the same bindings without altering old evidence; conflicting shared/rotated
 history blocks migration for explicit recovery rather than choosing a winner.
+
+Additive `012` journals native registration controls before crossing into Jobs.
+It preserves `001`–`011` migration functions and complete declaration maps. Its
+one deliberate old-guard extension allows a late registration acknowledgment
+only when the exact accepted control result already proves it. This can retain
+historical truth after retirement without reactivating the current pointer.
+The migration checks the old guard before replacing it; unexpected definitions
+fail rather than being silently overwritten. Existing accepted registrations
+backfill a bounded source-presence marker, not fabricated control receipts.
 
 A changed appointment's canonical writer records the ordinary receipt/effect seal,
 then captures integration work **in the same transaction**. Creation, hold
@@ -56,11 +66,73 @@ provenance, never the source's execution authority.
 | Private state | Meaning |
 | --- | --- |
 | Policy history/current/registration mapping | Immutable rule generation and exact Jobs epoch acknowledgment; local intake is activating, active or retired |
+| Registration control/result/attempt | Original activation or retirement key and captured Jobs CAS/registration, immutable result and bounded mutable retry state |
+| Registered-source marker | Permanent evidence that the rule's owned Jobs source existed; missing storage cannot become a false never-registered success |
 | Integration intent | Immutable source effect, appointment revision, original due/expiry, payload and permanent create/cancel keys |
 | Dispatch row | Bounded mutable claim, eligibility, retry time, safe blocked code and handoff state |
 | Jobs receipt association | Exact durable create/cancel result; not proof of workflow execution or delivery |
 | Effect admission | Unique source-local cutoff for one intent/execution; not proof an effect completed |
 | Effect outcome | Separate immutable observation result; retained after later cancellation or retirement |
+
+## Native readiness and registration lifecycle
+
+`CalendarRuntimeSource.ready` is an optional asynchronous owner hook, composed
+with existing logging rather than replacing it. For a new business command, the
+runtime verifies the established physical owner, releases its proof lease and
+waits for readiness before entering the canonical calendar writer. Concurrent
+requests share only bounded in-flight owner work, not a user's lifetime or a
+permanent successful-readiness cache. The original request's authority is
+rechecked afterward. A failed readiness operation means the business command
+**did not start**, even if a separate policy control is uncertain.
+
+An authorized original receipt bypasses readiness and still re-enters ordinary
+digest/current-permission validation. A later readiness failure therefore cannot
+hide an appointment already accepted. Logging-only sources do not gain this
+extra receipt preflight or readiness overhead.
+
+The private `CalendarIntegrationPolicyController` provides:
+
+- `prepare(policy)`: capture-only source preparation; it makes no Jobs calls.
+  Identical live policy reuses its epoch. A changed policy requires prior
+  unresolved controls to be reconciled before replacement.
+- `activate(ruleId)`: commit the exact Jobs key and observed full registration
+  before invoking Jobs. Original-key receipt barriers and replay hydrate the
+  capability without silently rebasing an uncertain CAS or creating a new key.
+- `retire(ruleId)`: synchronously stop new eligibility, persist local retirement
+  first, settle older controls, then retire the actual owned Jobs registration.
+  That registration may still be A when a newer local B was never applied.
+- `quiesce()` / `close()`: stop controller intake and drain its callers. These
+  are **not** proof that shared Jobs callbacks, Torrent or effects have drained.
+
+Work is bounded across rules, serialized per rule, and releases source leases
+before every Jobs wait. Retry failures update one attempt row rather than append
+unlimited history. Backoff does not hide an older unresolved control. Accepted
+late results remain historical evidence; no result revives a retired policy.
+If Jobs was never registered, retirement reports `no-registration` without
+inventing a downstream retirement receipt. If retained presence proves that a
+registration existed but it is now missing, the operation fails closed instead.
+Neither result promises `safeToDisable`; pending work/effects still require the
+future managed drain and operator procedure.
+
+## Fixed native observation catalog
+
+`zero.calendar.observation.v1` is a closed versioned Torrent graph with one
+code-only observation activity and one total attempt. Its source-only Job is
+absent from ordinary request discovery/admission. Registration itself opens no
+files, starts no timers and resolves no execution dependency. A late native
+executor lookup happens only after nonlegacy SYSTEM source/input checks.
+
+The activity receives a narrowed immutable context with no request services,
+provider bag or workflow memory. Actual source/occurrence/pin proof still runs at
+the observation boundary below; the compilation exemplar is not an admitted
+intent. Policy hashes include rule and scheduling semantics, while the permanent
+source identity belongs to the rule, not a temporary version.
+
+Jobs construction and mutation hints now remain dormant until explicit successful
+scheduler startup. Trusted manual ticks remain possible, including internal
+refill. A failed registration's captured callback stays inert after a later retry;
+cleanup cannot unregister someone else's replacement. This is a dependency
+construction prerequisite, **not** completed calendar recovery composition.
 
 ## Bounded claim → Jobs → acknowledgment
 

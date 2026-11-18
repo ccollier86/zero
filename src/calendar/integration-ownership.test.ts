@@ -6,10 +6,11 @@ import { jobSourceId } from '../jobs/source-model';
 import { Migrator } from '../migrations/migrator';
 import { hashMigration, hashSchemaSnapshot, snapshotDeclaredTables } from '../migrations/schema-snapshot';
 import { createReactiveDB } from '../sync/reactive-db';
-import { readCalendarRejection } from './error';
+import { readCalendarRejection, type CalendarErrorCode } from './error';
 import type { CalendarIntegrationPolicySpec } from './integration-model';
 import { CALENDAR_INTEGRATION_ADDITIONS, CALENDAR_INTEGRATION_TABLES } from './realm-integrations-migration';
 import { CALENDAR_INTEGRATION_OWNERSHIP_ADDITIONS, CALENDAR_INTEGRATION_OWNERSHIP_TABLES } from './realm-integration-ownership-migration';
+import { CALENDAR_INTEGRATION_CONTROL_TABLES } from './realm-integration-controls-migration';
 import { calendarRealm } from './realm';
 import { calendarHash, calendarJson } from './validation';
 
@@ -48,7 +49,9 @@ function fixture() {
     const definitions = () => raw.query("SELECT type,name,sql FROM sqlite_master WHERE type IN ('table','index','trigger') AND name NOT LIKE 'sqlite_%' ORDER BY type,name").all();
     const define = () => { for (const [name, schema] of Object.entries(CALENDAR_INTEGRATION_OWNERSHIP_ADDITIONS)) db.defineTable(name, schema); };
     const upgrade = () => {
-      define(); const migrator = new Migrator({ database: raw, dbPath: ':memory:', migrations: calendarRealm.migrations, createBackups: false, log() {} });
+      // Qualify the historical 010 -> 011 boundary itself. The additive 012
+      // journal has its own backfill/rollback suite and deliberately extends a guard.
+      define(); const migrator = new Migrator({ database: raw, dbPath: ':memory:', migrations: calendarRealm.migrations.slice(0, 11), createBackups: false, log() {} });
       try { const applied = migrator.run(); expect(migrator.status().every(row => row.checksumMatches)).toBe(true); return applied; } finally { migrator.dispose(); }
     };
     const command = (name: string, body: Record<string, unknown>): any => (runDatabaseRealmCommand(calendarRealm, db, 'calendar.integration.' + name,
@@ -57,7 +60,7 @@ function fixture() {
     return { db, raw, owner, policy, registration, seed, rows, bindings, definitions, define, upgrade, command, install, close: () => db.dispose() };
   } catch (error) { db.dispose(); throw error; }
 }
-function rejected(run: () => unknown, code: string) {
+function rejected(run: () => unknown, code: CalendarErrorCode) {
   try { run(); throw new Error('Expected rejection'); } catch (error) { expect(readCalendarRejection(error)?.code).toBe(code); }
 }
 
@@ -65,8 +68,9 @@ test('011 preserves committed 010 migration/declaration identity and adds a sepa
   expect(hashMigration(calendarRealm.migrations[9]!)).toBe(ORIGINAL_010_CHECKSUM);
   expect(calendarRealm.migrationChecksums[9]).toEqual({ version: '010', checksum: ORIGINAL_010_CHECKSUM });
   expect(hashSchemaSnapshot(snapshotDeclaredTables(CALENDAR_INTEGRATION_TABLES))).toBe(ORIGINAL_010_TABLES);
-  expect(calendarRealm.version).toBe('11'); expect(calendarRealm.migrations[10]?.version).toBe('011');
-  expect(calendarRealm.tables).toEqual(CALENDAR_INTEGRATION_OWNERSHIP_TABLES);
+  expect(calendarRealm.version).toBe('12'); expect(calendarRealm.migrations[10]?.version).toBe('011');
+  expect(calendarRealm.tables).toEqual(CALENDAR_INTEGRATION_CONTROL_TABLES);
+  for (const [name, schema] of Object.entries(CALENDAR_INTEGRATION_OWNERSHIP_TABLES)) expect(calendarRealm.tables[name]).toEqual(schema);
   for (const [name, schema] of Object.entries(CALENDAR_INTEGRATION_TABLES)) expect(calendarRealm.tables[name]).toEqual(schema);
   expect(Object.isFrozen(CALENDAR_INTEGRATION_ADDITIONS)).toBe(true); expect(Object.isFrozen(CALENDAR_INTEGRATION_OWNERSHIP_ADDITIONS)).toBe(true);
 });

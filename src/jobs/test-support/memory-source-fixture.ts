@@ -19,9 +19,9 @@ import { workflowDeferredStarts } from '../../workflows/workflow-deferred-start-
 import { WorkflowRegistry } from '../../workflows/workflow-registry';
 import { defineWorkflowTables } from '../../workflows/workflow-schema';
 import { WorkflowService } from '../../workflows/workflow-service';
-import type { StepContext } from '../../workflows/types';
+import type { StepContext, StepHandler } from '../../workflows/types';
 import { resolveJobsConfig } from '../config';
-import { defineJob } from '../definition';
+import { defineJob, type JobDefinition } from '../definition';
 import { JobsError, readJobRejection } from '../error';
 import { jobsRealm } from '../realm';
 import type { JobsDueCursor, JobsRuntime } from '../runtime';
@@ -32,6 +32,9 @@ import type { JobSourceIdentity } from '../source-model';
 export interface MemoryJobsOperation { readonly scope: ServiceDataScope; readonly name: string; readonly input: unknown }
 interface MemoryPlane { readonly db: ReactiveDB; readonly scope: ServiceDataScope; wakeAt: number | null }
 interface Options {
+  /** Explicit test-only native catalog substitution; normal source fixtures keep the original defaults. */
+  readonly definition?: JobDefinition;
+  readonly registerWorkflow?: (registry: WorkflowRegistry, activity: StepHandler) => void;
   readonly tenancy?: 'single' | 'multi';
   readonly beforeWrite?: (operation: MemoryJobsOperation) => void | Promise<void>;
   readonly afterWrite?: (operation: MemoryJobsOperation) => void | Promise<void>;
@@ -40,7 +43,7 @@ interface Options {
 }
 export async function memorySourceJobsFixture(options: Options = {}) {
   const auth = resolveAuthBehaviorConfig({ tenancy: options.tenancy ?? 'single' }), kernel = createAuthorizationKernel(auth);
-  const definition = defineJob({ name: 'synthetic.source', version: '1', origin: 'source', access: 'admin',
+  const definition = options.definition ?? defineJob({ name: 'synthetic.source', version: '1', origin: 'source', access: 'admin',
     workflow: { name: 'synthetic.source.workflow', version: 1 }, parseInput: input => input });
   const requestDefinition = defineJob({ name: 'synthetic.request', version: '1', access: 'admin',
     workflow: { name: 'synthetic.source.workflow', version: 1 }, parseInput: input => input });
@@ -57,10 +60,15 @@ export async function memorySourceJobsFixture(options: Options = {}) {
   try {
     torrentDb.getRawDatabase().run('PRAGMA temp_store=MEMORY'); defineWorkflowTables(torrentDb);
     const registry = new WorkflowRegistry();
-    registry.registerActivity({ name: 'synthetic.source.activity', version: '1', databaseCallable: true,
-      handler: async activity => { if (activeLeases || backendLeases) throw new Error('Source/Jobs SQL lease escaped into Torrent activity.');
-        calls.push(cloneDatabaseSerializableValue(activity.input)); await options.activity?.(activity.input, activity); return activity.input; } });
-    registry.create({ name: 'synthetic.source.workflow', version: 1, flow: flow(step('execute', { name: 'synthetic.source.activity', version: '1' })) });
+    const activity: StepHandler = async activity => {
+      if (activeLeases || backendLeases) throw new Error('Source/Jobs SQL lease escaped into Torrent activity.');
+      calls.push(cloneDatabaseSerializableValue(activity.input)); await options.activity?.(activity.input, activity); return activity.input;
+    };
+    if (options.registerWorkflow) options.registerWorkflow(registry, activity);
+    else {
+      registry.registerActivity({ name: 'synthetic.source.activity', version: '1', databaseCallable: true, handler: activity });
+      registry.create({ name: 'synthetic.source.workflow', version: 1, flow: flow(step('execute', { name: 'synthetic.source.activity', version: '1' })) });
+    }
     const store = new WorkflowExecutionAuthorityStore(torrentDb, () => now);
     const actor = (): WorkflowActorExecutionAuthority => ({ version: 1, kind: 'actor',
       reference: { version: 1, userId: context.userId, platformRole: 'admin', authGeneration: 0, sessionKind: 'web', sessionId: context.sessionId!,

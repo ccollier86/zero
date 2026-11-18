@@ -81,10 +81,23 @@ and memory regressions across both files. See the
 [qualification](../backend/calendar/qualification.md). The original historical
 effect references remain seals; a separate additive realm `010` captures explicit
 installed policy epochs and new appointment revisions without backfill. This is
-not a managed or public automation feature yet. Resume with fixed workflow/config
-registration, dormant owner hydration, dependency-ordered shutdown, durable
-retire-before-disable operations, fair restart/retry discovery and retained-capacity
-management. Physical/package qualification still requires storage recovery.
+not a managed or public automation feature yet.
+
+The following reviewed phase now adds the fixed source-only observation catalog,
+optional owner readiness, durable registration controls (`012`) and native
+controller, original-key Jobs settlement barriers and inert Jobs construction.
+The readiness hook preserves original business receipt recovery, and the control
+journal captures exact key/CAS before Jobs mutation. Retirement is local-first,
+keeps late factual evidence and distinguishes never-registered from missing
+previously registered state. Controller/dispatcher close does not claim shared
+Jobs/Torrent drainage. `calendar:true` does not enable this private automation.
+
+Resume with managed before-recovery dependency composition, dormant owner
+hydration, phased shutdown with evidence kept alive, explicit retire-before-disable
+operator controls, indexed fair restart/retry discovery and retained-capacity
+management. See stage 14 of the [integration plan](./calendar-integration-plan.md#14-delivery-stages-and-acceptance-gates).
+Physical/package qualification still requires storage recovery. No main/updater,
+application, live state or hosted-demo change accompanies these source phases.
 
 ## Checkpoints and places to resume
 

@@ -18,6 +18,150 @@ function latch() {
   return { entered, release, async wait() { enter(); await promise; } };
 }
 
+for (const phase of ['before', 'after'] as const) test(`create receipt settlement waits for the actual ${phase}-commit callback after its caller aborts`, async () => {
+  const barrier = latch(), caller = new AbortController(); let hold = true;
+  const pause = async (operation: { name: string }) => {
+    if (hold && operation.name === 'jobs.source.schedule.create') { hold = false; await barrier.wait(); }
+  };
+  const f = await memorySourceJobsFixture(phase === 'before' ? { beforeWrite: pause } : { afterWrite: pause });
+  let creating: Promise<unknown> | undefined, reconciling: Promise<unknown> | undefined;
+  try {
+    const source = f.source(); await source.api.registration.activate(activate);
+    const key = 'settle-create-' + phase;
+    creating = source.api.schedules.create({ input: { value: 1 }, at: new Date(f.now() + 5_000).toISOString() },
+      { idempotencyKey: key, signal: caller.signal }).then(value => ({ value }), error => ({ error }));
+    await barrier.entered; caller.abort(new JobsError('JOBS_NOT_READY'));
+    expect(await creating).toMatchObject({ error: { code: 'JOBS_OUTCOME_UNKNOWN' } });
+    // Retire policy without aborting physical owner lifetime. Reconciliation
+    // still needs the original evidence, not current new-dispatch permission.
+    await source.api.registration.retire({ expectedRevision: 1, idempotencyKey: 'retire-settlement-' + phase }); source.retireEligibility();
+    const before = f.commands.length; let settled = false;
+    reconciling = source.api.schedules.reconcileCreate(key).then(value => { settled = true; return value; });
+    await untilMemoryJobs(() => f.service.diagnostics().gate.queued === 1);
+    expect(settled).toBe(false); expect(f.service.diagnostics().gate.active).toBe(1);
+    barrier.release(); const result = await reconciling;
+    expect(result).toEqual(await source.api.receipts.get(key));
+    if (phase === 'before') { expect(result).toBeNull(); expect(f.rows(source.scope, 'job_schedules')).toHaveLength(0); }
+    else expect(result).toMatchObject({ id: jobSourceScheduleId(source.identity, key), control: 'active', revision: 1, generation: 1 });
+    expect(f.commands).toHaveLength(before); expect(f.service.diagnostics().gate).toMatchObject({ active: 0, queued: 0 });
+    expect(f.stats()).toMatchObject({ activeLeases: 0, backendLeases: 0 });
+  } finally { barrier.release(); await Promise.allSettled([creating, reconciling].filter((value): value is Promise<unknown> => !!value)); await f.close(); }
+});
+
+for (const phase of ['before', 'after'] as const) test(`registration receipt settlement waits for its original ${phase}-commit source gate callback`, async () => {
+  const barrier = latch(), caller = new AbortController(); let hold = true;
+  const pause = async (operation: { name: string }) => {
+    if (hold && operation.name === 'jobs.source.register') { hold = false; await barrier.wait(); }
+  };
+  const f = await memorySourceJobsFixture(phase === 'before' ? { beforeWrite: pause } : { afterWrite: pause });
+  let activating: Promise<unknown> | undefined, reconciling: Promise<unknown> | undefined;
+  try {
+    const source = f.source();
+    activating = source.api.registration.activate({ ...activate, signal: caller.signal }).then(value => ({ value }), error => ({ error }));
+    await barrier.entered; caller.abort(new JobsError('JOBS_NOT_READY'));
+    expect(await activating).toMatchObject({ error: { code: 'JOBS_OUTCOME_UNKNOWN' } }); source.retireEligibility();
+    const before = f.commands.length; let settled = false;
+    reconciling = source.api.registration.reconcile(activate.idempotencyKey).then(value => { settled = true; return value; });
+    await untilMemoryJobs(() => f.service.diagnostics().gate.queued === 1); expect(settled).toBe(false);
+    barrier.release(); const result = await reconciling;
+    expect(result).toEqual(await source.api.receipts.get(activate.idempotencyKey));
+    if (phase === 'before') { expect(result).toBeNull(); expect(f.stats().planes).toBe(0); }
+    else expect(result).toMatchObject({ generation: 1, revision: 1, state: 'active' });
+    expect(f.commands).toHaveLength(before); expect(f.service.diagnostics().gate).toMatchObject({ active: 0, queued: 0 });
+    expect(f.stats()).toMatchObject({ activeLeases: 0, backendLeases: 0 });
+  } finally { barrier.release(); await Promise.allSettled([activating, reconciling].filter((value): value is Promise<unknown> => !!value)); await f.close(); }
+});
+
+test('receipt settlement is strictly typed, pre-abort is inert, and historical controls are never re-executed', async () => {
+  const f = await memorySourceJobsFixture();
+  try {
+    const source = f.source(), aborted = new AbortController(), reason = new Error('Synthetic pre-aborted read'); aborted.abort(reason);
+    const initial = f.stats();
+    await expect(source.api.registration.reconcile('absent', { signal: aborted.signal })).rejects.toBe(reason);
+    await expect(source.api.schedules.reconcileCreate('absent', { signal: aborted.signal })).rejects.toBe(reason);
+    expect(f.stats()).toEqual(initial); expect(f.commands).toHaveLength(0); expect(f.service.diagnostics().gate).toMatchObject({ active: 0, queued: 0 });
+    const invalid = { signal: undefined, kind: 'schedule' } as unknown as Parameters<typeof source.api.registration.reconcile>[1];
+    await expect(source.api.registration.reconcile('absent', invalid)).rejects.toMatchObject({ code: 'JOBS_INPUT_INVALID' });
+    await expect(source.api.registration.reconcile('absent', null as unknown as Parameters<typeof source.api.registration.reconcile>[1]))
+      .rejects.toMatchObject({ code: 'JOBS_INPUT_INVALID' });
+    await expect(source.api.schedules.reconcileCreate('absent', { signal: 'not-a-signal' } as unknown as Parameters<typeof source.api.schedules.reconcileCreate>[1]))
+      .rejects.toMatchObject({ code: 'JOBS_INPUT_INVALID' });
+    expect(f.stats()).toEqual(initial);
+    const registered = await source.api.registration.activate(activate);
+    const created = await source.api.schedules.create({ input: { value: 1 }, at: new Date(f.now() + 5_000).toISOString() }, { idempotencyKey: 'original-create' });
+    const cancelled = await source.api.schedules.cancel(created.id, { expectedRevision: 1, idempotencyKey: 'original-cancel' });
+    const retired = await source.api.registration.retire({ expectedRevision: 1, idempotencyKey: 'original-retire' }); source.retireEligibility();
+    const before = f.commands.length;
+    expect(await source.api.registration.reconcile(activate.idempotencyKey)).toEqual(registered);
+    expect(await source.api.registration.reconcile('original-retire')).toEqual(retired);
+    expect(await source.api.schedules.reconcileCreate('original-create')).toEqual(created);
+    expect(await source.api.receipts.get('original-cancel')).toEqual(cancelled);
+    await expect(source.api.registration.reconcile('original-create')).rejects.toMatchObject({ code: 'JOBS_INTENT_CONFLICT' });
+    await expect(source.api.schedules.reconcileCreate(activate.idempotencyKey)).rejects.toMatchObject({ code: 'JOBS_INTENT_CONFLICT' });
+    await expect(source.api.schedules.reconcileCreate('original-cancel')).rejects.toMatchObject({ code: 'JOBS_INTENT_CONFLICT' });
+    expect(f.commands).toHaveLength(before); expect(f.service.diagnostics().gate).toMatchObject({ active: 0, queued: 0 });
+    expect(f.rows(source.scope, 'job_schedules')).toHaveLength(1);
+  } finally { await f.close(); }
+});
+
+test('receipt settlement rechecks physical source ownership after waiting and never turns owner loss into null', async () => {
+  const barrier = latch(), caller = new AbortController(); let hold = true;
+  const f = await memorySourceJobsFixture({ async afterWrite(operation) {
+    if (hold && operation.name === 'jobs.source.schedule.create') { hold = false; await barrier.wait(); }
+  } });
+  let creating: Promise<unknown> | undefined, reconciling: Promise<unknown> | undefined;
+  try {
+    const source = f.source(); await source.api.registration.activate(activate);
+    creating = source.api.schedules.create({ input: { value: 1 }, at: new Date(f.now() + 5_000).toISOString() },
+      { idempotencyKey: 'owner-loss', signal: caller.signal }).then(value => ({ value }), error => ({ error }));
+    await barrier.entered; caller.abort(); await creating;
+    reconciling = source.api.schedules.reconcileCreate('owner-loss').then(value => ({ value }), error => ({ error }));
+    await untilMemoryJobs(() => f.service.diagnostics().gate.queued === 1); source.revokeOwner(); barrier.release();
+    expect(await reconciling).toMatchObject({ error: { code: 'JOBS_AUTHORITY_RETIRED' } });
+    await expect(source.api.registration.reconcile('absent')).rejects.toMatchObject({ code: 'JOBS_AUTHORITY_RETIRED' });
+    expect(f.service.diagnostics().gate).toMatchObject({ active: 0, queued: 0 }); expect(f.stats()).toMatchObject({ activeLeases: 0, backendLeases: 0 });
+  } finally { barrier.release(); await Promise.allSettled([creating, reconciling].filter((value): value is Promise<unknown> => !!value)); await f.close(); }
+});
+
+test('a queued receipt settlement aborts without entering owner checks or leaking its gate slot', async () => {
+  const barrier = latch(); let hold = true;
+  const f = await memorySourceJobsFixture({ async afterWrite(operation) {
+    if (hold && operation.name === 'jobs.source.schedule.create') { hold = false; await barrier.wait(); }
+  } });
+  let creating: Promise<unknown> | undefined, reconciling: Promise<unknown> | undefined;
+  try {
+    const source = f.source(); await source.api.registration.activate(activate);
+    creating = source.api.schedules.create({ input: { value: 1 }, at: new Date(f.now() + 5_000).toISOString() },
+      { idempotencyKey: 'queued-settlement-abort' });
+    await barrier.entered;
+    const controller = new AbortController(), reason = new Error('Synthetic queued settlement cancellation'), checks = f.stats().ownerChecks;
+    reconciling = source.api.schedules.reconcileCreate('queued-settlement-abort', { signal: controller.signal })
+      .then(value => ({ value }), error => ({ error }));
+    await untilMemoryJobs(() => f.service.diagnostics().gate.queued === 1); controller.abort(reason);
+    expect(await reconciling).toEqual({ error: reason }); expect(f.stats().ownerChecks).toBe(checks);
+    expect(f.service.diagnostics().gate).toMatchObject({ active: 1, queued: 0 });
+    barrier.release(); await creating; expect(f.service.diagnostics().gate).toMatchObject({ active: 0, queued: 0 });
+  } finally { barrier.release(); await Promise.allSettled([creating, reconciling].filter((value): value is Promise<unknown> => !!value)); await f.close(); }
+});
+
+test('an active receipt settlement cancellation never returns an absence and retains its slot until read settlement', async () => {
+  const barrier = latch(); let hold = false;
+  const f = await memorySourceJobsFixture({ async beforeRead(operation) {
+    if (hold && operation.name === 'jobs.source.receipt') { hold = false; await barrier.wait(); }
+  } });
+  let reconciling: Promise<unknown> | undefined;
+  try {
+    const source = f.source(); await source.api.registration.activate(activate); hold = true;
+    const controller = new AbortController(), reason = new Error('Synthetic active settlement cancellation');
+    reconciling = source.api.schedules.reconcileCreate('absent', { signal: controller.signal })
+      .then(value => ({ value }), error => ({ error }));
+    await barrier.entered; controller.abort(reason);
+    expect(await reconciling).toEqual({ error: reason }); expect(f.service.diagnostics().gate.active).toBe(1);
+    barrier.release(); await untilMemoryJobs(() => f.service.diagnostics().gate.active === 0);
+    expect(f.service.diagnostics().gate.queued).toBe(0); expect(f.stats()).toMatchObject({ activeLeases: 0, backendLeases: 0 });
+  } finally { barrier.release(); await Promise.allSettled(reconciling ? [reconciling] : []); await f.close(); }
+});
+
 test('invalid source timing is a typed known no-start Jobs rejection before any source writer', async () => {
   const f = await memorySourceJobsFixture();
   try {

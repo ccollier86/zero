@@ -11,6 +11,8 @@ import { jobSourceId, jobSourcePrincipal, type JobSourceContract } from '../jobs
 import { memorySourceJobsFixture, untilMemoryJobs } from '../jobs/test-support/memory-source-fixture';
 import type { StepContext } from '../workflows/types';
 import { CalendarIntegrationDispatcher } from './integration-dispatcher';
+import { CalendarIntegrationPolicyController } from './integration-controller';
+import { CALENDAR_OBSERVATION_JOB, CALENDAR_OBSERVATION_WORKFLOW, calendarObservationPinInput, calendarObservationPolicy, registerCalendarObservationWorkflow } from './integration-catalog';
 import { CalendarError } from './error';
 import type { CalendarIntegrationEffectView, CalendarIntegrationIntentView, CalendarIntegrationPolicySpec, CalendarIntegrationPolicyView } from './integration-model';
 import { observeCalendarIntegration, type CalendarIntegrationObservationResult } from './integration-observation';
@@ -19,6 +21,7 @@ import { calendarRealm } from './realm';
 import { memoryCalendarServiceFixture } from './test-support/memory-service-fixture';
 
 async function fixture(options: {
+  nativeCatalog?: boolean;
   tenancy?: 'single' | 'multi';
   beforeJobsWrite?: (name: string) => void | Promise<void>;
   afterJobsWrite?: (name: string) => void | Promise<void>;
@@ -58,6 +61,9 @@ async function fixture(options: {
       return result;
     } } as CalendarIntegrationOwner;
     jobs = await memorySourceJobsFixture({
+      ...(options.nativeCatalog ? { definition: CALENDAR_OBSERVATION_JOB, registerWorkflow: (registry, activity) => registerCalendarObservationWorkflow(registry, () => ({
+        async execute(context) { await activity(context); return observations.at(-1)!; },
+      })) } satisfies Partial<Parameters<typeof memorySourceJobsFixture>[0]> : {}),
       tenancy: options.tenancy ?? 'single',
       beforeWrite: operation => options.beforeJobsWrite?.(operation.name),
       afterWrite: operation => options.afterJobsWrite?.(operation.name),
@@ -72,24 +78,29 @@ async function fixture(options: {
         } catch (error) { activityErrors.push(error); throw error; }
       },
     });
-    const identity = { domain: 'calendar.observation', databaseId: owner.owner.id, ownerId: owner.owner.owner_id,
+    // The native builder chooses stable per-rule identity before pinning the same
+    // fixed graph under its actual SYSTEM source principal. No fake graph runs.
+    const placeholder = { name: CALENDAR_OBSERVATION_WORKFLOW, version: 1, definitionId: 'unused', versionId: 'unused', fingerprint: '0'.repeat(64) };
+    const rule = { id: 'observation', version: '1', dueOffsetMs: 0, maxLatenessMs: options.maxLatenessMs ?? 60_000 };
+    const identity = options.nativeCatalog ? calendarObservationPolicy(owner, rule, placeholder).source.identity : { domain: 'calendar.observation', databaseId: owner.owner.id, ownerId: owner.owner.owner_id,
       rootHash: owner.owner.root_hash, scopeId: serviceDataScopeKey(owner.scope) };
+    const pinInput = options.nativeCatalog ? calendarObservationPinInput() : {};
     const pin = jobs.bridge.pin(jobs.bridge.system({ principal: jobSourcePrincipal(jobSourceId(identity)), reason: 'Synthetic calendar observation', scope: owner.scope }),
-      jobs.definition.workflow.name, {}, jobs.definition.workflow.version);
+      jobs.definition.workflow.name, pinInput, jobs.definition.workflow.version);
     const source: JobSourceContract = { identity, realmFingerprint: calendarRealm.fingerprint, policyVersion: 'synthetic-A', semanticsVersion: 'observation-v1',
       definition: { name: jobs.definition.name, version: jobs.definition.version, fingerprint: jobs.definition.fingerprint }, workflow: pin };
-    const policy: CalendarIntegrationPolicySpec = { ruleId: 'observation', ruleVersion: '1', adapter: 'observation-v1', source, dueOffsetMs: 0, maxLatenessMs: options.maxLatenessMs ?? 60_000 };
+    const policy: CalendarIntegrationPolicySpec = options.nativeCatalog ? calendarObservationPolicy(owner, rule, pin) : { ruleId: 'observation', ruleVersion: '1', adapter: 'observation-v1', source, dueOffsetMs: 0, maxLatenessMs: rule.maxLatenessMs };
     const installed = await owner.command<CalendarIntegrationPolicyView>('calendar.integration.policy.install', { policy, expectedEpoch: 0, now: jobs.now() }, { idempotencyKey: 'install-observation' });
     const assertEligible = () => owner.assertCurrent();
-    const capability = createTrustedJobSource({ identity, scope: owner.scope, realmFingerprint: source.realmFingerprint, definition: jobs.definition,
-      policyVersion: source.policyVersion, semanticsVersion: source.semanticsVersion, signal: owner.signal,
+    const capability = createTrustedJobSource({ identity, scope: owner.scope, realmFingerprint: policy.source.realmFingerprint, definition: jobs.definition,
+      policyVersion: policy.source.policyVersion, semanticsVersion: policy.source.semanticsVersion, signal: owner.signal,
       assertOwnerCurrent: () => owner.assertCurrent(), confirmOwnerCurrent: () => owner.verify(), assertEligible,
       async confirmEligible() {
         const selected = await owner.read<CalendarIntegrationPolicyView>('calendar.integration.policy', { ruleId: policy.ruleId });
         if (selected.epoch !== installed.epoch || selected.state === 'retired') throw new JobsError('JOBS_AUTHORITY_RETIRED');
       } });
     const sourceJobs = jobs.service.forSource(capability);
-    const registration = await sourceJobs.registration.activate({ expectedRevision: 0, idempotencyKey: 'activate-observation', pinInput: {} });
+    const registration = await sourceJobs.registration.activate({ expectedRevision: 0, idempotencyKey: 'activate-observation', pinInput });
     await owner.command('calendar.integration.policy.activate', { ruleId: policy.ruleId, epoch: installed.epoch, registration }, { idempotencyKey: 'ack-activation' });
     dispatcher = new CalendarIntegrationDispatcher({ store: owner, jobs: sourceJobs, now: jobs.now });
     const create = (key = 'appointment', offsetMs = 0) => session.api.appointments.create({ title: 'PRIVATE_APPOINTMENT_TITLE', resourceIds: [resource.id],
@@ -128,6 +139,155 @@ for (const tenancy of ['single', 'multi'] as const) test(`actual source Jobs/Tor
     expect(await f.dispatcher.runBatch()).toMatchObject({ claimed: 0 });
     expect(f.calendar.stats().activeLeases).toBe(0); expect(f.jobs.stats().activeLeases).toBe(0);
   } finally { await f.close(); }
+});
+
+for (const tenancy of ['single', 'multi'] as const) test(`closed native observation catalog executes the pinned workflow, not a substitute (${tenancy})`, async () => {
+  const f = await fixture({ nativeCatalog: true, tenancy }); try {
+    expect(f.jobs.definition.name).toBe(CALENDAR_OBSERVATION_JOB.name);
+    expect(f.policy.source.workflow.name).toBe(CALENDAR_OBSERVATION_WORKFLOW);
+    await f.create(); const intent = await f.intent();
+    expect(await f.dispatcher.runBatch()).toMatchObject({ accepted: 1 });
+    await f.jobs.tick(); await untilMemoryJobs(() => f.observations.length === 1);
+    expect(f.activityErrors).toEqual([]); expect(f.jobs.calls).toEqual([intent.input]);
+    expect(f.observations).toEqual([{ intentId: intent.id, state: 'observed' }]);
+    expect(f.captured[0]!.zero).toBeNull(); expect(f.captured[0]!.memory).toBeUndefined();
+    expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_effect_outcomes')).toHaveLength(1);
+    expect(f.calendar.stats().activeLeases).toBe(0); expect(f.jobs.stats().activeLeases).toBe(0);
+  } finally { await f.close(); }
+});
+
+/** Real native capability factory: controller eligibility and physical source
+ * ownership are separate. It cannot replace either with a request user. */
+function controllerFor(f: Awaited<ReturnType<typeof fixture>>) {
+  return new CalendarIntegrationPolicyController({ owner: f.owner, now: f.jobs.now, jobs: (policy, guards) => f.jobs.service.forSource(createTrustedJobSource({
+    identity: policy.source.identity, scope: f.owner.scope, realmFingerprint: policy.source.realmFingerprint, definition: f.jobs.definition,
+    policyVersion: policy.source.policyVersion, semanticsVersion: policy.source.semanticsVersion, signal: f.owner.signal,
+    assertOwnerCurrent: f.owner.assertCurrent, confirmOwnerCurrent: f.owner.verify, ...guards,
+  })) });
+}
+
+test('native controller adopts retained registration without a new Jobs generation, then retires truthfully after restart', async () => {
+  const f = await fixture({ nativeCatalog: true }); let controller = controllerFor(f);
+  try {
+    const adopted = await controller.activate(f.policy.ruleId);
+    expect(adopted.result).toEqual({ state: 'accepted', registration: f.registration });
+    expect(adopted.control.expectedRegistration).toEqual(f.registration);
+    expect(adopted.policy.state).toBe('active');
+    expect(await controller.prepare(f.policy)).toEqual(adopted.policy);
+    await controller.close(); controller = controllerFor(f);
+    const again = await controller.activate(f.policy.ruleId);
+    expect(again.control.jobsKey).toBe(adopted.control.jobsKey);
+    expect(again.result).toEqual(adopted.result);
+    expect(f.jobs.rows(f.owner.scope, 'job_schedules')).toHaveLength(0);
+    const retired = await controller.retire(f.policy.ruleId);
+    expect(retired.result).toBe('retired'); expect(retired.policy.state).toBe('retired');
+    expect(retired.registration).toEqual({ ...f.registration, state: 'retired', revision: f.registration.revision + 1 });
+    expect(await f.sourceJobs.registration.get()).toEqual(retired.registration);
+    expect(await controller.retire(f.policy.ruleId)).toEqual(retired);
+    expect(f.calendar.stats().activeLeases).toBe(0); expect(f.jobs.stats().activeLeases).toBe(0);
+  } finally { try { await controller.close(); } finally { await f.close(); } }
+});
+
+test('native retirement captures actual retained Jobs policy A even when local policy B was never activated', async () => {
+  const f = await fixture({ nativeCatalog: true }); const controller = controllerFor(f);
+  try {
+    const next = { ...f.policy, ruleVersion: '2', source: { ...f.policy.source, policyVersion: 'unapplied-B' } };
+    expect((await controller.prepare(next)).state).toBe('activating');
+    expect(await f.sourceJobs.registration.get()).toEqual(f.registration);
+    const retired = await controller.retire(f.policy.ruleId);
+    expect(retired.policy.epoch).toBe(2); expect(retired.policy.state).toBe('retired');
+    expect(retired.control!.expectedRegistration).toEqual(f.registration);
+    expect(retired.registration).toMatchObject({ policyHash: f.registration.policyHash, generation: f.registration.generation, state: 'retired' });
+    expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_control_results')).toHaveLength(1);
+  } finally { try { await controller.close(); } finally { await f.close(); } }
+});
+
+test('lost actual Jobs activation acknowledgment reconciles the original durable control after controller replacement', async () => {
+  let armed = false;
+  const f = await fixture({ nativeCatalog: true, afterJobsWrite(name) { if (armed && name === 'jobs.source.register') { armed = false; throw new Error('Synthetic lost registration acknowledgment.'); } } });
+  let controller = controllerFor(f);
+  try {
+    armed = true;
+    await expect(controller.activate(f.policy.ruleId)).rejects.toMatchObject({ code: 'JOBS_OUTCOME_UNKNOWN' });
+    const pending = await f.owner.read<any>('calendar.integration.controlEvidence', { ruleId: f.policy.ruleId });
+    expect(pending.pending).toMatchObject({ action: 'activate', result: null, lastFailure: 'JOBS_OUTCOME_UNKNOWN' });
+    const key = pending.pending.jobsKey;
+    await controller.close(); controller = controllerFor(f);
+    const recovered = await controller.activate(f.policy.ruleId);
+    expect(recovered.control.jobsKey).toBe(key); expect(recovered.result).toEqual({ state: 'accepted', registration: f.registration });
+    expect((await f.owner.read<any>('calendar.integration.controlEvidence', { ruleId: f.policy.ruleId })).pending).toBeNull();
+    expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_controls')).toHaveLength(1);
+    expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_control_results')).toHaveLength(1);
+    expect(f.jobs.rows(f.owner.scope, 'job_schedules')).toHaveLength(0);
+  } finally { try { await controller.close(); } finally { await f.close(); } }
+});
+
+test('retiring a captured policy with no Jobs registration records no invented downstream retirement', async () => {
+  const f = await fixture({ nativeCatalog: true }); const controller = controllerFor(f);
+  try {
+    const next = { ...f.policy, ruleId: 'unregistered', source: { ...f.policy.source, identity: { ...f.policy.source.identity, domain: 'calendar.unregistered' } } };
+    await controller.prepare(next);
+    const retired = await controller.retire(next.ruleId);
+    expect(retired).toMatchObject({ result: 'no-registration', control: null, registration: null, policy: { state: 'retired' } });
+    expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_controls')).toHaveLength(0);
+    expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_control_results')).toHaveLength(0);
+    expect((await f.owner.read<any>('calendar.integration.controlEvidence', { ruleId: next.ruleId })).registered).toBe(false);
+  } finally { try { await controller.close(); } finally { await f.close(); } }
+});
+
+test('retirement during an actual committed activation acknowledgment wait retains historical acceptance without reviving intake', async () => {
+  let armed = false, entered!: () => void, release!: () => void;
+  const arrived = new Promise<void>(resolve => { entered = resolve; }), gate = new Promise<void>(resolve => { release = resolve; });
+  const f = await fixture({ nativeCatalog: true, async afterJobsWrite(name) { if (armed && name === 'jobs.source.register') { armed = false; entered(); await gate; } } });
+  const controller = controllerFor(f);
+  try {
+    armed = true;
+    const activating = controller.activate(f.policy.ruleId).then(value => ({ value }), error => ({ error }));
+    await arrived; const retiring = controller.retire(f.policy.ruleId); release();
+    expect(await activating).toMatchObject({ error: { code: 'JOBS_OUTCOME_UNKNOWN' } });
+    const retired = await retiring;
+    expect(retired.policy.state).toBe('retired'); expect(retired.result).toBe('retired');
+    expect(retired.registration!.policyHash).toBe(f.registration.policyHash);
+    const results = f.calendar.sourceRows(f.session.scope, '_calendar_integration_control_results');
+    expect(results).toHaveLength(2); expect(results.every(row => row.state === 'accepted')).toBe(true);
+    expect((await f.owner.read<any>('calendar.integration.policy', { ruleId: f.policy.ruleId })).state).toBe('retired');
+    expect((await f.owner.read<any>('calendar.integration.controlEvidence', { ruleId: f.policy.ruleId })).pending).toBeNull();
+    await f.create(); expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_intents')).toHaveLength(0);
+  } finally { release(); try { await controller.close(); } finally { await f.close(); } }
+});
+
+test('lost actual Jobs retirement acknowledgment is recovered by its original key without a new retirement', async () => {
+  let armed = false;
+  const f = await fixture({ nativeCatalog: true, afterJobsWrite(name) { if (armed && name === 'jobs.source.retire') { armed = false; throw new Error('Synthetic lost retirement acknowledgment.'); } } });
+  let controller = controllerFor(f);
+  try {
+    armed = true; await expect(controller.retire(f.policy.ruleId)).rejects.toMatchObject({ code: 'JOBS_OUTCOME_UNKNOWN' });
+    const pending = await f.owner.read<any>('calendar.integration.controlEvidence', { ruleId: f.policy.ruleId });
+    expect(pending.pending).toMatchObject({ action: 'retire', result: null, lastFailure: 'JOBS_OUTCOME_UNKNOWN' });
+    expect((await f.owner.read<any>('calendar.integration.policy', { ruleId: f.policy.ruleId })).state).toBe('retired');
+    await controller.close(); controller = controllerFor(f);
+    const recovered = await controller.retire(f.policy.ruleId);
+    expect(recovered.result).toBe('retired'); expect(recovered.control!.jobsKey).toBe(pending.pending.jobsKey);
+    expect(recovered.registration).toEqual({ ...f.registration, state: 'retired', revision: f.registration.revision + 1 });
+    expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_controls')).toHaveLength(1);
+    expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_control_results')).toHaveLength(1);
+  } finally { try { await controller.close(); } finally { await f.close(); } }
+});
+
+test('replacement controller cannot reactivate past a committed local retirement whose downstream control never started', async () => {
+  const f = await fixture({ nativeCatalog: true }); const controller = controllerFor(f);
+  try {
+    // Deliberate crash boundary: local retirement was durable, but no separate
+    // Jobs retirement intent exists yet. New process state must not forget it.
+    await f.owner.command('calendar.integration.policy.retire', { ruleId: f.policy.ruleId, epoch: f.installed.epoch }, { idempotencyKey: 'interrupted-retirement' });
+    await expect(controller.prepare(f.policy)).rejects.toMatchObject({ code: 'CALENDAR_NOT_READY' });
+    expect(await f.sourceJobs.registration.get()).toEqual(f.registration);
+    expect((await f.owner.read<any>('calendar.integration.policy', { ruleId: f.policy.ruleId })).epoch).toBe(1);
+    expect((await controller.retire(f.policy.ruleId)).result).toBe('retired');
+    expect((await controller.prepare(f.policy)).epoch).toBe(2);
+    const reactivated = await controller.activate(f.policy.ruleId);
+    expect(reactivated.result).toMatchObject({ state: 'accepted', registration: { state: 'active', generation: 2, revision: 3 } });
+  } finally { try { await controller.close(); } finally { await f.close(); } }
 });
 
 test('a Jobs commit with lost acknowledgment reconciles its exact source key and dispatches only one workflow', async () => {

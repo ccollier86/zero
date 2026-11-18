@@ -18,6 +18,67 @@ This is feature-branch evidence, not a release certificate. No calendar backend
 archive has been selected by normal `zero-update`, and no application deployment
 or data migration is authorized by these checks.
 
+## November 18 durable policy lifecycle checkpoint
+
+The next reviewed source phase adds a fixed native observation catalog,
+owner-readiness seam, original-key Jobs settlement barriers, dormant Jobs
+construction, and additive realm `012` registration journal/controller. Public
+automation and managed recovery/startup are still disabled/unimplemented.
+
+Review closed these concrete lifecycle gaps before further composition:
+
+- Known previously registered Jobs state cannot disappear and be silently
+  recreated as generation one. Exact original accepted receipt reconciliation
+  remains permitted; missing retained current state otherwise fails closed.
+- Restart after local retirement but before preparation of the downstream
+  retirement control cannot bypass that unfinished retirement. Reactivation
+  requires its accepted durable retirement, not a lost process-local flag.
+- An unresolved activation blocks changed policy preparation. Evidence recovery
+  of its original receipt does not silently restore a quiesced source.
+- Retirement captures the actual owned Jobs registration, including old A when
+  current local B never applied. Late acceptance records historical mapping
+  without reviving a retired pointer. No-registration reports no invented result.
+- Transient retirement bookkeeping is bounded and shared across queued same-rule
+  controls, including queue refusal/missing rules. Different rules progress
+  independently; source leases are released before Jobs/Torrent waits.
+- Optional readiness is bounded, owner-lifetime single-flight and retried after
+  settlement; an initiating user's logout does not retire another waiter's
+  native work. Original authorized business receipts remain reconcilable even
+  when readiness later fails. Logging-only sources keep their existing cost.
+- Jobs registration/create hints do not dispatch before explicit successful
+  scheduler startup. Captured failed-start callbacks stay inert after retry;
+  exact-callback cleanup preserves replacements. Manual tick/refill still works.
+
+Actual memory tests exercise the fixed catalog—not only a synthetic substitute—
+through native Guardian/calendar, source Jobs and MAC-sealed Torrent, in single
+and multi tenancy. They also cover controller replacement, lost activation and
+retirement acknowledgments, retirement during an already committed activation
+wait, and the local-retire/before-journal crash boundary. Separate native realm
+tests cover direct-SQL forged outcomes, immutable evidence, late-ack guard proof,
+indexed pending queries, rollback and genuine populated `011` → `012` migration.
+All prior migration/checksum/declaration generations remain exact. The one
+explicit registration-guard extension is checked and rollback-qualified, not
+misrepresented as an unchanged guard.
+
+The expanded native-memory calendar/related-Jobs run passed **673 tests,
+15,093 assertions, 79 files**. Afterward, a test-only assertion typing correction
+was rechecked with the affected controller set: **15 passed, 332 assertions**;
+runtime code did not change after the expanded run. The final no-emit TypeScript
+graph passed with **360 roots, 3,970 imported source files, zero diagnostics**;
+emit and incremental output were disabled. Documentation validation passed for
+**907 pages**, all reachable, with zero structural problems. Interim fixture and
+typing failures were corrected and rechecked, not relabelled as original passes.
+
+Every owned fixture uses native memory state and closes database/read sessions,
+pools, workflow owners and clocks on success and failure. No dependencies,
+builds, file-backed databases, Docker resources, preview servers or packaged
+artifacts were generated; no disposable output or owned process is retained.
+
+These checks are memory/source evidence. Physical callback settlement across
+process death, actual managed recovery/worker shutdown, browser, Linux bundle and
+archive/updater qualification remain pending under the storage-integrity hold.
+No deployment, live data, hosted demo, main or updater selection changed.
+
 ## November 18 dispatch checkpoint review
 
 Independent review of `11e9bbc` found and corrected two source-boundary defects
@@ -970,7 +1031,7 @@ executable with the default source actor remains deliberately unavailable.
 Automatic working-hours coverage extension, offer/slot generation, public booking proofs,
 domain-contact/guest participant adapters, type-catalog/resource-policy administration, effective-dated location eligibility,
 recurrence, clinical visit/lobby/attention transitions,
-source-bound Jobs/Torrent effects, reminders,
+managed source-bound Jobs/Torrent delivery, reminders,
 outbound channels, public self-booking and AI remain later stages of the approved
 integration plan. The hosted local-state UI is not evidence that these backend
 features are implemented. Keep the independent core useful without silently

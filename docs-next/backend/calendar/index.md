@@ -39,7 +39,8 @@ working on an application; do not assume this branch is available through update
 - [Weekly working hours](./working-hours.md): finite local-date coverage, explicit
   exceptions, frozen UTC policy snapshots and compatible legacy format handling.
 - [Private integration protocol](./integrations.md): source-atomic intents, bounded
-  Jobs handoff, exact Torrent execution proof and observation-only cutoff; not
+  Jobs handoff, fixed observation catalog, owner readiness, durable registration
+  controls, exact Torrent execution proof and observation-only cutoff; not
   yet activated or a public reminders API.
 - [Qualification and remaining gates](./qualification.md): current source review,
   completed memory checks and explicitly unexecuted physical/deployment scenarios.
