@@ -32,6 +32,8 @@ working on an application; do not assume this branch is available through update
   bounded queries, live projections and uncertain outcomes.
 - [Lifecycle and required reasons](./lifecycle.md): optional richer outcomes,
   server-supplied transitions, private reasons and canonical cancellation.
+- [Visit modes and retained locations](./visits.md): optional location/version
+  bindings, current assignment compatibility, hold transfer and selector privacy.
 - [Qualification and remaining gates](./qualification.md): current source review,
   completed memory checks and explicitly unexecuted physical/deployment scenarios.
 - [Frontend composition](../../frontend/calendar/index.md): connected core versus
@@ -82,6 +84,12 @@ currently visible locations. Historical labels/assignments remain retained.
 Directory and location-detail hooks update reactively and retire revoked data.
 The richer demo's filter/management controls are not yet wired to these APIs.
 
+Appointments and holds can now explicitly bind an in-person location version or
+a phone/video mode. New/relevant changed bookings check current all-resource
+assignment compatibility; retained snapshots preserve historical labels/regions.
+The connected one-off editor includes a native mode/location picker. This does not
+create telehealth connections, check medical eligibility or enable lobby tracking.
+
 Versioned appointment types now supply exact duration/buffer defaults and per-resource
 unrestricted/optional/required policies. Typed appointments/holds retain their
 historical catalog generation. New/time-changed bookings and hold confirmation
@@ -100,7 +108,7 @@ progress, lobby tracking, arbitrary state machines or automatic workflow deliver
 
 Recurrence, all-day and floating dates, recurring working-hours/holiday expansion,
 public booking proofs/offers, participant invitations,
-effective-dated location eligibility and appointment visit locations,
+effective-dated location eligibility,
 clinical visit/lobby/attention state, delivery channels, public self-booking and AI
 adapters remain future stages. Local UI fields/previews do not implement those
 features. In this core, `recurrence`, `reminders` and `selfBooking` must remain false; attempting to

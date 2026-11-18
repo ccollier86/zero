@@ -35,6 +35,10 @@ publication, search, and production agent bundles.
     live updates, async native UI, adoption and staged qualification. Its
     [managed one-off core](../backend/calendar/index.md) is now connected on the
     implementation branch; later stages and release qualification remain open.
+  - [Calendar participant admission notes](./calendar-participant-admission-notes.md):
+    canonical Guardian-user references, independent discovery/detail/binding policy,
+    final target-revocation fences, provisioning-clock gap, app-contact adapter
+    boundaries and the next participant qualification matrix; not an implemented API.
 
 - [Logging and auditing replacement](./logging-auditing-replacement-plan.md):
   the current generic product plan replacing transport-centered activity with

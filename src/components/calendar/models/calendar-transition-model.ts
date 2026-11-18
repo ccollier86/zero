@@ -28,7 +28,9 @@ export function calendarTransitionInput(proposal: CalendarTransitionProposal, re
 /** A mutation can observe revocation before its independent live query does. Withdraw immediately. */
 export function calendarTransitionAuthorityDenied(error: { readonly code: string | null; readonly status: number | null }): boolean {
   return error.status === 401 || error.status === 403 || error.status === 428
-    || error.code === 'CALENDAR_NOT_FOUND' || error.code === 'CALENDAR_FORBIDDEN';
+    || error.code === 'CALENDAR_NOT_FOUND' || error.code === 'CALENDAR_FORBIDDEN'
+    || error.code === 'AUTH_UNAUTHORIZED' || error.code === 'UNAUTHORIZED'
+    || error.code === 'AUTH_FORBIDDEN' || error.code === 'FORBIDDEN' || error.code === 'LOGGING_ADMISSION_REQUIRED';
 }
 export function calendarTransitionReceiptAccepted(proposal: CalendarTransitionProposal, key: string, receipt: CalendarCommandReceipt): boolean {
   return receipt.requestId === key && receipt.id === proposal.id && receipt.operation === 'appointment.transitioned'

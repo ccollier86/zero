@@ -214,6 +214,12 @@ for the exact branch/release boundary. The connected workspace now uses server
 transition discovery and a native managed review/reason dialog, while clinical
 visit progress and lobby fields in the recovered UI remain local-only.
 
+The connected one-off editor also composes `CalendarVisitFields` over the native
+mode select and authorized paged location picker. It persists visit identity through
+the calendar facade, keeps accepted source history distinct from unsubmitted
+catalog choices, and never turns a video mode into a provider connection. The
+standalone recovered editor retains its independent local composition contract.
+
 No calendar Fabric database, Guardian policy, booking transaction/hold,
 cross-worker conflict arbitration, durable recurrence, timezone/DST engine,
 invitations, reminders, workflow triggers, external calendar sync or telehealth

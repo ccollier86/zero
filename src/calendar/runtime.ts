@@ -23,7 +23,7 @@ import { calendarRealm } from './realm';
 import { calendarActor, calendarSelection, CALENDAR_LIMITS } from './realm-model';
 import { CALENDAR_DEFAULT_LIFECYCLE_POLICY, calendarLifecyclePolicyFields, requireCalendarLifecycleManager } from './lifecycle-model';
 import type { CalendarServiceBroker } from './service';
-import { calendarAppointmentTypeInput, calendarAppointmentTypePageQuery, calendarLocationInput, calendarPageQuery, calendarRange, calendarResourcePageQuery } from './service-validation';
+import { calendarAppointmentTypeInput, calendarAppointmentTypePageQuery, calendarLocationInput, calendarPageQuery, calendarRange, calendarResourcePageQuery, calendarVisitLocationQuery } from './service-validation';
 import { normalizeCalendarInstant, normalizeCalendarTimeZone } from './time';
 import { calendarHash, calendarInteger, calendarKey, calendarRecord, calendarScope, calendarText, calendarValue } from './validation';
 
@@ -42,7 +42,7 @@ export interface CalendarRuntimeOptions {
   readonly source?: (coordinator: DatabaseCoordinator) => CalendarRuntimeSource;
 }
 const QUERIES = new Set(['calendar.resources', 'calendar.busy', 'calendar.appointments', 'calendar.appointment',
-  'calendar.locations', 'calendar.location', 'calendar.resourceLocations', 'calendar.locationAssignmentWitnesses',
+  'calendar.locations', 'calendar.location', 'calendar.resourceLocations', 'calendar.locationAssignmentWitnesses', 'calendar.visitLocations',
   'calendar.types', 'calendar.type', 'calendar.resourceTypes', 'calendar.lifecycle', 'calendar.appointmentTransitions',
   'calendar.availability', 'calendar.blocks', 'calendar.block', 'calendar.holds', 'calendar.hold', 'calendar.receipt']);
 const COMMANDS = new Set(['calendar.resource.create', 'calendar.resource.grant', 'calendar.resource.availability',
@@ -218,6 +218,7 @@ export class CalendarRuntime implements CalendarServiceBroker {
     const { actor: _actor, ...query } = body;
     if (name === 'calendar.resources') return { ...calendarResourcePageQuery(query, this.options.config), actor };
     if (name === 'calendar.locations') return { ...calendarPageQuery(query, this.options.config), actor };
+    if (name === 'calendar.visitLocations') return { ...calendarVisitLocationQuery(query, this.options.config), actor };
     if (name === 'calendar.types') return { ...calendarAppointmentTypePageQuery(query, this.options.config), actor };
     if (name === 'calendar.busy' || name === 'calendar.appointments' || name === 'calendar.blocks' || name === 'calendar.holds') return { ...calendarRange(query, this.options.config), actor };
     if ((name === 'calendar.appointment.create' || name === 'calendar.block.create' || name === 'calendar.hold.acquire')
@@ -345,6 +346,7 @@ export function emptyCalendarRead(name: string, input: unknown): unknown {
   const fields = name === 'calendar.resources' ? ['actor', 'limit', 'after', 'locationIds', 'regions']
     : name === 'calendar.locations' ? ['actor', 'limit', 'after']
     : name === 'calendar.types' ? ['actor', 'limit', 'after', 'resourceIds']
+    : name === 'calendar.visitLocations' ? ['actor', 'resourceIds', 'limit', 'after']
     : name === 'calendar.locationAssignmentWitnesses' ? ['actor', 'locationIds']
     : name === 'calendar.lifecycle' ? ['actor']
     : name === 'calendar.receipt' ? ['actor', 'requestId'] : ['calendar.appointment', 'calendar.appointmentTransitions', 'calendar.block', 'calendar.hold', 'calendar.availability', 'calendar.location', 'calendar.resourceLocations', 'calendar.type', 'calendar.resourceTypes'].includes(name) ? ['actor', 'id']
@@ -352,6 +354,11 @@ export function emptyCalendarRead(name: string, input: unknown): unknown {
   if (!fields) throw new CalendarError('CALENDAR_INPUT_INVALID');
   const r = calendarRecord(input, fields); calendarActor(r.actor);
   if (name === 'calendar.lifecycle') { requireCalendarLifecycleManager(calendarActor(r.actor)); return { ...CALENDAR_DEFAULT_LIFECYCLE_POLICY }; }
+  if (name === 'calendar.visitLocations') {
+    calendarInteger(r.limit ?? 25, 1, CALENDAR_LIMITS.page); if (r.after !== undefined) calendarKey(r.after);
+    if (calendarSelection(r.resourceIds).length) throw new CalendarError('CALENDAR_NOT_FOUND');
+    return { items: [], truncated: false, nextAfter: null };
+  }
   if (name === 'calendar.types') {
     const { actor: _actor, ...query } = r;
     const accepted = calendarAppointmentTypePageQuery(query, { maxPageSize: CALENDAR_LIMITS.page, maxResources: CALENDAR_LIMITS.selection });

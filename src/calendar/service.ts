@@ -8,7 +8,7 @@ import { admitCalendarRequest, type CalendarAuthority } from './authority';
 import type { ResolvedCalendarConfig } from './config';
 import { calendarLocationIds, calendarLocationInput, calendarPageQuery, calendarResourcePageQuery, calendarRange, calendarReceipt,
   calendarAppointmentTypePageQuery, calendarAppointmentTypeInput, calendarTypeReference, calendarResourceTypesInput,
-  calendarLifecyclePolicyInput, calendarAppointmentTransitionInput, calendarLifecycleReason } from './service-validation';
+  calendarLifecyclePolicyInput, calendarAppointmentTransitionInput, calendarLifecycleReason, calendarVisitInput, calendarVisitLocationQuery } from './service-validation';
 import { watchCalendarPage } from './watch';
 
 export interface CalendarServiceBroker {
@@ -66,6 +66,12 @@ export class CalendarService {
         },
       }),
       locations: Object.freeze({
+        forVisit: (query, options) => this.read(request, 'visitLocations', () => calendarVisitLocationQuery(query, this.config), options),
+        watchForVisit: (query, listener, options: CalendarWatchOptions = {}) => {
+          const detached = calendarVisitLocationQuery(query, this.config); this.ready();
+          return watchCalendarPage({ request, broker: this.broker, config: this.config, closing: this.signal,
+            queryName: 'calendar.visitLocations', query: detached, listener, options, track: task => this.track(task) });
+        },
         list: (query = {}, options?: CalendarReadOptions) => this.read(request, 'locations', () => calendarPageQuery(query, this.config), options),
         get: (id, options) => this.read(request, 'location', () => ({ id: calendarKey(id) }), options),
         create: (input, options) => this.write(request, 'location.create', input, options),
@@ -210,11 +216,11 @@ export class CalendarService {
         : operation === 'resource.availability' ? ['mode', 'windows']
         : operation === 'block.cancel' || operation === 'appointment.cancel' || operation === 'hold.release' ? []
         : operation === 'hold.confirm' ? ['title']
-        : operation === 'hold.acquire' ? ['resourceIds', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'ttlSeconds', 'appointmentType']
+        : operation === 'hold.acquire' ? ['resourceIds', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'ttlSeconds', 'appointmentType', 'visit']
         : operation === 'block.reschedule' ? ['startAt', 'endAt', 'timeZone']
         : operation === 'block.create' ? ['resourceIds', 'title', 'startAt', 'endAt', 'timeZone']
-        : operation === 'appointment.reschedule' ? ['startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'appointmentType']
-        : ['resourceIds', 'title', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'appointmentType'];
+        : operation === 'appointment.reschedule' ? ['startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'appointmentType', 'visit']
+        : ['resourceIds', 'title', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'appointmentType', 'visit'];
       // Detach before the first await; authored mutation cannot alter an admitted command.
       const body = calendarValue(calendarRecord(input, fields)) as Record<string, unknown>;
       if (operation === 'location.create' || operation === 'location.replace') calendarLocationInput(body, operation === 'location.replace');
@@ -226,6 +232,10 @@ export class CalendarService {
       if (Object.hasOwn(body, 'appointmentType')) {
         if (body.appointmentType === null) { if (operation !== 'appointment.reschedule') throw new CalendarError('CALENDAR_INPUT_INVALID'); }
         else body.appointmentType = calendarTypeReference(body.appointmentType);
+      }
+      if (Object.hasOwn(body, 'visit')) {
+        if (body.visit === null) { if (operation !== 'appointment.reschedule') throw new CalendarError('CALENDAR_INPUT_INVALID'); }
+        else body.visit = calendarVisitInput(body.visit);
       }
       const opts = calendarRecord(options, target === undefined ? ['idempotencyKey', 'signal']
         : ['idempotencyKey', 'signal', 'expectedRevision', ...(operation === 'appointment.cancel' ? ['reason'] : [])]);

@@ -4,6 +4,7 @@ import type { CalendarAppointmentInput, CalendarAppointmentPage, CalendarAppoint
   CalendarLifecyclePolicyInput, CalendarLifecyclePolicy, CalendarCancellationOptions,
   CalendarAvailabilityInput, CalendarAvailabilityView, CalendarAvailabilityWindow, CalendarBlockInput, CalendarBlockPage, CalendarBlockRescheduleInput, CalendarBlockView,
   CalendarHoldInput, CalendarHoldView, CalendarHoldPage, CalendarHoldConfirmationInput,
+  CalendarVisitInput, CalendarVisitSnapshot, CalendarVisitLocationQuery,
   CalendarAppointmentTypeInput, CalendarAppointmentTypeReplacement, CalendarAppointmentTypeReference, CalendarAppointmentTypeSnapshot,
   CalendarAppointmentTypeView, CalendarAppointmentTypePageQuery, CalendarAppointmentTypePage, CalendarResourceTypesInput, CalendarResourceTypesView,
   CalendarLocationInput, CalendarLocationReplacement, CalendarLocationView, CalendarLocationPageQuery, CalendarLocationPage, CalendarResourceLocationsView,
@@ -106,6 +107,14 @@ export function createCalendarClient(fetch: <T = unknown>(path: string, init?: F
       },
     }),
     locations: Object.freeze({
+      forVisit(supplied: CalendarVisitLocationQuery, readOptions?: CalendarReadOptions) {
+        const page = visitPageRequest(supplied);
+        return read('/visit-locations' + page.search, value => visitLocationPage(value, page.query), 'GET', undefined, readSignal(readOptions));
+      },
+      watchForVisit(query: CalendarVisitLocationQuery, listener: (page: CalendarLocationPage, update?: CalendarWatchUpdate) => void, supplied: CalendarWatchOptions = {}) {
+        const page = visitPageRequest(query);
+        return watch('/visit-locations/live' + page.search, value => visitLocationPage(value, page.query), listener, supplied);
+      },
       list(supplied?: CalendarLocationPageQuery, readOptions?: CalendarReadOptions) {
         const page = pageRequest(supplied);
         return read('/locations' + page.search, value => locationPage(value, page.query), 'GET', undefined, readSignal(readOptions));
@@ -374,6 +383,29 @@ function typePageRequest(value: unknown): { search: string; query: CalendarAppoi
   return { search: params.size ? '?' + params : '', query: Object.freeze({ ...(limit === undefined ? {} : { limit }),
     ...(after === undefined ? {} : { after }), ...(resourceIds === undefined ? {} : { resourceIds }) }) };
 }
+function visitPageRequest(value: unknown): { search: string; query: CalendarVisitLocationQuery } {
+  // Unlike catalog discovery, omission is never a manager-wide visit selection.
+  const page = typePageRequest(value);
+  if (page.query.resourceIds === undefined) throw invalid();
+  return page as { search: string; query: CalendarVisitLocationQuery };
+}
+function visitInput(value: unknown): CalendarVisitInput {
+  const r = record(value, ['mode', 'location']);
+  if (r.mode === 'in-person') return Object.freeze({ mode: r.mode, location: typeReference(r.location) });
+  if ((r.mode !== 'video' && r.mode !== 'phone') || Object.hasOwn(r, 'location')) throw invalid();
+  return Object.freeze({ mode: r.mode });
+}
+function visitSnapshot(value: unknown): CalendarVisitSnapshot {
+  const r = record(value, ['mode', 'location']);
+  if (r.mode === 'in-person') {
+    const location = record(r.location, ['id', 'revision', 'label', 'region']);
+    if (Object.keys(location).length !== 4 || location.region === undefined) throw invalid();
+    requestKey(location.id); integer(location.revision, 1); identifier(location.label, 256);
+    if (location.region !== null) region(location.region);
+    return Object.freeze({ mode: r.mode, location: Object.freeze(location) }) as unknown as CalendarVisitSnapshot;
+  }
+  return visitInput(r) as CalendarVisitSnapshot;
+}
 function typeInput(value: unknown, replacement = false): Record<string, unknown> {
   const fields = ['label', 'durationMinutes', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'colorKey', 'active'];
   const r = record(value, fields); identifier(r.label, 256); integer(r.durationMinutes, 1, 44_640);
@@ -444,6 +476,12 @@ function locationPage(value: unknown, query: CalendarLocationPageQuery): Calenda
   pageBoundary(items, r.truncated, r.nextAfter, query);
   return Object.freeze({ items: Object.freeze(items), truncated: r.truncated, nextAfter: r.nextAfter as string | null });
 }
+function visitLocationPage(value: unknown, query: CalendarVisitLocationQuery): CalendarLocationPage {
+  const page = locationPage(value, query);
+  if (page.items.some(location => !location.active)
+    || query.resourceIds.length === 0 && (page.items.length !== 0 || page.truncated || page.nextAfter !== null)) throw invalid();
+  return page;
+}
 function resourceLocationsView(value: unknown): CalendarResourceLocationsView {
   const r = record(value, ['resourceId', 'resourceRevision', 'locationIds']);
   if (Object.keys(r).length !== 3) throw invalid(); requestKey(r.resourceId); integer(r.resourceRevision, 1);
@@ -452,7 +490,7 @@ function resourceLocationsView(value: unknown): CalendarResourceLocationsView {
   return Object.freeze({ resourceId: r.resourceId as string, resourceRevision: r.resourceRevision as number, locationIds: Object.freeze(locationIds) });
 }
 function appointmentInput(value: unknown, create: boolean): Record<string, unknown> {
-  const r = record(value, ['startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'appointmentType', ...(create ? ['resourceIds', 'title'] : [])]);
+  const r = record(value, ['startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'appointmentType', 'visit', ...(create ? ['resourceIds', 'title'] : [])]);
   const resourceIds = create ? ids(r.resourceIds) : undefined;
   if (create) identifier(r.title, 512);
   instant(r.startAt); instant(r.endAt);
@@ -460,7 +498,8 @@ function appointmentInput(value: unknown, create: boolean): Record<string, unkno
   if (duration <= 0 || duration > 31 * 86400_000) throw invalid(); zone(r.timeZone);
   for (const key of ['bufferBeforeMinutes', 'bufferAfterMinutes']) if (!create || r[key] !== undefined) integer(r[key], 0, 1440);
   const appointmentType = Object.hasOwn(r, 'appointmentType') ? r.appointmentType === null && !create ? null : typeReference(r.appointmentType) : undefined;
-  return { ...r, ...(resourceIds === undefined ? {} : { resourceIds }), ...(appointmentType === undefined ? {} : { appointmentType }) };
+  const visit = Object.hasOwn(r, 'visit') ? r.visit === null && !create ? null : visitInput(r.visit) : undefined;
+  return { ...r, ...(resourceIds === undefined ? {} : { resourceIds }), ...(appointmentType === undefined ? {} : { appointmentType }), ...(visit === undefined ? {} : { visit }) };
 }
 function blockInput(value: unknown, create: boolean): Record<string, unknown> {
   const r = record(value, ['startAt', 'endAt', 'timeZone', ...(create ? ['resourceIds', 'title'] : [])]);
@@ -470,13 +509,14 @@ function blockInput(value: unknown, create: boolean): Record<string, unknown> {
   return { ...r, ...(resourceIds === undefined ? {} : { resourceIds }) };
 }
 function holdInput(value: unknown): Record<string, unknown> {
-  const r = record(value, ['resourceIds', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'ttlSeconds', 'appointmentType']);
+  const r = record(value, ['resourceIds', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'ttlSeconds', 'appointmentType', 'visit']);
   const resourceIds = ids(r.resourceIds);
   interval(r.startAt, r.endAt); zone(r.timeZone);
   for (const key of ['bufferBeforeMinutes', 'bufferAfterMinutes']) if (r[key] !== undefined) integer(r[key], 0, 1440);
   if (r.ttlSeconds !== undefined) integer(r.ttlSeconds, 1, 900);
   const appointmentType = Object.hasOwn(r, 'appointmentType') ? typeReference(r.appointmentType) : undefined;
-  return { ...r, resourceIds, ...(appointmentType === undefined ? {} : { appointmentType }) };
+  const visit = Object.hasOwn(r, 'visit') ? visitInput(r.visit) : undefined;
+  return { ...r, resourceIds, ...(appointmentType === undefined ? {} : { appointmentType }), ...(visit === undefined ? {} : { visit }) };
 }
 function availabilityInput(value: unknown): CalendarAvailabilityInput {
   const r = record(value, ['mode', 'windows']);
@@ -535,15 +575,16 @@ function resourceView(value: unknown): CalendarResourceView {
   return Object.freeze(r) as unknown as CalendarResourceView;
 }
 function appointmentView(value: unknown): CalendarAppointmentView {
-  const r = record(value, ['id', 'revision', 'resourceIds', 'title', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'status', 'createdBy', 'appointmentType', 'lifecycle']);
-  if (Object.keys(r).length !== 11 + (Object.hasOwn(r, 'appointmentType') ? 1 : 0) + (Object.hasOwn(r, 'lifecycle') ? 1 : 0)
+  const r = record(value, ['id', 'revision', 'resourceIds', 'title', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'status', 'createdBy', 'appointmentType', 'lifecycle', 'visit']);
+  if (Object.keys(r).length !== 11 + (Object.hasOwn(r, 'appointmentType') ? 1 : 0) + (Object.hasOwn(r, 'lifecycle') ? 1 : 0) + (Object.hasOwn(r, 'visit') ? 1 : 0)
     || r.status !== 'confirmed' && r.status !== 'cancelled') throw invalid();
   requestKey(r.id); integer(r.revision, 1); const resourceIds = ids(r.resourceIds); identifier(r.title, 512); requestKey(r.createdBy);
   instant(r.startAt); instant(r.endAt); if (Date.parse(String(r.endAt)) <= Date.parse(String(r.startAt))) throw invalid(); zone(r.timeZone);
   integer(r.bufferBeforeMinutes, 0, 1440); integer(r.bufferAfterMinutes, 0, 1440);
   const binding = bookingTypeSnapshot(r);
   const lifecycle = Object.hasOwn(r, 'lifecycle') ? { lifecycle: appointmentLifecycle(r.lifecycle, r) } : {};
-  return Object.freeze({ ...r, resourceIds: Object.freeze(resourceIds), ...binding, ...lifecycle }) as unknown as CalendarAppointmentView;
+  const visit = Object.hasOwn(r, 'visit') ? { visit: visitSnapshot(r.visit) } : {};
+  return Object.freeze({ ...r, resourceIds: Object.freeze(resourceIds), ...binding, ...lifecycle, ...visit }) as unknown as CalendarAppointmentView;
 }
 function blockView(value: unknown): CalendarBlockView {
   const r = record(value, ['id', 'revision', 'resourceIds', 'title', 'startAt', 'endAt', 'timeZone', 'status', 'createdBy']);
@@ -560,8 +601,8 @@ function blockPage(value: unknown): CalendarBlockPage {
 }
 function holdView(value: unknown): CalendarHoldView {
   const r = record(value, ['id', 'revision', 'resourceIds', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes',
-    'status', 'expiresAt', 'createdBy', 'appointmentId', 'appointmentType']);
-  if (Object.keys(r).length !== (Object.hasOwn(r, 'appointmentType') ? 13 : 12) || !['held', 'expired', 'released', 'confirmed'].includes(r.status as string)) throw invalid();
+    'status', 'expiresAt', 'createdBy', 'appointmentId', 'appointmentType', 'visit']);
+  if (Object.keys(r).length !== 12 + (Object.hasOwn(r, 'appointmentType') ? 1 : 0) + (Object.hasOwn(r, 'visit') ? 1 : 0) || !['held', 'expired', 'released', 'confirmed'].includes(r.status as string)) throw invalid();
   requestKey(r.id); integer(r.revision, 1); const resourceIds = ids(r.resourceIds); requestKey(r.createdBy);
   interval(r.startAt, r.endAt); instant(r.expiresAt); zone(r.timeZone);
   integer(r.bufferBeforeMinutes, 0, 1440); integer(r.bufferAfterMinutes, 0, 1440);
@@ -569,7 +610,8 @@ function holdView(value: unknown): CalendarHoldView {
   if (r.status === 'confirmed') requestKey(r.appointmentId);
   else if (r.appointmentId !== null) throw invalid();
   const binding = bookingTypeSnapshot(r);
-  return Object.freeze({ ...r, resourceIds: Object.freeze(resourceIds), ...binding }) as unknown as CalendarHoldView;
+  const visit = Object.hasOwn(r, 'visit') ? { visit: visitSnapshot(r.visit) } : {};
+  return Object.freeze({ ...r, resourceIds: Object.freeze(resourceIds), ...binding, ...visit }) as unknown as CalendarHoldView;
 }
 function bookingTypeSnapshot(r: Record<string, unknown>): { readonly appointmentType?: CalendarAppointmentTypeSnapshot } {
   if (!Object.hasOwn(r, 'appointmentType')) return {};

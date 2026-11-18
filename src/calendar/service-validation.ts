@@ -1,6 +1,6 @@
 /** Admission limits match the immutable realm ceilings; configuration may narrow, never advertise more. */
 import type { ResolvedCalendarConfig } from './config';
-import type { CalendarAppointmentTypePageQuery, CalendarCommandReceipt, CalendarLocationPageQuery, CalendarRangeQuery, CalendarResourcePageQuery } from './contracts';
+import type { CalendarAppointmentTypePageQuery, CalendarCommandReceipt, CalendarLocationPageQuery, CalendarRangeQuery, CalendarResourcePageQuery, CalendarVisitLocationQuery } from './contracts';
 import { CalendarError } from './error';
 import { normalizeCalendarInstant } from './time';
 import { calendarInteger, calendarKey, calendarRecord, calendarText, calendarValue } from './validation';
@@ -41,6 +41,19 @@ export function calendarAppointmentTypePageQuery(input: unknown, config: Pick<Re
   const resourceIds = values.map(value => calendarKey(value)).sort();
   if (new Set(resourceIds).size !== resourceIds.length) throw new CalendarError('CALENDAR_INPUT_INVALID');
   return Object.freeze({ ...base, resourceIds: Object.freeze(resourceIds) });
+}
+/** A visit choice is always tied to an explicit selected resource set, including the empty set. */
+export function calendarVisitLocationQuery(input: unknown, config: Pick<ResolvedCalendarConfig, 'maxPageSize' | 'maxResources'>): CalendarVisitLocationQuery {
+  const query = calendarAppointmentTypePageQuery(input, config);
+  if (query.resourceIds === undefined) throw new CalendarError('CALENDAR_INPUT_INVALID');
+  return query as CalendarVisitLocationQuery;
+}
+/** Authored references never carry server-retained labels, addresses or provider links. */
+export function calendarVisitInput(input: unknown): Record<string, unknown> {
+  const r = calendarRecord(input, ['mode', 'location']);
+  if (r.mode === 'in-person') return { mode: r.mode, location: calendarTypeReference(r.location) };
+  if ((r.mode !== 'video' && r.mode !== 'phone') || Object.hasOwn(r, 'location')) throw new CalendarError('CALENDAR_INPUT_INVALID');
+  return { mode: r.mode };
 }
 export function calendarAppointmentTypeInput(input: unknown, replacement = false): Record<string, unknown> {
   const fields = ['label', 'durationMinutes', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'colorKey', 'active'];

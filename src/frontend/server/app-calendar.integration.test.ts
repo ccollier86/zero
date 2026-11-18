@@ -203,9 +203,18 @@ for (const compliance of [false, true]) {
         options: { idempotencyKey: 'managed-hold-resource' } });
       expect(holdResourceResponse.status, await holdResourceResponse.clone().text()).toBe(200);
       const holdResource = await holdResourceResponse.json() as CalendarCommandReceipt;
+      const locationResponse = await call('/api/calendar/locations', { location: { label: 'PRIVATE_SYNTHETIC_MANAGED_LOCATION', region: 'US-IN' }, options: { idempotencyKey: 'managed-location' } });
+      expect(locationResponse.status, await locationResponse.clone().text()).toBe(200);
+      const visitLocation = await locationResponse.json() as CalendarCommandReceipt;
+      const assignment = await call('/api/calendar/resources/' + holdResource.id + '/locations', { locationIds: [visitLocation.id], options: { idempotencyKey: 'managed-location-assign', expectedRevision: 1 } }, 'PUT');
+      expect(assignment.status, await assignment.clone().text()).toBe(200);
+      const visitChoices = await call('/api/calendar/visit-locations?resourceIds=' + holdResource.id);
+      expect(visitChoices.status).toBe(200);
+      expect(await visitChoices.json()).toMatchObject({ items: [{ id: visitLocation.id, revision: 1, active: true }] });
       const holdNow = Date.now(), holdInput = { hold: { resourceIds: [holdResource.id],
         startAt: new Date(holdNow + 3_600_000).toISOString(), endAt: new Date(holdNow + 7_200_000).toISOString(),
-        timeZone: 'UTC', bufferBeforeMinutes: 5, bufferAfterMinutes: 10, ttlSeconds: 900 }, options: { idempotencyKey: 'managed-hold' } };
+        timeZone: 'UTC', bufferBeforeMinutes: 5, bufferAfterMinutes: 10, ttlSeconds: 900,
+        visit: { mode: 'in-person', location: { id: visitLocation.id, revision: 1 } } }, options: { idempotencyKey: 'managed-hold' } };
       const heldResponse = await call('/api/calendar/holds', holdInput);
       expect(heldResponse.status, await heldResponse.clone().text()).toBe(200);
       const held = await heldResponse.json() as CalendarCommandReceipt;
@@ -228,11 +237,13 @@ for (const compliance of [false, true]) {
       const confirmReceipt = await call('/api/calendar/receipts/managed-hold-confirm');
       expect(confirmReceipt.status).toBe(200); expect(await confirmReceipt.json()).toEqual({ receipt: confirmedHold });
       const confirmedRead = await call('/api/calendar/holds/' + held.id);
-      expect(confirmedRead.status).toBe(200); expect(await confirmedRead.json() as CalendarHoldView).toMatchObject({ status: 'confirmed', revision: 2, appointmentId: confirmedHold.id });
+      expect(confirmedRead.status).toBe(200); expect(await confirmedRead.json() as CalendarHoldView).toMatchObject({ status: 'confirmed', revision: 2, appointmentId: confirmedHold.id,
+        visit: { mode: 'in-person', location: { id: visitLocation.id, revision: 1, label: 'PRIVATE_SYNTHETIC_MANAGED_LOCATION', region: 'US-IN' } } });
       const confirmedAppointments = await call('/api/calendar/appointments/query', { query: holdRange });
       expect(confirmedAppointments.status).toBe(200);
       expect((await confirmedAppointments.json() as CalendarAppointmentPage).items).toMatchObject([{ id: confirmedHold.id, title: confirmInput.appointment.title,
-        startAt: holdInput.hold.startAt, endAt: holdInput.hold.endAt, resourceIds: [holdResource.id], bufferBeforeMinutes: 5, bufferAfterMinutes: 10 }]);
+        startAt: holdInput.hold.startAt, endAt: holdInput.hold.endAt, resourceIds: [holdResource.id], bufferBeforeMinutes: 5, bufferAfterMinutes: 10,
+        visit: { mode: 'in-person', location: { id: visitLocation.id, revision: 1 } } }]);
       const consumedHolds = await call('/api/calendar/holds/query', { query: holdRange });
       expect(consumedHolds.status).toBe(200); expect(await consumedHolds.json()).toEqual({ items: [], truncated: false });
 
@@ -336,7 +347,7 @@ for (const compliance of [false, true]) {
         expect(lifecyclePolicyEvidence.events).toHaveLength(1);
         expect(lifecyclePolicyEvidence.events[0]!.event).toMatchObject({ actor: { id: identity.user.userId }, target: { type: 'calendar.lifecycle-policy', id: 'policy' }, outcome: 'succeeded' });
         for (const entry of [...holdAcquired.events, ...holdEvidence.flatMap(page => page.events)]) {
-          expect(Object.keys(entry.event.metadata).every(key => ['revision', 'resourceCount', 'status', 'sequence'].includes(key))).toBe(true);
+          expect(Object.keys(entry.event.metadata).every(key => ['revision', 'resourceCount', 'status', 'sequence', 'visitMode'].includes(key))).toBe(true);
         }
         const serializedEvidence = JSON.stringify([evidence, cancellation, availabilityEvidence, ...blockEvidence, holdAcquired, ...holdEvidence, expiryEvidence, lifecycleEvidence, lifecyclePolicyEvidence]);
         expect(serializedEvidence).not.toMatch(/PRIVATE_SYNTHETIC|Fixture-only-password|calendar@example\.test/);

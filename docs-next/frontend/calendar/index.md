@@ -69,6 +69,21 @@ retain historical labels/defaults; untyped DTOs omit the optional binding. The
 connected editor and rich demo's local type picker are not yet wired to those
 catalogs/policies; see [type semantics](../../backend/calendar/facade.md#appointment-types-and-booking-policy).
 
+The visit-binding stage adds `useCalendarVisitLocations` plus the separately
+composable `CalendarVisitFields`. The connected editor now persists explicit
+Unspecified/In-person/Video/Phone choices through canonical appointment commands.
+Location choices are the current all-resource booking intersection, not the entire
+location catalog. Accepted historical location versions remain readable; an
+unsubmitted choice no longer present on the authorized page is masked and cannot
+be silently treated as accepted history. Dates/visit changes still require final
+server admission. See [Visit modes and retained locations](../../backend/calendar/visits.md).
+No attendee, lobby, presence or telehealth-provider state is implied.
+
+The private select wrapper now explicitly supplies its selected caption to the
+native value slot, so the server-rendered field does not depend on portal item
+effects just to display its selected text. This preserves native morphing and
+does not establish a broader calendar SSR/loader contract.
+
 Sources and the full composition guide are in
 [`src/components/calendar/README.md`](../../../src/components/calendar/README.md).
 The family has its own `components`, `models`, `hooks`, `recovered`, `styles`

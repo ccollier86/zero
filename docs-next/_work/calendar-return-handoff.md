@@ -45,6 +45,12 @@ managed transition review, with old cancel/reschedule bypasses closed. See
 lobby/attention, participants, recurrence and Jobs/Torrent effect dispatch remain
 separate pending stages. The approved hosted demo was not changed by this work.
 
+The subsequent source stage adds [visit/location bindings](../backend/calendar/visits.md)
+and a native connected mode/location field family, including historical generation
+preservation and exact hold transfer. The next participant implementation should
+start from the preserved [admission notes](./calendar-participant-admission-notes.md),
+not the demo's fictional directory. Neither stage implies a newly selected archive.
+
 ## Checkpoints and places to resume
 
 - Historical starting baseline: `05344d46a5d0178cdb5df3ab02bbe763ef6aa3cd`, Zero 2.10.5.

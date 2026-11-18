@@ -17,6 +17,8 @@ interface CalendarAuditMetadata {
   readonly status?: 'tentative' | 'confirmed' | 'completed' | 'no-show' | 'cancelled' | 'active' | 'held' | 'released';
   readonly policyRevision?: number;
   readonly reasonPresent?: boolean;
+  readonly visitMode?: 'in-person' | 'video' | 'phone';
+  readonly visitChanged?: boolean;
 }
 
 /** Call only inside an accepted mutation's callback; receipt replay and domain no-ops never reach this seam. */
@@ -32,6 +34,8 @@ export function appendCalendarSemanticAudit(context: DatabaseWriteCommandContext
   if (metadata.status !== undefined) values.status = metadata.status;
   if (metadata.policyRevision !== undefined) values.policyRevision = metadata.policyRevision;
   if (metadata.reasonPresent !== undefined) values.reasonPresent = metadata.reasonPresent;
+  if (metadata.visitMode !== undefined) values.visitMode = metadata.visitMode;
+  if (metadata.visitChanged !== undefined) values.visitChanged = metadata.visitChanged;
   const action = 'calendar.' + operation;
   appendDatabaseCommandSourceAudit(context, {
     // A real mutation sequence identifies A -> B -> A transitions independently of transport retries.

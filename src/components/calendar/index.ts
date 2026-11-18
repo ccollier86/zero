@@ -14,6 +14,8 @@ export { AppointmentTonePreview } from './components/appointment-tone-preview';
 export { CalendarContextMenu } from './components/calendar-context-menu';
 export { CalendarDateField } from './components/calendar-date-field';
 export { CalendarSelect } from './components/calendar-select';
+export { CalendarVisitFields } from './components/calendar-visit-fields';
+export type { CalendarVisitFieldsProps } from './components/calendar-visit-fields';
 export { CalendarHeader as CalendarToolbar } from './recovered/calendar/components/calendar-header';
 export { MiniCalendar } from './recovered/calendar/components/mini-calendar';
 export { ScopePicker } from './components/scope-picker';

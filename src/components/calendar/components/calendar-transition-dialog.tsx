@@ -33,7 +33,7 @@ export function CalendarAppointmentTransitionDialog(props: CalendarAppointmentTr
   const alive = useRef(true), submitting = useRef(false), identity = useRef<CalendarPendingRequest | null>(null);
   const fence = useRef(new CalendarDraftReceiptFence()).current;
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
-  const denied = retired || projection.status === 'error';
+  const denied = retired || projection.status === 'error' && calendarTransitionAuthorityDenied({ code: projection.code, status: null });
   useEffect(() => { if (denied) props.onAuthorityLost(); }, [denied, props.onAuthorityLost]);
   const ready = projection.status === 'ready' && projection.value !== null;
   const stale = ready && !calendarTransitionCurrent(proposal, projection.value!);
@@ -96,7 +96,10 @@ export function CalendarAppointmentTransitionDialog(props: CalendarAppointmentTr
   return <ControlledModal<CalendarCommandReceipt> open={!denied} identityKey={`${record.id}:${proposal.revision}:${proposal.policyRevision}:${proposal.status}`}
     busy={!denied && busy} dirty={!denied && reason.length > 0} error={denied ? null : error} onOpenChange={open => { if (!open) props.onClose(); }}
     descriptor={{ title: `${statusLabel(proposal.status)} appointment`, trigger: props.trigger, size: 'sm', customSize: { width: 'var(--calendar-size-420)' },
-      className: 'calendar-managed-dialog calendar-managed-radius-md', body: context => denied ? null : <form onSubmit={event => { event.preventDefault(); void submit(context); }}>
+      className: 'calendar-managed-dialog calendar-managed-radius-md', body: context => denied ? null : projection.status === 'error'
+        ? <Stack gap="sm" p="md"><Text>Current status rules are unavailable. Your reason is preserved; no new change can be submitted.</Text>
+          <Button variant="default" onClick={projection.refresh}>Retry current access</Button></Stack>
+        : <form onSubmit={event => { event.preventDefault(); void submit(context); }}>
         <Stack gap="sm" p="md"><Text fw="var(--calendar-weight-heading)">{record.title}</Text>
           <Text size="sm">{statusLabel(record.lifecycle?.status ?? record.status)} → {statusLabel(proposal.status)}</Text>
           {acceptsReason && <TextInput label={proposal.requiresReason ? 'Reason (required)' : 'Reason (optional)'} aria-label="Status change reason" value={reason} maxLength={1024}

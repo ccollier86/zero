@@ -2,7 +2,7 @@
 import type { DatabaseWriteCommandContext } from '../databases/database-realm';
 import type { DatabaseFindFilter } from '../databases/database-operations';
 import type { Row } from '../sync/types';
-import type { CalendarActor, CalendarAppointmentLifecycle, CalendarAppointmentTypeSnapshot, CalendarAppointmentView, CalendarCommandReceipt, CalendarGrant, CalendarResourceView } from './contracts';
+import type { CalendarActor, CalendarAppointmentLifecycle, CalendarAppointmentTypeSnapshot, CalendarAppointmentView, CalendarCommandReceipt, CalendarGrant, CalendarResourceView, CalendarVisitSnapshot } from './contracts';
 import { CalendarError } from './error';
 import { calendarHash, calendarInteger, calendarJson, calendarKey, calendarRecord, calendarScope, calendarText, calendarValue } from './validation';
 import { calendarBlock } from './blocks-model';
@@ -12,7 +12,7 @@ import { calendarType, requireCalendarTypeManager } from './appointment-types-mo
 
 export const CALENDAR_LIMITS = Object.freeze({ resources: 10_000, appointments: 100_000, blocks: 100_000, holds: 100_000, locations: 10_000,
   locationHistory: 100_000, resourceLocationHistory: 100_000, types: 10_000, typeHistory: 100_000, resourceTypeHistory: 100_000,
-  appointmentTypeHistory: 100_000, policyHistory: 100_000, appointmentLifecycleHistory: 100_000, receipts: 200_000, selection: 16, page: 100, rangeMs: 31 * 86_400_000 });
+  appointmentTypeHistory: 100_000, appointmentVisitHistory: 100_000, policyHistory: 100_000, appointmentLifecycleHistory: 100_000, receipts: 200_000, selection: 16, page: 100, rangeMs: 31 * 86_400_000 });
 export interface CalendarResourceRow extends Row { id: string; scope_id: string; label: string; kind: CalendarResourceView['kind']; owner_id: string | null; time_zone: string; revision: number; active: number }
 export interface CalendarAppointmentRow extends Row { id: string; scope_id: string; title: string; start_at: string; end_at: string; start_ms: number; end_ms: number; time_zone: string; buffer_before: number; buffer_after: number; occupied_start_ms: number; occupied_end_ms: number; status: CalendarAppointmentView['status']; revision: number; created_by: string }
 export interface CalendarReceiptRow extends Row { id: string; scope_id: string; principal: string; request_id: string; digest: string; result_json: string; target_kind: 'resource' | 'appointment' | 'block' | 'hold' | 'location' | 'type' | 'lifecycle'; target_id: string; required_right: 'book' | 'manage' }
@@ -65,17 +65,17 @@ export function calendarAppointment(context: DatabaseWriteCommandContext, actor:
 export function resourceView(row: CalendarResourceRow): CalendarResourceView {
   return { id: row.id, label: row.label, kind: row.kind, ownerId: row.owner_id, timeZone: row.time_zone, revision: row.revision, active: row.active === 1 };
 }
-export function appointmentView(row: CalendarAppointmentRow, resourceIds: string[], appointmentType?: CalendarAppointmentTypeSnapshot, lifecycle?: CalendarAppointmentLifecycle): CalendarAppointmentView {
+export function appointmentView(row: CalendarAppointmentRow, resourceIds: string[], appointmentType?: CalendarAppointmentTypeSnapshot, lifecycle?: CalendarAppointmentLifecycle, visit?: CalendarVisitSnapshot): CalendarAppointmentView {
   return { id: row.id, revision: row.revision, resourceIds, title: row.title, startAt: row.start_at, endAt: row.end_at, timeZone: row.time_zone,
     bufferBeforeMinutes: row.buffer_before, bufferAfterMinutes: row.buffer_after, status: row.status, createdBy: row.created_by,
-    ...(appointmentType === undefined ? {} : { appointmentType }), ...(lifecycle === undefined ? {} : { lifecycle }) };
+    ...(appointmentType === undefined ? {} : { appointmentType }), ...(lifecycle === undefined ? {} : { lifecycle }), ...(visit === undefined ? {} : { visit }) };
 }
 export function calendarRevision(row: { revision: number }, input: unknown): void {
   if (row.revision !== calendarInteger(input, 1)) throw new CalendarError('CALENDAR_REVISION_CONFLICT');
 }
 export function nextCalendarRevision(revision: number): number { return calendarInteger(revision, 1, Number.MAX_SAFE_INTEGER - 1) + 1; }
 export function calendarBudget(context: DatabaseWriteCommandContext, key: 'resources' | 'appointments' | 'blocks' | 'holds' | 'locations' | 'locationHistory' | 'resourceLocationHistory'
-  | 'types' | 'typeHistory' | 'resourceTypeHistory' | 'appointmentTypeHistory' | 'policyHistory' | 'appointmentLifecycleHistory' | 'receipts'): void {
+  | 'types' | 'typeHistory' | 'resourceTypeHistory' | 'appointmentTypeHistory' | 'appointmentVisitHistory' | 'policyHistory' | 'appointmentLifecycleHistory' | 'receipts'): void {
   const prior = context.db.get('_calendar_usage', key), count = prior ? calendarInteger(prior.count) : 0;
   if (count >= CALENDAR_LIMITS[key]) throw new CalendarError('CALENDAR_CAPACITY');
   if (prior) context.db.update('_calendar_usage', key, { count: count + 1 });

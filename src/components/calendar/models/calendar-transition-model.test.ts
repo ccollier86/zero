@@ -35,7 +35,8 @@ test('effective lifecycle status is used without mistaking the reservation statu
 test('a mutation-observed access denial retires presentation before an independent live query can catch up', () => {
   for (const error of [{ status: 401, code: 'AUTH_UNAUTHORIZED' }, { status: 403, code: null },
     { status: 428, code: 'LOGGING_ADMISSION_REQUIRED' }, { status: 404, code: 'CALENDAR_NOT_FOUND' },
-    { status: null, code: 'CALENDAR_FORBIDDEN' }]) expect(calendarTransitionAuthorityDenied(error)).toBe(true);
+    { status: null, code: 'CALENDAR_FORBIDDEN' }, { status: null, code: 'AUTH_UNAUTHORIZED' },
+    { status: null, code: 'LOGGING_ADMISSION_REQUIRED' }]) expect(calendarTransitionAuthorityDenied(error)).toBe(true);
   for (const error of [{ status: 409, code: 'CALENDAR_POLICY_STALE' }, { status: 400, code: 'CALENDAR_INPUT_INVALID' },
     { status: 503, code: 'CALENDAR_OUTCOME_UNKNOWN' }]) expect(calendarTransitionAuthorityDenied(error)).toBe(false);
 });

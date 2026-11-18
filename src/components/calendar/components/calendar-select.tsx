@@ -40,7 +40,7 @@ export function CalendarSelect({ data = [], value, defaultValue, onChange, label
         </div>
       </Popover.Dropdown>
     </Popover> : <Root value={selected ?? ''} onValueChange={choose} open={opened} onOpenChange={open} disabled={disabled || !options.length}>
-      <SelectTrigger {...triggerProps}><SelectValue placeholder={placeholder ?? 'Choose…'} /></SelectTrigger>
+      <SelectTrigger {...triggerProps}><SelectValue placeholder={placeholder ?? 'Choose…'}>{caption}</SelectValue></SelectTrigger>
       <SelectContent className="calendar-select-menu">{options.map(item => <SelectItem key={item.value} value={item.value} disabled={item.disabled} style={styles?.option}>{item.label}</SelectItem>)}</SelectContent>
     </Root>}
   </div>;

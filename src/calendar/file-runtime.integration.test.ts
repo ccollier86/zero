@@ -565,6 +565,51 @@ test('native lifecycle policy, private reasons, terminal occupancy and original 
   } finally { await f.close(); }
 }, 120_000);
 
+test('native visit bindings retain original location history and transfer holds across complete actor/SYSTEM restart', async () => {
+  const f = await fixture(), scope = applicationServiceDataScope(), manager = actor(scope), now = Date.now();
+  const instant = (minutes: number) => new Date(now + minutes * 60_000).toISOString();
+  try {
+    const provider = resource(scope); await f.runtime.write(scope, 'calendar.resource.create', provider, provider.requestId, guard);
+    const location = { actor: manager, id: 'visit-location', requestId: 'visit-location', label: 'PRIVATE_SYNTHETIC_VISIT_LOCATION', region: 'US-IN' };
+    await f.runtime.write(scope, 'calendar.location.create', location, location.requestId, guard);
+    await f.runtime.write(scope, 'calendar.resource.locations', { actor: manager, id: provider.id, requestId: 'visit-assign', expectedRevision: 1, locationIds: [location.id] }, 'visit-assign', guard);
+    const visit = { mode: 'in-person', location: { id: location.id, revision: 1 } };
+    const booking = { actor: manager, id: 'visit-booking', requestId: 'visit-booking', resourceIds: [provider.id], title: 'PRIVATE_SYNTHETIC_VISIT',
+      startAt: instant(60), endAt: instant(90), timeZone: 'UTC', visit };
+    const created = await f.runtime.write<CalendarCommandReceipt>(scope, 'calendar.appointment.create', booking, booking.requestId, guard);
+    const hold = { actor: manager, id: 'visit-hold', requestId: 'visit-hold', resourceIds: [provider.id], startAt: instant(120), endAt: instant(150), timeZone: 'UTC', ttlSeconds: 900, visit };
+    await f.runtime.write(scope, 'calendar.hold.acquire', hold, hold.requestId, guard);
+    await f.runtime.write(scope, 'calendar.location.replace', { actor: manager, id: location.id, requestId: 'visit-rename', expectedRevision: 1,
+      label: 'PRIVATE_SYNTHETIC_NEW_LABEL', region: 'US-GA', active: false }, 'visit-rename', guard);
+    await f.restart(false);
+    expect(await f.runtime.read<CalendarAppointmentView>(scope, 'calendar.appointment', { actor: manager, id: booking.id }, guard))
+      .toMatchObject({ revision: 1, visit: { mode: 'in-person', location: { id: location.id, revision: 1, label: location.label, region: 'US-IN' } } });
+    expect(await f.runtime.read<CalendarHoldView>(scope, 'calendar.hold', { actor: manager, id: hold.id }, guard))
+      .toMatchObject({ status: 'held', visit: { mode: 'in-person', location: { id: location.id, revision: 1, label: location.label } } });
+    await expect(f.runtime.write(scope, 'calendar.hold.confirm', { actor: manager, id: hold.id, appointmentId: 'visit-rejected', requestId: 'visit-stale-confirm',
+      expectedRevision: 1, title: 'Rejected' }, 'visit-stale-confirm', guard)).rejects.toMatchObject({ code: 'CALENDAR_VISIT_STALE', outcome: 'not-committed' });
+    const changed = { actor: manager, id: booking.id, requestId: 'visit-phone', expectedRevision: 1, startAt: booking.startAt, endAt: booking.endAt,
+      timeZone: 'UTC', bufferBeforeMinutes: 0, bufferAfterMinutes: 0, visit: { mode: 'phone' } };
+    const updated = await f.runtime.write<CalendarCommandReceipt>(scope, 'calendar.appointment.reschedule', changed, changed.requestId, guard);
+    const videoHold = { actor: manager, id: 'video-hold', requestId: 'video-hold', resourceIds: [provider.id], startAt: instant(180), endAt: instant(210), timeZone: 'UTC', ttlSeconds: 900, visit: { mode: 'video' } };
+    await f.runtime.write(scope, 'calendar.hold.acquire', videoHold, videoHold.requestId, guard);
+    const confirmation = { actor: manager, id: videoHold.id, appointmentId: 'video-booking', requestId: 'video-confirm', expectedRevision: 1, title: 'PRIVATE_SYNTHETIC_VIDEO' };
+    const confirmed = await f.runtime.write<CalendarCommandReceipt>(scope, 'calendar.hold.confirm', confirmation, confirmation.requestId, guard);
+    await f.restart(false);
+    expect(await f.runtime.write<CalendarCommandReceipt>(scope, 'calendar.appointment.create', booking, booking.requestId, guard)).toEqual(created);
+    expect(await f.runtime.write<CalendarCommandReceipt>(scope, 'calendar.appointment.reschedule', changed, changed.requestId, guard)).toEqual(updated);
+    expect(await f.runtime.write<CalendarCommandReceipt>(scope, 'calendar.hold.confirm', confirmation, confirmation.requestId, guard)).toEqual(confirmed);
+    expect(await f.runtime.read<CalendarAppointmentView>(scope, 'calendar.appointment', { actor: manager, id: booking.id }, guard)).toMatchObject({ revision: 2, visit: { mode: 'phone' } });
+    expect(await f.runtime.read<CalendarAppointmentView>(scope, 'calendar.appointment', { actor: manager, id: confirmed.id }, guard)).toMatchObject({ visit: { mode: 'video' } });
+    await f.stop();
+    inspect(f.path(scope), database => {
+      expect(database.query('SELECT visit_mode,location_revision FROM _calendar_appointment_visit_bindings WHERE appointment_id=? ORDER BY appointment_revision').all(booking.id))
+        .toEqual([{ visit_mode: 'in-person', location_revision: 1 }, { visit_mode: 'phone', location_revision: null }]);
+      expect(database.query('PRAGMA foreign_key_check').all()).toEqual([]);
+    });
+  } finally { await f.close(); }
+}, 120_000);
+
 test('native location/assignment history, current facets and original receipts survive full scope-owner restart', async () => {
   const f = await fixture(), scope = applicationServiceDataScope(), manager = actor(scope);
   try {

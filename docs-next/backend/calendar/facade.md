@@ -62,6 +62,8 @@ identity are rejected, not normalized away.
 | `locations.create({label, region?, active?}, options)` | Scope calendar manager only; omitted region is null, active defaults true |
 | `locations.replace(id, {label, region, active}, control)` | Explicit full replacement; scope manager and exact location revision |
 | `locations.forResource(resourceId, options?)` | `{resourceId, resourceRevision, locationIds}` under current resource visibility |
+| `locations.forVisit({resourceIds, limit?, after?}, options?)` | Active current intersection; book/manage on every resource before pagination, `[]` always empty |
+| `locations.watchForVisit(query, listener, options?)` | Live assignment-compatible booking selector with current authority |
 | `locations.watch(query, listener, options?)` | Authorized live location catalog pages |
 | `locations.watchLocation(id, listener, options?)` | Live detail; losing the last visible assignment retires the detail |
 | `locations.watchForResource(resourceId, listener, options?)` | Live assignments; losing resource access retires the detail |
@@ -107,6 +109,8 @@ target ID, revision and `changed`; never an old private appointment snapshot.
 
 See [Lifecycle and required reasons](./lifecycle.md) for simple defaults, richer
 confirmation/outcomes, private reasons and legacy cancellation compatibility.
+See [Visit modes and retained locations](./visits.md) for optional `visit` on
+creation/hold acquisition and reschedule preserve/replace/clear semantics.
 
 A range is `{resourceIds, startAt, endAt, limit?}`. It is half-open, positive,
 bounded at 31 days / 16 resources / 100 results (or narrower config). Empty

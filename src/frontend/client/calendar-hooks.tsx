@@ -7,7 +7,7 @@ import { AuthorizationScopeBoundaryFence, useAuthorizationScopeBoundary, readAut
 import type { Client, InternalClient } from './sdk';
 import type { CalendarAppointmentPage, CalendarAppointmentView, CalendarAppointmentTypePage, CalendarAppointmentTypePageQuery, CalendarAppointmentTypeView, CalendarResourceTypesView,
   CalendarLifecyclePolicy, CalendarAppointmentTransitions,
-  CalendarLocationPage, CalendarLocationPageQuery, CalendarLocationView, CalendarResourceLocationsView,
+  CalendarLocationPage, CalendarLocationPageQuery, CalendarLocationView, CalendarResourceLocationsView, CalendarVisitLocationQuery,
   CalendarRangeQuery, CalendarResourcePage, CalendarResourcePageQuery, CalendarWatchOptions, CalendarWatchUpdate } from '../../calendar/contracts';
 import { CalendarReadError } from './calendar-mutation';
 export interface CalendarReadResult<T> {
@@ -28,6 +28,10 @@ export function useCalendarResources(query: CalendarResourcePageQuery = {}): Cal
 export function useCalendarLocations(query: CalendarLocationPageQuery = {}): CalendarReadResult<CalendarLocationPage> {
   return useCalendarLive<CalendarLocationPage>(JSON.stringify(['locations', query.limit ?? null, query.after ?? null]),
     (client, listener, options) => client.calendar.locations.watch(query, listener, options));
+}
+export function useCalendarVisitLocations(query: CalendarVisitLocationQuery | null): CalendarReadResult<CalendarLocationPage> {
+  return useCalendarLive<CalendarLocationPage>(query === null ? null : JSON.stringify(['visit-locations', query.resourceIds, query.limit ?? null, query.after ?? null]),
+    (client, listener, options) => client.calendar.locations.watchForVisit(query!, listener, options));
 }
 export function useCalendarAppointmentTypes(query: CalendarAppointmentTypePageQuery = {}): CalendarReadResult<CalendarAppointmentTypePage> {
   return useCalendarLive<CalendarAppointmentTypePage>(JSON.stringify(['appointment-types', query.resourceIds ?? null, query.limit ?? null, query.after ?? null]),

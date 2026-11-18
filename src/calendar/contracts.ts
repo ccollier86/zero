@@ -8,6 +8,15 @@ export interface CalendarActor {
   readonly createOwn: boolean;
 }
 export type CalendarResourceKind = 'person' | 'room' | 'equipment';
+export type CalendarVisitMode = 'in-person' | 'video' | 'phone';
+export interface CalendarLocationReference { readonly id: string; readonly revision: number }
+export interface CalendarLocationSnapshot extends CalendarLocationReference { readonly label: string; readonly region: string | null }
+/** No provider URLs or manual addresses. Omission means an unspecified visit, not inferred telehealth. */
+export type CalendarVisitInput = { readonly mode: 'in-person'; readonly location: CalendarLocationReference }
+  | { readonly mode: 'video' | 'phone' };
+export type CalendarVisitSnapshot = { readonly mode: 'in-person'; readonly location: CalendarLocationSnapshot }
+  | { readonly mode: 'video' | 'phone' };
+export interface CalendarVisitLocationQuery extends CalendarLocationPageQuery { readonly resourceIds: readonly string[] }
 /** Reservation occupancy remains separate from confirmation/outcome; only cancellation releases it. */
 export type CalendarAppointmentStatus = 'tentative' | 'confirmed' | 'completed' | 'no-show' | 'cancelled';
 export interface CalendarLifecyclePolicyInput {
@@ -148,6 +157,7 @@ export interface CalendarBlockView extends CalendarBlockInput {
 export interface CalendarBlockPage { readonly items: readonly CalendarBlockView[]; readonly truncated: boolean }
 /** Authenticated transient reservation; this does not enable public self-booking. */
 export interface CalendarHoldInput {
+  readonly visit?: CalendarVisitInput;
   readonly appointmentType?: CalendarAppointmentTypeReference;
   readonly resourceIds: readonly string[];
   readonly startAt: string;
@@ -159,6 +169,7 @@ export interface CalendarHoldInput {
 }
 export interface CalendarHoldConfirmationInput { readonly title: string }
 export interface CalendarHoldView {
+  readonly visit?: CalendarVisitSnapshot;
   readonly appointmentType?: CalendarAppointmentTypeSnapshot;
   readonly id: string;
   readonly revision: number;
@@ -175,6 +186,7 @@ export interface CalendarHoldView {
 }
 export interface CalendarHoldPage { readonly items: readonly CalendarHoldView[]; readonly truncated: boolean }
 export interface CalendarAppointmentView {
+  readonly visit?: CalendarVisitSnapshot;
   readonly lifecycle?: CalendarAppointmentLifecycle;
   readonly appointmentType?: CalendarAppointmentTypeSnapshot;
   readonly id: string;
@@ -216,6 +228,7 @@ export interface CalendarResourceInput {
   readonly timeZone: string;
 }
 export interface CalendarAppointmentInput {
+  readonly visit?: CalendarVisitInput;
   readonly appointmentType?: CalendarAppointmentTypeReference;
   readonly resourceIds: readonly string[];
   readonly title: string;
@@ -227,6 +240,8 @@ export interface CalendarAppointmentInput {
 }
 /** Rescheduling explicitly supplies both buffers, never guesses them from a stale browser snapshot. */
 export interface CalendarRescheduleInput {
+  /** Omission preserves the accepted visit at the expected revision; null explicitly clears it. */
+  readonly visit?: CalendarVisitInput | null;
   /** Omit to preserve the accepted historical snapshot; null explicitly detaches it. */
   readonly appointmentType?: CalendarAppointmentTypeReference | null;
   readonly startAt: string;
@@ -292,6 +307,9 @@ export interface ScopedCalendar {
       options?: CalendarWatchOptions): () => void;
   };
   readonly locations: {
+    forVisit(query: CalendarVisitLocationQuery, options?: CalendarReadOptions): Promise<CalendarLocationPage>;
+    watchForVisit(query: CalendarVisitLocationQuery, listener: (page: CalendarLocationPage, update?: CalendarWatchUpdate) => void,
+      options?: CalendarWatchOptions): () => void;
     list(query?: CalendarLocationPageQuery, options?: CalendarReadOptions): Promise<CalendarLocationPage>;
     get(id: string, options?: CalendarReadOptions): Promise<CalendarLocationView>;
     create(input: CalendarLocationInput, options: CalendarRequestOptions): Promise<CalendarCommandReceipt>;

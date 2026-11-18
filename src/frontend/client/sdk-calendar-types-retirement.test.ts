@@ -12,10 +12,11 @@ const page = { items: [type], truncated: false, nextAfter: null };
 const policy = { resourceId: 'resource-a', resourceRevision: 1, mode: 'unrestricted', typeIds: [] };
 const lifecycle = { revision: 1, extended: false, cancellationReason: 'optional', noShowReason: 'optional' };
 const transitions = { id: 'appointment-a', revision: 1, policyRevision: 1, status: 'confirmed', allowed: [{ status: 'cancelled', requiresReason: false }] };
+const visitLocations = { items: [{ id: 'location-a', label: 'Synthetic location', region: null, active: true, revision: 1 }], truncated: false, nextAfter: null };
 afterEach(() => { getClient()?.disconnect(); globalThis.fetch = originalFetch; if (typeof localStorage !== 'undefined') localStorage.removeItem(refreshKey); });
 
 for (const transition of ['read-authority-reset', 'tenant-switch', 'disconnect'] as const) {
-  test(`SDK ${transition} releases catalog/type/resource-policy/lifecycle/transition watches before replacement authority publication`, async () => {
+  test(`SDK ${transition} releases catalog/type/resource-policy/lifecycle/transition/visit-location watches before replacement authority publication`, async () => {
     const paths: string[] = [], cancelled: string[] = [], controllers: ReadableStreamDefaultController<Uint8Array>[] = [];
     let delivered = 0, errors = 0;
     globalThis.fetch = (async (input: string | URL | Request) => {
@@ -25,7 +26,7 @@ for (const transition of ['read-authority-reset', 'tenant-switch', 'disconnect']
         return Response.json({ user, accessToken: switched ? 'synthetic-b' : 'synthetic-a', refreshToken: switched ? 'synthetic-refresh-b' : 'synthetic-refresh-a', activeTenant: tenant(switched ? 'tenant-b' : 'tenant-a') });
       }
       if (url.includes('/api/calendar/')) {
-        paths.push(url); const value = url.includes('/lifecycle/') ? lifecycle : url.includes('/transitions/') ? transitions
+        paths.push(url); const value = url.includes('/visit-locations/') ? visitLocations : url.includes('/lifecycle/') ? lifecycle : url.includes('/transitions/') ? transitions
           : url.includes('/resources/') ? policy : url.includes('/types/type-a/') ? type : page;
         return new Response(new ReadableStream<Uint8Array>({ start(controller) {
           controllers.push(controller); controller.enqueue(frame(value));
@@ -43,11 +44,12 @@ for (const transition of ['read-authority-reset', 'tenant-switch', 'disconnect']
       stops.push(client.calendar.types.watchForResource(policy.resourceId, listener, options));
       stops.push(client.calendar.lifecycle.watch(listener, options));
       stops.push(client.calendar.appointments.watchTransitions(transitions.id, listener, options));
-      await settle(() => delivered === 5); expect(paths).toHaveLength(5);
+      stops.push(client.calendar.locations.watchForVisit({ resourceIds: ['resource-a'] }, listener, options));
+      await settle(() => delivered === 6); expect(paths).toHaveLength(6);
       if (transition === 'read-authority-reset') client._syncClient.reset(); else if (transition === 'tenant-switch') await client.switchTenant('tenant-b'); else client.disconnect();
-      await settle(() => cancelled.length === 5);
+      await settle(() => cancelled.length === 6);
       for (const controller of controllers) expect(() => controller.enqueue(frame({ private: 'NEVER_DELIVER' }))).toThrow();
-      expect(delivered).toBe(5); expect(errors).toBe(0); expect(paths).toHaveLength(5);
+      expect(delivered).toBe(6); expect(errors).toBe(0); expect(paths).toHaveLength(6);
     } finally { stops.forEach(stop => stop()); client.disconnect(); }
   });
 }

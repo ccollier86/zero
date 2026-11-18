@@ -5,16 +5,18 @@ import { ControlledModal, type ModalContext } from '@zero/framework/modals';
 import type { CalendarAppointmentView, CalendarCommandReceipt, CalendarResourceView } from '../../../calendar/contracts';
 import { useClientMaybe } from '../../../frontend/client/client-context';
 import { useAuthorizationScopeBoundary } from '../../../frontend/client/authorization-scope-hooks';
-import { calendarScopeReadable, useCalendarAppointment, useCalendarAppointments, useCalendarResources, useCalendarAppointmentTransitions } from '../../../frontend/client/calendar-hooks';
-import { CalendarMutationError } from '../../../frontend/client/calendar-mutation';
+import { calendarScopeReadable, useCalendarAppointment, useCalendarAppointments, useCalendarResources, useCalendarAppointmentTransitions, useCalendarVisitLocations } from '../../../frontend/client/calendar-hooks';
+import { CalendarMutationError, CalendarReadError } from '../../../frontend/client/calendar-mutation';
 import type { Client } from '../../../frontend/client/sdk';
 import { CalendarSchedule } from './calendar-schedule';
 import { CalendarHeader } from '../recovered/calendar/components/calendar-header';
 import { CalendarSelect } from './calendar-select';
 import { CalendarDateField } from './calendar-date-field';
 import { TimePicker } from './time-picker';
+import { CalendarVisitFields } from './calendar-visit-fields';
+import { calendarVisitDraft, calendarVisitDraftInput, calendarVisitLabel, calendarVisitSelectionCurrent } from '../models/calendar-visit-model';
 import { CalendarAppointmentTransitionDialog } from './calendar-transition-dialog';
-import { calendarTransitionProposal, type CalendarTransitionProposal } from '../models/calendar-transition-model';
+import { calendarTransitionAuthorityDenied, calendarTransitionProposal, type CalendarTransitionProposal } from '../models/calendar-transition-model';
 import { isEnded, statusLabel } from '../models/appointment-presentation';
 import { Button, Checkbox, Group, Stack, Text, TextInput } from './calendar-ui';
 import { IconClock, IconPlus, IconRotateClockwise, IconUser } from './calendar-icons';
@@ -113,7 +115,7 @@ function CurrentCalendarWorkspace({ client, scopeKey, ...props }: ConnectedCalen
       || Date.parse(record.startAt) % 60000 !== 0 || Date.parse(record.endAt) % 60000 !== 0) {
       setNotice('This appointment needs an exact-instant reschedule through the calendar API; the minute-precision core editor will not alter it.'); return;
     }
-    setSession({ key: ++sessionKey.current, selection: selectionKey, record, trigger, initial: { resourceId: record.resourceIds[0]!, title: record.title, date: start.date, start: start.minute, end: end.minute } });
+    setSession({ key: ++sessionKey.current, selection: selectionKey, record, trigger, initial: { resourceId: record.resourceIds[0]!, title: record.title, date: start.date, start: start.minute, end: end.minute, ...calendarVisitDraft(record.visit) } });
   }
   async function reconcile() {
     if (!pending || !calendarScopeReadable(client, scopeKey)) return;
@@ -151,7 +153,7 @@ function CurrentCalendarWorkspace({ client, scopeKey, ...props }: ConnectedCalen
         onDateSelect={setDate} onMenu={menu} onEdit={event => { const source = projection.sourceByEventId.get(event.id); if (source) setDetails({ id: source.id, selection: selectionKey }); }}
         onDetails={event => { const source = projection.sourceByEventId.get(event.id); if (source) setDetails({ id: source.id, selection: selectionKey }); }} eventPresentation={() => ({ clinical: false, coreOnly: true })} />}
     {!!projection.supplemental.length && <details><summary>Outside grid hours or exact-instant appointments ({projection.supplemental.length})</summary><Stack gap="xs">{projection.supplemental.map(record => <Button key={record.id} variant="subtle" onClick={event => setDetails({ id: record.id, selection: selectionKey, trigger: event.currentTarget })}>{record.title} · {formatInstant(record.startAt, props.displayTimeZone)}</Button>)}</Stack></details>}
-    <div className="calendar-workspace-foot"><Text size="xs" role="status">{truncated ? 'Results are truncated. Narrow the range or selected calendars; this is not a complete availability view.' : notice || 'One-off core appointments · grid 7 AM–7 PM · no recurrence, invitations, visit modes or reminders.'}</Text>
+    <div className="calendar-workspace-foot"><Text size="xs" role="status">{truncated ? 'Results are truncated. Narrow the range or selected calendars; this is not a complete availability view.' : notice || 'One-off appointments · grid 7 AM–7 PM · no recurrence, invitations or automatic reminders.'}</Text>
       {pending && <Group gap="xs"><Text size="xs">Unsettled request · {pending.key}</Text><Button variant="default" disabled={!!session} onClick={() => { void reconcile(); }}>Reconcile original request</Button></Group>}
     </div>
     {overlayAllowed && details?.selection === selectionKey && <CoreDetails key={details.id} id={details.id} trigger={details.trigger} scopeKey={scopeKey} client={client} displayTimeZone={props.displayTimeZone}
@@ -186,6 +188,7 @@ function CoreDetails({ id, trigger, scopeKey, client, displayTimeZone, revision,
     descriptor={{ title: 'Appointment details', trigger, size: 'sm', customSize: { width: 'var(--calendar-size-440)' }, className: 'calendar-managed-dialog calendar-managed-radius-md', body: context => <Stack gap="md" p="md">
       {!record ? <Text>Loading current authorized details…</Text> : <><Text fw="var(--calendar-weight-heading)">{record.title}</Text><Text size="xs">{statusLabel(record.lifecycle?.status ?? record.status)} · revision {record.revision}</Text>
         <Text size="sm">{formatInstant(record.startAt, displayTimeZone)} → {formatInstant(record.endAt, displayTimeZone)}</Text>
+        <Text size="sm">{calendarVisitLabel(record.visit)}</Text>
         <Text size="xs" c="dimmed">Display · {displayTimeZone}<br />Scheduling · {record.timeZone}<br />Buffers · {record.bufferBeforeMinutes} minutes before / {record.bufferAfterMinutes} minutes after</Text>
         {record.lifecycle?.reason && <Text size="sm">Reason · {record.lifecycle.reason}</Text>}
         <Text size="xs" c="dimmed">Clinical progress, lobby, attendees, recurrence and automatic notifications are not enabled by these status controls.</Text>
@@ -198,18 +201,39 @@ function CoreDetails({ id, trigger, scopeKey, client, displayTimeZone, revision,
 }
 function CoreEditor({ session, resources, client, scopeKey, readRevision, onAuthorityLost, onClose, onUnknown, onRejected, onAccepted }: { session: CoreSession; resources: readonly CalendarResourceView[]; client: Client; scopeKey: string; readRevision: string; onAuthorityLost(): void; onClose(): void; onUnknown(identity: PendingIdentity): void; onRejected(identity: PendingIdentity): void; onAccepted(identity: PendingIdentity): void }) {
   const authority = useCalendarAppointment(session.record?.id ?? null, readRevision);
+  const management = useCalendarAppointmentTransitions(session.record?.id ?? null, readRevision);
   const [draft, setDraft] = useState(session.initial), draftRef = useRef(draft); draftRef.current = draft;
   const [phase, setPhase] = useState<'editing' | 'submitting' | 'unknown' | 'accepted' | 'conflict'>('editing'), [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [retired, setRetired] = useState(false), [locationCursor, setLocationCursor] = useState<string | null>(null), [locationHistory, setLocationHistory] = useState<(string | null)[]>([]);
+  const visitLocations = useCalendarVisitLocations(draft.visitMode === 'in-person'
+    ? { resourceIds: session.record?.resourceIds ?? [draft.resourceId], ...(locationCursor === null ? {} : { after: locationCursor }) } : null);
   const fence = useRef(new CalendarDraftReceiptFence()).current, submitting = useRef(false), identity = useRef<PendingIdentity | null>(null);
   const resource = resources.find(item => item.id === draft.resourceId), timeZone = session.record?.timeZone ?? resource?.timeZone;
   const alive = useRef(true); useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
-  const detailDenied = !!session.record && authority.status === 'error';
-  const detailPending = !!session.record && authority.status !== 'ready';
+  const detailDenied = retired || !!session.record && [authority, management].some(read => read.status === 'error'
+    && calendarTransitionAuthorityDenied({ code: read.code, status: null }));
+  const detailPending = !!session.record && (authority.status !== 'ready' || management.status !== 'ready');
+  const locationPending = draft.visitMode === 'in-person' && visitLocations.status !== 'ready';
+  const acceptedLocation = session.record?.visit?.mode === 'in-person' ? session.record.visit.location : undefined;
+  const locationSelectable = calendarVisitSelectionCurrent(draft, visitLocations.value, acceptedLocation);
   const staleBase = !!session.record && authority.value !== null && authority.value.revision !== session.record.revision;
   useEffect(() => { if (detailDenied) onAuthorityLost(); }, [detailDenied, onAuthorityLost]);
   const current = (context: ModalContext<CalendarCommandReceipt>) => alive.current && !context.signal.aborted && calendarScopeReadable(client, scopeKey);
-  function change(partial: Partial<CalendarCoreDraft>) { fence.edit(); setDraft(value => ({ ...value, ...partial })); if (phase === 'editing') setError(null); }
+  function change(partial: Partial<CalendarCoreDraft>) {
+    if (partial.resourceId !== undefined || partial.visitMode !== undefined && partial.visitMode !== draft.visitMode) {
+      setLocationCursor(null); setLocationHistory([]);
+      if (partial.resourceId !== undefined) partial = { ...partial, visitLocation: undefined };
+    }
+    fence.edit(); setDraft(value => ({ ...value, ...partial })); if (phase === 'editing') setError(null);
+  }
+  function locationPage(next: boolean) {
+    if (busy || visitLocations.status !== 'ready') return;
+    const after = next ? visitLocations.value?.nextAfter : locationHistory.at(-1);
+    if (after === undefined || next && after === null) return;
+    if (next) setLocationHistory(history => [...history, locationCursor]); else setLocationHistory(history => history.slice(0, -1));
+    setLocationCursor(after);
+  }
   function accepted(receipt: CalendarCommandReceipt, context: ModalContext<CalendarCommandReceipt>) {
     if (!current(context)) return;
     const admission = fence.accepted(receipt);
@@ -219,9 +243,11 @@ function CoreEditor({ session, resources, client, scopeKey, readRevision, onAuth
     else { setPhase('accepted'); setError('The submitted revision was accepted. Your newer edits are preserved and have not been submitted. Close this editor to review current data before another operation.'); }
   }
   async function submit(context: ModalContext<CalendarCommandReceipt>) {
-    if (submitting.current || phase !== 'editing' || !current(context) || !timeZone || detailPending || staleBase) return;
+    if (submitting.current || phase !== 'editing' || !current(context) || !timeZone || detailPending || locationPending || !locationSelectable || staleBase) return;
     const captured = { ...draftRef.current }, parsed = calendarCoreDraftInterval(captured, timeZone);
     if ('error' in parsed) { setError(parsed.error); return; }
+    const visit = calendarVisitDraftInput(captured, session.record?.visit);
+    if ('error' in visit) { setError(visit.error); return; }
     const interval = 'error' in parsed ? null : parsed;
     const key = 'calendar-ui:' + crypto.randomUUID(), operation = session.record ? 'appointment.rescheduled' : 'appointment.created';
     const request: PendingIdentity = { key, operation, ...(session.record ? { id: session.record.id } : {}) }; identity.current = request; fence.submit(key, operation, request.id);
@@ -229,17 +255,22 @@ function CoreEditor({ session, resources, client, scopeKey, readRevision, onAuth
     onUnknown(request); submitting.current = true; setBusy(true); setPhase('submitting'); setError(null); context.setBusy(true);
     try {
       const options = { idempotencyKey: key, signal: context.signal }, record = session.record;
-      const receipt = record ? await client.calendar.appointments.reschedule(record.id, { ...interval!, timeZone, bufferBeforeMinutes: record.bufferBeforeMinutes, bufferAfterMinutes: record.bufferAfterMinutes }, { ...options, expectedRevision: record.revision })
-        : await client.calendar.appointments.create({ resourceIds: [captured.resourceId], title: captured.title.trim(), ...interval!, timeZone }, options);
+      const receipt = record ? await client.calendar.appointments.reschedule(record.id, { ...interval!, timeZone, bufferBeforeMinutes: record.bufferBeforeMinutes, bufferAfterMinutes: record.bufferAfterMinutes, ...visit }, { ...options, expectedRevision: record.revision })
+        : await client.calendar.appointments.create({ resourceIds: [captured.resourceId], title: captured.title.trim(), ...interval!, timeZone, ...(visit.visit ? { visit: visit.visit } : {}) }, options);
       accepted(receipt, context);
     } catch (cause) {
       if (!current(context)) return;
+      if (cause instanceof CalendarMutationError && calendarTransitionAuthorityDenied(cause)) {
+        if (!cause.requiresReconciliation) { fence.rejected(); identity.current = null; onRejected(request); }
+        setRetired(true); return;
+      }
       if (!(cause instanceof CalendarMutationError) || cause.requiresReconciliation) {
         setPhase('unknown'); onUnknown(request); setError('The operation may have been accepted. Do not submit it again. Reconcile using the original request identity.');
       } else {
         fence.rejected(); identity.current = null; onRejected(request); setPhase(cause.code === 'CALENDAR_REVISION_CONFLICT' ? 'conflict' : 'editing');
         setError(cause.code === 'CALENDAR_BOOKING_CONFLICT' ? 'The server rejected this time because it conflicts with a reservation. Choose another time.'
           : cause.code === 'CALENDAR_REVISION_CONFLICT' ? 'This appointment changed. Your draft is preserved; close and reload current details before rescheduling or cancelling.'
+          : cause.code === 'CALENDAR_VISIT_STALE' || cause.code === 'CALENDAR_VISIT_CONFLICT' ? 'The location version or current calendar assignments changed. Your draft is preserved; choose a current authorized location or review the visit mode.'
           : 'The calendar operation was not accepted. Your draft is preserved.');
       }
     } finally { submitting.current = false; if (current(context)) { setBusy(false); context.setBusy(false); } }
@@ -250,7 +281,10 @@ function CoreEditor({ session, resources, client, scopeKey, readRevision, onAuth
     try { const receipt = await client.calendar.receipts.get(request.key, { signal: context.signal });
       if (!current(context)) return;
       if (!receipt) setError('No receipt is currently visible. This does not prove the write was rolled back. Keep the original request identity.'); else accepted(receipt, context);
-    } catch { if (current(context)) setError('Reconciliation is unavailable. Keep the original request identity; do not repeat the mutation.'); }
+    } catch (cause) { if (current(context)) {
+      if (cause instanceof CalendarReadError && calendarTransitionAuthorityDenied(cause)) setRetired(true);
+      else setError('Reconciliation is unavailable. Keep the original request identity; do not repeat the mutation.');
+    } }
     finally { submitting.current = false; if (current(context)) { setBusy(false); context.setBusy(false); } }
   }
   const times = Array.from({ length: 96 }, (_, index) => index * 15);
@@ -258,21 +292,25 @@ function CoreEditor({ session, resources, client, scopeKey, readRevision, onAuth
   return <ControlledModal<CalendarCommandReceipt> open identityKey={session.key} busy={busy} dirty error={error} onOpenChange={open => { if (!open) onClose(); }} descriptor={{
     title: session.record ? 'Reschedule appointment' : 'New appointment', trigger: session.trigger,
     size: 'sm', customSize: { width: 'var(--calendar-size-420)' }, className: 'calendar-managed-dialog calendar-managed-radius-md',
-    body: context => detailPending ? <Text p="md">Reauthorizing current appointment details…</Text> : <form onSubmit={event => { event.preventDefault(); void submit(context); }}><Stack gap="xs" px="md" py="sm">
+    body: context => detailPending ? <Stack p="md" gap="sm"><Text>Reauthorizing current appointment details and management…</Text>
+      {(authority.status === 'error' || management.status === 'error') && <><Text size="xs">The read is unavailable. Your draft is preserved but cannot be submitted until current access is verified.</Text>
+        <Button variant="default" onClick={() => { authority.refresh(); management.refresh(); }}>Retry current access</Button></>}</Stack> : <form onSubmit={event => { event.preventDefault(); void submit(context); }}><Stack gap="xs" px="md" py="sm">
       <TextInput variant="unstyled" aria-label="Appointment title" placeholder="Add an appointment title" value={draft.title} readOnly={!!session.record} maxLength={160} onChange={event => change({ title: event.currentTarget.value })}
         styles={{ input: { padding: 0, fontWeight: 'var(--calendar-weight-medium)', fontSize: 'var(--calendar-font-size-md)' } }} />
       <>
         <Group gap="xs" className="calendar-editor-time-row"><IconClock size="var(--calendar-size-14)" /><TimePicker label="Start time" value={draft.start} options={times} onChange={start => change({ start })} /><Text size="xs">→</Text><TimePicker label="End time" value={draft.end} options={times.filter(minute => minute > draft.start)} onChange={end => change({ end })} /><CalendarDateField value={draft.date} onChange={date => change({ date })} /></Group>
         <Group gap="xs"><IconUser size="var(--calendar-size-14)" /><CalendarSelect aria-label="Appointment calendar" value={draft.resourceId} disabled={!!session.record} data={resources.map(resource => ({ value: resource.id, label: resource.label }))} onChange={id => { if (id) change({ resourceId: id }); }} /></Group>
       </>
+      <CalendarVisitFields value={draft} locations={visitLocations.value} status={visitLocations.status} disabled={busy || phase !== 'editing'} canGoBack={locationHistory.length > 0}
+        acceptedLocation={acceptedLocation} onChange={change} onRetry={visitLocations.refresh} onPrevious={() => locationPage(false)} onNext={() => locationPage(true)} />
       <Text size="xs" c="dimmed">Scheduling timezone · {timeZone ?? 'Choose a calendar'}{session.record && session.record.resourceIds.length > 1 ? ' · all reserved resources are preserved' : ''}</Text>
-      <Text size="xs" c="dimmed">One-off core scheduling. Recurrence, invitees, visit modes, notes, clinical states and reminders are unavailable, not silently saved.</Text>
+      <Text size="xs" c="dimmed">One-off core scheduling. Recurrence, invitees, notes, clinical visit progress and automatic reminders are unavailable, not silently saved.</Text>
       {staleBase && <Text role="status" size="xs">This appointment changed. Your draft is preserved without rebasing. Close and reload current details before another reschedule or cancellation.</Text>}
       {error && <Text role="status" size="xs" c="dimmed">{error}</Text>}
       {identity.current && phase === 'unknown' && <Text size="xs">Original request · {identity.current.key}</Text>}
       <Group justify="space-between" py="sm"><Button variant="subtle" onClick={() => { void context.requestClose('cancel'); }}>Close</Button>
         {phase === 'unknown' ? <Button disabled={busy} onClick={() => { void reconcile(context); }}>Reconcile original request</Button>
-          : <Button type="submit" color="blue" disabled={phase !== 'editing' || staleBase || !session.record && !resource}>{phase === 'submitting' ? 'Submitting…' : phase === 'accepted' ? 'Submitted revision accepted' : phase === 'conflict' || staleBase ? 'Reload current appointment' : session.record ? 'Reschedule' : 'Create appointment'}</Button>}
+          : <Button type="submit" color="blue" disabled={phase !== 'editing' || staleBase || locationPending || !locationSelectable || !session.record && !resource}>{phase === 'submitting' ? 'Submitting…' : phase === 'accepted' ? 'Submitted revision accepted' : phase === 'conflict' || staleBase ? 'Reload current appointment' : session.record ? 'Reschedule' : 'Create appointment'}</Button>}
       </Group>
     </Stack></form>,
   }} />;

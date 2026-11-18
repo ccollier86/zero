@@ -25,6 +25,12 @@ implemented core and its explicit limitations. This is not the complete plan:
   managers own catalog edits; current resource managers replace bounded location
   sets with live, transaction-checked visibility witnesses. Current projections
   keep queries off retained history. Resource revisions fence older holds.
+- Optional visit bindings attach exact in-person location versions or phone/video
+  modes to appointments/holds, with no inferred provider or manual URL. New/relevant
+  changed bookings verify current all-resource assignment compatibility; old
+  labels/regions remain immutable snapshots. The active visit picker starts from
+  at most 16 current assignment candidates, not the entire scope catalog. This is
+  not medical/geographic eligibility or a location capacity reservation.
 - Versioned appointment types supply exact minute durations, buffer defaults and
   optional presentation keys. Scope managers control catalogs and resource
   unrestricted/optional/required policies; owning a resource cannot weaken its
@@ -83,13 +89,17 @@ implemented core and its explicit limitations. This is not the complete plan:
   policy/outcome/reason history. Its sixth receipt family has a real policy target,
   while appointment transitions keep the existing appointment receipt family.
   Legacy cancel digests/default wire shapes and current-right replay are retained.
+- Additive `007` preserves all six prior identities and adds appointment visit
+  generations/current pointers plus fixed hold capture, without a new receipt
+  family or backfill. Confirmation exactly transfers the captured visit; a stale
+  location rejects atomically. Earlier no-visit command digests stay unchanged.
 - Private effect references are handoff groundwork, not another audit system or
   a working notification pipeline.
 
 The runtime uses fixed empty-environment actors, existing-only acquisition for
 established files, immutable scope ownership, bounded queues and commit-only
 invalidation. Authorized appointment, block, hold, location/resource/type catalog
-and detail, availability, type-policy, lifecycle policy and transition watches use the same
+and detail, availability, type-policy, lifecycle policy, visit choices and transition watches use the same
 coalescing, quiet revalidation, private SSE and SDK-retirement machinery. Busy
 reads combine three stores with no titles, target IDs or kind discriminator. They
 bound each resource/store partition before merging a redacted page: at most

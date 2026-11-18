@@ -1,11 +1,12 @@
 /** Pure display adapter for authoritative timed core records. Never interprets the browser's timezone as scheduling authority. */
-import type { CalendarAppointmentView, CalendarCommandReceipt, CalendarRangeQuery, CalendarResourceView } from '../../../calendar/contracts';
+import type { CalendarAppointmentView, CalendarCommandReceipt, CalendarRangeQuery, CalendarResourceView, CalendarLocationSnapshot, CalendarVisitMode } from '../../../calendar/contracts';
 import type { CalendarResource, ScheduleEvent } from '../types';
 import type { CalendarViewMode } from '../recovered/calendar/types/calendar-view-mode';
 import { dateKey, isDay } from './calendar-date';
 import { monthDates, weekDates } from './calendar-model';
 const DAY_MS = 86400_000;
-export interface CalendarCoreDraft { resourceId: string; title: string; date: string; start: number; end: number }
+export interface CalendarCoreDraft { resourceId: string; title: string; date: string; start: number; end: number;
+  visitMode?: CalendarVisitMode | 'unspecified'; visitLocation?: CalendarLocationSnapshot }
 export function calendarDisplayDays(date: Date, view: CalendarViewMode): readonly string[] {
   return view === 'month' ? monthDates(date) : view === 'week' ? weekDates(date) : [dateKey(date)];
 }
@@ -42,7 +43,7 @@ export function calendarWallTimeCandidates(date: string, minute: number, timeZon
   }).sort((a, b) => a - b).map(epoch => new Date(epoch).toISOString());
 }
 export function calendarCoreDraftInterval(draft: CalendarCoreDraft, timeZone: string): { startAt: string; endAt: string } | { error: string } {
-  if (!draft.title.trim() || draft.title.length > 512) return { error: 'Enter a valid core appointment title.' };
+  if (!draft.title.trim() || draft.title.length > 512 || /[\u0000-\u001f\u007f]/.test(draft.title)) return { error: 'Enter a valid core appointment title.' };
   if (!isDay(draft.date) || !Number.isInteger(draft.start) || !Number.isInteger(draft.end) || draft.start >= draft.end) return { error: 'Choose a valid date and an end time after the start.' };
   const start = calendarWallTimeCandidates(draft.date, draft.start, timeZone), end = calendarWallTimeCandidates(draft.date, draft.end, timeZone);
   if (!start.length || !end.length) return { error: 'This local time does not exist in the scheduling timezone. Choose another time.' };
@@ -75,7 +76,9 @@ export function projectCalendarAppointments(records: readonly CalendarAppointmen
       for (const resourceId of admitted) {
         const id = JSON.stringify([source.id, resourceId, day]); sourceByEventId.set(id, source);
         events.push({ id, resourceId, date: day, title: source.title, titleMode: 'custom', start: visibleStart, end: visibleEnd,
-          kind: 'appointment', status: source.lifecycle?.status ?? source.status, location: 'Unspecified', notes: '', patientId: null, attendees: [],
+          kind: 'appointment', status: source.lifecycle?.status ?? source.status,
+          location: source.visit?.mode === 'in-person' ? 'In-person' : source.visit?.mode === 'video' ? 'Telehealth' : source.visit?.mode === 'phone' ? 'Phone' : 'Unspecified',
+          notes: '', patientId: null, attendees: [],
           visitType: null, customVisitType: '', recurrence: null, reminder: null, sendReminder: false });
       }
     }

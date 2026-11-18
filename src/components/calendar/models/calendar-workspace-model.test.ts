@@ -18,6 +18,9 @@ test('wall-time admission rejects nonexistent and ambiguous local times rather t
   expect(calendarWallTimeCandidates('2026-11-16', 600, 'America/New_York')).toEqual(['2026-11-16T15:00:00.000Z']);
   expect(calendarCoreDraftInterval({ resourceId: 'resource-a', title: 'Title', date: '2026-11-01', start: 90, end: 150 }, 'America/New_York')).toHaveProperty('error');
 });
+test('a control-character title is rejected before a UI request identity could be dispatched', () => {
+  expect(calendarCoreDraftInterval({ resourceId: 'resource', title: 'Synthetic\ttitle', date: '2026-11-16', start: 540, end: 600 }, 'UTC')).toHaveProperty('error');
+});
 test('real reservations project for each selected co-resource without fabricated people or visit metadata', () => {
   const projected = projectCalendarAppointments([record], ['resource-a', 'room-a'], ['2026-11-16'], 'America/New_York', 'day');
   expect(projected.events).toHaveLength(2); expect(projected.sourceByEventId.size).toBe(2);
@@ -33,6 +36,14 @@ test('managed cards display the accepted lifecycle without treating terminal out
     const projected = projectCalendarAppointments([source], ['resource-a'], ['2026-11-16'], 'America/New_York', 'day');
     expect(projected.events[0]!.status).toBe(status);
     expect(projected.sourceByEventId.get(projected.events[0]!.id)!.status).toBe('confirmed');
+  }
+});
+test('managed cards map explicit visit modes without inventing participants, arrival or call links', () => {
+  for (const [visit, location] of [[{ mode: 'phone' as const }, 'Phone'], [{ mode: 'video' as const }, 'Telehealth'],
+    [{ mode: 'in-person' as const, location: { id: 'place', revision: 1, label: 'PRIVATE_LOCATION', region: null } }, 'In-person']] as const) {
+    const projected = projectCalendarAppointments([{ ...record, visit }], ['resource-a'], ['2026-11-16'], 'America/New_York', 'day');
+    expect(projected.events[0]!).toMatchObject({ location, patientId: null, attendees: [] });
+    expect(projected.events[0]!.visit).toBeUndefined();
   }
 });
 test('outside-hours, overnight, sub-minute and DST-transition records remain in the exact-instant companion list, never silently clipped', () => {

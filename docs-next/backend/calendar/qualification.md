@@ -18,6 +18,66 @@ This is feature-branch evidence, not a release certificate. No calendar backend
 archive has been selected by normal `zero-update`, and no application deployment
 or data migration is authorized by these checks.
 
+## November 17 visit/location binding checkpoint
+
+Additive `007` preserves the six earlier migration functions/checksums and complete
+`006` declaration. The populated native-memory upgrade includes every preceding
+table family and verifies rows, SQL definitions, ledger, sequence and accepted
+typed/untyped receipts survive without backfill. Explicit post-upgrade visits first
+bind at their accepted appointment revision. Scope/principal request identities and
+all existing receipt families remain unchanged.
+
+Visit admission composes current all-resource rights, assignment intersection,
+current active location/version, type/duration/buffers, availability and conflicts.
+Immutable snapshots retain old location labels/regions, explicit replacement/clear
+is revisioned, and hold confirmation exactly transfers the fixed visit through the
+canonical appointment writer. Replays do not consult later location admission.
+Busy, audit and effect outputs never copy private location details.
+
+The visit selector is now bounded independently of the 10,000-location catalog:
+after authorizing every resource, its first probe uses the existing resource-first
+current-assignment index and `LIMIT 17`. At most 16 candidate IDs reach the catalog
+intersection query; oversized state fails closed. Real SQLite `EXPLAIN QUERY PLAN`
+and a 2,048-unassigned-location regression verify this bound and identical results.
+This is algorithm/query-plan evidence, not a disk throughput/latency benchmark.
+
+Independent review closed these additional UI gaps:
+
+- Only accepted source history may retain a named location after current choices
+  change; unsubmitted catalog metadata missing from the current authorized page is
+  masked and blocks saving until reviewed, without silently changing the draft.
+- Transient management-read failure masks/disables the form while preserving its
+  draft and exposing Retry. Known denial retires it, and an unavailable read never
+  turns into an automatic resubmission or a successful save.
+- A native non-searchable select now supplies its selected caption explicitly,
+  fixing a reproduced empty initial server-rendered value without changing native
+  morph/presence behavior. This is not a general calendar SSR qualification.
+- Control-character titles are rejected before creating a dispatched UI identity.
+
+| Visit-stage evidence | Result | Boundary |
+| --- | --- | --- |
+| Final integrated calendar/native-memory HTTP/SDK/hooks/upgrade/UI/readable-audit/modal/transform set | 589 tests, 11,283 assertions, 72 files; passed on Bun 1.4.4 | Memory-only, runtime transpiler cache disabled, no physical coordinator/actors/browser/archive |
+| Dedicated populated upgrade set | 22 tests, 2,068 assertions, 6 files; passed | Real memory migrator; preserves every old table family, not an existing file/WAL upgrade |
+| Focused visit-domain set | 17 tests, 168 assertions; passed | Includes bounded actual query plans and semantic-audit backpressure rollback |
+| Final scoped no-emit TypeScript | 218 root files, zero diagnostics | Includes new source/UI/client and prepared file/managed definitions; not emitted or executed physical scenarios |
+| Final documentation graph | 902 pages, 902 reachable, zero problems | Includes visit guide and indexed/backlinked participant-admission notes |
+| Final type-only fixture correction recheck | 12 tests, 618 assertions, 3 files; passed | Populated visit upgrade plus visit-draft/presentation models after generic/readonly test annotations |
+
+The first native setup/upgrade runs exceeded Bun's default five-second test
+deadline under local contention. Those failures remain part of the history; the
+final explicit run uses a bounded 30-second per-test deadline and the new populated
+fixtures declare bounded deadlines. No runtime retry, admission delay or production
+timeout was weakened to obtain a pass. Earlier fixture assertion/type errors were
+corrected without changing historical checksum pins.
+
+A thirteenth file/actor restart definition now covers retained location labels,
+stale hold rejection, visit changes, exact remote-hold transfer and original receipt
+replay. Both managed `createApp` variants also include real location selection,
+in-person hold transfer and private investigator metadata assertions. These remain
+**prepared, not executed** under the filesystem integrity hold. No new disk-backed
+fixtures, build/cache trees, dependencies or release artifacts were created.
+The hosted demo/theme and normal updater selection remain unchanged.
+
 ## November 17 lifecycle checkpoint
 
 Additive `006` adds a virtual-default/versioned scope lifecycle policy, immutable
@@ -426,15 +486,15 @@ repository's applicable suite, artifact hashing and updater selection. A compile
 executable with the default source actor remains deliberately unavailable.
 
 Recurring working-hours/holiday expansion, offer/slot generation, public booking proofs,
-participants, connected type-selection/management controls, effective-dated location eligibility and
-appointment visit locations, recurrence, clinical visit/lobby/attention transitions,
+participants, connected type-selection/management controls, effective-dated location eligibility,
+recurrence, clinical visit/lobby/attention transitions,
 source-bound Jobs/Torrent effects, reminders,
 outbound channels, public self-booking and AI remain later stages of the approved
 integration plan. The hosted local-state UI is not evidence that these backend
 features are implemented. Keep the independent core useful without silently
 enabling optional services or treating this checkpoint as full calendar completion.
 
-The additive migrations and scheduling/block/authenticated-hold/location/type/lifecycle paths also need physical
+The additive migrations and scheduling/block/authenticated-hold/location/type/lifecycle/visit paths also need physical
 existing-file upgrade/recovery, actor restart/contention, managed compliance and
 real-browser acceptance alongside the earlier core gates. Passing source/memory
 checks is not evidence those scenarios have run or that a production domain may

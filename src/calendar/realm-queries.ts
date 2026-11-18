@@ -13,6 +13,7 @@ import { calendarLocationSelection, calendarRegionSelection, readCalendarLocatio
 import { readCalendarAppointmentTypeSnapshot } from './appointment-type-bindings';
 import { requireCalendarTypeManager } from './appointment-types-model';
 import { readCalendarAppointmentLifecycle, requireCalendarLifecycleManager } from './lifecycle-model';
+import { readCalendarAppointmentVisitSnapshot } from './visit-bindings';
 
 function owner(context: DatabaseReadQueryContext, scopeId: string): void {
   const row = context.database.query<{ scope_id: string }>("SELECT scope_id FROM _calendar_owner WHERE id='application'").get();
@@ -95,12 +96,12 @@ export function queryCalendarAppointments(context: DatabaseReadQueryContext, inp
     AND NOT EXISTS(SELECT 1 FROM _calendar_reservations rr JOIN calendar_resources resource ON resource.id=rr.resource_id AND resource.scope_id=rr.scope_id WHERE rr.scope_id=a.scope_id AND rr.appointment_id=a.id AND NOT ${right.sql})
     ORDER BY a.occupied_start_ms,a.id LIMIT ?`).all(r.actor.scopeId, calendarOverlapSearchStart(r.startMs), r.endMs, r.startMs, ...r.ids, ...right.params, r.limit + 1);
   return { items: rows.slice(0, r.limit).map(row => appointmentView(row, resourceIds(context, r.actor.scopeId, row.id),
-    readCalendarAppointmentTypeSnapshot(context, r.actor.scopeId, row.id), readCalendarAppointmentLifecycle(context, r.actor.scopeId, row.id))), truncated: rows.length > r.limit };
+    readCalendarAppointmentTypeSnapshot(context, r.actor.scopeId, row.id), readCalendarAppointmentLifecycle(context, r.actor.scopeId, row.id), readCalendarAppointmentVisitSnapshot(context, r.actor.scopeId, row.id))), truncated: rows.length > r.limit };
 }
 export function readCalendarAppointment(context: DatabaseReadQueryContext, input: unknown) {
   const r = calendarRecord(input, ['actor', 'id']), actor = calendarActor(r.actor); owner(context, actor.scopeId);
   const { row, ids } = appointment(context, actor, calendarKey(r.id), 'details');
-  return appointmentView(row, ids, readCalendarAppointmentTypeSnapshot(context, actor.scopeId, row.id), readCalendarAppointmentLifecycle(context, actor.scopeId, row.id));
+  return appointmentView(row, ids, readCalendarAppointmentTypeSnapshot(context, actor.scopeId, row.id), readCalendarAppointmentLifecycle(context, actor.scopeId, row.id), readCalendarAppointmentVisitSnapshot(context, actor.scopeId, row.id));
 }
 export function readCalendarReceipt(context: DatabaseReadQueryContext, input: unknown) {
   const r = calendarRecord(input, ['actor', 'requestId']), actor = calendarActor(r.actor), requestId = calendarKey(r.requestId); owner(context, actor.scopeId);

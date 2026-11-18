@@ -97,7 +97,7 @@ function fixture() {
 }
 
 test('all four historical migrations and the complete 004 declaration retain their pinned identities', () => {
-  expect(calendarRealm.migrations.map(migration => migration.version)).toEqual(['001', '002', '003', '004', '005', '006']);
+  expect(calendarRealm.migrations.map(migration => migration.version)).toEqual(['001', '002', '003', '004', '005', '006', '007']);
   expect(calendarRealm.migrations.slice(0, 4).map(hashMigration)).toEqual(ORIGINAL_004_CHECKSUMS);
   expect(hashSchemaSnapshot(snapshotDeclaredTables(CALENDAR_LOCATION_TABLES))).toBe(ORIGINAL_004_TABLES);
   for (const [name, schema] of Object.entries(CALENDAR_LOCATION_TABLES)) expect(CALENDAR_TYPE_TABLES[name]).toEqual(schema);
@@ -109,7 +109,7 @@ test('real populated 004 upgrade preserves all old rows, triggers, ledgers, rece
   try {
     const before = f.legacy(), seq = f.db.currentSeq, ledger = f.raw.query('SELECT * FROM _migrations ORDER BY version').all();
     const triggers = f.raw.query<{ name: string; sql: string }, []>("SELECT name,sql FROM sqlite_master WHERE type='trigger' ORDER BY name").all();
-    expect(f.upgrade()).toEqual(['005', '006']); expect(f.legacy()).toEqual(before); expect(f.db.currentSeq).toBe(seq);
+    expect(f.upgrade()).toEqual(['005', '006', '007']); expect(f.legacy()).toEqual(before); expect(f.db.currentSeq).toBe(seq);
     expect(f.raw.query("SELECT * FROM _migrations WHERE version IN ('001','002','003','004') ORDER BY version").all()).toEqual(ledger);
     for (const trigger of triggers) expect(f.raw.query("SELECT name,sql FROM sqlite_master WHERE type='trigger' AND name=?").get(trigger.name)).toEqual(trigger);
     for (const [requestId, receipt] of f.saved) expect(f.query('receipt', { actor, requestId })).toEqual(receipt);

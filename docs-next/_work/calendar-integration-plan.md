@@ -988,6 +988,37 @@ The hosted demo/theme is unchanged. Source/memory tests and prepared file/actor/
 managed fixtures are not real browser or Linux qualification. There is still no
 dispatched reminder/channel/AI workflow or public booking offer enabled here.
 
+### November 17 retained visit bindings and native editor composition
+
+The next additive stage attaches optional in-person location versions or phone/video
+modes to appointments and holds. A current active physical location must be in every
+selected resource's current assignments, after all-resource booking admission.
+The binding is descriptive compatibility, not medical/geographic eligibility,
+presence or telehealth provider enablement. Private snapshots resolve immutable
+location history; busy/effect/audit payloads never copy location details.
+
+The writer checks typed and visit assignment policies before client-selected
+catalog lookups/defaults. Visit-v1 wire digests compose with types without changing
+any earlier no-visit identities. Reschedule preserves the original expected-revision
+binding unless explicitly replaced/cleared. Occupancy/visit changes freshly admit
+the visit; unchanged-zone/type-only corrections keep grandfathered facts. Hold
+confirmation rechecks and exactly transfers its captured visit through the same
+canonical appointment writer. All source facts, reservations, audit, budgets and
+receipts still commit or roll back together. Migration `007` preserves all six
+preceding identities and requires no backfill or new receipt family.
+
+The native editor now has a composable visit field family and authorized reactive
+location selector, rather than retaining local demo mode values without persistence.
+The reviewed theme/demo is unchanged. Source/model/memory checks do not replace
+physical, managed compliance, real-browser or installed Linux qualification.
+
+The next participant implementation has separately preserved
+[admission/final-fence notes](./calendar-participant-admission-notes.md). It must
+use canonical SYSTEM identities and final target revalidation, not fake preview
+users or asynchronous app lookups claimed as cross-file transactions. Directory,
+participant-detail and binding permissions remain distinct; app contacts/guests
+require their own reviewed adapters/proofs. These notes do not implement the API.
+
 ## 15. Documentation deliverables and open decisions
 
 Create a canonical calendar backend guide/index with configuration/defaults,

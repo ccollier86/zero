@@ -1,7 +1,7 @@
 /** Private hold subjects and membership. A hold is never an authority snapshot or a public booking proof. */
 import type { DatabaseReadQueryContext, DatabaseWriteCommandContext } from '../databases/database-realm';
 import type { Row } from '../sync/types';
-import type { CalendarActor, CalendarAppointmentTypeSnapshot, CalendarHoldView } from './contracts';
+import type { CalendarActor, CalendarAppointmentTypeSnapshot, CalendarHoldView, CalendarVisitSnapshot } from './contracts';
 import { CalendarError } from './error';
 import { calendarNow } from './hold-time';
 import { CALENDAR_LIMITS, calendarResource, eq, grantId, hasCalendarRight, type CalendarResourceRow } from './realm-model';
@@ -79,10 +79,10 @@ export function readCalendarHoldTarget(context: DatabaseReadQueryContext, actor:
   return { row, resourceIds: reservations.map(reservation => reservation.resource_id), reservations };
 }
 
-export function holdView(row: CalendarHoldRow, resourceIds: string[], now = calendarNow(), appointmentType?: CalendarAppointmentTypeSnapshot): CalendarHoldView {
+export function holdView(row: CalendarHoldRow, resourceIds: string[], now = calendarNow(), appointmentType?: CalendarAppointmentTypeSnapshot, visit?: CalendarVisitSnapshot): CalendarHoldView {
   return { id: row.id, revision: row.revision, resourceIds, startAt: row.start_at, endAt: row.end_at, timeZone: row.time_zone,
     bufferBeforeMinutes: row.buffer_before, bufferAfterMinutes: row.buffer_after,
     status: row.status === 'held' && row.expires_ms <= now ? 'expired' : row.status,
     expiresAt: new Date(row.expires_ms).toISOString(), createdBy: row.created_by, appointmentId: row.appointment_id,
-    ...(appointmentType ? { appointmentType } : {}) };
+    ...(appointmentType ? { appointmentType } : {}), ...(visit ? { visit } : {}) };
 }
