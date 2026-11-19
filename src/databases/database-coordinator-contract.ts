@@ -18,6 +18,7 @@ import type { DatabaseErrorCode } from './database-error';
 import type { DatabaseExecutor } from './database-executor';
 import type { DatabaseRef } from './database-file';
 import type { DatabaseObservability } from './database-observability';
+import type { DatabaseOpenAdmissionResolver } from './database-open-admission';
 import type {
   DatabaseCommitResult,
   DatabaseReadResult,
@@ -50,6 +51,8 @@ export interface DatabaseCoordinatorOptions {
   readonly realm: DatabaseRealm;
   /** Creates one exact-generation executor for a bounded pool slot. */
   readonly createExecutor: DatabaseExecutorFactory;
+  /** @internal Native synchronous cold-open policy; never crosses actor IPC. */
+  readonly openAdmission?: DatabaseOpenAdmissionResolver;
   /** File/hot policy resolved once and pinned for each opened generation. */
   readonly placement?: DatabasePlacementPolicy;
   readonly sqlite?: DatabaseActorSQLiteConfig;

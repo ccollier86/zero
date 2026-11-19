@@ -106,6 +106,37 @@ Actor persistence telemetry is disabled locally; managed parent database
 observability owns the operational boundary. These settings are not arbitrary
 PRAGMA commands or a native connection escape hatch.
 
+### Native cold-open admission (unreleased branch extension)
+
+Low-level trusted `DatabaseCoordinator` composition can supply a lazy synchronous
+`openAdmission(id)` callback. This is not a root `databaseTopology` setting or a
+browser-selected option. Existing consumers omit it and keep their current path.
+The callback returns `undefined` or a detached contract with:
+
+- `schema: 'current'`: require an existing matching physical binding, current
+  migration ledger, declared schema and available native storage invariants
+  before write-capable actor preparation. It does not repair an old source.
+- `schema: 'prepare'`: explicit preparation, after matching binding and optional
+  owner-row proof. `row.allowMissing: true` is valid only in this mode for staged
+  creation; any present mismatched row still rejects.
+- Optional `row: { table, id, equals }`: a realm-declared primary-key row and
+  nonempty scalar equality map. There is no raw SQL, arbitrary path or callback
+  in the actor payload. Boolean expectations use SQLite integer `1`/`0` semantics,
+  not text coercion.
+
+Admission is refreshed immediately before writer and reader bind dispatch,
+including replacement generations. Row identity cannot be retargeted and current
+admission cannot be downgraded. Actors acknowledge the exact detached contract;
+missing/mismatched proof fails closed. Current/required-row acquisition never
+creates a replacement for a missing source. Preparation and current operation
+authorization remain separate: the contract does not replace final Guardian or
+same-lease owner checks, nor prove arbitrary trigger/view equivalence.
+
+The Calendar branch uses this contract. It is source/MEMORY checked, not physical
+WAL/HOT/subprocess or packaged-deployment qualified; see its
+[qualification boundary](../calendar/qualification.md). No selected release is
+claimed by this extension.
+
 ## Capacity And Restart
 
 See the complete [capacity matrix](./capacity.md). Readers default true.

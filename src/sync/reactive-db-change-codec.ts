@@ -177,7 +177,18 @@ function isCanonicalJsonValue(value: unknown, ancestors: Set<object>): boolean {
   }
 }
 
-export function validateRetainedChangeRows(rows: readonly ChangeRow[]): void {
+/** Validate in one pass; callers may stream retained rows without buffering. */
+export function validateRetainedChangeRows(rows: Iterable<ChangeRow>): void {
+  inspectRetainedChangeRows(rows);
+}
+
+function inspectRetainedChangeRows(rows: Iterable<ChangeRow>): {
+  count: number;
+  firstSeq: number | null;
+  lastSeq: number | null;
+} {
+  let count = 0;
+  let firstSeq: number | null = null;
   let previousSeq: number | null = null;
   let observedVersionedRow = false;
   for (const row of rows) {
@@ -192,26 +203,27 @@ export function validateRetainedChangeRows(rows: readonly ChangeRow[]): void {
         'ZERO_SYNC_LOG_STATE_INVALID: legacy history follows versioned history',
       );
     }
+    if (count === 0) firstSeq = row.seq;
+    count += 1;
     previousSeq = row.seq;
   }
+  return { count, firstSeq, lastSeq: previousSeq };
 }
 
 export function validateRetainedHistory(
   state: ChangeLogStateRow,
-  rows: readonly ChangeRow[],
+  rows: Iterable<ChangeRow>,
 ): void {
-  validateRetainedChangeRows(rows);
-  if (rows.length === 0) {
+  const { count, firstSeq, lastSeq } = inspectRetainedChangeRows(rows);
+  if (count === 0) {
     if (state.prune_through !== state.seq) {
       throw new Error('ZERO_SYNC_LOG_STATE_INVALID: retained history is missing');
     }
     return;
   }
-  const first = rows[0]!.seq;
-  const last = rows.at(-1)!.seq;
-  if (first !== state.prune_through + 1
-    || last !== state.seq
-    || rows.length !== state.seq - state.prune_through) {
+  if (firstSeq !== state.prune_through + 1
+    || lastSeq !== state.seq
+    || count !== state.seq - state.prune_through) {
     throw new Error('ZERO_SYNC_LOG_STATE_INVALID: retained history does not match log state');
   }
 }

@@ -3,6 +3,8 @@ import { resolve } from 'node:path';
 
 import { DatabaseError } from './database-error';
 import { createDatabaseRef } from './database-file';
+import { databaseOpenAdmissionFingerprint } from './database-open-admission';
+import { defineDatabaseRealm } from './database-realm';
 import {
   DATABASE_ACTOR_MAX_REPLAY_CHANGES,
   validateDatabaseActorBindPayload,
@@ -32,6 +34,43 @@ const catalog = {
 };
 
 describe('database actor protocol', () => {
+  test('carries an optional detached admission and validates against the actual realm when supplied', () => {
+    const realm = defineDatabaseRealm({ name: 'protocol-open-admission', version: '1',
+      tables: { todos: { id: 'text primary key', title: 'text not null' } } });
+    const input = { databaseRef, filePath: resolve('/tmp/zero-databases/db.sqlite'), fileIdentity, instanceId,
+      actorLiveness, placement: { mode: 'file' }, realmFingerprint, sqlite: {},
+      openAdmission: { schema: 'prepare' as const, row: { table: 'todos', id: 'owner', equals: { title: 'synthetic' }, allowMissing: true as const } } };
+    const payload = validateDatabaseActorBindPayload(input, realm);
+    expect(payload.openAdmission).toEqual(input.openAdmission);
+    expect(Object.isFrozen(payload.openAdmission)).toBe(true);
+    expect(Object.isFrozen(payload.openAdmission!.row!.equals)).toBe(true);
+    input.openAdmission.row.equals.title = 'changed';
+    expect(payload.openAdmission!.row!.equals.title).toBe('synthetic');
+    // Structural IPC parsing needs no fabricated realm/catalog. The actual
+    // actor/helper revalidates ownership against its imported realm.
+    const outsideRealm = { ...input, openAdmission: { schema: 'current', row: {
+      table: 'not_declared', id: 'owner', equals: { title: 'synthetic' },
+    } } };
+    expect(validateDatabaseActorBindPayload(outsideRealm).openAdmission?.row?.table).toBe('not_declared');
+    expectCode(() => validateDatabaseActorBindPayload(outsideRealm, realm));
+    for (const openAdmission of [
+      { schema: 'current', row: { table: 'todos', id: 'owner', equals: { title: 'x' }, allowMissing: true } },
+      { schema: 'prepare', row: { table: 'todos', id: 'owner', equals: { title: 'x' }, allowMissing: false } },
+      { schema: 'prepare', sql: 'SELECT 1' },
+      { schema: 'prepare', row: { table: 'todos', id: 'owner', equals: { title: [] } } },
+    ]) expectCode(() => validateDatabaseActorBindPayload({ ...input, openAdmission }, realm));
+  });
+
+  test('readiness proof admits exactly a canonical optional admission fingerprint', () => {
+    const proof = databaseOpenAdmissionFingerprint({ schema: 'current', row: { table: 'todos', id: 'owner', equals: { title: 'x' } } });
+    const input = { databaseRef, role: 'writer', fileIdentity, instanceId, placement: { mode: 'file' },
+      realmFingerprint, schemaChecksum, sequence: { seq: 0 }, syncEpoch: 'synthetic', openAdmissionFingerprint: proof };
+    expect(validateDatabaseActorBindResult(input).openAdmissionFingerprint).toBe(proof);
+    for (const openAdmissionFingerprint of ['', 'sha256:' + proof, 'A'.repeat(64), null, {}, 1]) {
+      expectCode(() => validateDatabaseActorBindResult({ ...input, openAdmissionFingerprint }));
+    }
+  });
+
   test('validates and freezes one canonical writer binding', () => {
     const value = validateDatabaseActorBindPayload({
       databaseRef,

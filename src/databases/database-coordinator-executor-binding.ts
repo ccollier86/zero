@@ -20,6 +20,7 @@ import type { DatabaseExecutor } from './database-executor';
 import { sameDatabaseFileIdentity } from './database-file-identity';
 import type { DatabaseHotDurabilitySupervisor } from './database-hot-durability-supervisor';
 import type { DatabaseObservability } from './database-observability';
+import { databaseOpenAdmissionFingerprint } from './database-open-admission';
 import type { DatabaseRealm } from './database-realm';
 
 interface DatabaseCoordinatorExecutorBindingOptions {
@@ -139,7 +140,9 @@ export class DatabaseCoordinatorExecutorBinding {
       || result.instanceId !== entry.bindingIdentity.instanceId
       || !sameCoordinatorActorPlacement(result.placement, entry.placement)
       || result.realmFingerprint !== this.#realm.fingerprint
-      || result.schemaChecksum !== this.#realm.schemaChecksum) {
+      || result.schemaChecksum !== this.#realm.schemaChecksum
+      || result.openAdmissionFingerprint !== (entry.openAdmission === undefined
+        ? undefined : databaseOpenAdmissionFingerprint(entry.openAdmission))) {
       throw new DatabaseError(
         'DATABASE_SCHEMA_MISMATCH',
         'Database actor binding did not match its assigned realm.',

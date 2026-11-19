@@ -263,7 +263,7 @@ export class DatabaseActorRuntime implements Disposable {
     request: DatabaseExecutorServerRequest,
     requestedRole: DatabaseActorRole,
   ): DatabaseActorBindResult {
-    const payload = validateDatabaseActorBindPayload(request.payload);
+    const payload = validateDatabaseActorBindPayload(request.payload, this.realm);
     if (requestedRole !== this.role) {
       throw new DatabaseError(
         'DATABASE_OPERATION_UNSUPPORTED',
@@ -331,6 +331,7 @@ export class DatabaseActorRuntime implements Disposable {
           ? candidate!.runtime.db.syncEpoch
           : null,
         ...(candidate!.role === 'writer' && candidate!.loggingSource ? { loggingPolicyFingerprint: loggingDigest(candidate!.loggingSource.policy) } : {}),
+        ...(candidate!.openAdmissionFingerprint === undefined ? {} : { openAdmissionFingerprint: candidate!.openAdmissionFingerprint }),
       }));
       if (result.databaseRef !== payload.databaseRef
         || result.role !== this.role

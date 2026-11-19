@@ -7,6 +7,7 @@ import type { DatabaseError } from './database-error';
 import type { DatabaseExecutor } from './database-executor';
 import type { DatabaseFileIdentityProof } from './database-file-identity';
 import type { DatabaseId, DatabaseRef } from './database-file';
+import type { DatabaseOpenAdmission } from './database-open-admission';
 import type { DatabaseTenantSyncWakeup } from './database-tenant-sync';
 import type { DatabaseWriterLane } from './database-writer-lane';
 
@@ -27,6 +28,8 @@ export interface DatabaseCoordinatorEntry {
   readonly filePath: string;
   fileIdentity: DatabaseFileIdentityProof;
   readonly bindingIdentity: DatabaseBindingIdentity;
+  /** Detached policy pinned across generations; only strengthening is allowed. */
+  openAdmission?: DatabaseOpenAdmission;
   readonly placement: DatabaseActorPlacementConfig;
   readonly slot: number;
   readonly lane: DatabaseWriterLane;

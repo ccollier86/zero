@@ -124,6 +124,11 @@ export type {
 
 export { DatabaseCoordinator } from './database-coordinator';
 export type {
+  DatabaseOpenAdmission,
+  DatabaseOpenAdmissionResolver,
+  DatabaseOpenRowAdmission,
+} from './database-open-admission';
+export type {
   DatabaseAcquireOptions,
   DatabaseCoordinatorDiagnostics,
   DatabaseCoordinatorEntryDiagnostics,

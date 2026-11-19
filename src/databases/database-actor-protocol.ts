@@ -9,6 +9,8 @@
 import { isAbsolute, normalize, resolve } from 'node:path';
 
 import { DatabaseError } from './database-error';
+import { normalizeDatabaseOpenAdmission, type DatabaseOpenAdmission } from './database-open-admission';
+import type { DatabaseRealm } from './database-realm';
 import { normalizeLoggingActorSourceBinding, type LoggingActorSourceBinding } from '../logging/logging-actor-source';
 import { captureLoggingEvent } from '../logging/logging-validation';
 import type { LoggingContext } from '../logging/logging-contracts';
@@ -82,6 +84,7 @@ const BIND_FIELDS = new Set([
   'sqlite',
   'authorityCommitFence',
   'logging',
+  'openAdmission',
 ]);
 const REQUIRED_BIND_FIELDS = Object.freeze([
   'databaseRef',
@@ -186,12 +189,14 @@ export interface DatabaseActorBindPayload {
   readonly sqlite: DatabaseActorSQLiteConfig;
   readonly authorityCommitFence?: DatabaseActorAuthorityCommitFenceConfig;
   readonly logging?: LoggingActorSourceBinding;
+  readonly openAdmission?: DatabaseOpenAdmission;
 }
 
 /** Actor readiness proof returned after open/migration/schema validation. */
 export interface DatabaseActorBindResult {
   /** Required by managed audit admission when the parent supplied a source policy. */
   readonly loggingPolicyFingerprint?: string;
+  readonly openAdmissionFingerprint?: string;
   readonly databaseRef: DatabaseRef;
   readonly role: DatabaseActorRole;
   readonly fileIdentity: DatabaseFileIdentityProof;
@@ -234,6 +239,7 @@ export interface DatabaseActorUnbindPayload {
 /** Validate and detach a trusted actor bind payload. */
 export function validateDatabaseActorBindPayload(
   value: unknown,
+  realm?: DatabaseRealm,
 ): DatabaseActorBindPayload {
   const record = dataRecord(cloneDatabaseSerializableValue(value));
   assertExactFields(record, BIND_FIELDS, false);
@@ -243,6 +249,11 @@ export function validateDatabaseActorBindPayload(
   const authorityCommitFence = Object.hasOwn(record, 'authorityCommitFence')
     ? parseAuthorityCommitFence(record.authorityCommitFence)
     : undefined;
+  let openAdmission: DatabaseOpenAdmission | undefined;
+  if (Object.hasOwn(record, 'openAdmission')) {
+    try { openAdmission = normalizeDatabaseOpenAdmission(record.openAdmission, realm); }
+    catch { throw payloadInvalid('Invalid database open admission.'); }
+  }
   const result = {
     databaseRef: parseDatabaseRef(record.databaseRef),
     filePath: parseCanonicalFilePath(record.filePath),
@@ -252,6 +263,7 @@ export function validateDatabaseActorBindPayload(
     placement: parsePlacementConfig(record.placement),
     realmFingerprint: parseRealmFingerprint(record.realmFingerprint),
     sqlite: normalizeDatabaseActorSQLiteConfig(record.sqlite),
+    ...(openAdmission === undefined ? {} : { openAdmission }),
     ...(record.logging === undefined ? {} : { logging: validatedLoggingBinding(record.logging) }),
     ...(authorityCommitFence === undefined
       ? {}
@@ -276,8 +288,11 @@ export function validateDatabaseActorBindResult(
     'sequence',
     'syncEpoch',
     'loggingPolicyFingerprint',
+    'openAdmissionFingerprint',
   ]), false);
   if (record.loggingPolicyFingerprint !== undefined && (typeof record.loggingPolicyFingerprint !== 'string' || !SCHEMA_CHECKSUM_PATTERN.test(record.loggingPolicyFingerprint))) throw payloadInvalid('Invalid actor audit readiness proof.');
+  if (record.openAdmissionFingerprint !== undefined && (typeof record.openAdmissionFingerprint !== 'string'
+    || !SCHEMA_CHECKSUM_PATTERN.test(record.openAdmissionFingerprint))) throw payloadInvalid('Invalid actor open admission proof.');
   if (record.role !== 'writer' && record.role !== 'reader') {
     throw payloadInvalid('Invalid database actor role.');
   }
@@ -311,6 +326,7 @@ export function validateDatabaseActorBindResult(
     sequence: parseSequenceToken(record.sequence),
     syncEpoch: record.syncEpoch,
     ...(record.loggingPolicyFingerprint === undefined ? {} : { loggingPolicyFingerprint: record.loggingPolicyFingerprint as string }),
+    ...(record.openAdmissionFingerprint === undefined ? {} : { openAdmissionFingerprint: record.openAdmissionFingerprint as string }),
   });
 }
 

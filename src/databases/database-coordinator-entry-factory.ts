@@ -12,12 +12,20 @@ import {
   type DatabaseRef,
 } from './database-file';
 import type { DatabaseObservability } from './database-observability';
+import {
+  inspectDatabaseBindingIdentityWithAdmission,
+  resolveDatabaseOpenAdmission,
+  type DatabaseOpenAdmissionResolver,
+} from './database-open-admission';
 import type { DatabasePlacementPolicy } from './database-placement';
+import type { DatabaseRealm } from './database-realm';
 import { DatabaseWriterLane } from './database-writer-lane';
 
 interface DatabaseCoordinatorEntryFactoryOptions {
   readonly rootDirectory: () => string;
   readonly realmName: string;
+  readonly realm: DatabaseRealm;
+  readonly openAdmission?: DatabaseOpenAdmissionResolver;
   readonly placementPolicy: DatabasePlacementPolicy;
   readonly maxDatabaseFiles: number;
   readonly maxQueuedPerDatabase: number;
@@ -86,6 +94,12 @@ export class DatabaseCoordinatorEntryFactory {
     createIfMissing: boolean,
   ): DatabaseCoordinatorEntry | null {
     const databaseRef = createDatabaseRef(id);
+    // Resolve before allocating any main file. A current/required-row target
+    // must never become a newly provisioned replacement through acquire().
+    const openAdmission = resolveDatabaseOpenAdmission(this.#options.openAdmission, id, this.#options.realm);
+    const allowCreation = createIfMissing && (openAdmission === undefined
+      || openAdmission.schema === 'prepare'
+        && (openAdmission.row === undefined || openAdmission.row.allowMissing === true));
     const placement = resolveCoordinatorEntryPlacement(
       this.#options.placementPolicy,
       databaseRef,
@@ -93,7 +107,7 @@ export class DatabaseCoordinatorEntryFactory {
     let prepared;
     try {
       this.#options.assertOwnedRootCurrent();
-      prepared = createIfMissing
+      prepared = allowCreation
         ? prepareDatabaseFileWithCreationAdmission(
             this.#options.rootDirectory(),
             id,
@@ -101,9 +115,22 @@ export class DatabaseCoordinatorEntryFactory {
             () => { this.#managedDatabaseFiles += 1; },
           )
         : prepareExistingDatabaseFile(this.#options.rootDirectory(), id);
-      if (!prepared) return null;
+      if (!prepared) {
+        if (!createIfMissing) return null;
+        throw new DatabaseError('DATABASE_NOT_READY', 'Database admission requires an existing target.', {
+          retryable: false, outcome: 'not-started', details: { component: 'open-admission', reason: 'missing' },
+        });
+      }
       this.#options.assertOwnedRootCurrent();
-      const bindingIdentity = prepareDatabaseBindingIdentity({
+      const bindingIdentity = openAdmission && !prepared.created
+        ? inspectDatabaseBindingIdentityWithAdmission({
+          filePath: prepared.path,
+          fileIdentity: prepared.identity,
+          databaseRef,
+          realm: this.#options.realm,
+          admission: openAdmission,
+        })
+        : prepareDatabaseBindingIdentity({
         filePath: prepared.path,
         fileIdentity: prepared.identity,
         databaseRef,
@@ -126,6 +153,7 @@ export class DatabaseCoordinatorEntryFactory {
       filePath: prepared.path,
       fileIdentity: prepared.identity,
       bindingIdentity: prepared.bindingIdentity,
+      ...(openAdmission === undefined ? {} : { openAdmission }),
       placement,
       slot,
       lane: null as unknown as DatabaseWriterLane,

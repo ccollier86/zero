@@ -37,6 +37,7 @@ import {
 } from './database-realm';
 import { DatabaseReaderRuntime } from './database-reader-runtime';
 import { DatabaseRuntime } from './database-runtime';
+import { assertDatabaseOpenAdmission, databaseOpenAdmissionFingerprint, inspectDatabaseBindingIdentityWithAdmission } from './database-open-admission';
 import { DatabaseTenantSyncSnapshotSessionStore } from './database-tenant-sync-snapshot-session';
 import { DatabaseWriterOperationEngine } from './database-writer-engine';
 import { identityAnchorReactiveTableSchemas } from '../auth/identity-projection-reactive-schema';
@@ -61,6 +62,7 @@ export interface DatabaseActorWriterBinding {
   readonly snapshotSessions: DatabaseTenantSyncSnapshotSessionStore;
   readonly openedFileIdentity: DatabaseFileIdentityProof;
   readonly bindingIdentity: DatabaseBindingIdentity;
+  readonly openAdmissionFingerprint?: string;
   readonly livenessGuard: DatabaseActorLivenessGuard;
   fileGuard: DatabaseFileIdentityGuard | null;
 }
@@ -72,6 +74,7 @@ export interface DatabaseActorReaderBinding {
   readonly runtime: DatabaseReaderRuntime;
   readonly openedFileIdentity: DatabaseFileIdentityProof;
   readonly bindingIdentity: DatabaseBindingIdentity;
+  readonly openAdmissionFingerprint?: string;
   readonly livenessGuard: DatabaseActorLivenessGuard;
   fileGuard: DatabaseFileIdentityGuard;
 }
@@ -112,6 +115,14 @@ export function openWriterBinding(
       expected: payload.fileIdentity,
     });
     openedFileIdentity = fileGuard.proof;
+    if (payload.openAdmission) {
+      // The service opener may recover WAL/change journal policy or load a hot
+      // image. Prove the existing source through a readonly handle BEFORE it.
+      inspectDatabaseBindingIdentityWithAdmission({ filePath: payload.filePath, fileIdentity: payload.fileIdentity,
+        databaseRef: payload.databaseRef, realm, admission: payload.openAdmission, instanceId: payload.instanceId,
+        ...(payload.sqlite.busyTimeout === undefined ? {} : { busyTimeoutMs: payload.sqlite.busyTimeout }) });
+      fileGuard.assertCurrent();
+    }
     sqlite = createPlatformSQLiteService({
       mode: payload.placement.mode,
       path: payload.filePath,
@@ -153,6 +164,7 @@ export function openWriterBinding(
         { retryable: false, outcome: 'not-started' },
       );
     }
+    if (payload.openAdmission) assertBoundOpenAdmission(sqlite.raw, payload, realm);
     if (realm.guardianAnchorRequirements.length > 0) {
       // Framework FK anchors must exist before realm tables are prepared and
       // before any reader generation can observe this database schema.
@@ -167,7 +179,7 @@ export function openWriterBinding(
         ? {}
         : { reactive: { ringBufferDepth } }),
       migrations: realm.migrations,
-      migrate: true,
+      migrate: payload.openAdmission?.schema !== 'current',
       tables: {
         ...identityAnchorReactiveTableSchemas(realm.guardianAnchorRequirements),
         ...realm.tables,
@@ -247,6 +259,7 @@ export function openWriterBinding(
       snapshotSessions,
       openedFileIdentity: openedFileIdentity,
       bindingIdentity,
+      ...(payload.openAdmission ? { openAdmissionFingerprint: databaseOpenAdmissionFingerprint(payload.openAdmission) } : {}),
       livenessGuard,
       fileGuard,
     };
@@ -321,6 +334,22 @@ function assertActorGuardianReferenceStorage(
   }
 }
 
+/** Recheck the actual bound handle before any runtime/anchor initialization.
+ * This is connection-local query-only configuration, not a schema repair or a
+ * cached request authorization. Native commands remain separately fenced.
+ */
+function assertBoundOpenAdmission(database: import('bun:sqlite').Database, payload: DatabaseActorBindPayload, realm: DatabaseRealm): void {
+  const statement = database.prepare('PRAGMA query_only');
+  let queryOnly: { query_only: number } | null;
+  try { queryOnly = statement.get() as { query_only: number } | null; }
+  finally { statement.finalize(); }
+  if (!queryOnly || ![0, 1].includes(queryOnly.query_only)) throw new DatabaseError('DATABASE_SCHEMA_MISMATCH', 'Database query policy is unavailable.', { outcome: 'not-started' });
+  database.run('PRAGMA query_only=ON');
+  try { assertDatabaseOpenAdmission({ database, realm, admission: payload.openAdmission!,
+    databaseRef: payload.databaseRef, instanceId: payload.instanceId }); }
+  finally { database.run(queryOnly.query_only === 1 ? 'PRAGMA query_only=ON' : 'PRAGMA query_only=OFF'); }
+}
+
 /** Open and verify a read-only file/WAL binding. */
 export function openReaderBinding(
   payload: DatabaseActorBindPayload,
@@ -335,6 +364,12 @@ export function openReaderBinding(
       access: 'read',
       expected: payload.fileIdentity,
     });
+    if (payload.openAdmission) {
+      inspectDatabaseBindingIdentityWithAdmission({ filePath: payload.filePath, fileIdentity: payload.fileIdentity,
+        databaseRef: payload.databaseRef, realm, admission: payload.openAdmission, instanceId: payload.instanceId,
+        ...(payload.sqlite.busyTimeout === undefined ? {} : { busyTimeoutMs: payload.sqlite.busyTimeout }) });
+      fileGuard.assertCurrent();
+    }
     runtime = DatabaseReaderRuntime.open({
       filePath: payload.filePath,
       realm,
@@ -352,6 +387,7 @@ export function openReaderBinding(
       runtime,
       openedFileIdentity: fileGuard.proof,
       bindingIdentity: runtime.bindingIdentity,
+      ...(payload.openAdmission ? { openAdmissionFingerprint: databaseOpenAdmissionFingerprint(payload.openAdmission) } : {}),
       livenessGuard,
       fileGuard,
     };
@@ -513,10 +549,18 @@ function openPublishedHotBindingGuard(
   expected: DatabaseBindingIdentity,
 ): DatabaseFileIdentityGuard {
   const guard = openDatabaseFileIdentityGuard(payload.filePath, {
-    access: 'readwrite',
+    access: payload.openAdmission ? 'read' : 'readwrite',
   });
   try {
-    const published = prepareDatabaseBindingIdentity({
+    const published = payload.openAdmission ? inspectDatabaseBindingIdentityWithAdmission({
+      filePath: payload.filePath,
+      fileIdentity: guard.proof,
+      databaseRef: payload.databaseRef,
+      realm,
+      admission: payload.openAdmission,
+      instanceId: payload.instanceId,
+      ...(payload.sqlite.busyTimeout === undefined ? {} : { busyTimeoutMs: payload.sqlite.busyTimeout }),
+    }) : prepareDatabaseBindingIdentity({
       filePath: payload.filePath,
       fileIdentity: guard.proof,
       databaseRef: payload.databaseRef,

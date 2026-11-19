@@ -202,6 +202,7 @@ export class DatabaseCoordinator implements AsyncDisposable {
     });
     this.entryLifecycle = new DatabaseCoordinatorEntryLifecycle({
       realm: this.realm,
+      ...(config.openAdmission ? { openAdmission: config.openAdmission } : {}),
       sqlite: config.sqlite,
       readersEnabled: this.readersEnabled,
       operationTimeoutMs: this.operationTimeoutMs,
@@ -226,6 +227,8 @@ export class DatabaseCoordinator implements AsyncDisposable {
     this.entryFactory = new DatabaseCoordinatorEntryFactory({
       rootDirectory: () => this.rootDirectory,
       realmName: this.realm.name,
+      realm: this.realm,
+      ...(config.openAdmission ? { openAdmission: config.openAdmission } : {}),
       placementPolicy: config.placementPolicy,
       maxDatabaseFiles: this.maxDatabaseFiles,
       maxQueuedPerDatabase: config.maxQueuedPerDatabase,

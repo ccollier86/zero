@@ -22,6 +22,30 @@ interface LegacyMigrationRecord {
   duration_ms: number;
 }
 
+/**
+ * Read successful durable migration state without creating tables, importing
+ * legacy records, or repairing the compatibility ledger. Missing native
+ * ledgers deliberately fail: callers requiring legacy adoption must prepare
+ * the database explicitly before read-only admission.
+ */
+export function readMigrationLedgerState(
+  db: Pick<Database, 'prepare'>,
+): Map<string, MigrationLedgerRecord> {
+  const statement = db.prepare(`
+    SELECT * FROM main._zero_migrations
+    WHERE status IN ('applied', 'rolled_back')
+    ORDER BY id ASC
+  `);
+  try {
+    const rows = statement.all() as MigrationLedgerRecord[];
+    const state = new Map<string, MigrationLedgerRecord>();
+    for (const row of rows) state.set(row.version, row);
+    return state;
+  } finally {
+    statement.finalize();
+  }
+}
+
 export class MigrationLedger {
   constructor(private readonly db: Database) {
     this.ensureTables();
@@ -54,14 +78,7 @@ export class MigrationLedger {
    * does not erase the last successful up/down event.
    */
   stateByVersion(): Map<string, MigrationLedgerRecord> {
-    const rows = this.db.prepare(`
-      SELECT * FROM _zero_migrations
-      WHERE status IN ('applied', 'rolled_back')
-      ORDER BY id ASC
-    `).all() as MigrationLedgerRecord[];
-    const state = new Map<string, MigrationLedgerRecord>();
-    for (const row of rows) state.set(row.version, row);
-    return state;
+    return readMigrationLedgerState(this.db);
   }
 
   /** Return the durable state for one migration version. */

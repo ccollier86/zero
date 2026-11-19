@@ -6,6 +6,7 @@ import {
   validateDatabaseActorBindResult,
   type DatabaseActorSQLiteConfig,
   type DatabaseActorAuthorityCommitFenceConfig,
+  type DatabaseActorBindPayload,
 } from './database-actor-protocol';
 import type { DatabaseActorLivenessBinding } from './database-actor-liveness';
 import { prepareDatabaseBindingIdentity } from './database-binding-identity';
@@ -32,6 +33,12 @@ import type { DatabaseExecutor, DatabaseExecutorValue } from './database-executo
 import { openDatabaseFileIdentityGuard } from './database-file-identity';
 import { DatabaseHotDurabilitySupervisor } from './database-hot-durability-supervisor';
 import type { DatabaseObservability } from './database-observability';
+import {
+  assertDatabaseOpenAdmissionTransition,
+  inspectDatabaseBindingIdentityWithAdmission,
+  resolveDatabaseOpenAdmission,
+  type DatabaseOpenAdmissionResolver,
+} from './database-open-admission';
 import type { DatabaseRealm } from './database-realm';
 import {
   nextDatabaseRestartPlan,
@@ -48,6 +55,7 @@ export type DatabaseCloseReason = 'requested' | 'idle' | 'capacity' | 'shutdown'
 interface DatabaseCoordinatorEntryLifecycleOptions {
   readonly loggingBinding?: (entry: DatabaseCoordinatorEntry) => LoggingActorSourceBinding | undefined;
   readonly realm: DatabaseRealm;
+  readonly openAdmission?: DatabaseOpenAdmissionResolver;
   readonly sqlite: DatabaseActorSQLiteConfig;
   readonly readersEnabled: boolean;
   readonly operationTimeoutMs: number;
@@ -72,6 +80,7 @@ interface DatabaseCoordinatorEntryLifecycleOptions {
 
 export class DatabaseCoordinatorEntryLifecycle {
   readonly #realm: DatabaseRealm;
+  readonly #openAdmission: DatabaseOpenAdmissionResolver | undefined;
   readonly #sqlite: DatabaseActorSQLiteConfig;
   readonly #readersEnabled: boolean;
   readonly #operationTimeoutMs: number;
@@ -98,6 +107,7 @@ export class DatabaseCoordinatorEntryLifecycle {
   constructor(options: DatabaseCoordinatorEntryLifecycleOptions) {
     this.#loggingBinding = options.loggingBinding;
     this.#realm = options.realm;
+    this.#openAdmission = options.openAdmission;
     this.#sqlite = options.sqlite;
     this.#readersEnabled = options.readersEnabled;
     this.#operationTimeoutMs = options.operationTimeoutMs;
@@ -166,22 +176,11 @@ export class DatabaseCoordinatorEntryLifecycle {
     const previousSyncIdentity = entry.syncIdentity;
     try {
       const logging = this.#loggingBinding?.(entry);
-      const payload = validateDatabaseActorBindPayload({
-        databaseRef: entry.databaseRef,
-        filePath: entry.filePath,
-        fileIdentity: entry.fileIdentity,
-        instanceId: entry.bindingIdentity.instanceId,
-        actorLiveness: this.#actorLiveness(),
-        placement: entry.placement,
-        realmFingerprint: this.#realm.fingerprint,
-        sqlite: this.#sqlite,
-        ...(logging ? { logging } : {}),
-        ...(this.#authorityCommitFence
-          ? { authorityCommitFence: this.#authorityCommitFence }
-          : {}),
-      });
+      this.#resolveOpenAdmission(entry);
       entry.writer = this.#executorBinding.create(entry, 'writer');
       await entry.writer.start();
+      // Native startup may yield. Refresh on the actual bind dispatch stack.
+      const payload = this.#bindPayload(entry, logging);
       const writerResult = validateDatabaseActorBindResult(
         await entry.writer.execute({
           operation: DATABASE_ACTOR_OPERATIONS.bindWriter,
@@ -195,11 +194,12 @@ export class DatabaseCoordinatorEntryLifecycle {
       if (this.#readersEnabled && entry.placement.mode === 'file') {
         entry.reader = this.#executorBinding.create(entry, 'reader');
         await entry.reader.start();
+        const readerPayload = this.#bindPayload(entry, logging);
         const readerResult = validateDatabaseActorBindResult(
           await entry.reader.execute({
             operation: DATABASE_ACTOR_OPERATIONS.bindReader,
             kind: 'read',
-            payload: payload as unknown as DatabaseExecutorValue,
+            payload: readerPayload as unknown as DatabaseExecutorValue,
           }, { timeoutMs: this.#operationTimeoutMs }),
         );
         this.#executorBinding.assertBindResult(entry, 'reader', readerResult);
@@ -590,17 +590,26 @@ export class DatabaseCoordinatorEntryLifecycle {
 
   #refreshHotEntryFileIdentity(entry: DatabaseCoordinatorEntry): void {
     if (entry.placement.mode !== 'hot') return;
+    const openAdmission = this.#resolveOpenAdmission(entry);
     this.#assertOwnedRootCurrent();
     const guard = openDatabaseFileIdentityGuard(entry.filePath, {
-      access: 'readwrite',
+      access: openAdmission === undefined ? 'readwrite' : 'read',
     });
     try {
-      const bindingIdentity = prepareDatabaseBindingIdentity({
+      const bindingIdentity = openAdmission === undefined ? prepareDatabaseBindingIdentity({
         filePath: entry.filePath,
         fileIdentity: guard.proof,
         databaseRef: entry.databaseRef,
         realmName: this.#realm.name,
         initialize: false,
+      }) : inspectDatabaseBindingIdentityWithAdmission({
+        filePath: entry.filePath,
+        fileIdentity: guard.proof,
+        databaseRef: entry.databaseRef,
+        realm: this.#realm,
+        admission: openAdmission,
+        instanceId: entry.bindingIdentity.instanceId,
+        ...(this.#sqlite.busyTimeout === undefined ? {} : { busyTimeoutMs: this.#sqlite.busyTimeout }),
       });
       guard.assertCurrent();
       this.#assertOwnedRootCurrent();
@@ -615,6 +624,30 @@ export class DatabaseCoordinatorEntryLifecycle {
     } finally {
       guard.release();
     }
+  }
+
+  #resolveOpenAdmission(entry: DatabaseCoordinatorEntry) {
+    const next = resolveDatabaseOpenAdmission(this.#openAdmission, entry.id, this.#realm);
+    assertDatabaseOpenAdmissionTransition(entry.openAdmission, next);
+    if (next !== undefined) entry.openAdmission = next;
+    return next;
+  }
+
+  #bindPayload(entry: DatabaseCoordinatorEntry, logging: LoggingActorSourceBinding | undefined): DatabaseActorBindPayload {
+    const openAdmission = this.#resolveOpenAdmission(entry);
+    return validateDatabaseActorBindPayload({
+      databaseRef: entry.databaseRef,
+      filePath: entry.filePath,
+      fileIdentity: entry.fileIdentity,
+      instanceId: entry.bindingIdentity.instanceId,
+      actorLiveness: this.#actorLiveness(),
+      placement: entry.placement,
+      realmFingerprint: this.#realm.fingerprint,
+      sqlite: this.#sqlite,
+      ...(openAdmission === undefined ? {} : { openAdmission }),
+      ...(logging ? { logging } : {}),
+      ...(this.#authorityCommitFence ? { authorityCommitFence: this.#authorityCommitFence } : {}),
+    }, this.#realm);
   }
 
   async #closeEntryOnce(

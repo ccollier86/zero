@@ -1,5 +1,7 @@
 /** Runtime validation and normalization for DatabaseCoordinator construction. */
 
+import { types as utilTypes } from 'node:util';
+
 import { AuthorityCommitCoordinator } from './authority-commit-coordinator';
 import { DatabaseActorAuthorityContext } from './database-actor-authority-context';
 import {
@@ -13,6 +15,7 @@ import type {
 } from './database-coordinator-contract';
 import { DatabaseError } from './database-error';
 import type { DatabaseObservability } from './database-observability';
+import type { DatabaseOpenAdmissionResolver } from './database-open-admission';
 import {
   DATABASE_FILE_PLACEMENT_POLICY,
   type DatabasePlacementPolicy,
@@ -50,6 +53,7 @@ export interface NormalizedDatabaseCoordinatorConfig {
   readonly realm: DatabaseRealm;
   readonly operationCatalog: ReturnType<typeof createDatabaseRealmOperationCatalog>;
   readonly createExecutor: DatabaseExecutorFactory;
+  readonly openAdmission?: DatabaseOpenAdmissionResolver;
   readonly placementPolicy: DatabasePlacementPolicy;
   readonly sqlite: DatabaseActorSQLiteConfig;
   readonly readersEnabled: boolean;
@@ -97,6 +101,10 @@ export function normalizeDatabaseCoordinatorConfig(
       'DATABASE_CONFIG_INVALID',
       'Database executor factory is required.',
     );
+  }
+  if (options.openAdmission !== undefined && (typeof options.openAdmission !== 'function'
+    || utilTypes.isAsyncFunction(options.openAdmission) || utilTypes.isGeneratorFunction(options.openAdmission))) {
+    throw new DatabaseError('DATABASE_CONFIG_INVALID', 'Database open admission resolver must be synchronous.');
   }
 
   const maxDatabases = positiveInteger(
@@ -237,6 +245,7 @@ export function normalizeDatabaseCoordinatorConfig(
     realm: options.realm,
     operationCatalog,
     createExecutor: options.createExecutor,
+    ...(options.openAdmission === undefined ? {} : { openAdmission: options.openAdmission }),
     placementPolicy,
     sqlite,
     readersEnabled: options.readers !== false,
