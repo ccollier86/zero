@@ -52,7 +52,7 @@ export function retireJobSource(context: DatabaseWriteCommandContext, input: unk
       const next: JobSourceRow = { ...row, revision: nextJobInteger(row.revision), state: 'retired', updated_at: now };
       context.db.update('_jobs_sources', row.id, next);
       return { value: sourceRegistration(next, policy, identity), policyGeneration: row.current_generation };
-    });
+    }, 'recovery');
   });
 }
 
@@ -110,7 +110,7 @@ export function changeSourceJobSchedule(context: DatabaseWriteCommandContext, in
         { revision: next.revision, generation: next.generation, previousControl: row.control, control: next.control, ownership: 'service',
           sourceId: registry.id, policyGeneration: admitted.source!.generation, ...(admitted.initiatedBy === undefined ? {} : { initiatedBy: admitted.initiatedBy }) });
       return { value: sourceScheduleReceipt(next, admitted), policyGeneration: admitted.source!.generation };
-    });
+    }, r.action === 'cancel' ? 'recovery' : 'ordinary');
   });
 }
 

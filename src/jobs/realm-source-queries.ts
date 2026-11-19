@@ -2,11 +2,11 @@
 import type { DatabaseReadQueryContext } from '../databases/database-realm';
 import { JobsError } from './error';
 import { digest, jobAdmissionId, jobOccurrenceId, type JobAdmission, type JobAdmissionRow, type JobOccurrenceRow, type JobScheduleRow, type JobSeal } from './model';
-import { decodeJobAdmission, normalizeJobSeal } from './realm-model';
-import { jobSourceId, normalizeJobSourceIdentity, normalizeJobSourceOrigin, type JobSourceIdentity } from './source-model';
+import { decodeJobAdmission, JOB_LIMITS, normalizeJobSeal } from './realm-model';
+import { jobSourceId, normalizeJobSourceIdentity, normalizeJobSourceOrigin, type JobRetainedCapacity, type JobSourceCapacity, type JobSourceIdentity } from './source-model';
 import { assertSourceAdmission, assertSourceRow, assertSourceSchedule, decodeSourceIntent, decodeSourcePolicy,
-  sourceIntentId, sourcePolicyId, sourceRegistration, sourceScheduleReceipt, type JobSourceIntentRow, type JobSourcePolicyRow, type JobSourceRow } from './source-realm-model';
-import { jobInteger, jobRecord, jobScope, jobText, jobTime } from './validation';
+  JOB_SOURCE_LIMITS, JOB_SOURCE_RECOVERY_INTENTS_LIMIT, sourceIntentId, sourcePolicyId, sourceRegistration, sourceScheduleReceipt, type JobSourceIntentRow, type JobSourcePolicyRow, type JobSourceRow } from './source-realm-model';
+import { jobHash, jobInteger, jobRecord, jobScope, jobText, jobTime } from './validation';
 
 /** Broker-only transport. The native facade never returns admission input or a seal to its caller. */
 export interface JobSourceExecutionContext {
@@ -45,6 +45,23 @@ export function readSourceJobExecution(context: DatabaseReadQueryContext, input:
 export function getJobSource(context: DatabaseReadQueryContext, input: unknown) {
   const r = jobRecord(input, ['identity']), identity = normalizeJobSourceIdentity(r.identity), row = source(context, identity);
   return row ? sourceRegistration(row, policy(context, identity, row.current_generation), identity) : null;
+}
+
+/** Fixed-size owner/source proof and seven usage primary-key reads; no history scans,
+ * admissions, authority seals or source policy contracts are read or exposed. */
+export function readSourceJobCapacity(context: DatabaseReadQueryContext, input: unknown): JobSourceCapacity {
+  const r = jobRecord(input, ['identity']), identity = normalizeJobSourceIdentity(r.identity), row = source(context, identity);
+  const usage = context.database.query<{ count: number }>('SELECT count FROM _jobs_usage WHERE id=?');
+  const capacity = (id: string, limit: number): JobRetainedCapacity => {
+    const retained = usage.get(id);
+    let used: number;
+    try { used = retained ? jobInteger(retained.count) : 0; } catch { throw new JobsError('JOBS_STATE_INVALID'); }
+    return { used, limit, remaining: Math.max(0, limit - used) };
+  };
+  return { source: { id: jobSourceId(identity), registered: row !== null, schedules: capacity('source:' + jobHash(identity), JOB_SOURCE_LIMITS.schedules) },
+    file: { schedules: capacity('schedules', JOB_LIMITS.schedules), intents: capacity('intents', JOB_LIMITS.intents),
+      sourceRecoveryIntents: capacity('sourceRecoveryIntents', JOB_SOURCE_RECOVERY_INTENTS_LIMIT), occurrences: capacity('occurrences', JOB_LIMITS.occurrences),
+      sources: capacity('sources', JOB_SOURCE_LIMITS.sources), sourcePolicies: capacity('source-policies', JOB_SOURCE_LIMITS.policies) } };
 }
 
 /** Retired sources may still read and reconcile their immutable historical ownership. */

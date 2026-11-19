@@ -251,6 +251,15 @@ export class CalendarIntegrationCoordinator implements CalendarObservationExecut
     this.drainTask = task;
     void task.catch(() => { if (this.drainTask === task) this.drainTask = null; }); return task;
   }
+  /** @internal Physical native intake join, separately from bounded drain's
+   * diagnostics and shared Jobs/Torrent settlement. Attempt drain() first and
+   * preserve its rejection; this join grants no new source/effect authority.
+   */
+  async drainPhysicalIntake(): Promise<void> {
+    if (this.state !== 'quiescing' && this.state !== 'closed') throw new CalendarError('CALENDAR_NOT_READY');
+    await Promise.all([this.readiness.drainPhysical(), this.intake.drainPhysical(),
+      ...[...this.cells.values()].map(cell => cell.controller.drainPhysical())]);
+  }
   /** Final phase ONLY after shared Jobs callbacks and Torrent recovery/execution have stopped. */
   closeEvidence(): Promise<void> {
     if (this.evidenceCloseTask) return this.evidenceCloseTask;
@@ -260,6 +269,16 @@ export class CalendarIntegrationCoordinator implements CalendarObservationExecut
     })();
     this.evidenceCloseTask = task;
     void task.catch(() => { if (this.evidenceCloseTask === task) this.evidenceCloseTask = null; }); return task;
+  }
+  /** @internal AFTER Torrent stop/physical drain. Even if earlier bounded
+   * drainage refused, retire this final pool and join its actual bodies before
+   * any adjacent Jobs/Calendar provider closes. Earlier errors remain errors.
+   */
+  async drainPhysicalEvidence(): Promise<void> {
+    if (this.state !== 'quiescing' && this.state !== 'closed') throw new CalendarError('CALENDAR_NOT_READY');
+    this.evidenceStop.abort(new CalendarError('CALENDAR_NOT_READY'));
+    try { await this.evidence.close(); } catch { /* Native owner retains the separately reported bounded-close failure. */ }
+    await this.evidence.drainPhysical();
   }
   diagnostics() {
     return { state: this.state, retainedOwners: this.cells.size, maxOwners: this.maxOwners, scheduledAt: this.scheduled?.at ?? null,

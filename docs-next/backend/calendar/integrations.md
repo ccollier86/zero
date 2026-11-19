@@ -196,6 +196,48 @@ The existing `calendar: true` core remains independent of Jobs/Torrent, and fals
 remains inert. Installed-file upgrades, actual managed workers/browser/Linux
 execution and normal updater selection remain unqualified.
 
+### Private managed composition checkpoint
+
+The subsequent native factory now composes the actual Calendar core and logging
+source with the coordinator and exact dormant Jobs/Torrent owners. It is not
+selected by public configuration or mounted automatically. Framework composition
+registers the fixed observation graph purely, prepares Jobs with the exact
+branded source-only definition, and prepares Calendar inside the unpublished
+Torrent owner's before-recovery hook. It explicitly seals dependency attachment
+before permitting recovery. After publication, coordinator hydration precedes
+automatic Jobs dispatch. Disabled and ordinary core/logging-only Calendar keep
+their independent path; applications must not import this private factory.
+Startup checks the exact published Torrent service before and after asynchronous
+hydration. Missing, swapped or retired publication refuses startup; loss during
+a separate writer wait quiesces fresh eligibility without erasing accepted
+receipts. Recovered execution remains available before that publication check.
+
+The pin adapter uses native `pinRegistered`, not ordinary name precedence. It
+requires the exact registered code graph, explicit version, immutable graph
+content/fingerprint and application definition ownership. A same-named scoped
+database definition is rejected even when its version or fingerprint matches.
+Ordinary authored workflow resolution is unchanged.
+
+One shared cleanup owner retires Calendar facade/intake and Jobs intake, joins
+their actual bodies, stops/drains Torrent, then joins Calendar's raw evidence
+callbacks **before** final Jobs close and Calendar logging/Fabric disposal.
+Subordinate Calendar cleanup delegates to that owner. A rejected bounded pool
+close cannot let runtime cleanup continue underneath a still-running callback.
+Native `drainPhysicalIntake()` and `drainPhysicalEvidence()` have no success-by-
+timeout shortcut; bounded-close failures are still reported after physical
+settlement. A callback that never settles needs outer process containment, not
+a fictional clean close. Unsealed preparation failure cleans native dependencies
+without recursively stopping the Workflow initializer that is awaiting it.
+Partial Calendar provider ownership is retained before fallible facade/route
+publication. A refused final provider close may retry that same retired owner;
+completed physical joins, their failures and Workflow stop are not replayed.
+
+The source-owned Jobs capacity projection and separate finite recovery receipt
+headroom support this native lifetime. They do not finish public operator
+retire/reactivate/adoption, sustained retained-history capacity or large-catalog
+hydration. Those gates, actual managed authentication/logging, actors, browser,
+Linux deployment and exact-package/updater qualification remain open.
+
 ## Bounded claim → Jobs → acknowledgment
 
 `CalendarIntegrationDispatcher` uses explicit bounded batches and coalesced

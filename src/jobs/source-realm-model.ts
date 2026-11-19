@@ -18,6 +18,9 @@ export type JobSourceIntentRow = Row & {
   id: string; scope_id: string; source_id: string; policy_generation: number; digest: string; result_json: string; created_at: number;
 };
 export const JOB_SOURCE_LIMITS = Object.freeze({ sources: 1_024, policies: 10_000, schedules: 1_000 });
+/** Reserved finite recovery receipts: one cancellation/schedule plus retirement headroom
+ * for retained policy generations and source identities. No history is reclaimed. */
+export const JOB_SOURCE_RECOVERY_INTENTS_LIMIT = JOB_LIMITS.schedules + JOB_SOURCE_LIMITS.policies + JOB_SOURCE_LIMITS.sources;
 export function sourcePolicyId(id: string, generation: number): string { return id + ':' + generation; }
 export function sourceIntentId(identity: JobSourceIdentity, requestId: unknown): string { return jobHash(['source', jobSourceId(identity), jobKey(requestId)]); }
 
@@ -84,7 +87,7 @@ export function decodeSourceIntent(row: JobSourceIntentRow, identity: JobSourceI
 }
 /** The semantic hash omits wall clock/proof freshness; permanent results precede policy/CAS checks. */
 export function sourceIntent<T>(context: DatabaseWriteCommandContext, identity: JobSourceIdentity, requestId: unknown, intent: unknown,
-  now: number, run: () => { value: T; policyGeneration: number }): T {
+  now: number, run: () => { value: T; policyGeneration: number }, budget: 'ordinary' | 'recovery' = 'ordinary'): T {
   const id = sourceIntentId(identity, requestId), hash = jobHash(intent), prior = context.db.get('_jobs_source_intents', id) as JobSourceIntentRow | null;
   if (prior) {
     if (prior.digest !== hash) throw new JobsError('JOBS_INTENT_CONFLICT');
@@ -92,7 +95,11 @@ export function sourceIntent<T>(context: DatabaseWriteCommandContext, identity: 
     if (!policy) throw new JobsError('JOBS_STATE_INVALID'); decodeSourcePolicy(policy, identity, prior.policy_generation);
     return decodeSourceIntent(prior, identity) as T;
   }
-  jobBudget(context, 'intents', JOB_LIMITS.intents);
+  // The immutable namespace/digest/result and original-key replay remain shared
+  // with historical receipts. Only new native cancel/retire commands reserve
+  // separate headroom; neither this budget nor ordinary admission is unlimited.
+  jobBudget(context, budget === 'recovery' ? 'sourceRecoveryIntents' : 'intents',
+    budget === 'recovery' ? JOB_SOURCE_RECOVERY_INTENTS_LIMIT : JOB_LIMITS.intents);
   const result = run(), json = jobJson(result.value);
   context.db.createStrict('_jobs_source_intents', { id, scope_id: identity.scopeId, source_id: jobSourceId(identity),
     policy_generation: result.policyGeneration, digest: hash, result_json: json, created_at: now });

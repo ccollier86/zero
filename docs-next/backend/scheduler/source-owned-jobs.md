@@ -79,6 +79,12 @@ The private `JobsService.forSource` surface supports:
   Cron/source recurrence is deliberately rejected by this first integration.
 - Current schedule inspection and original command-receipt reconciliation, even
   after retirement or cancellation. Evidence reads do not run current parsers.
+- Private `capacity.get()` returns per-source schedules and shared-file retained
+  budget usage/limits/remaining. It verifies the existing owner and uses seven
+  usage primary-key lookups, not history scans. Missing existing Jobs storage
+  returns `null`, not an invented empty/provisioned database. Registration
+  presence is not proof that a source is currently eligible or active. No seal,
+  executable contract, scheduling input or other source identity is exposed.
 - Bounded original occurrence execution evidence: `executions.get` proves the
   exact MAC-sealed Torrent start key, including before Jobs' dispatch
   acknowledgment. It returns safe IDs/pin/hash/status, never authority seals or
@@ -90,6 +96,34 @@ ID/generation/revision/policy hash after waits and retain the same live binding
 at the final writer edge. This prevents delayed old work acquiring a newer epoch.
 See the [private calendar protocol](../calendar/integrations.md) for a concrete
 observation-only consumer, not an activated application adapter.
+
+### Bounded recovery headroom
+
+The next branch-source pass keeps the existing 100,000 ordinary receipt budget
+and adds a **separate 21,024-receipt native source recovery allowance**:
+10,000 retained schedules + 10,000 source policy generations + 1,024 sources.
+Only source cancellation and retirement use that allowance. Registration,
+creation and readmission still use the ordinary budget; request-oriented Jobs
+contracts do not gain source control authority.
+
+An ordinary-capacity refusal must not by itself prevent a new cancel/retire
+receipt. Original-key lookup still happens first in the same immutable receipt
+namespace, with unchanged IDs, intent digests, results and scope/owner fences.
+Replays spend neither budget. Historic controls charged to the old shared
+counter remain there; they are not relabelled, recounted or refunded. New
+recovery receipts use their own additive usage key in the existing accounting
+table. No migration closure, declaration map or historical evidence is changed.
+Registering the new private query does change the Jobs realm declaration
+fingerprint. Existing retained metadata still requires the normal explicit
+upgrade permission; this does not bypass `migrate:false` or repair a missing
+established file. Physical installed-file adoption remains a qualification gate.
+
+This allowance is finite headroom, **not unlimited emergency admission or a
+sustainable archive/retention solution**. If it also fills, new controls fail
+closed while existing receipt reconciliation remains available. Capacity reads
+are observations, not reservations. Native operators must expose pressure and
+unsettled work; never delete receipts, rotate identities or blindly replay an
+unknown effect to make capacity appear available.
 
 Activation replay alone never reinstalls a retired/superseded generation.
 Source controls and the existing runner share the same per-schedule gate.

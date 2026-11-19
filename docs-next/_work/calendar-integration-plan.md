@@ -791,17 +791,40 @@ Current managed-coordinator integration checklist, not a reminder/provider adapt
 3. **Implemented in the private envelope:** indexed startup discovery and one
    coalesced absolute wake, future retries/expired claims and durable fairness.
    Resolve larger catalog hydration and shared retained capacity before public activation.
-4. **Native phases implemented; managed calendar composition pending:** the
+4. **Native managed phases implemented; public mounting pending:** the
    quiesce/drain/final-close boundaries keep Calendar and Jobs evidence
    available until physical callbacks and recovered Torrent work settle. Current
    controller/dispatcher close is not a shared physical drain certificate. Jobs
    now tracks actual callback settlement separately from cancelled callers.
    Torrent's native physical barrier also retains ignored/late invocation bodies
    after compatibility disposal grace; managed Jobs joins it before final close.
-5. Add explicit retire-before-disable/operator inspection, retained-capacity
-   handling and bounded/lazy owner hydration before opening configuration.
+5. **Native capacity projection/recovery headroom implemented; operator controls
+   pending:** add explicit retire-before-disable/adoption, sustainable retained-
+   capacity handling and bounded/lazy owner hydration before opening configuration.
 6. Qualify actual actors, interruption/restart, managed logging, browser, Linux
    bundle, exact archive and updater after storage integrity is verified.
+
+The next implementation decision is private managed composition, not public
+activation. A two-phase Calendar core owner composes logging and integration
+sources inside the exact unpublished Torrent owner's dependency hook, after
+dormant Jobs preparation. Pure fixed workflow registration and an exact branded
+Jobs catalog precede that hook. Native code pins must reject scoped name
+shadowing, not merely match a name/version. Dependency attachment is explicitly
+sealed before recovery; coordinator hydration precedes automatic Jobs startup.
+One shared lifecycle owns Calendar intake, actual Jobs callbacks, Torrent
+invocations, raw Calendar evidence callbacks and final providers, in that order.
+No subordinate runtime cleanup may bypass an unsettled physical barrier.
+
+Capacity review also found that the ordinary receipt ceiling could prevent
+new cancel/retire operations. Add separate bounded source recovery headroom of
+21,024 receipts, retaining the existing ordinary 100,000 budget, immutable
+receipt namespace and every historical counter. Only cancel/retire use it;
+new registration/create/readmission remain ordinary. Add a private existing-only
+capacity projection using fixed usage primary-key reads. This is finite recovery
+headroom, not a solution for indefinite retained history or automatic reminders.
+Sustainable retained-capacity, operator retire/adopt/reactivate and larger owner
+hydration still gate public activation. No public configuration, application
+deployment or release selection is part of this checkpoint.
 
 Each stage gets source/type tests and focused review before proceeding. Public
 activation and the physical/deployment gates above remain future requirements.

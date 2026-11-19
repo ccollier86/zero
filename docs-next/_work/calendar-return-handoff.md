@@ -101,7 +101,16 @@ original controls, handles live retirement, keeps historical execution available
 before startup/after intake drainage, and refuses stale config resurrection.
 Its current 64-owner envelope/shared retained Jobs limits remain explicit.
 
-Resume with actual managed calendar/config composition and operator
+The following private managed factory now composes the core/logging source and
+coordinator with the exact dormant Jobs and unpublished Torrent owners. It adds
+fixed registered-code pin proof, sealed dependency attachment and one phased
+teardown owner that joins raw Calendar evidence callbacks before final Jobs
+close. Separate bounded source-recovery receipts keep ordinary receipt pressure
+from immediately blocking cancellation/retirement; a private capacity projection
+reports retained accounting without history scans. No public automation selection
+is enabled and this finite headroom does not solve indefinite retained history.
+
+Resume with public managed configuration and operator
 retire/reactivate-before-disable controls, larger catalog hydration and sustainable
 retained-capacity management. See stage 14 of the [integration plan](./calendar-integration-plan.md#14-delivery-stages-and-acceptance-gates).
 Physical/package qualification still requires storage recovery. No main/updater,

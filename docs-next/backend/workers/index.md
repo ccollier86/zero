@@ -67,6 +67,15 @@ the [review and qualification record](../../_work/durable-jobs-and-workers-plan.
 before relying on a newer package. Cancellation still retains physical capacity
 until the actual callback/process settles, and a retired audit frame stays retired.
 
+The unreleased calendar-integration branch also adds native
+`WorkPool.drainPhysical()` after intake closure. `close()` retains its existing
+bounded grace and can reject with an unknown drain outcome. The separate barrier
+joins actual callback bodies without a timeout or database/authority access;
+call it outside those callbacks and only after attempting `close()`. It rejects
+while intake is still open. Keep adjacent providers alive until it settles, and
+preserve the earlier bounded-close error rather than relabelling it success.
+This is not process containment, detached-work tracking or a durable queue.
+
 ## Fixed task catalog
 
 Example side-effect-free `server/worker-tasks.ts`, shared by parent and child:

@@ -193,6 +193,16 @@ export class WorkPool {
     return closing;
   }
 
+  /** @internal Native dependency barrier AFTER close has retired intake.
+   * Caller cancellation and a rejected shutdown grace do not settle a callback.
+   * No timeout, persistence, authority or detached-work inference is involved.
+   * Never await this barrier from one of this pool's own callbacks.
+   */
+  async drainPhysical(): Promise<void> {
+    if (this.state === 'open') throw new WorkerError('WORKER_NOT_READY', 'Close work-pool intake before joining its physical callbacks.');
+    while (this.active.size) await Promise.all([...this.active].map(entry => entry.finished));
+  }
+
   private removeQueued(entry: Entry): void {
     const queue = this.waiting.get(entry.key), index = queue?.indexOf(entry) ?? -1;
     if (index < 0) return;

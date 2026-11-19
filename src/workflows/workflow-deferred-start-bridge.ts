@@ -42,6 +42,10 @@ export class WorkflowDeferredStartBridge {
   pin(authority: WorkflowPersistedExecutionAuthority, name: string, input: unknown, version: number): WorkflowPinnedStart {
     this.assertCurrent(authority); const pin = this.dependencies.graph.pinStart(name, input, authority, version); this.assertCurrent(authority); return pin;
   }
+  /** Native fixed catalogs must prove their current registered code graph, never select a scoped database shadow. */
+  pinRegistered(authority: WorkflowPersistedExecutionAuthority, name: string, input: unknown, version: number): WorkflowPinnedStart {
+    this.assertCurrent(authority); const pin = this.dependencies.graph.pinRegisteredStart(name, input, authority, version); this.assertCurrent(authority); return pin;
+  }
   seal(authority: WorkflowPersistedExecutionAuthority, binding: string): WorkflowAuthoritySeal {
     this.assertCurrent(authority); return this.dependencies.authority.store.sealAuthority(DOMAIN, authority, bound(binding));
   }

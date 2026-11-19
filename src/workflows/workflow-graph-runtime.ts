@@ -10,6 +10,7 @@ import type { CompiledWorkflowDefinition } from './workflow-compiler';
 import type { WorkflowAccessPrincipal } from './workflow-access';
 import { workflowAccessPrincipalFromExecutionIdentity } from './workflow-access';
 import type { WorkflowPinnedStart } from './workflow-deferred-start-contract';
+import { isApplicationWorkflowDefinition } from './workflow-definition-scope';
 import { WorkflowError } from './workflow-error';
 import type { WorkflowPersistedExecutionAuthority } from './workflow-execution-authority';
 import type { StartWorkflowGraphOptions } from './workflow-graph-definition-resolver';
@@ -156,6 +157,31 @@ export class WorkflowGraphRuntime {
     const target = this.hasPersistedDefinition(name, authority) || !compiled ? name : compiled;
     const resolved = this.starts.resolveStart(target, input, authority, workflowAccessPrincipalFromExecutionIdentity(authority.identity), { version });
     return Object.freeze({ name: resolved.catalog.name, version: resolved.version.version_number, definitionId: resolved.catalog.definition_id,
+      versionId: resolved.version.version_id, fingerprint: resolved.version.fingerprint });
+  }
+
+  /** @internal Fixed native catalogs require their exact registered code graph, not normal scoped name precedence.
+   * Read-only and available before recovery: publication belongs to normal runtime construction.
+   */
+  pinRegisteredStart(name: string, input: unknown, authority: WorkflowPersistedExecutionAuthority, version: number): WorkflowPinnedStart {
+    this.assertAvailable();
+    if (!Number.isSafeInteger(version) || version < 1) throw new WorkflowError('A durable start requires an explicit graph version', 'WORKFLOW_REQUEST_INVALID', 422);
+    const compiled = this.registry.getCompiledWorkflow(name);
+    if (!compiled) throw new WorkflowError('Registered workflow is not available', 'WORKFLOW_VERSION_NOT_FOUND', 404);
+    if (compiled.authoringSource !== 'code' || compiled.format === 'legacy' || compiled.version !== version) {
+      throw new WorkflowError('Registered workflow does not match the fixed code version', 'WORKFLOW_VERSION_CONFLICT', 409);
+    }
+    this.starts.assertRegisteredNamespaceCurrent(name, authority);
+    const resolved = this.starts.resolveStart(compiled, input, authority, workflowAccessPrincipalFromExecutionIdentity(authority.identity), { version, source: 'code' });
+    if (resolved.catalog.name !== name || resolved.catalog.source !== 'code' || !isApplicationWorkflowDefinition(resolved.catalog)
+      || resolved.version.source !== 'code' || resolved.version.definition_id !== resolved.catalog.definition_id
+      || resolved.version.version_number !== version || resolved.version.graph_format !== compiled.format
+      || resolved.version.schema_version !== compiled.graph.schemaVersion || resolved.version.fingerprint !== compiled.fingerprint
+      || resolved.version.graph_json !== compiled.graphJson) {
+      throw new WorkflowError('Registered workflow does not match its immutable code version', 'WORKFLOW_VERSION_CONFLICT', 409);
+    }
+    this.starts.assertRegisteredNamespaceCurrent(name, authority);
+    return Object.freeze({ name, version, definitionId: resolved.catalog.definition_id,
       versionId: resolved.version.version_id, fingerprint: resolved.version.fingerprint });
   }
 

@@ -12,7 +12,7 @@ import type { JobsRuntime } from './runtime';
 import { normalizeScheduleTiming } from './schedule-time';
 import { assertJobSourceEligible, assertJobSourceOwner, confirmJobSource, requireJobSource, type TrustedJobSource } from './source-authority';
 import { jobSourceId, jobSourcePrincipal, jobSourceScheduleId, normalizeJobSourceContract, normalizeJobSourceInitiator,
-  type JobSourceContract, type JobSourceExecutionEvidence, type JobSourceRegistration, type JobSourceScheduleReceipt } from './source-model';
+  type JobSourceCapacity, type JobSourceContract, type JobSourceExecutionEvidence, type JobSourceRegistration, type JobSourceScheduleReceipt } from './source-model';
 import type { JobSourceExecutionContext } from './realm-source-queries';
 import { jobDigest, jobHash, jobInput, jobInteger, jobKey, jobRecord, jobText, jobTime } from './validation';
 import { isKnownJobMutationRejection, sourceGateMutation } from './source-gate';
@@ -29,6 +29,8 @@ interface SourceScheduleRevisionOptions extends SourceScheduleOptions { readonly
 export interface SourceJobInput { readonly input: unknown; readonly at: string; readonly maxLatenessMs?: number; readonly initiatedBy?: string }
 /** Private evidence/control surface; it is not a request API or an alternative general scheduler. */
 export interface SourceJobs {
+  /** Existing-only owner-authorized accounting; absence never provisions an empty scope. */
+  readonly capacity: { get(): Promise<JobSourceCapacity | null> };
   readonly registration: {
     get(): Promise<JobSourceRegistration | null>;
     /** Owner-only original register/retire receipt after earlier source-gate callbacks settle. Does not quiesce future/pre-gate admission. */
@@ -177,6 +179,7 @@ export class JobsSourceBroker {
       }, { key: jobGateKey(source.scope, scheduleId), signal: opts.signal });
     };
     return Object.freeze({
+      capacity: Object.freeze({ get: () => read<JobSourceCapacity | null>('jobs.source.capacity', { identity: source.identity }) }),
       registration: Object.freeze({
         get: () => read<JobSourceRegistration | null>('jobs.source', { identity: source.identity }),
         reconcile: (key: string, options?: SourceEvidenceOptions) => reconcile('registration', key, options) as Promise<JobSourceRegistration | null>,

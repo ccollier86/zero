@@ -168,6 +168,10 @@ export class CalendarIntegrationPolicyController {
     this.quiesce(); const task = this.pool.close(); this.closeTask = task;
     void task.catch(() => { if (this.closeTask === task) this.closeTask = null; }); return task;
   }
+  /** @internal Join actual controller callbacks after close was attempted.
+   * A bounded close rejection must be reported separately, not relabelled clean.
+   */
+  drainPhysical(): Promise<void> { return this.pool.drainPhysical(); }
   diagnostics() { return { closing: this.closing, rules: this.cells.size, retirementMarkers: this.retirements.size, pool: this.pool.status() }; }
 
   private run<T>(ruleId: string, work: () => Promise<T>): Promise<T> {

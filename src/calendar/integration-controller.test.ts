@@ -35,7 +35,7 @@ async function fixture() {
     const jobs = (policy: CalendarIntegrationPolicySpec, guards: CalendarIntegrationEligibilityGuards): SourceJobs => {
       factoryCalls++; bindings.push({ policy, guards });
       const sourceId = jobSourceId(policy.source.identity), keyFor = (key: string) => sourceId + ':' + key;
-      return { registration: {
+      return { capacity: { async get() { throw new Error('Controller does not request capacity in this fixture.'); } }, registration: {
         async get() { assertNoLease(); return currents.get(sourceId) ?? null; },
         async reconcile(key) { assertNoLease(); return receipts.get(keyFor(key)) ?? null; },
         async activate(options) {

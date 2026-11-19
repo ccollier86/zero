@@ -303,6 +303,7 @@ export async function mountPlatformServices({
         async beforeRecovery(workflows, { signal }) {
           signal.throwIfAborted();
           preparedJobs.owner = await prepareManagedJobs(app, runtime, config, workflows, async () => { await workflowLifecycle.stop?.(); });
+          preparedJobs.owner?.sealDependencies();
           signal.throwIfAborted();
         },
       });

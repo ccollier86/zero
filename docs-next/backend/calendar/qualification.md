@@ -18,6 +18,68 @@ This is feature-branch evidence, not a release certificate. No calendar backend
 archive has been selected by normal `zero-update`, and no application deployment
 or data migration is authorized by these checks.
 
+## November 18 private managed composition and recovery-capacity checkpoint
+
+The subsequent source phase composes the actual native Calendar core/logging
+source, bounded coordinator, dormant Jobs owner and exact unpublished Torrent
+service through a private preparation factory. Public configuration does not
+select it; ordinary Calendar remains independent of Jobs/Torrent. No provider
+send, recurrence, reminder, public booking or hosted-demo change is enabled.
+
+The reviewed boundaries include:
+
+- Exact branded source-only Jobs catalog composition and a registered-code pin
+  proof that rejects same-name scoped database graphs, even when fingerprints
+  match. Generic authored-workflow pin precedence is unchanged.
+- One construction-time dependent, explicitly sealed before recovery. Failed
+  unsealed preparation may clean itself without recursively stopping its own
+  Workflow initializer; dormant runner state alone never proves recovery absent.
+- The exact published Workflow owner is checked before and after asynchronous
+  startup. Missing/swapped/retired publication refuses new work; loss during
+  startup quiesces eligibility and retains accepted Jobs evidence.
+- Shared teardown retires Calendar/Jobs intake, joins actual intake and Jobs
+  callbacks, stops/physically drains Torrent, and joins raw Calendar evidence
+  bodies before final Jobs and Calendar providers. Bounded pool-close failure
+  remains a failure, not physical completion or permission to bypass the join.
+- Partial provider ownership is retained before fallible facade/route setup.
+  A failed Calendar provider close can retry that exact retired provider without
+  repeating completed physical shutdown or Workflow stop.
+- The generic native WorkPool barrier requires retired intake and has no
+  timeout, database operation or authority-restoration side effect. Earlier
+  callback rejection is consumed; detached unawaited work remains out of scope.
+- Ordinary source receipt pressure cannot consume the new separate 21,024
+  cancellation/retirement allowance. Existing ordinary limits, original receipt
+  namespace/digest/results and historical accounting remain intact. Exhausted
+  recovery capacity still refuses new controls atomically; this is not an
+  indefinite-history or archive solution.
+- Private capacity inspection uses existing-only routing, exact owner/source
+  proof and fixed usage primary-key reads, without seals, inputs or history
+  scans. Missing storage remains absent; source presence is not eligibility.
+
+The expanded domain memory run passed **876 tests, 17,128 assertions, 101 files**
+in 165.28 seconds. This run deliberately excludes the app-composition files that
+were still under review. After their final publication guard, the focused native
+managed Calendar/Jobs, before-recovery and request-security set passed **49 tests,
+390 assertions, six files** in 12.53 seconds. These are distinct runs, not additive
+test totals. Earlier app fixture spelling/expectation failures and an assertion
+about a void return value were corrected, not relabelled as original passes.
+
+The final no-emit TypeScript graph passed with **398 roots, 3,999 source files
+and zero diagnostics**, with emission and incremental output disabled.
+Documentation validation passed for **907 pages**, all reachable, with zero
+structural problems. `git diff --check` is clean.
+
+Every new fixture releases and joins its synthetic work on setup failure and
+normal/failing teardown. No dependency install, generated build, file-backed
+fixture, Docker resource, preview server or archive was created. Only source
+and small textual evidence in these guides are retained.
+
+These are synthetic source/memory checks, not full managed `createApp`, physical
+Fabric actors, installed-file upgrades, browser or bundled Linux qualification.
+Those and exact-archive/updater selection remain unexecuted under the unchanged
+filesystem-integrity hold. The private owner/capacity bounds and operator
+adoption/retirement procedure remain public-activation gates.
+
 ## November 18 managed dependency and native coordinator checkpoint
 
 The next source pass implements dormant managed Jobs preparation before Torrent
