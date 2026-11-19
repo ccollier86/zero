@@ -18,6 +18,7 @@ import { assertCalendarBookingType, bindCalendarHoldType, calendarAppointmentTyp
   assertCalendarTypePolicy, normalizeCalendarTypedBooking, normalizeCalendarTypedIntentInterval, readCalendarHoldTypeSnapshot } from './appointment-type-bindings';
 import { assertCalendarBookingVisit, assertCalendarVisitPolicy, bindCalendarHoldVisit, calendarHoldVisit, calendarVisitInput, readCalendarHoldVisitSnapshot } from './visit-bindings';
 import { bindCalendarHoldParticipants, calendarHoldParticipants, calendarParticipantReferences, requireCalendarParticipantManager } from './participant-bindings';
+import { assertCalendarResourceLocationCoverage } from './location-policies';
 
 function receipt(requestId: string, operation: CalendarCommandReceipt['operation'], id: string, revision: number, changed = true): CalendarCommandReceipt {
   return { requestId, operation, id, revision, changed };
@@ -68,6 +69,7 @@ export function acquireCalendarHold(context: DatabaseWriteCommandContext, input:
       const now = calendarNow();
       if (acceptedInterval.startMs <= now) throw new CalendarError('CALENDAR_INPUT_INVALID');
       assertCalendarBookingType(context, actor, resourceIds, acceptedInterval, appointmentType);
+      assertCalendarResourceLocationCoverage(context, actor.scopeId, resourceIds, visitRef, acceptedInterval);
       const visit = assertCalendarBookingVisit(context, actor, resourceIds, visitRef);
       assertLiveQuota(context, actor, now);
       assertCalendarAvailability(context, actor.scopeId, resourceIds, acceptedInterval);

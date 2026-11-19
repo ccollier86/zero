@@ -22,6 +22,7 @@ interface CalendarAuditMetadata {
   readonly participantCount?: number;
   readonly participantsChanged?: boolean;
   readonly availabilityKind?: 'explicit-utc-v1' | 'weekly-local-v1';
+  readonly locationPolicyKind?: 'static-v1' | 'effective-utc-v1';
   readonly windowCount?: number;
   readonly titleChanged?: boolean;
   readonly resourcesChanged?: boolean;
@@ -48,6 +49,7 @@ export function appendCalendarSemanticAudit(context: DatabaseWriteCommandContext
   if (metadata.participantCount !== undefined) values.participantCount = metadata.participantCount;
   if (metadata.participantsChanged !== undefined) values.participantsChanged = metadata.participantsChanged;
   if (metadata.availabilityKind !== undefined) values.availabilityKind = metadata.availabilityKind;
+  if (metadata.locationPolicyKind !== undefined) values.locationPolicyKind = metadata.locationPolicyKind;
   if (metadata.windowCount !== undefined) values.windowCount = metadata.windowCount;
   for (const key of ['titleChanged', 'resourcesChanged', 'occupancyChanged', 'timeZoneChanged', 'typeChanged'] as const) {
     if (metadata[key] !== undefined) values[key] = metadata[key];

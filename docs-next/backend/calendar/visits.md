@@ -103,6 +103,13 @@ location whose requested version is no longer current/active returns
 client-selected catalog generation; hidden IDs are not an existence oracle.
 Review current choices instead of blindly retrying under a new key.
 
+Assignments can now be explicit all-time or effective-UTC policies. Fresh in-person
+admission must cover the whole buffered occupied interval on every resource;
+directory membership alone is not that proof. `locations.forVisit` can filter by
+explicit occupied UTC bounds, while omission remains directory discovery only.
+See [Effective location policies](./location-policies.md) for versioned authoring,
+private discovery, static compatibility and accepted-history preservation.
+
 Holds capture their fixed visit at acquisition. Confirmation accepts only the
 normal title, rechecks the captured visit/type/resource/expiry state and transfers
 the exact binding through the canonical appointment writer before consuming the

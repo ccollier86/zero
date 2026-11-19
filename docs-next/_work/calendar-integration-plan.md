@@ -68,7 +68,7 @@ demo change is implied by framework completion.
 | F1 | **Existing-owner and lifecycle admission.** Reject stale physical schema/ledger or wrong/missing/substituted owner before write-capable open/preparation. Explicit setup can migrate only after proving established ownership. Retired rules do not block unrelated bookings; removed active rules require review without orphaning accepted/unknown evidence. Zero-rule evidence-only recovery remains possible. | Source-atomic operator requests, ordered physical drain, read-only native cold admission and readiness/evidence split implemented/source checked. Physical rejection proof unexecuted. |
 | F2 | **Working versus durable-history capacity.** Completed history must not exhaust a live-work quota. Preserve original schedule/receipt/Torrent identities and factual historical counters. Bound active/unknown/review occupancy, expose pressure, keep retirement/reconciliation headroom and use an explicit configurable storage/history budget. More than 1,000 completed reminders on one unchanged source must remain readable and permit new work. Scale resident owner/capability hydration separately from retained files. | Additive Jobs003/004, finite policy/writer conservation, native read-only attachment, physical pins, SYSTEM wake coverage, bounded resident eviction and demand hydration are source/MEMORY checked. Source-control and schedule pools have independent finite capacity. Historical evidence/identities survive idle release. Actual file/actor/performance qualification remains open. |
 | F3 | **Managed activation, adoption and controls.** Wire the existing dormant Calendar/Jobs/Torrent owner into normal startup, typed opt-in config, authorized operator API/SDK and clear readiness. Add read-only adoption planning, explicit prepare/retire/reactivate/disable procedure and Doctor checks. Unknown/nonterminal work prevents a false safe-disable result. | Private owner/inspection/audited acceptance and fresh/populated staged-migration repair are source implemented. Calendar now admits the original 001–016 boundaries with unchanged hashes and a retained pre-manifest016 pin. Public feature configuration/mount, adoption/disable procedure and Doctor remain gated on the actual F5/F7 capabilities, not the private observation exemplar. |
-| F4 | **Complete canonical scheduling commands.** Support the rich editor's persisted fields through one atomic update contract, current resource/type/visit/participant policy, receipts and semantic evidence. Independent override permission/reason; retain history. Add local-date all-day handling and reviewed effective eligibility where supported. No sequential saves presented as atomic or raw CRUD bypass. | Atomic016 rich edits and canonical017 untyped all-day appointment writers, sealed date history/current projection, date-native queries, HTTP/SDK/live hooks and connected editor/lanes are source implemented with focused MEMORY/native HTTP checks. Combined final checking is recorded in qualification. Independent override, effective eligibility and physical/browser qualification remain required; holds/blocks are still timed-only. |
+| F4 | **Complete canonical scheduling commands.** Support the rich editor's persisted fields through one atomic update contract, current resource/type/visit/participant policy, receipts and semantic evidence. Independent override permission/reason; retain history. Add local-date all-day handling and reviewed effective eligibility where supported. No sequential saves presented as atomic or raw CRUD bypass. | Atomic016 rich edits, canonical017 untyped all-day appointments and canonical018 effective resource/location policy are source implemented through final writers, bounded queries, HTTP/SDK/live hooks and connected rich editor behavior. Final checking is recorded in qualification. Independent override and physical/browser qualification remain required; holds/blocks are still timed-only. |
 | F5 | **Series and coverage.** Standards-tested daily/weekly/monthly/yearly engine, nominal occurrence identity, exceptions, one/future/all edits and split lineage. Bounded all-resource materialization commits conflicts consistently; expose durable coverage, not unbounded free-time promises. Existing Jobs/Torrent extends horizons without a second Calendar timer system. | Private bounded timed engine/conformance source checked. Reviewed implementation design below specifies immutable versions, staged atomic publication, explicit one/future/all semantics and sparse UTC coverage. No series persistence, automatic coverage or facade/UI activation yet. |
 | F6 | **Authoritative self-booking and invitations.** Real bounded offers, member/invitation/approved-guest proof, notice/horizon/type/recipient policy, abuse limits, actual any-provider allocation, expiry and atomic confirmation. Explicit pending-review capacity semantics and approve/reject. Hash/revoke capabilities; no private busy/detail leak or staff-audit requirement for public artwork. | Authenticated subject-bound holds/confirm source checked. Offers/proofs/review/RSVP/public routes and native booking UI queued. |
 | F7 | **Actual effects and optional service adapters.** Versioned source-owned reminder/transition rules, immutable due/lateness, fresh recipient/domain checks after waits, native notification/email adapters and exact supersede/cancel/reconciliation. Partial acceptance and unknown SMTP remain distinct; manual review never invents provider evidence. Storage/presence/contact/AI adapters are optional and admitted explicitly. | Observation-only cutoff/recovery source checked. No actual reminder/channel, invitation or AI adapter is enabled. |
@@ -629,8 +629,9 @@ Keep `001`–`016` maps/functions, timed payloads, normal receipt digests, half-
 occupancy and historical interpretation intact. Canonical `017` is now registered
 with the complete untyped appointment writer, read/transport and connected UI
 path. Its pure compiler remains a conversion helper, not booking authority.
-The series family must follow 017; no series schema or capability is enabled by
-this all-day package. Both genuine pre-manifest and staged016 policy identities
+The series family must follow the latest reviewed F4 migration (currently018);
+no series schema or capability is enabled by the all-day/effective-location packages.
+Both genuine pre-manifest and staged016 policy identities
 remain retained. Source/MEMORY integration is not physical/browser/package release.
 
 **LocalDate authority.** The private input is
@@ -733,12 +734,12 @@ admission but still requires current object/view authority and grants no new pow
 The UI obtains current allowed actions, requests a reason/review and uses the same
 async owner/receipt/unknown boundary; declining that interaction performs no write.
 
-**Remaining eligibility, not a new identity/provider system.** Current source
+**Effective eligibility, not a new identity/provider system.** Current source
 already enforces active resources, all-resource grants, pinned active type duration/
 buffers, common active in-person location versions, bounded weekly-local hours/date
 overrides, blocks/live holds and synchronous SYSTEM checks for newly added native
 participants. Do not rewrite these as another permission engine or reinterpret
-resource owner/profile preferences as clinical credentials. The remaining native
+resource owner/profile preferences as clinical credentials. The implemented 018 native
 geographic increment is scope-owned versioned effective resource/location assignment
 coverage, admitted against the whole resulting occupied interval under the same
 resource revision and writer decision. Legacy static assignments retain their
@@ -754,6 +755,26 @@ and meaningful occupancy/resource/visit changes revalidate the resulting candida
 Unchanged history, cancellation, receipt reconciliation and unrelated title edits
 must not require fresh target eligibility. Keep newly added participant checks and
 their existing SYSTEM final fence separate from retained unavailable references.
+
+Canonical 018 supplies `locations.policy.get/replace/watch` and the corresponding
+private native HTTP/SDK/hook surface. The closed formats are `static-v1` and
+`effective-utc-v1`, with bounded normalized UTC windows per location. The original
+004 directory union keeps its facet/visibility role, while explicit legacy versus
+policy selectors and immutable source/window history own eligibility. Original
+017 data and receipts are preserved; new resource creation initializes its selector
+in the same transaction. Adopted state cannot disappear into a legacy fallback.
+Fresh legacy replacement refuses an effective policy after original receipt
+reconciliation. Explicit static policy is the deliberate downgrade path.
+
+`locations.forVisit` accepts optional occupied UTC bounds and qualifies the whole
+common set before pagination. Omission remains directory discovery, not free-time
+or all-time eligibility. The connected rich editor uses representable timed bounds
+with buffers and unchanged all-day frozen facts; new/changed LocalDates disclose
+save-time eligibility rather than guessing UTC in the browser. All native final
+writers still enforce the exact policy. See the
+[effective-location contract](../backend/calendar/location-policies.md) and
+[qualification record](../backend/calendar/qualification.md). Management UI and
+independently permitted conflict override remain separate unfinished work.
 
 After the pure compiler, review the actual current-schema migration and canonical
 interval/override/assignment contracts before implementation. Qualify populated
@@ -860,6 +881,24 @@ slab; it need not materialize every intervening date or wait for wall-clock time
 Resource/time/rule/exception changes invalidate the relevant proof atomically;
 ordinary live reservations still use fresh conflict checks. Missing working-hours
 coverage is separately qualified from its exact retained policy generation.
+
+Finite weekly working-hours coverage and effective-location windows are authored
+authority, not disposable caches. Automatic series continuation must never move
+their end dates or reinterpret missing coverage as unrestricted. A rolling source
+format would need its own explicit reviewed policy contract. Preserve these
+independent fences when qualifying a later series occupancy slab.
+
+The current bounded pure expander restarts from DTSTART and has a 4,096-candidate
+work ceiling. It is not, unchanged, a durable continuation protocol: sparse rules,
+invalid local dates or gaps can exhaust work without emitting a reservation.
+Before automatic materialization, persist source/engine/generation-bound progress
+that advances over examined nominal candidates even when none are emitted. Keep
+RRULE valid-occurrence counting distinct from EXDATE/additional-date handling;
+do not refund COUNT for an excluded occurrence or consume it for an added one.
+An unqualified cursor cannot issue a UTC coverage certificate, and caller-authored
+cursors/compiled cells cannot authorize native writes. Test zero-output batches,
+long sparse histories, engine replacement and recovery without a forever-retry
+loop or source-wide scan at every continuation.
 
 Automatic work uses a fixed source-owned **SeriesGrant**, not the initiating
 user's retained session or an invented `CalendarActor`. Separate reservation

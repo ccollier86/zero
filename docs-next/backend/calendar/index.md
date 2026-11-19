@@ -36,6 +36,8 @@ working on an application; do not assume this branch is available through update
   server-supplied transitions, private reasons and canonical cancellation.
 - [Visit modes and retained locations](./visits.md): optional location/version
   bindings, current assignment compatibility, hold transfer and selector privacy.
+- [Effective location policies](./location-policies.md): explicit all-time versus
+  date-effective resource assignments, whole-occupancy checks and private live discovery.
 - [Native account participants](./participants.md): explicit Guardian eligibility,
   private bindings, exact hold transfer, live names/tombstones and reusable picker.
 - [Weekly working hours](./working-hours.md): finite local-date coverage, explicit
@@ -90,10 +92,14 @@ Unknown outcomes retain the original key; replay after expiry is not renewal.
 
 Versioned locations and resource assignments now support authorized directory
 facets. Location/region filters narrow current resource grants; they cannot grant
-access or serve as clinical/geographic booking policy. Global scope managers edit
+access or serve as clinical credentials. The separate effective-location policy
+can constrain scheduling across the entire buffered occupied interval. Global scope managers edit
 the catalog; resource managers replace only their own managed assignments using
 currently visible locations. Historical labels/assignments remain retained.
 Directory and location-detail hooks update reactively and retire revoked data.
+Effective policies are explicit; existing static assignments stay all-time until
+replaced. Legacy replacement cannot silently flatten effective policy. See the
+effective location guide above; directory facets alone never establish eligibility.
 The richer demo's filter/management controls are not yet wired to these APIs.
 
 Appointments and holds can now explicitly bind an in-person location version or

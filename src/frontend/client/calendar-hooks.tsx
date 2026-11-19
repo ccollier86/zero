@@ -8,7 +8,7 @@ import type { Client, InternalClient } from './sdk';
 import type { CalendarAppointmentPage, CalendarAppointmentView, CalendarAppointmentTypePage, CalendarAppointmentTypePageQuery, CalendarAppointmentTypeView, CalendarResourceTypesView,
   CalendarLifecyclePolicy, CalendarAppointmentTransitions, CalendarCapabilities, CalendarAvailabilityPolicyView,
   CalendarParticipantDirectoryQuery, CalendarParticipantDirectoryPage, CalendarParticipantsView,
-  CalendarLocationPage, CalendarLocationPageQuery, CalendarLocationView, CalendarResourceLocationsView, CalendarVisitLocationQuery,
+  CalendarLocationPage, CalendarLocationPageQuery, CalendarLocationView, CalendarResourceLocationsView, CalendarResourceLocationPolicyView, CalendarVisitLocationQuery,
   CalendarRangeQuery, CalendarDateRangeQuery, CalendarResourcePage, CalendarResourcePageQuery, CalendarWatchOptions, CalendarWatchUpdate } from '../../calendar/contracts';
 import { CalendarReadError } from './calendar-mutation';
 export interface CalendarReadResult<T> {
@@ -50,8 +50,12 @@ export function useCalendarLocations(query: CalendarLocationPageQuery = {}): Cal
     (client, listener, options) => client.calendar.locations.watch(query, listener, options));
 }
 export function useCalendarVisitLocations(query: CalendarVisitLocationQuery | null): CalendarReadResult<CalendarLocationPage> {
-  return useCalendarLive<CalendarLocationPage>(query === null ? null : JSON.stringify(['visit-locations', query.resourceIds, query.limit ?? null, query.after ?? null]),
+  return useCalendarLive<CalendarLocationPage>(query === null ? null : JSON.stringify(['visit-locations', query.resourceIds, query.limit ?? null, query.after ?? null, query.interval ?? null]),
     (client, listener, options) => client.calendar.locations.watchForVisit(query!, listener, options));
+}
+export function useCalendarResourceLocationPolicy(id: string | null, readRevision?: string | number): CalendarReadResult<CalendarResourceLocationPolicyView> {
+  return useCalendarLive<CalendarResourceLocationPolicyView>(id === null ? null : JSON.stringify(['location-policy', id, readRevision ?? null]),
+    (client, listener, options) => client.calendar.locations.policy.watch(id!, listener, options));
 }
 export function useCalendarAppointmentTypes(query: CalendarAppointmentTypePageQuery = {}): CalendarReadResult<CalendarAppointmentTypePage> {
   return useCalendarLive<CalendarAppointmentTypePage>(JSON.stringify(['appointment-types', query.resourceIds ?? null, query.limit ?? null, query.after ?? null]),

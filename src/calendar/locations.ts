@@ -1,6 +1,6 @@
 /** Versioned private location directory and resource metadata. No booking policy is implied. */
 import type { DatabaseReadQueryContext, DatabaseWriteCommandContext } from '../databases/database-realm';
-import type { CalendarLocationView, CalendarResourceLocationsView } from './contracts';
+import type { CalendarActor, CalendarLocationView, CalendarResourceLocationsView } from './contracts';
 import { CalendarError, calendarCommand } from './error';
 import { assertCalendarOwner, calendarActor, calendarBudget, calendarIntent, calendarResource, calendarRevision, CALENDAR_LIMITS,
   grantId, hasCalendarRight, nextCalendarRevision, requireCalendarRight, type CalendarResourceRow } from './realm-model';
@@ -8,6 +8,7 @@ import { CALENDAR_LOCATION_JOIN, calendarLocation, calendarLocationCurrentId, ca
   currentCalendarResourceLocations, parseCalendarLocationIds, readCalendarLocationTarget, requireCalendarLocationManager, type CalendarLocationRow, type CalendarLocationWitness } from './locations-model';
 import { appendCalendarSemanticAudit } from './semantic-audit';
 import { calendarHash, calendarInteger, calendarJson, calendarKey, calendarRecord, calendarText } from './validation';
+import { assertLegacyCalendarResourceLocationsWritable, bindLegacyCalendarResourceLocations } from './location-policies';
 
 function readOwner(context: DatabaseReadQueryContext, scopeId: string): void {
   const owner = context.database.query<{ scope_id: string }>("SELECT scope_id FROM _calendar_owner WHERE id='application'").get();
@@ -59,38 +60,50 @@ export function replaceCalendarResourceLocations(context: DatabaseWriteCommandCo
     if (witnesses.some(witness => !locationIds.includes(witness.locationId))) throw new CalendarError('CALENDAR_INPUT_INVALID');
     return calendarIntent(context, actor, r.requestId, ['resource.locations', resource.id, expectedRevision, locationIds], 'resource', 'manage', requestId => {
       calendarRevision(resource, expectedRevision);
+      assertLegacyCalendarResourceLocationsWritable(context, actor.scopeId, resource.id);
       const prior = currentCalendarResourceLocations(context, actor.scopeId, resource.id);
       if (calendarJson(prior) === calendarJson(locationIds)) return { requestId, operation: 'resource.locations-changed', id: resource.id, revision: resource.revision, changed: false };
-      for (const id of locationIds) {
-        // A successful mutation must not make a guessed hidden directory ID
-        // visible. Witnesses are selected by a private authorized read, then
-        // independently revalidated here against current rights/membership.
-        if (!actor.manageAll && !prior.includes(id)) {
-          const witness = witnesses.find(value => value.locationId === id);
-          if (!witness) throw new CalendarError('CALENDAR_NOT_FOUND');
-          const source = calendarResource(context, actor, witness.resourceId), grant = context.db.get('_calendar_grants', grantId(actor.scopeId, source.id, actor.userId));
-          if (!hasCalendarRight(actor, source, grant, 'busy') && !hasCalendarRight(actor, source, grant, 'book')) throw new CalendarError('CALENDAR_NOT_FOUND');
-          const pointer = context.db.get('_calendar_resource_locations', source.id), member = context.db.get('_calendar_resource_location_current', calendarLocationCurrentId(actor.scopeId, source.id, id));
-          if (!pointer || !member || pointer.scope_id !== actor.scopeId || pointer.resource_id !== source.id || member.scope_id !== actor.scopeId || member.resource_id !== source.id || member.location_id !== id || member.resource_revision !== pointer.resource_revision) throw new CalendarError('CALENDAR_NOT_FOUND');
-        }
-        const row = calendarLocation(context, actor, id);
-        if (row.active !== 1 && !prior.includes(id)) throw new CalendarError('CALENDAR_NOT_FOUND');
-      }
+      assertCalendarLocationAssignmentSelection(context, actor, resource, locationIds, prior, witnesses);
       const revision = nextCalendarRevision(resource.revision); calendarBudget(context, 'resourceLocationHistory');
       const change = context.db.update('calendar_resources', resource.id, { revision });
-      context.db.createStrict('_calendar_resource_location_history', { id: calendarHash([actor.scopeId, resource.id, revision]), scope_id: actor.scopeId,
-        resource_id: resource.id, resource_revision: revision, location_ids_json: calendarJson(locationIds) });
-      for (const locationId of locationIds) context.db.createStrict('_calendar_resource_location_members', { id: calendarHash([actor.scopeId, resource.id, revision, locationId]),
-        scope_id: actor.scopeId, resource_id: resource.id, resource_revision: revision, location_id: locationId });
-      if (context.db.get('_calendar_resource_locations', resource.id)) context.db.update('_calendar_resource_locations', resource.id, { resource_revision: revision });
-      else context.db.createStrict('_calendar_resource_locations', { id: resource.id, scope_id: actor.scopeId, resource_id: resource.id, resource_revision: revision });
-      for (const locationId of prior) context.db.delete('_calendar_resource_location_current', calendarLocationCurrentId(actor.scopeId, resource.id, locationId));
-      for (const locationId of locationIds) context.db.createStrict('_calendar_resource_location_current', { id: calendarLocationCurrentId(actor.scopeId, resource.id, locationId),
-        scope_id: actor.scopeId, resource_id: resource.id, resource_revision: revision, location_id: locationId });
+      writeCalendarResourceLocationDirectory(context, actor.scopeId, resource.id, revision, locationIds, prior);
+      bindLegacyCalendarResourceLocations(context, actor.scopeId, resource.id, revision, locationIds);
       appendCalendarSemanticAudit(context, 'resource.locations-changed', change, { revision, locationCount: locationIds.length });
       return { requestId, operation: 'resource.locations-changed', id: resource.id, revision, changed: true };
     });
   });
+}
+/** Shared native selection admission; witnesses never confer grants or effective coverage. */
+export function assertCalendarLocationAssignmentSelection(context: DatabaseWriteCommandContext, actor: CalendarActor, resource: CalendarResourceRow,
+  locationIds: readonly string[], prior: readonly string[], witnesses: readonly CalendarLocationWitness[]): void {
+  for (const id of locationIds) {
+    // A successful mutation must not make a guessed hidden directory ID
+    // visible. Witnesses are selected by a private authorized read, then
+    // independently revalidated here against current rights/membership.
+    if (!actor.manageAll && !prior.includes(id)) {
+      const witness = witnesses.find(value => value.locationId === id);
+      if (!witness) throw new CalendarError('CALENDAR_NOT_FOUND');
+      const source = calendarResource(context, actor, witness.resourceId), grant = context.db.get('_calendar_grants', grantId(actor.scopeId, source.id, actor.userId));
+      if (!hasCalendarRight(actor, source, grant, 'busy') && !hasCalendarRight(actor, source, grant, 'book')) throw new CalendarError('CALENDAR_NOT_FOUND');
+      const pointer = context.db.get('_calendar_resource_locations', source.id), member = context.db.get('_calendar_resource_location_current', calendarLocationCurrentId(actor.scopeId, source.id, id));
+      if (!pointer || !member || pointer.scope_id !== actor.scopeId || pointer.resource_id !== source.id || member.scope_id !== actor.scopeId || member.resource_id !== source.id || member.location_id !== id || member.resource_revision !== pointer.resource_revision) throw new CalendarError('CALENDAR_NOT_FOUND');
+    }
+    const row = calendarLocation(context, actor, id);
+    if (row.active !== 1 && !prior.includes(id)) throw new CalendarError('CALENDAR_NOT_FOUND');
+  }
+}
+/** Writes only exact directory union/history after the caller advanced the parent once. */
+export function writeCalendarResourceLocationDirectory(context: DatabaseWriteCommandContext, scopeId: string, resourceId: string, revision: number,
+  locationIds: readonly string[], prior: readonly string[]): void {
+  context.db.createStrict('_calendar_resource_location_history', { id: calendarHash([scopeId, resourceId, revision]), scope_id: scopeId,
+    resource_id: resourceId, resource_revision: revision, location_ids_json: calendarJson(locationIds) });
+  for (const locationId of locationIds) context.db.createStrict('_calendar_resource_location_members', { id: calendarHash([scopeId, resourceId, revision, locationId]),
+    scope_id: scopeId, resource_id: resourceId, resource_revision: revision, location_id: locationId });
+  if (context.db.get('_calendar_resource_locations', resourceId)) context.db.update('_calendar_resource_locations', resourceId, { resource_revision: revision });
+  else context.db.createStrict('_calendar_resource_locations', { id: resourceId, scope_id: scopeId, resource_id: resourceId, resource_revision: revision });
+  for (const locationId of prior) context.db.delete('_calendar_resource_location_current', calendarLocationCurrentId(scopeId, resourceId, locationId));
+  for (const locationId of locationIds) context.db.createStrict('_calendar_resource_location_current', { id: calendarLocationCurrentId(scopeId, resourceId, locationId),
+    scope_id: scopeId, resource_id: resourceId, resource_revision: revision, location_id: locationId });
 }
 /** Internal broker projection, never an authored public command field. A
  * witness conveys no authority: the writer revalidates its exact current row. */

@@ -5,6 +5,7 @@ import type { Root } from 'react-dom/client';
 import type { CalendarAppointmentTransitions, CalendarAppointmentTypePage, CalendarAppointmentView, CalendarCommandReceipt,
   CalendarControlOptions, CalendarLocationPage, CalendarParticipantDirectoryPage, CalendarParticipantReference, CalendarParticipantsView,
   CalendarRequestOptions, CalendarResourceView, CalendarWatchOptions } from '../../../calendar/contracts';
+import type { CalendarVisitLocationQuery } from '../../../calendar/contracts';
 import { ClientProvider } from '../../../frontend/client/client-context';
 import { useAuthorizationScopeBoundary } from '../../../frontend/client/authorization-scope-hooks';
 import { CalendarMutationError, CalendarReadError } from '../../../frontend/client/calendar-mutation';
@@ -25,6 +26,7 @@ import { CalendarCivilDateField } from '../components/calendar-civil-date-field'
 import { CalendarManagedForm } from '../components/calendar-surfaces';
 import { AppointmentModal, AppointmentModalContent, type AppointmentModalContentProps } from '../recovered/appointment-modal/components/appointment-modal/AppointmentModal';
 import type { CalendarPendingRequest } from './calendar-workspace-model';
+import { calendarVisitDraft } from './calendar-visit-model';
 
 const roots = new Set<Root>(); let restoreDom: () => void;
 beforeEach(() => { restoreDom = installMinimalHookDom(); configureFrontendObservability({ http: false, console: false }); modals.discardAll(); });
@@ -238,6 +240,46 @@ test('an unknown all-day write reconciles only its original identity and never c
   f.receipt = receiptFor(write); await click('Reconcile original request'); expect(f.accepted).toHaveLength(1); expect(f.writes).toHaveLength(1); expect(f.closed).toBe(1);
 });
 
+test('effective location discovery includes exact timed buffers, retires changed-basis pagination and leaves older wire unchanged', async () => {
+  const f = fixture(), location = { id: 'location', revision: 2, label: 'Synthetic location', region: null, active: true };
+  f.visitPage = { items: [location], nextAfter: 'location', truncated: true };
+  const root = await mountEditor(f, false, true, false, true);
+  await act(async () => find(value => value.type === CalendarVisitFields).props.onChange({ visitMode: 'in-person', visitLocation: location }));
+  expect(f.visits[0]!.query.interval).toEqual({ startAt: '2026-11-18T10:04:00.000Z', endAt: '2026-11-18T11:14:00.000Z' });
+  const retainedNext = find(value => value.type === CalendarVisitFields).props.onNext;
+  await act(async () => retainedNext()); expect(f.visits.at(-1)!.query.after).toBe('location');
+  await act(async () => { field('Start time').props.onChange(608); field('End time').props.onChange(668); });
+  expect(f.visits.at(-1)!.query).not.toHaveProperty('after');
+  expect(f.visits.at(-1)!.query.interval).toEqual({ startAt: '2026-11-18T10:05:00.000Z', endAt: '2026-11-18T11:15:00.000Z' });
+  const count = f.visits.length; await act(async () => retainedNext()); expect(f.visits).toHaveLength(count);
+  await act(async () => root.unmount()); roots.delete(root);
+  const old = fixture(); old.visitPage = { items: [location], nextAfter: null, truncated: false }; await mountEditor(old, false);
+  await act(async () => find(value => value.type === CalendarVisitFields).props.onChange({ visitMode: 'in-person', visitLocation: location }));
+  expect(old.visits[0]!.query).not.toHaveProperty('interval');
+});
+
+test('accepted all-day discovery retains frozen coverage but new authored dates cannot inherit old UTC eligibility', async () => {
+  const location = { id: 'location', revision: 2, label: 'Retained location', region: null };
+  const source: CalendarAppointmentView = { ...record, interval: { kind: 'all-day-local-v1', startDate: '2026-10-15', endDate: '2026-11-15', timeZone: 'UTC' },
+    startAt: '2026-10-15T00:00:00.000Z', endAt: '2026-11-15T01:00:00.000Z', bufferBeforeMinutes: 0, bufferAfterMinutes: 0, visit: { mode: 'in-person', location } };
+  const f = fixture(source); await mountEditor(f, false, true, true, true);
+  expect(f.visits[0]!.query.interval).toEqual({ startAt: source.startAt, endAt: source.endAt });
+  expect(find(value => value.type === CalendarVisitFields).props.acceptedLocation).toEqual(location);
+  await title('Historical location metadata'); expect(submitButton().props.disabled).toBe(false);
+  await act(async () => find(value => value.type === CalendarCivilDateField && value.props.label === 'All-day exclusive end date').props.onChange('2026-11-14'));
+  expect(f.visits.at(-1)!.query).not.toHaveProperty('interval');
+  expect(find(value => value.type === CalendarVisitFields).props.acceptedLocation).toBeUndefined();
+  expect(find(value => value.type === CalendarVisitFields).props.coverageHint).toContain('no UTC boundaries are guessed');
+  expect(submitButton().props.disabled).toBe(true); expect(f.writes).toEqual([]);
+});
+
+test('location-policy capability retirement withdraws the native owner instead of silently downgrading its selection query', async () => {
+  const f = fixture(), root = await mountEditor(f, false, true, false, true); await title('Preserved policy-aware draft');
+  const retained = find(value => value.type === 'form').props.onSubmit, context = nativeContext();
+  await act(async () => root.updateProps({ locationPolicies: false })); expect(context.signal.aborted).toBe(true);
+  await act(async () => retained({ preventDefault() {} })); expect(f.writes).toEqual([]);
+});
+
 interface Subscription<T> { resolve(value: T): void; options: CalendarWatchOptions }
 interface Write { operation: CalendarCommandReceipt['operation']; input: any; control: CalendarControlOptions | CalendarRequestOptions; pending: ReturnType<typeof deferred<CalendarCommandReceipt>> }
 function deferred<T>() { let resolve!: (value: T) => void, reject!: (error: unknown) => void; const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
@@ -247,6 +289,7 @@ function fixture(acceptedRecord = record) {
     isRestoring: false, isAuthenticated: true, authorizationState: { status: 'ready' }, sessionTransition: { phase: 'idle', revision: 0 }, subscribe, subscribeAuthorization: subscribe };
   const f = { auth, writes: [] as Write[], unknown: [] as CalendarPendingRequest[], accepted: [] as CalendarPendingRequest[], rejected: [] as CalendarPendingRequest[],
     directories: [] as Subscription<CalendarParticipantDirectoryPage>[], bindings: [] as Subscription<CalendarParticipantsView>[], types: [] as Subscription<CalendarAppointmentTypePage>[],
+    visits: [] as (Subscription<CalendarLocationPage> & { query: CalendarVisitLocationQuery })[], visitPage: { items: [], truncated: false, nextAfter: null } as CalendarLocationPage,
     receiptKeys: [] as string[], receipt: null as CalendarCommandReceipt | null, closed: 0, lost: 0, notify() { for (const listener of observers) listener(); } };
   function watch<T>(list: Subscription<T>[], resolve: (value: T) => void, options: CalendarWatchOptions, initial: T) { list.push({ resolve, options }); resolve(initial); return () => {}; }
   function write(operation: Write['operation'], input: unknown, control: Write['control']) { const pending = deferred<CalendarCommandReceipt>(); f.writes.push({ operation, input, control, pending }); return pending.promise; }
@@ -257,19 +300,19 @@ function fixture(acceptedRecord = record) {
     create(input: unknown, control: CalendarRequestOptions) { return write('appointment.created', input, control); },
     reschedule() { throw new Error('No chained reschedule'); } },
     types: { watch(_query: unknown, resolve: (value: CalendarAppointmentTypePage) => void, options: CalendarWatchOptions) { return watch(f.types, resolve, options, { items: [type], nextAfter: null, truncated: false }); } },
-    locations: { watchForVisit(_query: unknown, resolve: (value: CalendarLocationPage) => void) { resolve({ items: [], truncated: false, nextAfter: null }); return () => {}; } },
+    locations: { watchForVisit(query: CalendarVisitLocationQuery, resolve: (value: CalendarLocationPage) => void, options: CalendarWatchOptions) { f.visits.push({ query, resolve, options }); resolve(f.visitPage); return () => {}; } },
     participants: { watchDirectory(_query: unknown, resolve: (value: CalendarParticipantDirectoryPage) => void, options: CalendarWatchOptions) { return watch(f.directories, resolve, options, { items: [person], nextAfter: null, truncated: false }); },
       watchForAppointment(_id: string, resolve: (value: CalendarParticipantsView) => void, options: CalendarWatchOptions) { return watch(f.bindings, resolve, options, { id: acceptedRecord.id, revision: acceptedRecord.revision, participants: [{ ref: oldRef, availability: 'unavailable' }] }); },
       replace() { throw new Error('No chained participant save'); } }, receipts: { async get(key: string) { f.receiptKeys.push(key); return f.receipt; } } } } as unknown as Client;
   return Object.assign(f, { client, acceptedRecord });
 }
 type Fixture = ReturnType<typeof fixture>;
-async function mountEditor(f: Fixture, participants = true, existing = true, allDayAppointments = false) {
+async function mountEditor(f: Fixture, participants = true, existing = true, allDayAppointments = false, locationPolicies = false) {
   const record = f.acceptedRecord;
-  let props: Omit<CalendarAppointmentEditorProps, 'scopeKey'> = { client: f.client, resources, participants, allDayAppointments,
+  let props: Omit<CalendarAppointmentEditorProps, 'scopeKey'> = { client: f.client, resources, participants, allDayAppointments, locationPolicies,
     session: { key: 1, ...(existing ? { record } : {}), timeZone: 'UTC', initial: { resourceIds: ['a', 'b'], title: existing ? record.title : '', date: existing && record.interval ? record.interval.startDate : '2026-11-18', start: 607, end: 667,
       ...(existing && record.interval ? { intervalKind: 'all-day-local-v1', endDate: record.interval.endDate } : {}),
-      visitMode: existing ? 'phone' : 'unspecified', bufferBeforeMinutes: 3, bufferAfterMinutes: 7 } },
+      ...(existing ? calendarVisitDraft(record.visit) : { visitMode: 'unspecified' }), bufferBeforeMinutes: existing ? record.bufferBeforeMinutes : 3, bufferAfterMinutes: existing ? record.bufferAfterMinutes : 7 } },
     onUnknown: value => f.unknown.push(value), onAccepted: value => f.accepted.push(value), onRejected: value => f.rejected.push(value), onClose: () => { f.closed++; }, onAuthorityLost: () => { f.lost++; } };
   function Scoped() { const boundary = useAuthorizationScopeBoundary(); return boundary.ready ? createElement(CalendarAppointmentEditor, { ...props, scopeKey: boundary.key }) : null; }
   const { createRoot } = await import('react-dom/client'), root = createRoot(createHookContainer()); roots.add(root);

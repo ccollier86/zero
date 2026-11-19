@@ -20,6 +20,79 @@ or data migration is authorized by these checks.
 
 ## November 18 finish-line review: cold admission and retained evidence
 
+### November 19 canonical018: effective resource/location policy
+
+Actual realm 18 adds complete scope-owned effective assignment policy through
+canonical source writes, immutable retained source/windows, sealed current
+selectors and the original bounded directory union. Final appointment/hold
+admission checks every selected resource over the whole buffered occupied
+interval. Static compatibility, explicit downgrade, original receipt replay and
+accepted-history grandfathering remain distinct. Server/client policy APIs,
+private interval-aware live discovery and the connected editor are wired; this
+does not enable conflict override, recurring series or a management redesign.
+
+Current exact source pins:
+
+- Realm: `sha256:de6ee805fc2afc7c49e8095c2c2dec4932ba2dac6770b5bfc4b6c8998a7811cf`.
+- Schema: `7c15ec94ad679f2dda2cb45304a63959d292befd56abfa1f7ffc94f199d09f45`.
+- 018 migration: `0519c6365efc103656480ce106bc1f593e76461b976f467b85f41823d78f0bf0`.
+- Registry: 38 commands, 37 queries. Original 001–017 hashes, genuine 017
+  fingerprint and both genuine 016 pins remain explicitly checked. Raw fresh
+  migration and every populated native prefix are exercised without latest
+  table predefinition. 018 derives legacy selectors and one immutable version
+  marker; it does not invent authored effective policy or alter old usage rows.
+
+The broader combined checkpoint ran **455 tests across 36 files: 454 passed and
+one failed**, with 6,451 assertions in 212.23 seconds. The failure was a test's
+incorrect assumption that maximum legal policy JSON exceeded 24 KiB; its actual
+size was 23,051 bytes. The corrected maximum-distribution case proves 23,063 bytes
+are admitted without a hidden lower cap. The production byte guard remains
+unchanged. This original failure is not relabelled as a clean full run.
+
+After corrections, the final focused set passed **138 tests, 2,927 assertions,
+10 files** in 76.49 seconds: canonical policy, native date/interval discovery,
+HTTP/SDK/SSE, all native migration stages and historical identities, runtime,
+service, dense directory, source-audit pressure/privacy and editor interval model.
+Separate overlapping checkpoints, not additive totals, include:
+
+- Native canonical/query/HTTP: 40 tests/293 assertions after typed SQL binding
+  corrections; prior canonical/holds/update/source-audit set 83 tests/672 assertions.
+- Query/HTTP plus earlier visit compatibility: 35 tests/372 assertions, four files.
+- Frontend SDK/hooks/editor/workspace compatibility: 134 tests/1,518 assertions,
+  12 files. Constructor-preserving Intl test-double correction then passed its
+  three cases/17 assertions without a production change.
+
+Early tests caught a real static-policy normalizer bug: passing `calendarKey`
+directly to `Array.map` supplied its array index as the optional size limit. An
+explicit one-argument callback fixes that; native/SDK parity tests remain. Old
+directory fixtures also omitted the new legacy selector or assumed six reads
+instead of the additional bounded per-resource integrity proofs. They now build
+valid current state and assert those proofs separately; corruption fixtures
+remove only the exact synthetic seal needed for injection. Historical registry
+fixtures are derived from genuine retained registries, not polluted by new names.
+
+The initial no-emit graph reported 13 SQL-binding/query-generic/literal/test-double
+diagnostics. Bindings now narrow/validate their values and preserve native query
+tuple types; contracts were not widened. Final no-emit checking passed **529
+roots, 4,119 source files, zero diagnostics**. Documentation validation reports
+**909 reachable pages/unique IDs, zero problems**.
+
+Actual `LoggingActorSource` evidence verifies one private semantic event per real
+policy change, none for replay/no-op/rejection, and complete rollback under source
+queue backpressure. SQL seals structural identity/scope/cardinality/late writes;
+the final native resource intent additionally proves exact source-to-epoch cell
+agreement before receipt/effect. This is not independent SQL date compilation or
+full managed compliance/deployment qualification. Native HTTP fixtures use actual
+Guardian/service/transactions and explicitly simulated physical coordination.
+
+All tests here are cache-off MEMORY/in-process checks with owned read copies,
+streams, runtimes, migrators and UI roots closed in teardown. No physical fixture,
+browser preview, Docker/build/dependency tree or archive was generated. Storage
+status/check still return the existing integrity hold. Real file/WAL/HOT,
+browser/layout, actor/restart, installed Linux and updater gates remain unexecuted.
+No main merge or Calendar backend release selection is claimed. See
+[Effective location policies](./location-policies.md).
+
 ### November 19 canonical017: all-day appointments, date queries and connected UI
 
 Actual realm 17 now registers the complete appointment-only LocalDate path:

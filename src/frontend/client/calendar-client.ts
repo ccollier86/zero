@@ -9,12 +9,14 @@ import type { CalendarAppointmentCreateInput, CalendarAppointmentIntervalInput, 
   CalendarAppointmentTypeInput, CalendarAppointmentTypeReplacement, CalendarAppointmentTypeReference, CalendarAppointmentTypeSnapshot,
   CalendarAppointmentTypeView, CalendarAppointmentTypePageQuery, CalendarAppointmentTypePage, CalendarResourceTypesInput, CalendarResourceTypesView,
   CalendarLocationInput, CalendarLocationReplacement, CalendarLocationView, CalendarLocationPageQuery, CalendarLocationPage, CalendarResourceLocationsView,
+  CalendarResourceLocationPolicyInput, CalendarResourceLocationPolicyView,
   CalendarControlOptions, CalendarGrant, CalendarRangeQuery, CalendarReadOptions, CalendarRequestOptions, CalendarRescheduleInput, CalendarResourceInput,
   CalendarResourcePage, CalendarResourcePageQuery, CalendarResourceView, CalendarWatchOptions, CalendarWatchUpdate, ScopedCalendar } from '../../calendar/contracts';
 import type { FetchInit } from './sdk';
 import { calendarFailureDetails, calendarMutationFailure, CalendarReadError } from './calendar-mutation';
 import { watchCalendarRange } from './calendar-client-watch';
 import { calendarAvailabilityPolicyInput, calendarAvailabilityPolicyView } from './calendar-client-availability-policy';
+import { calendarLocationPolicyInput, calendarLocationPolicyView } from './calendar-client-location-policy';
 export interface CalendarClient extends ScopedCalendar { clear(): void }
 export function createCalendarClient(fetch: <T = unknown>(path: string, init?: FetchInit) => Promise<T>,
   open?: (path: string, init: RequestInit) => Promise<Response>): CalendarClient {
@@ -146,6 +148,21 @@ export function createCalendarClient(fetch: <T = unknown>(path: string, init?: F
       },
     }),
     locations: Object.freeze({
+      policy: Object.freeze({
+        get(id: string, supplied?: CalendarReadOptions) {
+          const target = requestKey(id);
+          return read('/resources/' + encodeURIComponent(target) + '/location-policy', value => calendarLocationPolicyView(value, target), 'GET', undefined, readSignal(supplied));
+        },
+        replace(id: string, input: CalendarResourceLocationPolicyInput, supplied: CalendarControlOptions) {
+          const target = requestKey(id), policy = calendarLocationPolicyInput(input), control = options(supplied, true);
+          return mutation('/resources/' + encodeURIComponent(target) + '/location-policy', { policy, options: control }, supplied,
+            'resource.location-policy-changed', target, undefined, 'PUT', control.expectedRevision as number);
+        },
+        watch(id: string, listener: (policy: CalendarResourceLocationPolicyView, update?: CalendarWatchUpdate) => void, supplied: CalendarWatchOptions = {}) {
+          const target = requestKey(id);
+          return watch('/resources/' + encodeURIComponent(target) + '/location-policy/live', value => calendarLocationPolicyView(value, target), listener, supplied);
+        },
+      }),
       forVisit(supplied: CalendarVisitLocationQuery, readOptions?: CalendarReadOptions) {
         const page = visitPageRequest(supplied);
         return read('/visit-locations' + page.search, value => visitLocationPage(value, page.query), 'GET', undefined, readSignal(readOptions));
@@ -458,9 +475,16 @@ function typePageRequest(value: unknown): { search: string; query: CalendarAppoi
 }
 function visitPageRequest(value: unknown): { search: string; query: CalendarVisitLocationQuery } {
   // Unlike catalog discovery, omission is never a manager-wide visit selection.
-  const page = typePageRequest(value);
+  const row = record(value, ['resourceIds', 'limit', 'after', 'interval']), { interval: suppliedInterval, ...paging } = row;
+  const page = typePageRequest(paging);
   if (page.query.resourceIds === undefined) throw invalid();
-  return page as { search: string; query: CalendarVisitLocationQuery };
+  if (!Object.hasOwn(row, 'interval')) return page as { search: string; query: CalendarVisitLocationQuery };
+  const bounds = record(suppliedInterval, ['startAt', 'endAt']);
+  if (Object.keys(bounds).length !== 2) throw invalid(); instant(bounds.startAt); instant(bounds.endAt);
+  const duration = Date.parse(String(bounds.endAt)) - Date.parse(String(bounds.startAt)); if (duration <= 0 || duration > 33 * 86400_000) throw invalid();
+  const params = new URLSearchParams(page.search), interval = Object.freeze({ startAt: bounds.startAt as string, endAt: bounds.endAt as string });
+  params.set('startAt', interval.startAt); params.set('endAt', interval.endAt);
+  return { search: '?' + params, query: Object.freeze({ ...page.query, resourceIds: page.query.resourceIds, interval }) };
 }
 function visitInput(value: unknown): CalendarVisitInput {
   const r = record(value, ['mode', 'location']);
@@ -563,13 +587,15 @@ function resourceLocationsView(value: unknown): CalendarResourceLocationsView {
   return Object.freeze({ resourceId: r.resourceId as string, resourceRevision: r.resourceRevision as number, locationIds: Object.freeze(locationIds) });
 }
 function capabilityView(value: unknown): CalendarCapabilities {
-  const r = record(value, ['timeZone', 'createOwn', 'manage', 'participants', 'limits', 'allDayAppointments']), limits = record(r.limits, ['maxRangeDays', 'maxPageSize', 'maxResources', 'maxParticipants']);
-  if (Object.keys(r).length !== 5 + (Object.hasOwn(r, 'allDayAppointments') ? 1 : 0) || Object.keys(limits).length !== 4 || typeof r.createOwn !== 'boolean'
+  const r = record(value, ['timeZone', 'createOwn', 'manage', 'participants', 'limits', 'allDayAppointments', 'locationPolicies']), limits = record(r.limits, ['maxRangeDays', 'maxPageSize', 'maxResources', 'maxParticipants']);
+  if (Object.keys(r).length !== 5 + (Object.hasOwn(r, 'allDayAppointments') ? 1 : 0) + (Object.hasOwn(r, 'locationPolicies') ? 1 : 0) || Object.keys(limits).length !== 4 || typeof r.createOwn !== 'boolean'
     || Object.hasOwn(r, 'allDayAppointments') && typeof r.allDayAppointments !== 'boolean'
+    || Object.hasOwn(r, 'locationPolicies') && typeof r.locationPolicies !== 'boolean'
     || typeof r.manage !== 'boolean' || typeof r.participants !== 'boolean' || r.participants && !r.manage) throw invalid();
   zone(r.timeZone);
   return Object.freeze({ timeZone: r.timeZone as string, createOwn: r.createOwn, manage: r.manage, participants: r.participants,
     ...(Object.hasOwn(r, 'allDayAppointments') ? { allDayAppointments: r.allDayAppointments as boolean } : {}),
+    ...(Object.hasOwn(r, 'locationPolicies') ? { locationPolicies: r.locationPolicies as boolean } : {}),
     limits: Object.freeze({ maxRangeDays: integer(limits.maxRangeDays, 1, 31), maxPageSize: integer(limits.maxPageSize, 1, 100),
       maxResources: integer(limits.maxResources, 1, 16), maxParticipants: integer(limits.maxParticipants, 1, 100) }) });
 }
@@ -862,7 +888,7 @@ function busyPage(value: unknown): CalendarBusyPage {
 }
 function calendarReceipt(value: unknown): CalendarCommandReceipt {
   const r = record(value, ['requestId', 'operation', 'id', 'revision', 'changed']);
-  if (Object.keys(r).length !== 5 || typeof r.operation !== 'string' || !['resource.created', 'resource.grant-changed', 'resource.availability-changed', 'resource.availability-policy-changed', 'resource.locations-changed',
+  if (Object.keys(r).length !== 5 || typeof r.operation !== 'string' || !['resource.created', 'resource.grant-changed', 'resource.availability-changed', 'resource.availability-policy-changed', 'resource.locations-changed', 'resource.location-policy-changed',
     'location.created', 'location.updated',
     'type.created', 'type.updated', 'resource.types-changed',
     'block.created', 'block.rescheduled', 'block.cancelled', 'hold.acquired', 'hold.released',

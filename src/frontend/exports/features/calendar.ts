@@ -1,5 +1,5 @@
 /** Browser-safe core calendar entry. Private actor/runtime/storage ownership is not exposed here. */
-export { useCalendarResources, useCalendarAppointment, useCalendarAppointments, useCalendarAppointmentDates, useCalendarLocations, useCalendarLocation, useCalendarResourceLocations, useCalendarVisitLocations } from '../../client/calendar-hooks';
+export { useCalendarResources, useCalendarAppointment, useCalendarAppointments, useCalendarAppointmentDates, useCalendarLocations, useCalendarLocation, useCalendarResourceLocations, useCalendarResourceLocationPolicy, useCalendarVisitLocations } from '../../client/calendar-hooks';
 export { useCalendarAppointmentTypes, useCalendarAppointmentType, useCalendarResourceTypes } from '../../client/calendar-hooks';
 export { useCalendarLifecycle, useCalendarAppointmentTransitions } from '../../client/calendar-hooks';
 export { useCalendarCapabilities } from '../../client/calendar-hooks';
@@ -20,6 +20,7 @@ export type { CalendarResourceKind, CalendarResourceView, CalendarResourceInput,
   CalendarAppointmentTypeReference, CalendarAppointmentTypeSnapshot, CalendarAppointmentTypeInput, CalendarAppointmentTypeReplacement,
   CalendarAppointmentTypeView, CalendarAppointmentTypePageQuery, CalendarAppointmentTypePage, CalendarResourceTypesInput, CalendarResourceTypesView,
   CalendarLocationInput, CalendarLocationReplacement, CalendarLocationView, CalendarLocationPageQuery, CalendarLocationPage, CalendarResourceLocationsView,
+  CalendarResourceLocationPolicyInput, CalendarResourceLocationPolicyView, CalendarResourceLocationPolicyAssignment, CalendarResourceLocationPolicyWindow,
   CalendarAppointmentView, CalendarAppointmentInput, CalendarRescheduleInput, CalendarCommandReceipt,
   CalendarAppointmentCreateInput, CalendarExplicitAppointmentInput, CalendarAppointmentIntervalInput, CalendarAppointmentUpdateInput,
   CalendarAllDayAppointmentInterval, CalendarExplicitTimedAppointmentInterval, CalendarDateRangeQuery,

@@ -146,8 +146,19 @@ test('visit picker queries seed at most sixteen indexed current candidates and i
     expect(after).toEqual(before);
     expect(f.query('visitLocations', { ...input, after: before.nextAfter }, true))
       .toMatchObject({ items: [{ id: 'selected-06' }, { id: 'selected-08' }, { id: 'selected-10' }], truncated: true, nextAfter: 'selected-10' });
-    expect(f.plans).toHaveLength(6);
-    for (const plan of f.plans) {
+    const proofs = f.plans.filter(plan => plan.sql.startsWith('SELECT * FROM _calendar_resource_location_current'));
+    expect(proofs).toHaveLength(6); // Two exact current-union proofs per read, never retained generations.
+    for (const plan of proofs) {
+      expect(plan.sql).toContain('ORDER BY location_id LIMIT 17');
+      expect(plan.params).toEqual([owner.scopeId, plan.params[1]]);
+      expect(plan.params[1] === 'person' || plan.params[1] === 'room').toBe(true);
+      expect(plan.rowsReturned).toBe(plan.params[1] === 'person' ? 16 : 8);
+      expect(plan.detail).toMatch(/SEARCH _calendar_resource_location_current USING INDEX calendar_resource_location_current_identity \(scope_id=\? AND resource_id=\?\)/);
+      expect(plan.detail).not.toMatch(/\bSCAN\b|TEMP B-TREE/);
+    }
+    const selections = f.plans.filter(plan => !proofs.includes(plan));
+    expect(selections).toHaveLength(6);
+    for (const plan of selections) {
       expect(plan.sql).not.toMatch(/_calendar_resource_location_(?:members|history)\b/);
       expect(plan.detail).not.toMatch(/SCAN [mlhp]\b|TEMP B-TREE/);
       expect(plan.detail).toContain('calendar_resource_locations_identity');
@@ -170,7 +181,12 @@ test('visit picker queries seed at most sixteen indexed current candidates and i
     expect(f.plans).toEqual([]); // Full co-resource admission precedes candidate lookup.
     f.assign([], 'person');
     expect(f.query('visitLocations', input, true)).toEqual({ items: [], truncated: false, nextAfter: null });
-    expect(f.plans).toHaveLength(1); expect(f.plans[0]!.rowsReturned).toBe(0);
+    expect(f.plans).toHaveLength(3); // Both current unions are proved before the empty candidate seed.
+    expect(f.plans[0]!.sql).toContain('ORDER BY location_id LIMIT 17');
+    expect(f.plans[1]!.sql).toContain('ORDER BY location_id LIMIT 17');
+    expect(f.plans[2]!.sql).toMatch(/^SELECT m\.location_id/);
+    expect(f.plans.map(plan => plan.rowsReturned)).toEqual([0, 8, 0]);
+    for (const plan of f.plans) expect(plan.detail).not.toMatch(/\bSCAN\b|TEMP B-TREE/);
   } finally { f.close(); }
 });
 
@@ -181,6 +197,7 @@ test('an oversized corrupt current assignment rejects at the seventeen-row probe
     // Explicit corruption injection in this disposable memory database only;
     // normal assignment writes cannot exceed the schema's sixteen-member cap.
     const raw = f.db.getRawDatabase(); raw.run('DROP TRIGGER calendar_resource_location_current_parent');
+    raw.run('DROP TRIGGER calendar_location_policy_directory__calendar_resource_location_current_insert');
     const current = raw.prepare('INSERT INTO _calendar_resource_location_current(id,scope_id,resource_id,resource_revision,location_id) VALUES(?,?,\'person\',?,?)');
     try {
       for (let i = 0; i < 16; i++) {
@@ -189,7 +206,9 @@ test('an oversized corrupt current assignment rejects at the seventeen-row probe
       }
     } finally { current.finalize(); }
     rejects(() => f.query('visitLocations', { actor: manager, resourceIds: ['person'] }, true), 'CALENDAR_STATE_INVALID');
-    expect(f.plans).toHaveLength(1); expect(f.plans[0]!.params.at(-1)).toBe(17); expect(f.plans[0]!.rowsReturned).toBe(17);
+    expect(f.plans).toHaveLength(1); //018 catches the invalid union before the ordinary seed/directory query.
+    expect(f.plans[0]!.sql).toContain('ORDER BY location_id LIMIT 17');
+    expect(f.plans[0]!.params).toEqual([owner.scopeId, 'person']); expect(f.plans[0]!.rowsReturned).toBe(17);
   } finally { f.close(); }
 });
 

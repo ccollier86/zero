@@ -12,6 +12,8 @@ export interface CalendarVisitFieldsProps {
   readonly status: 'idle' | 'loading' | 'ready' | 'error';
   /** Source-accepted history only, not the history of unsubmitted picker choices. */
   readonly acceptedLocation?: CalendarLocationSnapshot;
+  /** Truthful caller-owned discovery context, never a booking authorization claim. */
+  readonly coverageHint?: string;
   readonly disabled?: boolean;
   readonly canGoBack?: boolean;
   onChange(change: Pick<CalendarCoreDraft, 'visitMode' | 'visitLocation'>): void;
@@ -47,5 +49,6 @@ export function CalendarVisitFields(props: CalendarVisitFieldsProps) {
       </Group>}
     </>}
     {mode !== 'unspecified' && <Text size="xs" c="dimmed">{mode === 'in-person' ? 'The server verifies current location assignments when the booking changes.' : 'Visit mode only. No call link, provider connection or notification is created.'}</Text>}
+    {mode === 'in-person' && props.coverageHint && <Text size="xs" c="dimmed" role="status">{props.coverageHint}</Text>}
   </Stack>;
 }

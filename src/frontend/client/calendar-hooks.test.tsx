@@ -5,11 +5,13 @@ import type { Root } from 'react-dom/client';
 import type { CalendarAppointmentPage, CalendarAppointmentView, CalendarAppointmentTypePage, CalendarAppointmentTypePageQuery, CalendarAppointmentTypeView,
   CalendarLifecyclePolicy, CalendarAppointmentTransitions, CalendarParticipantDirectoryQuery, CalendarParticipantDirectoryPage, CalendarParticipantsView, CalendarAvailabilityPolicyView,
   CalendarResourceTypesView, CalendarLocationPage, CalendarLocationPageQuery, CalendarVisitLocationQuery, CalendarRangeQuery, CalendarReadOptions, CalendarResourcePage, CalendarResourcePageQuery, CalendarWatchOptions, CalendarWatchUpdate } from '../../calendar/contracts';
+import type { CalendarResourceLocationPolicyView } from '../../calendar/contracts';
 import { ClientProvider } from './client-context';
 import type { Client } from './sdk';
 import { CalendarReadError } from './calendar-mutation';
 import { useCalendarAppointment, useCalendarAppointments, useCalendarResources, useCalendarLocations, useCalendarAppointmentTypes,
   useCalendarAppointmentType, useCalendarResourceTypes, useCalendarLifecycle, useCalendarAppointmentTransitions, useCalendarVisitLocations,
+  useCalendarResourceLocationPolicy,
   useCalendarParticipantDirectory, useCalendarAppointmentParticipants, useCalendarHoldParticipants, useCalendarAvailabilityPolicy, type CalendarReadResult, type UseCalendarAppointmentsResult } from './calendar-hooks';
 import { createHookContainer, installMinimalHookDom } from './test-fixtures/react-hook-dom';
 const roots = new Set<Root>(); let restore: () => void;
@@ -323,6 +325,44 @@ test('availability policy live owners replace targets and withdraw denied or ret
   await act(async () => { f.availabilityPolicies[4]!.resolve(first); }); expect(current.value).toBeNull();
 });
 
+test('location-policy hook masks changed resource/revision/scope owners and terminally retires denied or null selections', async () => {
+  const f = fixture(), { createRoot } = await import('react-dom/client'), root = createRoot(createHookContainer()); roots.add(root);
+  let id: string | null = 'resource-a', revision = 0, current!: CalendarReadResult<CalendarResourceLocationPolicyView>;
+  function Capture() { current = useCalendarResourceLocationPolicy(id, revision); return null; }
+  function render() { root.render(createElement(ClientProvider, { client: f.client, children: createElement(Capture) })); }
+  await act(async () => render());
+  const first: CalendarResourceLocationPolicyView = { resourceId: 'resource-a', resourceRevision: 2, policy: { kind: 'static-v1', locationIds: [] } };
+  await act(async () => f.locationPolicies[0]!.resolve(first)); expect(current.value).toBe(first);
+  id = 'resource-b'; await act(async () => render()); expect(current.value).toBeNull(); expect(f.locationPolicies[0]!.options.signal!.aborted).toBe(true);
+  await act(async () => f.locationPolicies[0]!.resolve(first)); expect(current.value).toBeNull();
+  const second = { ...first, resourceId: 'resource-b', resourceRevision: 3 };
+  await act(async () => f.locationPolicies[1]!.resolve(second)); expect(current.value).toBe(second);
+  revision++; await act(async () => render()); expect(current.value).toBeNull(); expect(f.locationPolicies[1]!.removals).toBe(1);
+  await act(async () => f.locationPolicies[2]!.options.onError?.(new CalendarReadError('CALENDAR_NOT_FOUND', 404, true)));
+  expect(current).toMatchObject({ status: 'error', value: null });
+  await act(async () => f.locationPolicies[2]!.resolve(second)); expect(current.value).toBeNull();
+  f.auth.authorizationScopeKey = 'new-policy-scope'; await act(async () => f.notify());
+  expect(current).toMatchObject({ status: 'loading', value: null });
+  await act(async () => f.locationPolicies[3]!.resolve(second)); expect(current.value).toBe(second);
+  id = null; await act(async () => render()); expect(current).toMatchObject({ status: 'idle', value: null }); expect(f.locationPolicies[3]!.options.signal!.aborted).toBe(true);
+});
+
+test('visit hook interval identity retires old occupied coverage before another location page can publish', async () => {
+  const f = fixture(), { createRoot } = await import('react-dom/client'), root = createRoot(createHookContainer()); roots.add(root);
+  let query: CalendarVisitLocationQuery = { resourceIds: ['resource'], interval: { startAt: '2026-11-18T10:00:00.000Z', endAt: '2026-11-18T11:00:00.000Z' } };
+  let current!: CalendarReadResult<CalendarLocationPage>;
+  function Capture() { current = useCalendarVisitLocations(query); return null; }
+  function render() { root.render(createElement(ClientProvider, { client: f.client, children: createElement(Capture) })); }
+  await act(async () => render());
+  const page = { items: [], truncated: false, nextAfter: null };
+  await act(async () => f.visits[0]!.resolve(page)); expect(current.value).toBe(page);
+  query = { ...query, interval: { startAt: query.interval!.startAt, endAt: '2026-11-18T12:00:00.000Z' } };
+  await act(async () => render()); expect(current.value).toBeNull(); expect(f.visits[0]!.options.signal!.aborted).toBe(true);
+  expect(f.visits[1]!.query.interval).toEqual(query.interval);
+  await act(async () => f.visits[0]!.resolve(page)); expect(current.value).toBeNull();
+  await act(async () => f.visits[1]!.resolve(page)); expect(current.value).toBe(page);
+});
+
 function fixture() {
   const observers = new Set<() => void>(), subscribe = (observer: () => void) => { observers.add(observer); return () => { observers.delete(observer); }; };
   const auth = { authorizationScopeKey: 'original-scope', user: { userId: 'synthetic-user' }, activeTenant: { tenantId: 'synthetic-tenant' }, isLoading: false,
@@ -341,6 +381,7 @@ function fixture() {
   const appointmentParticipants: { id: string; options: CalendarWatchOptions; resolve(value: CalendarParticipantsView): void; removals: number }[] = [];
   const holdParticipants: { id: string; options: CalendarWatchOptions; resolve(value: CalendarParticipantsView): void; removals: number }[] = [];
   const availabilityPolicies: { id: string; options: CalendarWatchOptions; resolve(value: CalendarAvailabilityPolicyView): void; removals: number }[] = [];
+  const locationPolicies: { id: string; options: CalendarWatchOptions; resolve(value: CalendarResourceLocationPolicyView): void; removals: number }[] = [];
   const client = { auth, calendar: { availability: { policy: { watch(id: string, listener: (value: CalendarAvailabilityPolicyView) => void, options: CalendarWatchOptions) {
     const item = { id, options, resolve: listener, removals: 0 }; availabilityPolicies.push(item); return () => { item.removals++; };
   } } }, participants: { watchDirectory(query: CalendarParticipantDirectoryQuery, listener: (value: CalendarParticipantDirectoryPage) => void, options: CalendarWatchOptions) {
@@ -353,7 +394,9 @@ function fixture() {
     const item = { options, resolve: listener, removals: 0 }; lifecycle.push(item); return () => { item.removals++; };
   } }, resources: { watch(query: CalendarResourcePageQuery, listener: (value: CalendarResourcePage) => void, options: CalendarWatchOptions) {
     const item = { query, options, resolve: listener, removals: 0 }; resources.push(item); return () => { item.removals++; };
-  } }, locations: { watch(query: CalendarLocationPageQuery, listener: (value: CalendarLocationPage) => void, options: CalendarWatchOptions) {
+  } }, locations: { policy: { watch(id: string, listener: (value: CalendarResourceLocationPolicyView) => void, options: CalendarWatchOptions) {
+    const item = { id, options, resolve: listener, removals: 0 }; locationPolicies.push(item); return () => { item.removals++; };
+  } }, watch(query: CalendarLocationPageQuery, listener: (value: CalendarLocationPage) => void, options: CalendarWatchOptions) {
     const item = { query, options, resolve: listener, removals: 0 }; locations.push(item); return () => { item.removals++; };
   }, watchForVisit(query: CalendarVisitLocationQuery, listener: (value: CalendarLocationPage) => void, options: CalendarWatchOptions) {
     const item = { query, options, resolve: listener, removals: 0 }; visits.push(item); return () => { item.removals++; };
@@ -369,7 +412,7 @@ function fixture() {
     subscriptions.push({ query, listener, options }); return () => {};
   } } } } as unknown as Client;
   return { client, auth, subscriptions, resources, locations, visits, types, typeDetails, typePolicies, details, lifecycle, transitions,
-    participantDirectories, appointmentParticipants, holdParticipants, availabilityPolicies, notify() { for (const observer of observers) observer(); } };
+    participantDirectories, appointmentParticipants, holdParticipants, availabilityPolicies, locationPolicies, notify() { for (const observer of observers) observer(); } };
 }
 async function renderReads(client: Client) {
   const { createRoot } = await import('react-dom/client'), root = createRoot(createHookContainer()); roots.add(root);

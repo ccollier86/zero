@@ -90,6 +90,53 @@ function fixture(tenancy: 'single' | 'multi' = 'single', overrides: Partial<Auth
 }
 
 describe('calendar internal service boundary (in-memory broker, not Fabric)', () => {
+  test('location policy facade detaches normalized source and binds server-only visibility witnesses without changing logical intent', async () => {
+    const f = fixture(), api = f.service.forAuthority(f.request);
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; }); f.setBeforeCurrent(() => gate);
+    f.setOnRead(async call => call.name === 'calendar.receipt' ? null : call.name === 'calendar.locationAssignmentWitnesses'
+      ? [{ locationId: 'site', resourceId: 'visible-resource' }] : { resourceId: 'resource', resourceRevision: 2, policy: { kind: 'static-v1', locationIds: [] } });
+    f.setOnWrite(async call => ({ requestId: call.requestId, operation: 'resource.location-policy-changed', id: call.input.id as string,
+      revision: Number(call.input.expectedRevision) + 1, changed: true }));
+    try {
+      const policy = { kind: 'effective-utc-v1' as const, assignments: [{ locationId: 'site', windows: [
+        { startAt: '2027-01-01T10:00:00.000Z', endAt: '2027-01-01T11:00:00.000Z' },
+        { startAt: '2027-01-01T11:00:00.000Z', endAt: '2027-01-01T12:00:00.000Z' },
+      ] }] };
+      const saving = api.locations.policy.replace('resource', policy, { idempotencyKey: 'location-policy', expectedRevision: 1 });
+      policy.assignments[0]!.locationId = 'changed'; policy.assignments[0]!.windows.length = 0;
+      release(); expect(await saving).toMatchObject({ operation: 'resource.location-policy-changed', revision: 2, changed: true });
+      expect(f.calls).toHaveLength(1); expect(f.calls[0]!.name).toBe('calendar.resource.location-policy');
+      expect(f.calls[0]!.input).toMatchObject({ id: 'resource', expectedRevision: 1, kind: 'effective-utc-v1',
+        assignments: [{ locationId: 'site', windows: [{ startAt: '2027-01-01T10:00:00.000Z', endAt: '2027-01-01T12:00:00.000Z' }] }],
+        locationWitnesses: [{ locationId: 'site', resourceId: 'visible-resource' }] });
+      expect(await api.locations.policy.get('resource')).toMatchObject({ resourceId: 'resource' });
+      f.setOnWrite(async call => ({ requestId: call.requestId, operation: 'resource.location-policy-changed', id: 'resource', revision: 99, changed: true }));
+      await expect(api.locations.policy.replace('resource', { kind: 'static-v1', locationIds: [] },
+        { idempotencyKey: 'wrong-policy-receipt', expectedRevision: 2 })).rejects.toMatchObject({ code: 'CALENDAR_OUTCOME_UNKNOWN' });
+    } finally { release(); await f.service.close(); }
+  });
+  test('visit discovery detaches occupied bounds and malformed location policy inputs never reach a private broker', async () => {
+    const f = fixture(), api = f.service.forAuthority(f.request);
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; }); f.setBeforeCurrent(() => gate);
+    const reads: ReadCall[] = []; f.setOnRead(async call => { reads.push(call); return { items: [], truncated: false, nextAfter: null }; });
+    try {
+      const query = { resourceIds: ['z', 'a'], interval: { startAt: '2027-01-01T00:00:00.000Z', endAt: '2027-01-02T00:00:00.000Z' } };
+      const reading = api.locations.forVisit(query); query.resourceIds.length = 0; query.interval.startAt = 'changed'; release(); await reading;
+      expect(reads[0]!.input).toMatchObject({ resourceIds: ['a', 'z'], interval: { startAt: '2027-01-01T00:00:00.000Z', endAt: '2027-01-02T00:00:00.000Z' } });
+      const count = f.readCalls;
+      for (const input of [{ kind: 'static-v1', locationIds: [], scopeId: 'forged' }, { kind: 'effective-utc-v1', assignments: [], locationWitnesses: [] },
+        { kind: 'effective-utc-v1', assignments: [{ locationId: 'site', windows: [{ startAt: 'invalid', endAt: 'invalid' }] }] }]) {
+        await expect(api.locations.policy.replace('resource', input as never, { idempotencyKey: 'invalid-policy', expectedRevision: 1 })).rejects.toMatchObject({ code: 'CALENDAR_INPUT_INVALID' });
+      }
+      for (const interval of [{ startAt: 0, endAt: 1000 }, { startAt: '2027-01-01T00:00:00.000Z' }, { startAt: '2027-01-01T00:00:00.000Z', endAt: '2027-03-01T00:00:00.000Z' },
+        { startAt: '2027-01-01T00:00:00.000Z', endAt: '2027-01-02T00:00:00.000Z', actor: 'forged' }]) {
+        await expect(api.locations.forVisit({ resourceIds: [], interval } as never)).rejects.toMatchObject({ code: 'CALENDAR_INPUT_INVALID' });
+      }
+      expect(f.readCalls).toBe(count); expect(f.calls).toHaveLength(0);
+    } finally { release(); await f.service.close(); }
+  });
   test('lifecycle facade uses fixed policy identity and detaches policy/transition/cancellation controls before admission', async () => {
     const f = fixture(), api = f.service.forAuthority(f.request);
     let release!: () => void;

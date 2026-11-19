@@ -15,6 +15,18 @@ test('capability reads use one fixed native path and return immutable whiteliste
     expect(value).not.toBe(capabilities);
   } finally { client.clear(); }
 });
+test('location policy capability remains absent on older servers and accepts only an explicit native boolean', async () => {
+  for (const locationPolicies of [true, false]) {
+    const client = createCalendarClient(async <T>() => ({ ...capabilities, allDayAppointments: true, locationPolicies }) as T);
+    try { expect(await client.capabilities.get()).toEqual({ ...capabilities, allDayAppointments: true, locationPolicies }); }
+    finally { client.clear(); }
+  }
+  for (const locationPolicies of [undefined, null, 1, 'true']) {
+    const client = createCalendarClient(async <T>() => ({ ...capabilities, locationPolicies }) as T);
+    try { await expect(client.capabilities.get()).rejects.toMatchObject({ name: 'CalendarReadError' }); }
+    finally { client.clear(); }
+  }
+});
 test('invalid/private/contradictory capability projections reject without exposing the wire body', async () => {
   for (const value of [{ ...capabilities, actor: { userId: 'PRIVATE_ID' } }, { ...capabilities, rootDirectory: '/PRIVATE_PATH' },
     { ...capabilities, manage: false }, { ...capabilities, timeZone: 'bad/zone' }, { ...capabilities, createOwn: 'yes' },

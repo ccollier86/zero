@@ -57,7 +57,7 @@ Input, with year0000–9999 handling independent of host-local Date normalizatio
 ```ts
 {
   timeZone,
-  createOwn, manage, participants, allDayAppointments,
+  createOwn, manage, participants, allDayAppointments, locationPolicies,
   limits: { maxRangeDays, maxPageSize, maxResources, maxParticipants }
 }
 ```
@@ -81,6 +81,18 @@ complete partial schedule or dozens of streams. Direct facade callers may compos
 additional separately bounded reads.
 
 ## Booking and type selection
+
+On supporting servers, the location picker submits explicit occupied UTC bounds
+for representable timed drafts, including type buffers, and frozen boundaries for
+unchanged all-day records. New/changed LocalDates remain authorized directory
+discovery with a visible save-time-check explanation; the browser does not guess
+their UTC conversion. Candidate/capability changes retire stale discovery. Accepted
+historical locations remain available for unchanged metadata edits rather than
+being silently replaced by a current catalog choice. The native writer always
+performs the final eligibility decision.
+
+`useCalendarResourceLocationPolicy(id, readRevision?)` exposes the separate native
+live policy for app-specific administration. See [Effective location policies](../../backend/calendar/location-policies.md).
 
 Canonical booking/hold admission also enforces the selected
 [working-hours policy](../../backend/calendar/working-hours.md), when configured.

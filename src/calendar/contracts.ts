@@ -1,5 +1,8 @@
 /** Private, scope-admitted calendar contracts shared by native server and browser facades. */
 import type { CalendarAvailabilityPolicyInput, CalendarAvailabilityPolicyView } from './working-hours-contracts';
+import type { CalendarResourceLocationPolicyInput, CalendarResourceLocationPolicyView } from './location-policy-contracts';
+export type { CalendarResourceLocationPolicyInput, CalendarResourceLocationPolicyView,
+  CalendarResourceLocationPolicyWindow, CalendarResourceLocationPolicyAssignment } from './location-policy-contracts';
 export type { CalendarAvailabilityPolicyInput, CalendarAvailabilityPolicyView, CalendarExplicitAvailabilityPolicyInput,
   CalendarWeeklyAvailabilityPolicyInput, CalendarWorkingHoursSnapshot } from './working-hours-contracts';
 export interface CalendarActor {
@@ -20,6 +23,8 @@ export interface CalendarCapabilities {
   readonly participants: boolean;
   /** Absent on older servers. This covers untyped appointments, not holds or blocks. */
   readonly allDayAppointments?: boolean;
+  /** Absent on older servers. Authoritative effective assignment policy/discovery is available. */
+  readonly locationPolicies?: boolean;
   readonly limits: { readonly maxRangeDays: number; readonly maxPageSize: number; readonly maxResources: number; readonly maxParticipants: number };
 }
 /** Native account identity only. Calendar files never duplicate Guardian profiles or credentials. */
@@ -47,7 +52,11 @@ export type CalendarVisitInput = { readonly mode: 'in-person'; readonly location
   | { readonly mode: 'video' | 'phone' };
 export type CalendarVisitSnapshot = { readonly mode: 'in-person'; readonly location: CalendarLocationSnapshot }
   | { readonly mode: 'video' | 'phone' };
-export interface CalendarVisitLocationQuery extends CalendarLocationPageQuery { readonly resourceIds: readonly string[] }
+export interface CalendarVisitLocationQuery extends CalendarLocationPageQuery {
+  readonly resourceIds: readonly string[];
+  /** Explicit occupied UTC bounds, including buffers; omission is directory discovery only. */
+  readonly interval?: { readonly startAt: string; readonly endAt: string };
+}
 /** Reservation occupancy remains separate from confirmation/outcome; only cancellation releases it. */
 export type CalendarAppointmentStatus = 'tentative' | 'confirmed' | 'completed' | 'no-show' | 'cancelled';
 export interface CalendarLifecyclePolicyInput {
@@ -239,6 +248,7 @@ export interface CalendarAppointmentView {
 export interface CalendarCommandReceipt {
   readonly requestId: string;
   readonly operation: 'resource.created' | 'resource.grant-changed' | 'resource.availability-changed' | 'resource.locations-changed'
+    | 'resource.location-policy-changed'
     | 'resource.availability-policy-changed'
     | 'location.created' | 'location.updated'
     | 'type.created' | 'type.updated' | 'resource.types-changed'
@@ -414,6 +424,12 @@ export interface ScopedCalendar {
       options?: CalendarWatchOptions): () => void;
   };
   readonly locations: {
+    readonly policy: {
+      get(resourceId: string, options?: CalendarReadOptions): Promise<CalendarResourceLocationPolicyView>;
+      replace(resourceId: string, policy: CalendarResourceLocationPolicyInput, options: CalendarControlOptions): Promise<CalendarCommandReceipt>;
+      watch(resourceId: string, listener: (policy: CalendarResourceLocationPolicyView, update?: CalendarWatchUpdate) => void,
+        options?: CalendarWatchOptions): () => void;
+    };
     forVisit(query: CalendarVisitLocationQuery, options?: CalendarReadOptions): Promise<CalendarLocationPage>;
     watchForVisit(query: CalendarVisitLocationQuery, listener: (page: CalendarLocationPage, update?: CalendarWatchUpdate) => void,
       options?: CalendarWatchOptions): () => void;

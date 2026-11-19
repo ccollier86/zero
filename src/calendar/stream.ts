@@ -54,6 +54,10 @@ export function calendarResourceLocationsStream(calendar: ScopedCalendar, id: st
   return calendarSnapshotStream({ read: options => calendar.locations.forResource(id, options),
     watch: (listener, options) => calendar.locations.watchForResource(id, listener, options) }, signal);
 }
+export function calendarResourceLocationPolicyStream(calendar: ScopedCalendar, id: string, signal: AbortSignal): ReadableStream<Uint8Array> {
+  return calendarSnapshotStream({ read: options => calendar.locations.policy.get(id, options),
+    watch: (listener, options) => calendar.locations.policy.watch(id, listener, options) }, signal);
+}
 export function calendarAppointmentStream(calendar: ScopedCalendar, query: CalendarRangeQuery, signal: AbortSignal): ReadableStream<Uint8Array> {
   return calendarSnapshotStream({ read: options => calendar.appointments.query(query, options),
     watch: (listener, options) => calendar.appointments.watch(query, listener, options) }, signal);

@@ -32,6 +32,7 @@ import { calendarIntegrationInput, calendarIntegrationOptions, type CalendarInte
 import type { CalendarIntegrationOperatorRequestReceipt } from './integration-operator-request-model';
 import type { DatabaseOpenAdmission } from '../databases/database-open-admission';
 import { CalendarIntegrationWakeCatalog, installCalendarIntegrationWakeCatalog, type CalendarIntegrationWakeCoverage } from './integration-wake-catalog';
+import { normalizeCalendarResourceLocationPolicy } from './location-policy-model';
 
 export interface CalendarRuntimeSource {
   prepare(owner: CalendarOwnerRecord): void;
@@ -52,12 +53,12 @@ export interface CalendarRuntimeOptions {
   readonly integrationWake?: true;
 }
 const QUERIES = new Set(['calendar.resources', 'calendar.busy', 'calendar.appointments', 'calendar.appointmentsByDate', 'calendar.appointment',
-  'calendar.locations', 'calendar.location', 'calendar.resourceLocations', 'calendar.locationAssignmentWitnesses', 'calendar.visitLocations',
+  'calendar.locations', 'calendar.location', 'calendar.resourceLocations', 'calendar.resourceLocationPolicy', 'calendar.locationAssignmentWitnesses', 'calendar.visitLocations',
   'calendar.types', 'calendar.type', 'calendar.resourceTypes', 'calendar.lifecycle', 'calendar.appointmentTransitions',
   'calendar.availability', 'calendar.availabilityPolicy', 'calendar.blocks', 'calendar.block', 'calendar.holds', 'calendar.hold', 'calendar.receipt',
   'calendar.appointmentParticipants', 'calendar.holdParticipants', 'calendar.holdParticipantAdmission']);
 const COMMANDS = new Set(['calendar.resource.create', 'calendar.resource.grant', 'calendar.resource.availability', 'calendar.resource.availability-policy',
-  'calendar.location.create', 'calendar.location.replace', 'calendar.resource.locations',
+  'calendar.location.create', 'calendar.location.replace', 'calendar.resource.locations', 'calendar.resource.location-policy',
   'calendar.type.create', 'calendar.type.replace', 'calendar.resource.types', 'calendar.lifecycle.replace', 'calendar.appointment.transition',
   'calendar.block.create', 'calendar.block.reschedule', 'calendar.block.cancel',
   'calendar.hold.acquire', 'calendar.hold.release', 'calendar.hold.confirm',
@@ -177,7 +178,7 @@ export class CalendarRuntime implements CalendarServiceBroker {
       // It selects a native transport attempt, not a new logical domain intent;
       // calendarIntent still compares the original scope/principal/key digest.
       const transportKey = 'calendar-command:' + calendarHash([calendarRealm.fingerprint, actor, key, name,
-        ...(name === 'calendar.resource.locations' ? [body.locationWitnesses ?? null] : [])]);
+        ...(name === 'calendar.resource.locations' || name === 'calendar.resource.location-policy' ? [body.locationWitnesses ?? null] : [])]);
       const result = await this.execute<CalendarCommandReceipt>(record, 'command', name, body, guard, transportKey, false, operationSignal,
         finalCommitGuard ? this.guard(finalCommitGuard, operationSignal) : undefined);
       try {
@@ -526,6 +527,15 @@ export class CalendarRuntime implements CalendarServiceBroker {
       calendarKey(requestId); calendarKey(id); calendarInteger(expectedRevision, 1);
       Object.assign(body, calendarAppointmentUpdateInput(patch, this.options.config));
     }
+    if (name === 'calendar.resource.location-policy') {
+      const { requestId, id, expectedRevision, locationWitnesses: _witnesses, ...policy } = query;
+      calendarKey(requestId); calendarKey(id); calendarInteger(expectedRevision, 1);
+      Object.assign(body, normalizeCalendarResourceLocationPolicy(policy));
+    }
+    if (name === 'calendar.resourceLocationPolicy') {
+      const selected = calendarRecord(query, ['id']);
+      return { actor, id: calendarKey(selected.id) };
+    }
     if (name === 'calendar.resources') return { ...calendarResourcePageQuery(query, this.options.config), actor };
     if (name === 'calendar.locations') return { ...calendarPageQuery(query, this.options.config), actor };
     if (name === 'calendar.visitLocations') return { ...calendarVisitLocationQuery(query, this.options.config), actor };
@@ -704,10 +714,10 @@ export function emptyCalendarRead(name: string, input: unknown): unknown {
   const fields = name === 'calendar.resources' ? ['actor', 'limit', 'after', 'locationIds', 'regions']
     : name === 'calendar.locations' ? ['actor', 'limit', 'after']
     : name === 'calendar.types' ? ['actor', 'limit', 'after', 'resourceIds']
-    : name === 'calendar.visitLocations' ? ['actor', 'resourceIds', 'limit', 'after']
+    : name === 'calendar.visitLocations' ? ['actor', 'resourceIds', 'limit', 'after', 'interval']
     : name === 'calendar.locationAssignmentWitnesses' ? ['actor', 'locationIds']
     : name === 'calendar.lifecycle' ? ['actor']
-    : name === 'calendar.receipt' ? ['actor', 'requestId'] : ['calendar.appointment', 'calendar.appointmentTransitions', 'calendar.appointmentParticipants', 'calendar.holdParticipants', 'calendar.holdParticipantAdmission', 'calendar.block', 'calendar.hold', 'calendar.availability', 'calendar.availabilityPolicy', 'calendar.location', 'calendar.resourceLocations', 'calendar.type', 'calendar.resourceTypes'].includes(name) ? ['actor', 'id']
+    : name === 'calendar.receipt' ? ['actor', 'requestId'] : ['calendar.appointment', 'calendar.appointmentTransitions', 'calendar.appointmentParticipants', 'calendar.holdParticipants', 'calendar.holdParticipantAdmission', 'calendar.block', 'calendar.hold', 'calendar.availability', 'calendar.availabilityPolicy', 'calendar.location', 'calendar.resourceLocations', 'calendar.resourceLocationPolicy', 'calendar.type', 'calendar.resourceTypes'].includes(name) ? ['actor', 'id']
     : name === 'calendar.appointmentsByDate' ? ['actor', 'resourceIds', 'startDate', 'endDate', 'limit']
     : name === 'calendar.busy' || name === 'calendar.appointments' || name === 'calendar.blocks' || name === 'calendar.holds' ? ['actor', 'resourceIds', 'startAt', 'endAt', 'limit'] : null;
   if (!fields) throw new CalendarError('CALENDAR_INPUT_INVALID');
@@ -717,8 +727,9 @@ export function emptyCalendarRead(name: string, input: unknown): unknown {
   }
   if (name === 'calendar.lifecycle') { requireCalendarLifecycleManager(calendarActor(r.actor)); return { ...CALENDAR_DEFAULT_LIFECYCLE_POLICY }; }
   if (name === 'calendar.visitLocations') {
-    calendarInteger(r.limit ?? 25, 1, CALENDAR_LIMITS.page); if (r.after !== undefined) calendarKey(r.after);
-    if (calendarSelection(r.resourceIds).length) throw new CalendarError('CALENDAR_NOT_FOUND');
+    const { actor: _actor, ...query } = r;
+    const accepted = calendarVisitLocationQuery(query, { maxPageSize: CALENDAR_LIMITS.page, maxResources: CALENDAR_LIMITS.selection });
+    if (accepted.resourceIds.length) throw new CalendarError('CALENDAR_NOT_FOUND');
     return { items: [], truncated: false, nextAfter: null };
   }
   if (name === 'calendar.types') {
@@ -753,7 +764,7 @@ export function emptyCalendarRead(name: string, input: unknown): unknown {
     if (!calendarActor(r.actor).manageAll) throw new CalendarError('CALENDAR_FORBIDDEN');
     throw new CalendarError('CALENDAR_NOT_FOUND');
   }
-  if (['calendar.appointment', 'calendar.appointmentTransitions', 'calendar.holdParticipantAdmission', 'calendar.block', 'calendar.hold', 'calendar.availability', 'calendar.availabilityPolicy', 'calendar.location', 'calendar.resourceLocations', 'calendar.resourceTypes'].includes(name)) { calendarKey(r.id); throw new CalendarError('CALENDAR_NOT_FOUND'); }
+  if (['calendar.appointment', 'calendar.appointmentTransitions', 'calendar.holdParticipantAdmission', 'calendar.block', 'calendar.hold', 'calendar.availability', 'calendar.availabilityPolicy', 'calendar.location', 'calendar.resourceLocations', 'calendar.resourceLocationPolicy', 'calendar.resourceTypes'].includes(name)) { calendarKey(r.id); throw new CalendarError('CALENDAR_NOT_FOUND'); }
   const ids = calendarSelection(r.resourceIds);
   const start = Date.parse(normalizeCalendarInstant(r.startAt)), end = Date.parse(normalizeCalendarInstant(r.endAt));
   calendarInteger(end - start, 1, CALENDAR_LIMITS.rangeMs); calendarInteger(r.limit ?? 100, 1, CALENDAR_LIMITS.page);

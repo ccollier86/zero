@@ -68,9 +68,17 @@ export function calendarAppointmentTypePageQuery(input: unknown, config: Pick<Re
 }
 /** A visit choice is always tied to an explicit selected resource set, including the empty set. */
 export function calendarVisitLocationQuery(input: unknown, config: Pick<ResolvedCalendarConfig, 'maxPageSize' | 'maxResources'>): CalendarVisitLocationQuery {
-  const query = calendarAppointmentTypePageQuery(input, config);
+  const r = calendarRecord(input, ['resourceIds', 'limit', 'after', 'interval']);
+  const { interval: authoredInterval, ...base } = r;
+  const query = calendarAppointmentTypePageQuery(base, config);
   if (query.resourceIds === undefined) throw new CalendarError('CALENDAR_INPUT_INVALID');
-  return query as CalendarVisitLocationQuery;
+  if (!Object.hasOwn(r, 'interval')) return query as CalendarVisitLocationQuery;
+  const interval = calendarRecord(authoredInterval, ['startAt', 'endAt']);
+  if (typeof interval.startAt !== 'string' || typeof interval.endAt !== 'string') throw new CalendarError('CALENDAR_INPUT_INVALID');
+  const startAt = normalizeCalendarInstant(interval.startAt), endAt = normalizeCalendarInstant(interval.endAt);
+  calendarInteger(Date.parse(endAt) - Date.parse(startAt), 1, 33 * 86_400_000);
+  return Object.freeze({ ...query, resourceIds: query.resourceIds,
+    interval: Object.freeze({ startAt, endAt }) });
 }
 /** Authored references never carry server-retained labels, addresses or provider links. */
 export function calendarVisitInput(input: unknown): Record<string, unknown> {
@@ -161,7 +169,8 @@ export function calendarReceipt(input: unknown, requestId: string, operation: st
   const expected = { 'resource.create': 'resource.created', 'resource.grant': 'resource.grant-changed',
     'resource.availability': 'resource.availability-changed',
     'resource.availability-policy': 'resource.availability-policy-changed',
-    'resource.locations': 'resource.locations-changed', 'location.create': 'location.created', 'location.replace': 'location.updated',
+    'resource.locations': 'resource.locations-changed', 'resource.location-policy': 'resource.location-policy-changed',
+    'location.create': 'location.created', 'location.replace': 'location.updated',
     'type.create': 'type.created', 'type.replace': 'type.updated', 'resource.types': 'resource.types-changed',
     'block.create': 'block.created', 'block.reschedule': 'block.rescheduled', 'block.cancel': 'block.cancelled',
     'hold.acquire': 'hold.acquired', 'hold.release': 'hold.released', 'hold.confirm': 'appointment.created',
@@ -169,7 +178,7 @@ export function calendarReceipt(input: unknown, requestId: string, operation: st
     'appointment.transition': 'appointment.transitioned', 'appointment.participants': 'appointment.participants-changed', 'lifecycle.replace': 'lifecycle.policy-changed' }[operation];
   if (!expected || r.requestId !== requestId || r.operation !== expected || r.id !== id || typeof r.changed !== 'boolean') throw new CalendarError('CALENDAR_STATE_INVALID');
   calendarInteger(r.revision, 1);
-  if (expectedRevision !== undefined && (operation === 'lifecycle.replace' || operation === 'appointment.transition' || operation === 'appointment.participants' || operation === 'appointment.update')
+  if (expectedRevision !== undefined && (operation === 'lifecycle.replace' || operation === 'appointment.transition' || operation === 'appointment.participants' || operation === 'appointment.update' || operation === 'resource.location-policy')
     && (r.revision !== expectedRevision + (r.changed ? 1 : 0) || operation === 'appointment.transition' && !r.changed)) throw new CalendarError('CALENDAR_STATE_INVALID');
   return Object.freeze({ requestId, operation: expected as CalendarCommandReceipt['operation'], id, revision: r.revision as number, changed: r.changed });
 }

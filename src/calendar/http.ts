@@ -6,13 +6,14 @@ import type { CalendarAppointmentCreateInput, CalendarAppointmentUpdateInput, Ca
   CalendarAppointmentTypeInput, CalendarAppointmentTypeReplacement, CalendarAppointmentTypePageQuery, CalendarResourceTypesInput,
   CalendarLifecyclePolicyInput, CalendarAppointmentTransitionInput, CalendarCancellationOptions,
   CalendarControlOptions, CalendarGrant, CalendarHoldInput, CalendarHoldConfirmationInput, CalendarLocationInput, CalendarLocationPageQuery, CalendarLocationReplacement,
-  CalendarRangeQuery, CalendarRequestOptions, CalendarRescheduleInput, CalendarResourcePageQuery, CalendarVisitLocationQuery, CalendarParticipantReference, CalendarAvailabilityPolicyInput } from './contracts';
+  CalendarRangeQuery, CalendarRequestOptions, CalendarRescheduleInput, CalendarResourcePageQuery, CalendarVisitLocationQuery, CalendarParticipantReference, CalendarAvailabilityPolicyInput,
+  CalendarResourceLocationPolicyInput } from './contracts';
 import { CalendarError } from './error';
 import { calendarRecord } from './validation';
 import { calendarAppointmentStream, calendarAvailabilityStream, calendarBlockStream, calendarHoldStream, calendarLocationStream, calendarResourceStream,
   calendarLocationDetailStream, calendarResourceLocationsStream, calendarTypeStream, calendarTypeDetailStream, calendarResourceTypesStream,
   calendarLifecycleStream, calendarAppointmentTransitionsStream, calendarVisitLocationStream, calendarParticipantDirectoryStream, calendarParticipantsStream, calendarCapabilitiesStream, calendarAvailabilityPolicyStream,
-  calendarAppointmentDateStream } from './stream';
+  calendarAppointmentDateStream, calendarResourceLocationPolicyStream } from './stream';
 
 const key = t.String({ minLength: 1, maxLength: 128 });
 // Query strings stay wire strings through composed native validators; convert
@@ -22,10 +23,13 @@ const resourceQuery = { ...pageQuery, locationIds: t.Optional(t.String({ maxLeng
 const typeQuery = { ...pageQuery, resourceIds: t.Optional(t.String({ maxLength: 2063 })) };
 // Optional only in the framework schema so omission reaches our safe calendar
 // admission error instead of a framework validation body. The facade requires it.
-const visitQuery = { ...pageQuery, resourceIds: t.Optional(t.String({ maxLength: 2063 })) };
-function visitFilters(query: { limit?: string; after?: string; resourceIds?: string }): CalendarVisitLocationQuery {
+const visitQuery = { ...pageQuery, resourceIds: t.Optional(t.String({ maxLength: 2063 })),
+  startAt: t.Optional(t.String({ maxLength: 32 })), endAt: t.Optional(t.String({ maxLength: 32 })) };
+function visitFilters(query: { limit?: string; after?: string; resourceIds?: string; startAt?: string; endAt?: string }): CalendarVisitLocationQuery {
   if (typeof query.resourceIds !== 'string') throw new CalendarError('CALENDAR_INPUT_INVALID');
-  return { ...pageFilters(query), resourceIds: query.resourceIds === '' ? [] : query.resourceIds.split(',') };
+  if ((query.startAt === undefined) !== (query.endAt === undefined)) throw new CalendarError('CALENDAR_INPUT_INVALID');
+  return { ...pageFilters(query), resourceIds: query.resourceIds === '' ? [] : query.resourceIds.split(','),
+    ...(query.startAt === undefined ? {} : { interval: { startAt: query.startAt, endAt: query.endAt! } }) };
 }
 function typeFilters(query: { limit?: string; after?: string; resourceIds?: string }): CalendarAppointmentTypePageQuery {
   const { resourceIds, ...page } = query;
@@ -149,11 +153,11 @@ export async function createCalendarHttp(runtime: ZeroAppRuntime) {
         return zero.calendar.resources.setAppointmentTypes(params.id, { mode: r.mode, typeIds: r.typeIds } as CalendarResourceTypesInput, r.options as CalendarControlOptions);
       } }),
       defineEndpoint({ method: 'GET', path: '/visit-locations', query: t.Object(visitQuery, { additionalProperties: false }), async handler({ zero, query, request }) {
-        if (!zero.calendar) throw new CalendarError('CALENDAR_NOT_READY'); admitQueryKeys(request, ['limit', 'after', 'resourceIds']);
+        if (!zero.calendar) throw new CalendarError('CALENDAR_NOT_READY'); admitQueryKeys(request, ['limit', 'after', 'resourceIds', 'startAt', 'endAt']);
         return zero.calendar.locations.forVisit(visitFilters(query));
       } }),
       defineEndpoint({ method: 'GET', path: '/visit-locations/live', query: t.Object(visitQuery, { additionalProperties: false }), async handler({ zero, query, request }) {
-        if (!zero.calendar) throw new CalendarError('CALENDAR_NOT_READY'); admitQueryKeys(request, ['limit', 'after', 'resourceIds']);
+        if (!zero.calendar) throw new CalendarError('CALENDAR_NOT_READY'); admitQueryKeys(request, ['limit', 'after', 'resourceIds', 'startAt', 'endAt']);
         const filters = visitFilters(query); await zero.calendar.locations.forVisit(filters);
         return new Response(calendarVisitLocationStream(zero.calendar, filters, request.signal), {
           headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'private, no-store', 'X-Accel-Buffering': 'no' },
@@ -197,6 +201,22 @@ export async function createCalendarHttp(runtime: ZeroAppRuntime) {
       defineEndpoint({ method: 'GET', path: '/resources/:id/locations', params: t.Object({ id: key }), async handler({ zero, params }) {
         if (!zero.calendar) throw new CalendarError('CALENDAR_NOT_READY'); return zero.calendar.locations.forResource(params.id);
       } }),
+      ...([false, true] as const).map(live => defineEndpoint({ method: 'GET', path: '/resources/:id/location-policy' + (live ? '/live' : ''),
+        params: t.Object({ id: key }), async handler({ zero, params, request }) {
+          if (!zero.calendar) throw new CalendarError('CALENDAR_NOT_READY'); admitQueryKeys(request, []);
+          const policy = await zero.calendar.locations.policy.get(params.id);
+          return live ? new Response(calendarResourceLocationPolicyStream(zero.calendar, params.id, request.signal), {
+            headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'private, no-store', 'X-Accel-Buffering': 'no' },
+          }) : policy;
+        },
+      })),
+      defineEndpoint({ method: 'PUT', path: '/resources/:id/location-policy', params: t.Object({ id: key }), body: t.Unknown(),
+        async handler({ zero, params, body, request }) {
+          if (!zero.calendar) throw new CalendarError('CALENDAR_NOT_READY'); admitQueryKeys(request, []);
+          const value = calendarRecord(body, ['policy', 'options']);
+          return zero.calendar.locations.policy.replace(params.id, value.policy as CalendarResourceLocationPolicyInput, value.options as CalendarControlOptions);
+        },
+      }),
       defineEndpoint({ method: 'GET', path: '/resources/:id/locations/live', params: t.Object({ id: key }), async handler({ zero, params, request }) {
         if (!zero.calendar) throw new CalendarError('CALENDAR_NOT_READY'); await zero.calendar.locations.forResource(params.id);
         return new Response(calendarResourceLocationsStream(zero.calendar, params.id, request.signal), {

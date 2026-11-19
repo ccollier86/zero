@@ -13,6 +13,7 @@ function fixture(logging: 'enabled' | 'disabled' | 'workflow-disabled' = 'enable
   const db = createReactiveDB({ mode: 'memory' });
   let source: LoggingActorSource | null = null;
   try {
+    db.getRawDatabase().run('PRAGMA temp_store=MEMORY');
     for (const [table, schema] of Object.entries(calendarRealm.tables)) db.defineTable(table, schema);
     for (const migration of calendarRealm.migrations) migration.up(db.getRawDatabase());
     source = logging === 'disabled' ? null : new LoggingActorSource(db, normalizeLoggingActorSourceBinding({ records: false,
@@ -121,6 +122,63 @@ test('source audit pressure rolls back location revision history and resource as
     drain();
     f.command('resource.locations', { actor, id: 'person', requestId: 'failed-assignment', expectedRevision: 1, locationIds: ['location'] });
     expect(f.db.get('_calendar_resource_locations', 'person')!.resource_revision).toBe(2);
+  } finally { f.close(); }
+});
+
+test('effective assignment policy audit is source-atomic, private and once-only across replay, no-op and explicit downgrade', () => {
+  const f = fixture();
+  try {
+    f.resource();
+    f.command('location.create', { actor, requestId: 'location', id: 'location', label: 'NEVER_LOG_CALENDAR_LOCATION' });
+    const policy = { actor, id: 'person', requestId: 'effective-policy', expectedRevision: 1,
+      kind: 'effective-utc-v1', assignments: [{ locationId: 'location', windows: [
+        { startAt: '2027-01-01T00:00:00.000Z', endAt: '2028-01-01T00:00:00.000Z' },
+      ] }] };
+    f.command('resource.location-policy', policy); f.command('resource.location-policy', policy);
+    f.command('resource.location-policy', { ...policy, requestId: 'effective-noop', expectedRevision: 2 });
+    f.command('resource.location-policy', { actor, id: 'person', requestId: 'explicit-downgrade', expectedRevision: 2,
+      kind: 'static-v1', locationIds: ['location'] });
+    const events = f.source!.control({}).rows.map(row => row.event);
+    const policies = events.filter(event => event.action === 'calendar.resource.location-policy-changed');
+    expect(policies).toHaveLength(2);
+    expect(policies.map(event => event.metadata.locationPolicyKind)).toEqual(['effective-utc-v1', 'static-v1']);
+    expect(policies.map(event => event.metadata.revision)).toEqual([2, 3]);
+    expect(policies.map(event => event.metadata.windowCount)).toEqual([1, 0]);
+    expect(policies.every(event => event.actor.id === actor.userId && event.outcome === 'succeeded'
+      && event.evidence === 'server-confirmed' && event.scope.kind === 'tenant' && event.scope.tenantId === 'tenant-a')).toBe(true);
+    expect(policies.every(event => event.target?.type === 'calendar.resource' && event.target.id === 'person')).toBe(true);
+    expect(policies.every(event => Object.keys(event.metadata).every(key =>
+      ['sequence', 'revision', 'locationCount', 'windowCount', 'locationPolicyKind'].includes(key)))).toBe(true);
+    expect(new Set(policies.map(event => event.id)).size).toBe(2);
+    expect(JSON.stringify(policies)).not.toContain('NEVER_LOG_CALENDAR');
+    expect(JSON.stringify(policies)).not.toContain('2027-01-01');
+    expect(JSON.stringify(policies)).not.toContain('assignments');
+    expect(() => f.command('resource.location-policy', { ...policy, requestId: 'rejected-policy', expectedRevision: 3,
+      assignments: [{ locationId: 'guessed-location', windows: policy.assignments[0]!.windows }] })).toThrow();
+    expect(f.source!.control({}).rows.map(row => row.event)).toEqual(events);
+  } finally { f.close(); }
+});
+
+test('audit source pressure rolls back the complete effective policy and permits only the original not-committed command to be retried', () => {
+  const f = fixture('enabled', 1);
+  const drain = () => { const page = f.source!.control({}); f.source!.control({ acknowledge: page.rows.map(row => row.id) }); };
+  try {
+    f.resource(); drain();
+    f.command('location.create', { actor, requestId: 'location', id: 'location', label: 'NEVER_LOG_CALENDAR_LOCATION' });
+    const policy = { actor, id: 'person', requestId: 'pressured-policy', expectedRevision: 1,
+      kind: 'effective-utc-v1', assignments: [{ locationId: 'location', windows: [
+        { startAt: '2027-01-01T00:00:00.000Z', endAt: '2028-01-01T00:00:00.000Z' },
+      ] }] };
+    const before = f.db.getRawDatabase().serialize(), sequence = f.db.currentSeq;
+    expect(() => f.command('resource.location-policy', policy)).toThrow(expect.objectContaining({ code: 'DATABASE_BACKPRESSURE', outcome: 'not-committed' }));
+    expect(f.db.getRawDatabase().serialize()).toEqual(before); expect(f.db.currentSeq).toBe(sequence);
+    expect(f.db.list('_calendar_resource_location_policy_history')).toEqual([]);
+    expect(f.db.list('_calendar_resource_location_policy_windows')).toEqual([]);
+    expect(f.db.get('_calendar_resource_location_policy_current', 'person')).toMatchObject({ source_kind: 'legacy', history_id: null, resource_revision: 1 });
+    expect(f.db.list('_calendar_resource_location_history')).toEqual([]);
+    drain(); f.command('resource.location-policy', policy);
+    expect(f.db.get('calendar_resources', 'person')!.revision).toBe(2);
+    expect(f.source!.control({}).rows.map(row => row.event.action)).toEqual(['calendar.resource.location-policy-changed']);
   } finally { f.close(); }
 });
 

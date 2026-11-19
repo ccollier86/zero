@@ -17,6 +17,7 @@ import { assertCalendarVisitPolicy, bindCalendarAppointmentVisit, calendarAppoin
   calendarCurrentAppointmentVisit, calendarVisitInput, sameCalendarVisit } from './visit-bindings';
 import { bindCalendarAppointmentParticipants, calendarParticipantReferences, requireCalendarParticipantManager } from './participant-bindings';
 import { replaceCalendarAppointmentResourceCurrent } from './appointment-resource-bindings';
+import { initializeCalendarResourceLocationPolicy } from './location-policies';
 import { normalizeCalendarAppointmentTimeIntent } from './appointment-time-input';
 import { bindCalendarAppointmentTime, calendarCurrentAppointmentTime, calendarAppointmentTimeFields,
   requireCalendarAppointmentTimeStorage, resolveCalendarAppointmentTimeIntent, type CalendarAppointmentTimeFact } from './appointment-time-bindings';
@@ -55,6 +56,7 @@ export function createCalendarResource(context: DatabaseWriteCommandContext, inp
       }
       calendarBudget(context, 'resources');
       const change = context.db.createStrict('calendar_resources', { id, scope_id: actor.scopeId, label, kind: String(r.kind), owner_id: ownerId, time_zone: timeZone, revision: 1, active: 1 });
+      initializeCalendarResourceLocationPolicy(context, actor.scopeId, id);
       appendCalendarSemanticAudit(context, 'resource.created', change, { revision: 1 });
       return receipt(requestId, 'resource.created', id, 1);
     });

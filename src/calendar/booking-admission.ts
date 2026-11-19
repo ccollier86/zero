@@ -6,6 +6,7 @@ import { assertCalendarVisitPolicyForScope, assertCalendarBookingVisitForScope }
 import { assertCalendarAvailability } from './availability-model';
 import { assertCalendarResourcesAvailable } from './occupancy';
 import type { CalendarTimedInterval } from './time';
+import { assertCalendarResourceLocationCoverage } from './location-policies';
 
 export interface CalendarBookingCandidate {
   readonly resourceIds: readonly string[];
@@ -38,6 +39,7 @@ export function admitCalendarBookingCandidate(context: DatabaseWriteCommandConte
   // Complete BOTH intersections before resolving either client-selected private catalog generation.
   if (checks.type) assertCalendarTypePolicyForScope(context, scopeId, resourceIds, appointmentType);
   if (checks.visit) assertCalendarVisitPolicyForScope(context, scopeId, resourceIds, visit);
+  if (checks.visit) assertCalendarResourceLocationCoverage(context, scopeId, resourceIds, visit, interval);
   const acceptedType = checks.type ? assertCalendarBookingTypeForScope(context, scopeId, resourceIds, interval, appointmentType) : undefined;
   const acceptedVisit = checks.visit ? assertCalendarBookingVisitForScope(context, scopeId, resourceIds, visit) : undefined;
   if (checks.availabilityResourceIds.length) assertCalendarAvailability(context, scopeId, checks.availabilityResourceIds, interval);

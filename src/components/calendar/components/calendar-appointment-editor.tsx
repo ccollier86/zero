@@ -19,6 +19,7 @@ import { calendarZonedParts, type CalendarPendingRequest } from '../models/calen
 import { isEnded } from '../models/appointment-presentation';
 import { calendarAddDates, calendarLocalDate } from '../models/calendar-local-date';
 import { CalendarCivilDateField } from './calendar-civil-date-field';
+import { calendarVisitIntervalProjection } from '../models/calendar-visit-interval-model';
 import { CalendarAppointmentResourceFields } from './calendar-appointment-resource-fields';
 import { CalendarCoreTypeFields } from './calendar-core-type-fields';
 import { CalendarVisitFields } from './calendar-visit-fields';
@@ -36,6 +37,8 @@ export interface CalendarAppointmentEditorProps {
   readonly participants?: boolean;
   /** Native capability, not a UI grant. Missing on older servers means unavailable. */
   readonly allDayAppointments?: boolean;
+  /** Native discovery capability; absent older servers retain the legacy location query shape. */
+  readonly locationPolicies?: boolean;
   readonly maxResources?: number;
   readonly maxParticipants?: number;
   onAuthorityLost(): void;
@@ -82,6 +85,8 @@ function CurrentCalendarAppointmentEditor(props: CalendarAppointmentEditorProps 
   if (allDayMode.enabled !== (props.allDayAppointments === true)) allDayMode.retired = true;
   const allDay = draft.intervalKind === 'all-day-local-v1';
   const selectedType = draft.appointmentType === undefined ? record?.appointmentType : draft.appointmentType;
+  const locationPolicyMode = useRef({ enabled: props.locationPolicies === true, retired: false }).current;
+  if (locationPolicyMode.enabled !== (props.locationPolicies === true)) locationPolicyMode.retired = true;
   const authority = useCalendarAppointment(record?.id ?? null, readRevision);
   const management = useCalendarAppointmentTransitions(record?.id ?? null, readRevision);
   const binding = useCalendarAppointmentParticipants(participantMode.enabled && !participantMode.retired ? record?.id ?? null : null, readRevision);
@@ -98,11 +103,18 @@ function CurrentCalendarAppointmentEditor(props: CalendarAppointmentEditorProps 
   const [locationCursor, setLocationCursor] = useState<string | null>(null), [locationHistory, setLocationHistory] = useState<(string | null)[]>([]);
   const typeQuery = { resourceIds: [...draft.resourceIds].sort(), ...(typeCursor === null ? {} : { after: typeCursor }) };
   const types = useCalendarAppointmentTypes(typeQuery);
+  const locationInterval = locationPolicyMode.enabled ? calendarVisitIntervalProjection(draft, timeZone, types.value, record) : null;
+  const locationBasis = JSON.stringify([typeQuery.resourceIds, locationInterval?.interval ?? null]);
+  const [locationPageBasis, setLocationPageBasis] = useState(locationBasis), locationOwner = useRef(locationBasis); locationOwner.current = locationBasis;
+  useEffect(() => { if (locationPageBasis !== locationBasis) { setLocationCursor(null); setLocationHistory([]); setLocationPageBasis(locationBasis); } }, [locationPageBasis, locationBasis]);
+  const currentLocationCursor = locationPageBasis === locationBasis ? locationCursor : null;
   const locations = useCalendarVisitLocations(draft.visitMode === 'in-person'
-    ? { resourceIds: typeQuery.resourceIds, ...(locationCursor === null ? {} : { after: locationCursor }) } : null);
+    ? { resourceIds: typeQuery.resourceIds, ...(currentLocationCursor === null ? {} : { after: currentLocationCursor }),
+      ...(locationInterval?.interval ? { interval: locationInterval.interval } : {}) } : null);
   const assignmentChanged = calendarAppointmentDraftResourcesChanged(draft, record);
   const acceptedType = assignmentChanged ? undefined : record?.appointmentType;
-  const acceptedLocation = !assignmentChanged && record?.visit?.mode === 'in-person' ? record.visit.location : undefined;
+  const acceptedLocation = !assignmentChanged && (!locationPolicyMode.enabled || locationInterval?.preservesAcceptedInterval)
+    && record?.visit?.mode === 'in-person' ? record.visit.location : undefined;
   const typeSelection = calendarCoreTypeSelection(draft, types.value, acceptedType);
   const locationSelectable = calendarVisitSelectionCurrent(draft, locations.value, acceptedLocation);
   const [retired, setRetired] = useState(false);
@@ -124,7 +136,7 @@ function CurrentCalendarAppointmentEditor(props: CalendarAppointmentEditorProps 
     accepted: bindingCurrent ? binding.value?.participants : undefined,
     acceptedStatus: record ? binding.status === 'ready' && !bindingCurrent ? 'loading' : binding.status : undefined,
     acceptedCode: binding.code, onRetryAccepted: binding.refresh });
-  const authorityLost = retired || readDenied || selection.denied || participantMode.retired || allDayMode.retired
+  const authorityLost = retired || readDenied || selection.denied || participantMode.retired || allDayMode.retired || locationPolicyMode.retired
     || (allDay || !!record?.interval) && !allDayMode.enabled || contextClient !== client
     || !calendarScopeReadable(client, scopeKey) || !isOwnerCurrent();
   currentAdmission.current = { authorityLost };
@@ -188,7 +200,7 @@ function CurrentCalendarAppointmentEditor(props: CalendarAppointmentEditorProps 
     else if (!next && typeHistory.length) { setTypeCursor(typeHistory.at(-1)!); setTypeHistory(typeHistory.slice(0, -1)); }
   }
   function locationPage(next: boolean) {
-    if (locations.status !== 'ready' || latest.current.authorityLost || !['editing', 'submitting'].includes(phaseRef.current)) return;
+    if (locationOwner.current !== locationBasis || locations.status !== 'ready' || latest.current.authorityLost || !['editing', 'submitting'].includes(phaseRef.current)) return;
     if (next && locations.value?.nextAfter) { setLocationHistory([...locationHistory, locationCursor]); setLocationCursor(locations.value.nextAfter); }
     else if (!next && locationHistory.length) { setLocationCursor(locationHistory.at(-1)!); setLocationHistory(locationHistory.slice(0, -1)); }
   }
@@ -255,6 +267,11 @@ function CurrentCalendarAppointmentEditor(props: CalendarAppointmentEditorProps 
                     value={Number.isFinite(buffers.after) ? buffers.after : ''} readOnly={!!typeSelection.snapshot} disabled={!editable || types.status !== 'ready'}
                     onChange={event => change({ bufferAfterMinutes: event.currentTarget.value === '' ? NaN : Number(event.currentTarget.value) })} /></Group>}</Stack>,
               locationControl: <CalendarVisitFields value={draft} locations={locations.value} status={locations.status} acceptedLocation={acceptedLocation}
+                coverageHint={!locationPolicyMode.enabled ? undefined : locationInterval?.interval
+                  ? 'Location discovery uses the complete occupied interval, including buffers. Final eligibility is checked when saved.'
+                  : locationInterval?.kind === 'unprojected-all-day'
+                    ? 'Current resource-compatible locations only. Coverage of these authored dates is checked atomically when saved; no UTC boundaries are guessed.'
+                    : 'Choose a valid interval and type to filter locations by occupied coverage. Final eligibility is checked when saved.'}
                 disabled={!editable} canGoBack={locationHistory.length > 0} onChange={change} onRetry={locations.refresh}
                 onPrevious={() => locationPage(false)} onNext={() => locationPage(true)} />,
               repeatControl: <Text size="xs" c="dimmed">One-off appointment · recurrence unavailable</Text>,

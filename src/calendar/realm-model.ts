@@ -12,6 +12,7 @@ import { calendarType, requireCalendarTypeManager } from './appointment-types-mo
 import { recordCalendarIntegrationMutation } from './integration-model';
 import { calendarCurrentResourceMembership, CALENDAR_APPOINTMENT_RESOURCE_CURRENT } from './appointment-resource-bindings';
 import { calendarCurrentAppointmentTime, CALENDAR_APPOINTMENT_TIME_STATE } from './appointment-time-bindings';
+import { assertCalendarResourceLocationPolicyCurrent } from './location-policies';
 
 export const CALENDAR_LIMITS = Object.freeze({ resources: 10_000, appointments: 100_000, blocks: 100_000, holds: 100_000, locations: 10_000,
   locationHistory: 100_000, resourceLocationHistory: 100_000, types: 10_000, typeHistory: 100_000, resourceTypeHistory: 100_000,
@@ -116,7 +117,7 @@ export function authorizeCalendarReceipt(context: DatabaseWriteCommandContext, a
 export function parseCalendarReceipt(row: CalendarReceiptRow): CalendarCommandReceipt {
   try {
     const r = calendarRecord(JSON.parse(row.result_json), ['requestId', 'operation', 'id', 'revision', 'changed']);
-    const operations = { resource: ['resource.created', 'resource.grant-changed', 'resource.availability-changed', 'resource.locations-changed', 'resource.types-changed', 'resource.availability-policy-changed'],
+    const operations = { resource: ['resource.created', 'resource.grant-changed', 'resource.availability-changed', 'resource.locations-changed', 'resource.types-changed', 'resource.availability-policy-changed', 'resource.location-policy-changed'],
       appointment: ['appointment.created', 'appointment.rescheduled', 'appointment.updated', 'appointment.cancelled', 'appointment.transitioned', 'appointment.participants-changed'], block: ['block.created', 'block.rescheduled', 'block.cancelled'],
       hold: ['hold.acquired', 'hold.released'], location: ['location.created', 'location.updated'], type: ['type.created', 'type.updated'], lifecycle: ['lifecycle.policy-changed'] };
     if (r.requestId !== row.request_id || r.id !== row.target_id || typeof r.changed !== 'boolean'
@@ -152,6 +153,7 @@ export function calendarIntent(context: DatabaseWriteCommandContext, actor: Cale
   }
   calendarBudget(context, 'receipts');
   const result = run(requestId);
+  if (targetKind === 'resource' && result.changed) assertCalendarResourceLocationPolicyCurrent(context, actor.scopeId, result.id);
   // Participant/lifecycle/status edits seal the same retained time authority.
   // This fresh-state check never runs ahead of original receipt replay.
   if (targetKind === 'appointment' && result.changed) {

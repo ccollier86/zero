@@ -62,11 +62,13 @@ identity are rejected, not normalized away.
 | `locations.create({label, region?, active?}, options)` | Scope calendar manager only; omitted region is null, active defaults true |
 | `locations.replace(id, {label, region, active}, control)` | Explicit full replacement; scope manager and exact location revision |
 | `locations.forResource(resourceId, options?)` | `{resourceId, resourceRevision, locationIds}` under current resource visibility |
-| `locations.forVisit({resourceIds, limit?, after?}, options?)` | Active current intersection; book/manage on every resource before pagination, `[]` always empty |
+| `locations.forVisit({resourceIds, interval?, limit?, after?}, options?)` | Active current intersection; explicit occupied UTC `interval` also filters whole-interval eligibility before pagination, `[]` always empty |
 | `locations.watchForVisit(query, listener, options?)` | Live assignment-compatible booking selector with current authority |
 | `locations.watch(query, listener, options?)` | Authorized live location catalog pages |
 | `locations.watchLocation(id, listener, options?)` | Live detail; losing the last visible assignment retires the detail |
 | `locations.watchForResource(resourceId, listener, options?)` | Live assignments; losing resource access retires the detail |
+| `locations.policy.get(resourceId, options?)` / `watch(resourceId, listener, options?)` | Authoritative static/effective assignment source; current resource book/detail rights |
+| `locations.policy.replace(resourceId, policy, control)` | Atomic versioned static or effective-UTC assignment policy; current resource manage rights |
 | `capabilities.get(options?)` / `watch(listener, options?)` | Current scoped UI flags and configured limits; no owner/file/actor allocation or account enumeration |
 | `types.list({resourceIds?, limit?, after?}?, options?)` | Authorized active-type intersection for selected resources; manager omission lists the full catalog |
 | `types.get(id, options?)` | Current catalog revision; scope calendar manager only |
@@ -119,6 +121,8 @@ See [Lifecycle and required reasons](./lifecycle.md) for simple defaults, richer
 confirmation/outcomes, private reasons and legacy cancellation compatibility.
 See [Visit modes and retained locations](./visits.md) for optional `visit` on
 creation/hold acquisition and reschedule preserve/replace/clear semantics.
+See [Effective location policies](./location-policies.md) for time-bounded
+assignments, legacy replacement/downgrade and occupied-interval discovery.
 See [Native account participants](./participants.md) for explicit configuration,
 the additional private permission boundary, hold transfer and unavailable targets.
 
@@ -215,6 +219,9 @@ never a substitute for the stable command identity. Hidden IDs cannot be exposed
 by attaching them to a resource you own. Newly assigned locations must be active;
 an already assigned inactive location can be retained or removed. Assignment changes
 increment the resource revision, so older holds fail their captured-resource fence.
+Once effective assignment policy is selected, fresh legacy replacements reject
+instead of flattening it. Explicit downgrade uses `locations.policy.replace` with
+`static-v1`; accepted original receipt replay remains available under current rights.
 
 Both `locationIds` and `regions` filters accept at most 16 distinct entries. An empty
 or omitted facet means no narrowing within the authorized resource set, not
@@ -225,9 +232,10 @@ at separate locations in both states. An appointment range's empty `resourceIds`
 continues to mean no resources; geography filtering never broadens that selection.
 
 Inactive locations/assignments remain readable and filterable history metadata.
-Deactivation is not a booking prohibition and does not erase, move or cancel any
-appointment. These APIs do not yet model effective-dated location eligibility or
-bind an appointment to a visit location; those remain explicit later policy work.
+Deactivation does not erase, move or cancel accepted appointments. Fresh in-person
+bindings require the selected active directory generation and all-resource policy
+coverage. The separate visit and effective-location policy APIs establish those
+facts; ordinary directory facets do not. See the linked guides for their contracts.
 
 Location and assignment histories each have a 100,000-revision lifetime ceiling;
 locations have a 10,000-row ceiling. These are retained budgets, not concurrent

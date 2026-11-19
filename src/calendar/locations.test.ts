@@ -367,7 +367,8 @@ test('current-directory catalog, facets and witness plans stay indexed and bound
 
     // Exact synthetic setup in this already-owned native memory fixture. The
     // original guards stay enabled: resource revision, immutable header/member,
-    // sealed pointer and replaceable current projection advance in source order.
+    // sealed pointer, replaceable current projection and018 legacy eligibility
+    // selector advance in source order. No fabricated effective source is added.
     // Prepared statements and the single transaction keep this small; no 1000
     // receipt images or per-flip read-database snapshots are generated.
     const statements: ReturnType<typeof f.raw.prepare>[] = [];
@@ -380,6 +381,7 @@ test('current-directory catalog, facets and witness plans stay indexed and bound
       const pointer = prepare("UPDATE _calendar_resource_locations SET resource_revision=? WHERE id='a-churn'");
       const remove = prepare("DELETE FROM _calendar_resource_location_current WHERE resource_id='a-churn'");
       const current = prepare('INSERT INTO _calendar_resource_location_current(id,scope_id,resource_id,resource_revision,location_id) VALUES(?,?,\'a-churn\',?,?)');
+      const policy = prepare("UPDATE _calendar_resource_location_policy_current SET resource_revision=? WHERE id='a-churn' AND source_kind='legacy'");
       const initialRevision = Number(f.db.get('calendar_resources', 'a-churn')!.revision);
       f.raw.transaction(() => {
         for (let i = 0; i < 1000; i++) {
@@ -388,9 +390,12 @@ test('current-directory catalog, facets and witness plans stay indexed and bound
           member.run('synthetic-member-' + i, actor.scopeId, revision, locationId);
           if (i === 0) first.run(actor.scopeId, revision); else pointer.run(revision);
           remove.run(); current.run(calendarLocationCurrentId(actor.scopeId, 'a-churn', locationId), actor.scopeId, revision, locationId);
+          expect(policy.run(revision).changes).toBe(1);
         }
       })();
     } finally { for (const statement of statements) statement.finalize(); }
+    expect(f.db.get('_calendar_resource_location_policy_current', 'a-churn')).toMatchObject({ source_kind: 'legacy', history_id: null,
+      resource_revision: f.db.get('_calendar_resource_locations', 'a-churn')!.resource_revision });
     f.db.createStrict('_calendar_usage', { id: 'resourceLocationHistory', count: 1000 });
     f.assign('a-churn', []); f.assign('a-hidden-resource', ['a-hidden']); f.assign('b-visible', ['c-visible']); f.assign('c-visible', ['d-visible']);
     expect(f.db.list('_calendar_resource_location_history')).toHaveLength(1004);

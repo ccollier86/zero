@@ -126,9 +126,10 @@ test('native empty-scope broker reads allocate no owner, lease, file or fake res
     expect(await f.runtime.read<{ items: unknown[]; truncated: boolean; nextAfter: null }>(scope, 'calendar.resources', { actor, locationIds: ['missing'], regions: ['US-IN'] }, noop)).toEqual({ items: [], truncated: false, nextAfter: null });
     for (const name of ['calendar.busy', 'calendar.appointments', 'calendar.blocks']) expect(await f.runtime.read<{ items: unknown[]; truncated: boolean }>(scope, name, { actor, resourceIds: [], ...range }, noop)).toEqual({ items: [], truncated: false });
     expect(await f.runtime.read(scope, 'calendar.receipt', { actor, requestId: 'missing' }, noop)).toBeNull();
-    for (const name of ['calendar.appointment', 'calendar.block', 'calendar.availability', 'calendar.location', 'calendar.resourceLocations', 'calendar.type', 'calendar.resourceTypes']) {
+    for (const name of ['calendar.appointment', 'calendar.block', 'calendar.availability', 'calendar.location', 'calendar.resourceLocations', 'calendar.resourceLocationPolicy', 'calendar.type', 'calendar.resourceTypes']) {
       await expect(f.runtime.read(scope, name, { actor, id: 'missing' }, noop)).rejects.toMatchObject({ code: 'CALENDAR_NOT_FOUND' });
     }
+    expect(await f.runtime.read<{ items: unknown[]; truncated: boolean; nextAfter: null }>(scope, 'calendar.visitLocations', { actor, resourceIds: [], interval: range }, noop)).toEqual({ items: [], truncated: false, nextAfter: null });
     await expect(f.runtime.read(scope, 'calendar.busy', { actor, resourceIds: ['missing'], ...range }, noop)).rejects.toMatchObject({ code: 'CALENDAR_NOT_FOUND' });
     expect(f.system.prepare('SELECT count(*) AS count FROM _calendar_owners').get()).toEqual({ count: 0 });
     expect(f.stats().acquisitions).toBe(0);
@@ -146,6 +147,13 @@ test('empty projections reject malformed inputs, forged physical scope and async
     }
     for (const query of [{ resourceIds: ['duplicate', 'duplicate'] }, { resourceIds: [], limit: 0 }, { resourceIds: [], actorId: 'forged' }]) {
       expect(() => emptyCalendarRead('calendar.types', { actor, ...query })).toThrow(CalendarError);
+    }
+    for (const interval of [{ startAt: range.startAt }, { ...range, endAt: range.startAt }, { ...range, scopeId: 'forged' },
+      { startAt: range.startAt, endAt: '2027-01-01T00:00:00.000Z' }]) {
+      expect(() => emptyCalendarRead('calendar.visitLocations', { actor, resourceIds: [], interval })).toThrow(CalendarError);
+    }
+    for (const input of [{ actor, id: 'invalid key' }, { actor, id: 'missing', scopeId: 'forged' }]) {
+      await expect(f.runtime.read(scope, 'calendar.resourceLocationPolicy', input, noop)).rejects.toMatchObject({ code: 'CALENDAR_INPUT_INVALID' });
     }
     await expect(f.runtime.read(trustedSystemServiceDataScope({ scopeKind: 'tenant', tenantId: 'other' }), 'calendar.resources', { actor }, noop)).rejects.toMatchObject({ code: 'CALENDAR_FORBIDDEN' });
     await expect(f.runtime.read(scope, 'calendar.resources', { actor }, async () => {})).rejects.toMatchObject({ code: 'CALENDAR_CONFIG_INVALID' });

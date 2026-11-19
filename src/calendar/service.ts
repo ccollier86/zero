@@ -16,6 +16,7 @@ import { calendarParticipantBroker, calendarParticipantCommitGuard, calendarPart
 import { calendarParticipantReferences } from './participants-validation';
 import { calendarCapabilitiesBroker } from './capabilities';
 import { normalizeCalendarAvailabilityPolicy } from './working-hours-model';
+import { normalizeCalendarResourceLocationPolicy, calendarLocationPolicyIds } from './location-policy-model';
 
 export interface CalendarServiceBroker {
   read<T>(scope: ServiceDataScope, name: string, input: unknown, guard: () => void, signal?: AbortSignal): Promise<T>;
@@ -107,6 +108,15 @@ export class CalendarService {
         },
       }),
       locations: Object.freeze({
+        policy: Object.freeze<ScopedCalendar['locations']['policy']>({
+          get: (id, options) => this.read(request, 'resourceLocationPolicy', () => ({ id: calendarKey(id) }), options),
+          replace: (id, input, options) => this.write(request, 'resource.location-policy', input, options, id),
+          watch: (id, listener, options: CalendarWatchOptions = {}) => {
+            const query = Object.freeze({ id: calendarKey(id) }); this.ready();
+            return watchCalendarPage({ request, broker: this.broker, config: this.config, closing: this.signal,
+              queryName: 'calendar.resourceLocationPolicy', query, listener, options, track: task => this.track(task) });
+          },
+        }),
         forVisit: (query, options) => this.read(request, 'visitLocations', () => calendarVisitLocationQuery(query, this.config), options),
         watchForVisit: (query, listener, options: CalendarWatchOptions = {}) => {
           const detached = calendarVisitLocationQuery(query, this.config); this.ready();
@@ -272,6 +282,7 @@ export class CalendarService {
         : operation === 'resource.types' ? ['mode', 'typeIds']
         : operation === 'location.create' || operation === 'location.replace' ? ['label', 'region', 'active']
         : operation === 'resource.locations' ? ['locationIds']
+        : operation === 'resource.location-policy' ? ['kind', 'locationIds', 'assignments']
         : operation === 'resource.grant' ? ['userId', 'grants']
         : operation === 'resource.availability' ? ['mode', 'windows']
         : operation === 'block.cancel' || operation === 'appointment.cancel' || operation === 'hold.release' ? []
@@ -291,6 +302,7 @@ export class CalendarService {
       }
       if (operation === 'location.create' || operation === 'location.replace') calendarLocationInput(body, operation === 'location.replace');
       if (operation === 'resource.locations') body.locationIds = calendarLocationIds(body.locationIds);
+      if (operation === 'resource.location-policy') Object.assign(body, normalizeCalendarResourceLocationPolicy(body));
       if (operation === 'type.create' || operation === 'type.replace') calendarAppointmentTypeInput(body, operation === 'type.replace');
       if (operation === 'resource.types') Object.assign(body, calendarResourceTypesInput(body));
       if (operation === 'lifecycle.replace') Object.assign(body, calendarLifecyclePolicyInput(body));
@@ -317,7 +329,7 @@ export class CalendarService {
       const commitGuard = await calendarParticipantCommitGuard({ broker: this.broker, directory: this.participantDirectory,
         config: this.config, authority, operation, body, key, id, expectedRevision });
       authority.guard();
-      if (operation === 'resource.locations' && !authority.actor.manageAll) {
+      if ((operation === 'resource.locations' || operation === 'resource.location-policy') && !authority.actor.manageAll) {
         // A location ID is metadata, not a visibility grant. Capture a currently
         // authorized assignment witness; the final writer checks its live rights
         // and membership again rather than trusting this read across the await.
@@ -326,7 +338,8 @@ export class CalendarService {
         await authority.confirm(); authority.guard();
         if (prior === null) {
           body.locationWitnesses = await this.broker.read(authority.scope, 'calendar.locationAssignmentWitnesses',
-            { actor: authority.actor, locationIds: body.locationIds }, authority.guard, authority.signal);
+            { actor: authority.actor, locationIds: operation === 'resource.locations' ? body.locationIds
+              : calendarLocationPolicyIds(normalizeCalendarResourceLocationPolicy(body)) }, authority.guard, authority.signal);
           await authority.confirm(); authority.guard();
         }
       }

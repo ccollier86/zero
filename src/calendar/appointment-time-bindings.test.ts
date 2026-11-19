@@ -8,7 +8,7 @@ import { Migrator, type Migration } from '../migrations/migrator';
 import { hashMigration, hashSchemaSnapshot, snapshotDeclaredTables } from '../migrations/schema-snapshot';
 import { createReactiveDB } from '../sync/reactive-db';
 import type { Row } from '../sync/types';
-import { calendarRealm } from './realm';
+import { calendarRealm017 as calendarRealm } from './test-support/calendar-realm-017';
 import { CALENDAR_APPOINTMENT_ALL_DAY_ADDITIONS, CALENDAR_APPOINTMENT_ALL_DAY_MIGRATION, calendarAppointmentAllDayTables } from './realm-appointment-all-day-migration';
 import { bindCalendarAppointmentTime, calendarAppointmentTime, calendarAppointmentTimeFields, readCalendarAppointmentTime,
   calendarAppointmentTimeHistoryFields, resolveCalendarAppointmentTimeIntent, CALENDAR_APPOINTMENT_TIME_CURRENT as CURRENT, CALENDAR_APPOINTMENT_TIME_HISTORY as HISTORY,
