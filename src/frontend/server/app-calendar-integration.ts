@@ -6,6 +6,8 @@ import { CalendarIntegrationCoordinator } from '../../calendar/integration-coord
 import type { CalendarAuthority } from '../../calendar/authority';
 import type { CalendarIntegrationNativeOperations } from '../../calendar/integration-operator';
 import { calendarIntegrationInspectionForAuthority, type CalendarIntegrationInspectionForAuthority } from '../../calendar/integration-operator-service';
+import { calendarIntegrationOperatorRequestsForAuthority, type CalendarIntegrationScopedOperatorRequests } from '../../calendar/integration-operator-request-service';
+import { createManagedCalendarOperatorAuthority, runManagedCalendarOperatorAcceptance } from './app-calendar-operator-authority';
 import type { ResolvedJobsConfig } from '../../jobs/config';
 import { JobDefinitionCatalog } from '../../jobs/definition';
 import { emitPlatformEventTo } from '../../observability/sink';
@@ -35,6 +37,8 @@ export interface ManagedCalendarIntegrationOwner extends CalendarObservationExec
   readonly operations: CalendarIntegrationNativeOperations;
   /** Guardian-managed read-only projection; no mutating operator access. */
   inspectionForAuthority(request: CalendarAuthority): CalendarIntegrationInspectionForAuthority;
+  /** Private actor acceptance projection. Source-local truth only; no HTTP/SDK mount. */
+  operatorForAuthority(request: CalendarAuthority): CalendarIntegrationScopedOperatorRequests;
   /** Call after Torrent publication and BEFORE enabling Jobs automatic wakes. */
   start(scheduler: SchedulerService): Promise<void>;
   /** Exactly the Jobs owner's shared close, not an independent Calendar close. */
@@ -130,9 +134,19 @@ export async function prepareManagedCalendarIntegration(input: ManagedCalendarIn
       retire: (scope, options) => selected.retire(scope, options),
       reactivate: (scope, options) => selected.reactivate(scope, options),
     });
+    const prepared = core;
+    const nativeRequests = Object.freeze({ inspect: operations.inspect,
+      reactivationPolicy: (scope: Parameters<CalendarIntegrationCoordinator['reactivationPolicy']>[0], ruleId: string) => selected.reactivationPolicy(scope, ruleId) });
     return Object.freeze({ coordinator: selected,
       operations,
-      inspectionForAuthority: (request: CalendarAuthority) => calendarIntegrationInspectionForAuthority(operations, request, calendarConfig, signal),
+      inspectionForAuthority: (request: CalendarAuthority) => calendarIntegrationInspectionForAuthority(operations,
+        createManagedCalendarOperatorAuthority(runtime, request, prepared.logging), calendarConfig, signal),
+      operatorForAuthority(request: CalendarAuthority) {
+        const authority = createManagedCalendarOperatorAuthority(runtime, request, prepared.logging);
+        return calendarIntegrationOperatorRequestsForAuthority(authority, calendarConfig, signal, { native: nativeRequests,
+          broker: prepared.persistence,
+          accept: (context, operation) => runManagedCalendarOperatorAcceptance(prepared.logging, authority, context, operation) });
+      },
       execute: (context: Parameters<CalendarObservationExecution['execute']>[0]) => selected.execute(context),
       async start(scheduler: SchedulerService) {
         const assertPublished = () => {

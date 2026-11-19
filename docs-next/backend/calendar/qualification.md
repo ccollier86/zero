@@ -18,6 +18,88 @@ This is feature-branch evidence, not a release certificate. No calendar backend
 archive has been selected by normal `zero-update`, and no application deployment
 or data migration is authorized by these checks.
 
+## November 18 source-atomic initiating-user acceptance checkpoint
+
+The following private phase adds actor-bound operator acceptance in additive
+`015`. Local retirement or next-epoch activation intent, the initiating receipt,
+capacity charge and enabled semantic audit join one source transaction. Existing
+local pointers and the original `012` control journal supply native recovery;
+there is no second operator work queue. No public configuration, operator route,
+SDK member, application deployment or archive is enabled by this checkpoint.
+
+Source and combined native-memory checks cover:
+
+- Exact initiating-user receipt replay before current pointer, desired-contract,
+  graph/configuration or native running-state checks. Source replay remains
+  currently manager-authorized and bound to the original scope/principal/user.
+  Reused keys conflict across all six ordinary Calendar receipt families.
+- Real `014` → `015` populated migration preserves old closures, complete table
+  maps, metadata, accepted rows, ledgers and sequence. Conflicting identities and
+  late migration failure refuse/roll back. Genuine committed `014` compatibility
+  is pinned instead of rewriting source or downstream contracts.
+- Audit pressure and late source refusal roll back local state, new policy
+  history, actor receipt and usage together. Actual source outbox assertions
+  verify human attribution and separate system-owned recovery; replay/no-op adds
+  no false semantic change event. Logging disabled creates no logging schema.
+- Ordinary receipt exhaustion cannot consume changed-retirement reserve; no-op
+  and reactivation cannot spend that reserve. Reserve exhaustion still refuses
+  atomically. Audit pressure, ownership failure and source capacity remain real
+  admission blockers, never bypassed to force a successful response.
+- The existing-only runtime lane never calls owner provisioning/binding or
+  ordinary source readiness. A retired readiness hook cannot block its repair.
+  Captured SYSTEM ownership is fenced across reads, final writer admission and
+  acknowledgment. A simulated replacement before writer execution leaves the
+  old physical source untouched. Wrong root/realm contracts are rejected.
+- Real Guardian fixture admission rejects ordinary users, anonymous, native and
+  previously admitted API-key callers. Strict field/callback/routing rejection,
+  selection detachment, account/scope/policy replacement and cancellation remain
+  live. Predispatch refusals prove no attempt started; post-acceptance loss stays
+  unknown and is reconcilable only with fresh authorized original-key reads.
+- The private managed facade uses the exact Logging owner installed on its
+  Calendar provider and real expiring `LoggingAdmission`, including live trusted
+  authority properties. It does not acknowledge/probe or mint a request grant.
+  Human attribution retires after the acceptance callback, including retained
+  children; background work explicitly drops it.
+- The combined native MEMORY test accepts a human retirement, explicitly runs
+  the existing absolute Scheduler wake, observes real original-key Jobs/control
+  retirement, then accepts a new local reactivation epoch and observes actual
+  native activation. After coordinator intake drain, both original human
+  requests still replay without another compilation/control mutation.
+
+The contract is documented under
+[atomic initiating-user acceptance](./integrations.md#atomic-initiating-user-acceptance).
+
+The expanded native-memory baseline passed **835 tests, 18,850 assertions,
+97 files** in 204.92 seconds. Final review then added an outer-await authority
+fence on accepted receipt replay and its deterministic microtask regression.
+The final focused source/operator/audit/upgrade/Guardian/native coordinator/
+managed composition set passed **123 tests, 2,300 assertions, 11 files** in
+53.65 seconds. These are distinct runs, not additive totals; the 97-file run is
+not represented as a run of that last guard delta.
+
+Early failures included an invalid alias-containing transport hash, fixture
+credential admission and predispatch-outcome expectations, a test privacy regex
+matching the required `workflow` family, and fixture JSON typing. They were
+corrected and rechecked, not relabelled as initial passes. Review additionally
+closed a stale SYSTEM-owner window before the final baseline; the focused source
+test proves that replacement cannot mutate the old physical file.
+
+The final no-emit graph passed with **421 roots, 4,021 source files and zero
+diagnostics**; emission and incremental output were disabled. Documentation
+validation passed for **907 reachable pages** with zero structural problems, and
+`git diff --check` passed. All owned MEMORY databases, read snapshots, workflow
+owners, timers, clocks and pools were closed in `finally`; no dependency install,
+file-backed fixture, actor process, build, Docker resource, preview or archive
+was created by this phase. Source, docs and existing held artifacts are preserved.
+
+These are source/MEMORY checks with explicit physical transport doubles, not a
+managed `createApp`, browser, physical actor, bundled Linux or installed-archive
+qualification. In particular, a cold `acquireExisting()` can still prepare native
+schema before the domain owner check. Current metadata and MEMORY proof do not
+qualify that as a no-migration production boundary. That gate remains explicit
+before public activation, alongside sustainable capacity, larger owner catalogs,
+the adoption/disable procedure and deployment/update qualification.
+
 ## November 18 private operator inspection and selected-control checkpoint
 
 The next private source phase adds bounded rule/control/capacity inspection,

@@ -5,6 +5,7 @@ import { hashMigration, hashSchemaSnapshot, snapshotDeclaredTables } from '../mi
 import { calendarRealm } from './realm';
 import { CALENDAR_INTEGRATION_QUEUE_TABLES } from './realm-integration-queue-migration';
 import { CALENDAR_INTEGRATION_INSPECTION_ADDITIONS, CALENDAR_INTEGRATION_INSPECTION_TABLES } from './realm-integration-inspection-migration';
+import { CALENDAR_INTEGRATION_OPERATOR_TABLES } from './realm-integration-operator-migration';
 import { calendarInspectionFixture, calendarInspectionHistoricalRealm } from './test-support/integration-inspection-fixture';
 
 // Pinned original bb45e01 source closures and complete 013 declarations, not replacement functions/maps.
@@ -41,12 +42,12 @@ function fixture() {
 
 test('014 preserves all thirteen recorded closures/checksums and frozen complete 013 declarations', () => {
   const versions = Array.from({ length: 13 }, (_, i) => String(i + 1).padStart(3, '0'));
-  expect(calendarRealm.version).toBe('14'); expect(calendarRealm.migrations.map(row => row.version)).toEqual([...versions, '014']);
+  expect(calendarRealm.version).toBe('15'); expect(calendarRealm.migrations.map(row => row.version)).toEqual([...versions, '014', '015']);
   expect(calendarRealm.migrations.slice(0, 13).map(hashMigration)).toEqual([...ORIGINAL_013_CHECKSUMS]);
   expect(calendarRealm.migrationChecksums.slice(0, 13)).toEqual(ORIGINAL_013_CHECKSUMS.map((checksum, i) => ({ version: versions[i], checksum })));
   expect(hashSchemaSnapshot(snapshotDeclaredTables(CALENDAR_INTEGRATION_QUEUE_TABLES))).toBe(ORIGINAL_013_TABLES);
   expect(calendarInspectionHistoricalRealm.fingerprint).not.toBe(calendarRealm.fingerprint);
-  expect(calendarRealm.tables).toEqual(CALENDAR_INTEGRATION_INSPECTION_TABLES);
+  expect(calendarRealm.tables).toEqual(CALENDAR_INTEGRATION_OPERATOR_TABLES);
   for (const [name, schema] of Object.entries(CALENDAR_INTEGRATION_QUEUE_TABLES)) expect(calendarRealm.tables[name]).toEqual(schema);
   expect(Object.isFrozen(CALENDAR_INTEGRATION_INSPECTION_ADDITIONS)).toBe(true); expect(Object.isFrozen(CALENDAR_INTEGRATION_INSPECTION_TABLES)).toBe(true);
   for (const schema of Object.values(CALENDAR_INTEGRATION_INSPECTION_ADDITIONS)) expect(Object.isFrozen(schema)).toBe(true);

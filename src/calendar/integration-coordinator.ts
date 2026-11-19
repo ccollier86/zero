@@ -251,6 +251,20 @@ export class CalendarIntegrationCoordinator implements CalendarObservationExecut
     return this.operatorControl(scope, input, true);
   }
 
+  /** @internal Pure closed-catalog compilation for a NEW actor request. Never
+   * call this before looking up an original accepted actor receipt. No cell,
+   * file, Jobs operation, policy write or mutable caller contract is admitted.
+   */
+  reactivationPolicy(scope: ServiceDataScope, ruleInput: string): CalendarIntegrationPolicySpec {
+    this.assertIntake();
+    if (this.state !== 'running') throw new CalendarError('CALENDAR_NOT_READY');
+    const ruleId = calendarKey(ruleInput, 64), rule = this.rules.find(rule => rule.id === ruleId);
+    if (!rule) throw new CalendarError('CALENDAR_NOT_READY');
+    const owner = this.operatorOwner(scope);
+    if (!owner) throw new CalendarError('CALENDAR_NOT_FOUND');
+    return calendarObservationPolicy(owner, rule, this.options.pin(owner));
+  }
+
   private operatorControl(scope: ServiceDataScope, input: CalendarIntegrationOperatorControl,
     reactivate: boolean): Promise<CalendarIntegrationOperatorResult> {
     try {

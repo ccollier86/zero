@@ -22,6 +22,7 @@ import { createCalendarHttp } from '../../calendar/http';
 import { installCalendarLogging } from '../../calendar/logging';
 import { composeCalendarRuntimeSources, type CalendarRuntimeSourceFactory } from '../../calendar/runtime-sources';
 import type { ResolvedConfig } from './types';
+import type { LoggingRuntime } from '../../logging/logging-runtime';
 
 export interface ManagedCalendarInput {
   readonly app: Elysia;
@@ -34,6 +35,8 @@ export interface ManagedCalendarInput {
 /** @internal Native owner only; never projected through request services. */
 export interface ManagedCalendarProviderOwner {
   readonly persistence: CalendarRuntime;
+  /** Exact logging binding installed on this native provider, or disabled. */
+  readonly logging: LoggingRuntime | null;
   quiesce(): void;
   drainFacade(): Promise<void>;
   closeProvider(): Promise<void>;
@@ -95,7 +98,7 @@ export async function prepareManagedCalendarCore(input: ManagedCalendarInput, na
   };
   const close = native.closeWith ?? closeProvider;
   try {
-    native.retainProvider?.(Object.freeze({ persistence, quiesce, drainFacade, closeProvider, close }));
+    native.retainProvider?.(Object.freeze({ persistence, logging: logging ?? null, quiesce, drainFacade, closeProvider, close }));
     // Register ownership before any fallible facade/route publication. A failed
     // local close keeps this exact shared cleanup registered for later retry.
     unregister = runtime.addCleanup(close);
@@ -114,7 +117,7 @@ export async function prepareManagedCalendarCore(input: ManagedCalendarInput, na
     runtime.set(ZERO_CALENDAR_SERVICE, service);
     app.use(await createCalendarHttp(runtime));
     input.signal?.throwIfAborted();
-    return Object.freeze({ persistence, service, quiesce, drainFacade, closeProvider, close });
+    return Object.freeze({ persistence, logging: logging ?? null, service, quiesce, drainFacade, closeProvider, close });
   } catch (error) {
     // Factory failure is still inside beforeRecovery. Clean local state, never
     // recursively invoke the shared Workflow stop from its own preparation.

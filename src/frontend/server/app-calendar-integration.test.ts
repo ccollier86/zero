@@ -185,6 +185,34 @@ test('managed inspection reuses native ownership but exposes only fresh Guardian
   } finally { await f.close(); }
 });
 
+test('actor-local retirement and reactivation are accepted separately from native Jobs settlement and remain replayable', async () => {
+  const f = await fixture();
+  try {
+    const owner = await f.prepare(); await f.publish(); await owner.start(f.scheduler);
+    const view = owner.operatorForAuthority(f.session.authority);
+    const before = (await view.inspect())!.rules[0]!.selection;
+    const retired = await view.retire('observe', { idempotencyKey: 'actor-retire', expected: before });
+    expect(retired).toMatchObject({ action: 'retire', policy: before, changed: true, localState: 'retired' });
+    expect(Object.hasOwn(retired, 'downstream')).toBe(false); expect(Object.hasOwn(retired, 'safeToDisable')).toBe(false);
+    const wake = f.scheduler.list().find(entry => entry.name.startsWith('calendar-integration:'));
+    expect(wake).toBeDefined(); expect(f.scheduler.run(wake!.name)).toBe(true);
+    await untilMemoryJobs(() => f.calendar.sourceRows(f.session.scope, '_calendar_integration_control_results')
+      .some(row => row.state === 'accepted' && String(row.registration_json).includes('retired')));
+    expect((await view.inspect())!.rules[0]!.downstream?.state).toBe('retired');
+    const reactivated = await view.reactivate('observe', { idempotencyKey: 'actor-reactivate', expected: before });
+    expect(reactivated).toMatchObject({ localState: 'activating', policy: { epoch: before.epoch + 1 } });
+    const next = f.scheduler.list().find(entry => entry.name.startsWith('calendar-integration:'));
+    expect(next).toBeDefined(); expect(f.scheduler.run(next!.name)).toBe(true);
+    await untilMemoryJobs(() => f.calendar.sourceRows(f.session.scope, '_calendar_integration_policy_current')[0]?.state === 'active');
+    expect((await view.inspect())!.rules[0]).toMatchObject({ selection: reactivated.policy, downstream: { state: 'active', matchesPolicy: true } });
+    const requests = f.calendar.sourceRows(f.session.scope, '_calendar_integration_operator_requests').length;
+    await owner.coordinator.drain();
+    expect(await view.reactivate('observe', { idempotencyKey: 'actor-reactivate', expected: before })).toEqual(reactivated);
+    expect(await view.retire('observe', { idempotencyKey: 'actor-retire', expected: before })).toEqual(retired);
+    expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_operator_requests')).toHaveLength(requests);
+  } finally { await f.close(); }
+});
+
 test('private Job catalog adds only the exact branded source definition and rejects native-name collisions', async () => {
   const f = await fixture();
   try {

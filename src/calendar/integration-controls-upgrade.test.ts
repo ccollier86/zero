@@ -8,7 +8,7 @@ import { jobSourceId } from '../jobs/source-model';
 import { calendarRealm } from './realm';
 import { CALENDAR_INTEGRATION_OWNERSHIP_TABLES } from './realm-integration-ownership-migration';
 import { CALENDAR_INTEGRATION_CONTROL_ADDITIONS, CALENDAR_INTEGRATION_CONTROL_TABLES } from './realm-integration-controls-migration';
-import { CALENDAR_INTEGRATION_INSPECTION_TABLES } from './realm-integration-inspection-migration';
+import { CALENDAR_INTEGRATION_OPERATOR_TABLES } from './realm-integration-operator-migration';
 import { calendarHash, calendarJson } from './validation';
 
 const ORIGINAL_011_CHECKSUM = '973644331b5d77442e142596ed1fda02d987c9abe7b72a83050471ef07de4707';
@@ -58,8 +58,8 @@ test('012 preserves committed 011 migration/map identity and declares separate f
   expect(hashMigration(calendarRealm.migrations[10]!)).toBe(ORIGINAL_011_CHECKSUM);
   expect(calendarRealm.migrationChecksums[10]).toEqual({ version: '011', checksum: ORIGINAL_011_CHECKSUM });
   expect(hashSchemaSnapshot(snapshotDeclaredTables(CALENDAR_INTEGRATION_OWNERSHIP_TABLES))).toBe(ORIGINAL_011_TABLES);
-  expect(calendarRealm.version).toBe('14'); expect(calendarRealm.migrations[11]?.version).toBe('012');
-  expect(calendarRealm.tables).toEqual(CALENDAR_INTEGRATION_INSPECTION_TABLES);
+  expect(calendarRealm.version).toBe('15'); expect(calendarRealm.migrations[11]?.version).toBe('012');
+  expect(calendarRealm.tables).toEqual(CALENDAR_INTEGRATION_OPERATOR_TABLES);
   for (const [name, schema] of Object.entries(CALENDAR_INTEGRATION_OWNERSHIP_TABLES)) expect(calendarRealm.tables[name]).toEqual(schema);
   expect(Object.isFrozen(CALENDAR_INTEGRATION_CONTROL_ADDITIONS)).toBe(true); expect(Object.isFrozen(CALENDAR_INTEGRATION_CONTROL_TABLES)).toBe(true);
 });

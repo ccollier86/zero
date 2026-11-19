@@ -29,6 +29,7 @@ import { calendarHash, calendarInteger, calendarKey, calendarRecord, calendarSco
 import { calendarParticipantReferences, requireCalendarParticipantManager } from './participant-bindings';
 import { calendarIntegrationInput, calendarIntegrationOptions, type CalendarIntegrationCommandOptions,
   type CalendarIntegrationOwner, type CalendarIntegrationReadOptions } from './integration-runtime';
+import type { CalendarIntegrationOperatorRequestReceipt } from './integration-operator-request-model';
 
 export interface CalendarRuntimeSource {
   prepare(owner: CalendarOwnerRecord): void;
@@ -191,6 +192,63 @@ export class CalendarRuntime implements CalendarServiceBroker {
 
   diagnostics() { return { state: this.state, activeOperations: this.active.size, initializingScopes: this.initializers.size,
     readyingOwners: this.sourceReadiness.size, fabric: this.owner.diagnostics() }; }
+
+  /** @internal Actor-facing operator reads have a separate strict registry and
+   * cannot be reached through the native owner or ordinary Calendar request API.
+   * An absent owner stays absent; these are never provisioning/adoption methods.
+   */
+  integrationOperatorReceipt(scope: ServiceDataScope, input: unknown, assertCurrent: () => void,
+    signal?: AbortSignal): Promise<CalendarIntegrationOperatorRequestReceipt | null> {
+    return this.track(async () => {
+      const operationSignal = signal ? AbortSignal.any([this.stop.signal, signal]) : this.stop.signal;
+      const guard = this.guard(assertCurrent, operationSignal); guard();
+      const r = calendarRecord(calendarValue(input), ['actor', 'requestId']), actor = calendarActor(r.actor);
+      if (!actor.manageAll || actor.scopeId !== serviceDataScopeKey(scope)) throw new CalendarError('CALENDAR_FORBIDDEN');
+      const requestId = calendarKey(r.requestId), owner = this.integrationOwnerForScope(scope);
+      if (!owner) return null;
+      const ownerGuard = () => { guard(); this.assertIntegrationOwner(owner); };
+      const value = await this.execute<CalendarIntegrationOperatorRequestReceipt | null>(owner, 'query', 'calendar.integration.operator.receipt',
+        { actor, expectedOwnerId: owner.owner_id, requestId }, ownerGuard, undefined, false, operationSignal);
+      ownerGuard(); return value;
+    });
+  }
+
+  /** @internal Existing-only human acceptance, not a native control invocation.
+   * Bypass readySourceOwner: retirement is precisely why normal readiness may
+   * refuse. Retain the same physical proof, revocation and final writer fences.
+   */
+  integrationOperatorRequest(scope: ServiceDataScope, input: unknown, assertCurrent: () => void,
+    signal?: AbortSignal, finalCommitGuard?: () => void): Promise<CalendarIntegrationOperatorRequestReceipt> {
+    return this.track(async () => {
+      const operationSignal = signal ? AbortSignal.any([this.stop.signal, signal]) : this.stop.signal;
+      const guard = this.guard(assertCurrent, operationSignal); guard();
+      const r = calendarRecord(calendarValue(input), ['actor', 'requestId', 'action', 'ruleId', 'expected', 'desired']);
+      const actor = calendarActor(r.actor), requestId = calendarKey(r.requestId);
+      if (!actor.manageAll || actor.scopeId !== serviceDataScopeKey(scope)) throw new CalendarError('CALENDAR_FORBIDDEN');
+      const owner = this.integrationOwnerForScope(scope);
+      if (!owner) throw new CalendarError('CALENDAR_NOT_FOUND');
+      const ownerGuard = () => { guard(); this.assertIntegrationOwner(owner); };
+      const identity = { actor, expectedOwnerId: owner.owner_id, requestId };
+      const prior = await this.execute<CalendarIntegrationOperatorRequestReceipt | null>(owner, 'query', 'calendar.integration.operator.receipt',
+        identity, ownerGuard, undefined, false, operationSignal); ownerGuard();
+      const { desired: _desired, ...authored } = r;
+      const body: Record<string, unknown> = { ...authored, ...identity };
+      // Receipt-first source replay must survive config/pin/realm movement. A
+      // fresh installation alone must match CURRENT physical owner and realm.
+      if (prior === null && Object.hasOwn(r, 'desired')) body.desired = calendarIntegrationInput(owner, scope, 'command',
+        'calendar.integration.policy.install', { policy: r.desired, expectedEpoch: 0 }, 'operator-owner-proof').policy;
+      const result = await this.execute<CalendarIntegrationOperatorRequestReceipt>(owner, 'command', 'calendar.integration.operator.request', body, ownerGuard,
+        'calendar-operator-command:' + calendarHash([calendarRealm.fingerprint, body]), false, operationSignal,
+        prior === null && finalCommitGuard ? this.guard(finalCommitGuard, operationSignal) : undefined);
+      try {
+        ownerGuard();
+        const accepted = await this.execute<CalendarIntegrationOperatorRequestReceipt | null>(owner, 'query', 'calendar.integration.operator.receipt',
+          identity, ownerGuard, undefined, false, operationSignal); ownerGuard();
+        if (accepted === null || calendarHash(accepted) !== calendarHash(result)) throw new CalendarError('CALENDAR_OUTCOME_UNKNOWN');
+      } catch { throw new CalendarError('CALENDAR_OUTCOME_UNKNOWN'); }
+      return result;
+    });
+  }
 
   /** @internal Detached metadata only. Enumeration never provisions a file, binds an owner or acquires an actor. */
   integrationOwners(): readonly CalendarOwnerRecord[] {

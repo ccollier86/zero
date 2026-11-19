@@ -23,7 +23,7 @@ source-local effect cutoff. The only effect adapter is an internal observation;
 it does not send messages or call providers. A fixed native catalog, readiness
 hook, durable policy controller and bounded native coordinator are implemented
 internally. Managed Jobs now constructs dormant evidence before Torrent recovery;
-automatic calendar mounting, public configuration and audited operator mutations remain
+automatic calendar mounting and public configuration/operator routes remain
 pending. Do not import these internal modules into an application to bypass that
 boundary.
 
@@ -69,6 +69,11 @@ bounded private inspection query. Source admission and settlement maintain the
 projection atomically; the explicit migration alone backfills historical
 admissions without outcomes. No inspection read scans the admission history or
 rewrites it. All `001`–`013` closures and complete declaration maps are preserved.
+
+Additive `015` stores initiating-user operator receipts separately from native
+Jobs/control evidence. The receipt, local policy transition, usage charge and
+enabled semantic audit append share one source transaction. `001`–`014` closures,
+complete historical maps, accepted evidence and original native keys stay intact.
 
 Only explicitly installed policy epochs participate. Their fixed adapter, rule
 and semantic versions, physical source identity, exact Jobs definition, complete
@@ -170,9 +175,75 @@ projection. It derives the canonical Guardian scope, requires Calendar managemen
 permission, and revalidates captured authority before reading and before returning
 private data, including between internal owner/source/Jobs waits through transient
 trusted callbacks. Public read options still allow only cancellation, never caller-
-authored authority callbacks. It exposes only `get`. Mutating request projection remains gated
-on a source-atomic initiating-actor/operator-receipt/semantic-audit contract;
-an authorize → native call → post-audit sequence would leave a crash gap.
+authored authority callbacks. It exposes only `get`.
+
+### Atomic initiating-user acceptance
+
+The private managed owner now also offers `operatorForAuthority(request)` with:
+
+- `inspect({signal?})`: the same bounded, redacted inspection.
+- `requests.get(idempotencyKey, {signal?})`: only the current principal's receipt
+  in the current canonical scope; management permission remains required.
+- `retire(ruleId, {idempotencyKey, expected, signal?})` and `reactivate(...)`:
+  source-local actor acceptance, **not** direct projection of native controls.
+
+These contracts remain private and unmounted: no public configuration, HTTP route
+or SDK member is enabled. Do not import this internal API into an application to
+bypass activation or qualification gates.
+
+For a fresh request the existing-only writer verifies current Guardian management,
+the captured SYSTEM owner and same-lease physical owner, then checks exact
+selection/CAS. It retires the local pointer or installs the fixed desired next
+epoch as `activating`. In that same transaction it records the actor-bound receipt
+and one enabled semantic event. The event identifies the verified initiating user,
+scope, rule and opaque policy/request references—not source contracts, keys,
+schedules or private appointment data. Audit rejection rolls everything back.
+Disabled/optional logging remains optional; no default logging source is created.
+
+The existing local policy and `012` journal already provide durable native recovery
+intent, so there is no second background queue. Commit hints and normal startup
+resume original Jobs controls outside human attribution. Background work never
+reconstructs an executor or authority from the receipt's initiating user ID.
+
+Receipt lookup precedes fresh policy selection and desired graph/config compilation.
+An identical accepted request remains readable after the current pointer advances,
+its rule disappears, the native coordinator stops, or graph compilation is unavailable.
+Reused principal/key with different authored action/rule/selection conflicts, including
+ordinary Calendar command keys. Current management and scope still fence replay.
+The runtime rechecks the receipt after a transport acknowledgment before release.
+
+The ordinary Calendar readiness hook is deliberately bypassed for this existing-only
+lane: a retired rule must not prevent its own repair. No owner is provisioned,
+adopted or rebound. Fresh reactivation still requires a running coordinator, a
+configured closed-catalog rule and original downstream retirement proof. Its fixed
+desired contract is fenced again at the final writer edge. SYSTEM owner replacement
+and request/session/role/scope changes cannot redirect an in-flight acceptance.
+
+The managed authority combines Guardian with actual required logging admission,
+using the exact Logging owner installed on the Calendar source. It never probes,
+acknowledges or invents a grant. Human attribution exists only around acceptance;
+native control, schedule, wake and recovery work retain their independent lifetimes.
+
+| Receipt fact | Meaning |
+| --- | --- |
+| `localState: retired` | The local fresh-effect cutoff was accepted; not proof that Jobs or effects physically stopped |
+| `localState: activating` | The new local policy epoch was accepted; not downstream activation success |
+| `changed: false` | An already-retired no-op was receipted; no false change audit was appended |
+| `requests.get(...) === null` | No receipt was visible at that read; not rollback or proof an in-flight command cannot later commit |
+
+An already-in-flight Jobs create may finish after local retirement, then require
+original-key cancellation/reconciliation. The final source effect-admission writer
+still rejects the retired epoch. No local receipt promises provider recall or a
+physical handoff cutoff. Use separate native control/inspection facts for settlement.
+Loss after possible source acceptance remains `CALENDAR_OUTCOME_UNKNOWN`; reconcile
+the original key, never manufacture a new key or assume rollback from a missing read.
+
+Changed retirements have a separate 10,000-entry actor-receipt reserve, bounded by
+the retained policy-generation ceiling (each generation retires at most once).
+Reactivation and new-key retired no-ops use the existing 200,000 ordinary receipt
+budget; neither can consume recovery reserve. Exact replay charges neither. Required
+audit/outbox pressure and physical ownership errors still reject and roll back;
+the reserve does not bypass evidence or make capacity indefinite.
 
 Retirement, empty queues and even an acknowledged downstream retirement do not
 prove that running effects finished. Inspection and control results deliberately
@@ -181,7 +252,7 @@ Jobs/Torrent physical joins and Calendar evidence drainage still precede provide
 disposal. Setting `calendar:false` is not a replacement for that procedure.
 
 Historical source contracts retain their original realm fingerprint. Recovery
-accepts only the current realm or the pinned genuine `010`–`013` native realms,
+accepts only the current realm or the pinned genuine `010`–`014` native realms,
 while still matching every physical identity, catalog and semantic field against
 the freshly proven current owner. New policy installation still requires the
 current realm. No old policy or Jobs receipt is rewritten to make an upgrade fit.

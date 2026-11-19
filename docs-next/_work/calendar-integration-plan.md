@@ -798,12 +798,13 @@ Current managed-coordinator integration checklist, not a reminder/provider adapt
    now tracks actual callback settlement separately from cancelled callers.
    Torrent's native physical barrier also retains ignored/late invocation bodies
    after compatibility disposal grace; managed Jobs joins it before final close.
-5. **Native capacity, selected controls and read-only inspection implemented;
-   public operator projection pending:** exact current selection/CAS, explicit
+5. **Native capacity, selected controls, inspection and private actor acceptance
+   implemented; public operator projection pending:** exact current selection/CAS, explicit
    retire/reactivate, bounded indexed source/effect presence and redacted Jobs
-   accounting are private native contracts. Guardian projection is read-only.
-   Add source-atomic initiating-actor/operator receipts/semantic audit before
-   projecting mutations; finish explicit retire-before-disable/adoption,
+   accounting are private native contracts. Guardian inspection remains read-only.
+   Private managed mutations now use source-atomic initiating-actor receipts and
+   semantic audit; they are not direct native-control projection. Finish public
+   admission/qualification and explicit retire-before-disable/adoption,
    sustainable retained capacity and larger bounded owner hydration before
    opening configuration. Empty queues or retired controls never certify that
    running effects finished or their evidence owner can be removed.
@@ -819,10 +820,11 @@ shadowing, not merely match a name/version. Dependency attachment is explicitly
 sealed before recovery; coordinator hydration precedes automatic Jobs startup.
 One shared lifecycle owns Calendar intake, actual Jobs callbacks, Torrent
 invocations, raw Calendar evidence callbacks and final providers, in that order.
-No subordinate runtime cleanup may bypass an unsettled physical barrier. The next
-operator step is the source-atomic actor/receipt/audit boundary, followed by its
-authorized projection and explicit adoption/disable procedure—not simply mounting
-the existing native mutation methods behind a route.
+No subordinate runtime cleanup may bypass an unsettled physical barrier. The
+source-atomic actor/receipt/audit boundary and its private managed projection are
+implemented in `015`. Public activation still requires qualified cold ownership
+admission and the explicit adoption/disable procedure—not simply mounting the
+existing native mutation methods behind a route.
 
 Capacity review also found that the ordinary receipt ceiling could prevent
 new cancel/retire operations. Add separate bounded source recovery headroom of
@@ -841,6 +843,18 @@ unknown results require inspection/reconciliation rather than a new replay key.
 Historical contract recovery admits only pinned native `010`–`013` fingerprints
 against fresh current physical ownership; new installs still require the current
 realm. See the [native operator contract](../backend/calendar/integrations.md#selected-native-controls-and-inspection).
+
+The following `015` phase adds source-local initiating-user acceptance, with the
+policy transition, actor-bound receipt, enabled semantic audit and capacity charge
+in one transaction. Original receipt replay precedes new selection/config/graph
+compilation and remains currently authorized. There is no new worker queue: the
+existing local pointer and native control journal resume downstream work. Retired
+readiness is bypassed only on this existing-only repair lane, never for ordinary
+booking. Changed retirement receipts have bounded recovery headroom; no-op and
+reactivation receipts stay ordinary. The exact Logging source owner and live
+required admission fence the private request facade. Genuine `014` compatibility
+is pinned as well; no old contract is rewritten. Accepted local facts, native
+downstream settlement and physical effect completion remain distinct.
 
 Sustainable retained-capacity, public audited operator/adoption and larger owner
 hydration still gate public activation. No public configuration, application

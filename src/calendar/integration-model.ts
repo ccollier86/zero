@@ -78,7 +78,7 @@ export function integrationScheduleReceipt(input: unknown, intent: IntegrationIn
   return { id: String(r.id), sourceId: String(r.sourceId), policyGeneration: calendarInteger(r.policyGeneration, 1), control: r.control as JobSourceScheduleReceipt['control'],
     revision: calendarInteger(r.revision, 1), generation: calendarInteger(r.generation, 1), createdAt: integrationTime(r.createdAt), updatedAt: integrationTime(r.updatedAt) };
 }
-export function integrationBudget(context: DatabaseWriteCommandContext, key: 'integrationPolicies' | 'integrationIntents', limit: number): void {
+export function integrationBudget(context: DatabaseWriteCommandContext, key: 'integrationPolicies' | 'integrationIntents' | 'integrationOperatorRetirements', limit: number): void {
   const row = context.db.get('_calendar_usage', key), count = row ? calendarInteger(row.count) : 0;
   if (count >= limit) throw new CalendarError('CALENDAR_CAPACITY');
   if (row) context.db.update('_calendar_usage', key, { count: count + 1 }); else context.db.createStrict('_calendar_usage', { id: key, count: 1 });
