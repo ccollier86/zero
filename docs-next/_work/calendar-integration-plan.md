@@ -17,12 +17,15 @@ applies_to: ["proposal reviewed against 2.11.0 and b237bf4 foundation follow-up;
 [Working index](./index.md) · [Preserved UI and return handoff](./calendar-return-handoff.md) ·
 [Current frontend contract](../frontend/calendar/index.md)
 
-Reviewed 2026-11-16. This is the proposed integration contract and implementation
-sequence, not documentation of existing calendar APIs or permission to deploy an
-application. The user requested plan review before backend implementation.
-The experimental frontend ships in 2.11.0; **calendar configuration, persistence,
-booking and reminder APIs do not yet exist**. Names in backticks below describe
-proposed surfaces unless explicitly identified as existing.
+Originally reviewed 2026-11-16; completion ledger refreshed 2026-11-18 against
+`8bd8f25` and the working feature branch. The original review preceded backend
+implementation. At that planning baseline, the selected 2.11.0 package provided
+experimental frontend components only. The branch now implements configuration,
+private persistence, connected one-off booking and the foundations described
+below, but has not published a qualified Calendar backend archive. Inspect the
+installed package by commit/hash rather than treating historic version references
+as a statement about all current source. Later-stage names remain proposals until
+their row below is implemented and qualified.
 
 Implementation has begun on `feature/calendar-backend-foundation`. The
 [managed core source guide](../backend/calendar/index.md) now documents the
@@ -30,6 +33,98 @@ connected one-off implementation. It is not yet released or updater-selected;
 statements above about the selected 2.11.0 archive remain unchanged. Core API
 names in that guide are implemented on the branch; later-stage names below are
 still proposals.
+
+## Finish-line execution ledger
+
+This is the authoritative remaining-work list. Historical checkpoints below are
+evidence, not a substitute for completion. **The finish line includes recurrence,
+self-booking, reminders/effects and the complete connected management/clinical UI;
+an observation-only bridge or one-off calendar does not complete this plan.**
+
+Status vocabulary: **source checked** means native-memory/type evidence, not
+physical/browser/deployment acceptance; **in progress** and **queued** are not
+available capabilities. Only the exact qualified and updater-selected artifact
+may be labelled **released**. No completion percentage is inferred from file or
+unit-test counts.
+
+### Definition of done
+
+An app can opt into the feature on a new or existing Zero installation, preserve
+its tenancy, identities, data and themes, configure permissions/timezones/catalogs,
+and mount native Calendar workspace/management components. Every enabled control
+uses canonical supported APIs, real authorized reactive data and the existing Zero
+services. Optional recurrence, public booking, clinical workflows and channels are
+deliberately configurable; enabled features work end to end, while unavailable
+dependencies produce a truthful setup/blocked state, never a working-looking local
+preview. Approved visual anatomy and Zero tokens/motion remain intact.
+
+Source authority, rollback/receipt/audit truth, file-mode concurrency/performance,
+recovery, real-browser flows, installed Linux actors and normal update/adoption
+must pass before release. No application deployment, live-data migration or hosted
+demo change is implied by framework completion.
+
+| Order | Work package and completion test | Current state |
+| --- | --- | --- |
+| F1 | **Existing-owner and lifecycle admission.** Reject stale physical schema/ledger or wrong/missing/substituted owner before write-capable open/preparation. Explicit setup can migrate only after proving established ownership. Retired rules do not block unrelated bookings; removed active rules require review without orphaning accepted/unknown evidence. Zero-rule evidence-only recovery remains possible. | Source-atomic operator requests, ordered physical drain, read-only native cold admission and readiness/evidence split implemented/source checked. Physical rejection proof unexecuted. |
+| F2 | **Working versus durable-history capacity.** Completed history must not exhaust a live-work quota. Preserve original schedule/receipt/Torrent identities and factual historical counters. Bound active/unknown/review occupancy, expose pressure, keep retirement/reconciliation headroom and use an explicit configurable storage/history budget. More than 1,000 completed reminders on one unchanged source must remain readable and permit new work. Scale resident owner/capability hydration separately from retained files. | Transactional Jobs working membership and truthful versioned capacity projection in progress. Configurable retained budget, transport recovery reserve and bounded resident-owner hydration remain required. No deletion, identity rotation or limit bump is a solution. |
+| F3 | **Managed activation, adoption and controls.** Wire the existing dormant Calendar/Jobs/Torrent owner into normal startup, typed opt-in config, authorized operator API/SDK and clear readiness. Add read-only adoption planning, explicit prepare/retire/reactivate/disable procedure and Doctor checks. Unknown/nonterminal work prevents a false safe-disable result. | Private native owner, inspection and audited actor acceptance source checked; public mount and operational procedure queued after F1/F2. |
+| F4 | **Complete canonical scheduling commands.** Support the rich editor's persisted fields through one atomic update contract, current resource/type/visit/participant policy, receipts and semantic evidence. Independent override permission/reason; retain history. Add local-date all-day handling and reviewed effective eligibility where supported. No sequential saves presented as atomic or raw CRUD bypass. | One-off timed booking, buffers/blocks/holds, catalogs, generic lifecycle, native participants and weekly availability source checked. Atomic rich update/current-resource history in progress; all-day/override/remaining eligibility queued. |
+| F5 | **Series and coverage.** Standards-tested daily/weekly/monthly/yearly engine, nominal occurrence identity, exceptions, one/future/all edits and split lineage. Bounded all-resource materialization commits conflicts consistently; expose durable coverage, not unbounded free-time promises. Existing Jobs/Torrent extends horizons without a second Calendar timer system. | Private bounded timed recurrence engine/conformance source checked, including zone gap/fold and Gregorian boundary cases. Series persistence, automatic coverage and facade/UI connection queued. |
+| F6 | **Authoritative self-booking and invitations.** Real bounded offers, member/invitation/approved-guest proof, notice/horizon/type/recipient policy, abuse limits, actual any-provider allocation, expiry and atomic confirmation. Explicit pending-review capacity semantics and approve/reject. Hash/revoke capabilities; no private busy/detail leak or staff-audit requirement for public artwork. | Authenticated subject-bound holds/confirm source checked. Offers/proofs/review/RSVP/public routes and native booking UI queued. |
+| F7 | **Actual effects and optional service adapters.** Versioned source-owned reminder/transition rules, immutable due/lateness, fresh recipient/domain checks after waits, native notification/email adapters and exact supersede/cancel/reconciliation. Partial acceptance and unknown SMTP remain distinct; manual review never invents provider evidence. Storage/presence/contact/AI adapters are optional and admitted explicitly. | Observation-only cutoff/recovery source checked. No actual reminder/channel, invitation or AI adapter is enabled. |
+| F8 | **Connected clinical and management experience.** Canonical optional progress/outcome/lobby/attention axes and current action/reason policy; online presence never implies arrival. Connect the reviewed rich editor, all card/agenda/context/status entry points, scoped geography, catalogs/hours/blocks/grants and public booking through the shared async controller. Day/week/month/list, fixed gutter, dense provider scrolling, empty/setup/denied/unknown states and native modal lifecycle work with real data. | Connected one-off/types/visits/native-account/status-reason subset source checked. Rich editor/management/clinical/booking completion queued. |
+| F9 | **Integration and operational qualification.** Single/multi tenancy, populated upgrades, files/WAL/HOT/restarts/kill, real managed optional/compliance logging, quiet revocation/reconnect, measured file-mode budgets and real Chromium. No passing mock/model/unit result substitutes for a browser or actor run. | Extensive source/MEMORY evidence; physical definitions partly prepared. Real physical/browser/performance qualification blocked by the existing storage-integrity hold. |
+| F10 | **Release and adoption.** Final docs/Doctor/public exports, full frozen-candidate validation, exact installed source archive and official Linux/amd64 bundle/actors, updater preservation, commit/hash/provenance and both remotes. Normal updater selects the qualified artifact; handoff shows new/existing-app setup and app-owned hooks. | Queued. No Calendar backend release selected. |
+
+### Recorded implementation decisions and boundaries
+
+- Keep one private conflict domain per admitted application/tenant scope, not one
+  file per provider and not a change to the app's own data topology.
+- Preserve durable proof/history in the existing Fabric-backed services. Separate
+  bounded work occupancy from permanent history and give history an explicit
+  configurable operational budget with visible pressure. Do not add the separately
+  planned backup/archive service, delete unknown proof, recycle logical identity,
+  or claim bounded disk plus unlimited retained writes.
+- Source-owned horizon maintenance will reuse Jobs scheduling and pinned Torrent
+  runs. Appointment recurrence follows Calendar/RFC semantics, not Croner. Only
+  bounded upcoming effect work enters the working schedule window.
+- Organizational work retains independent service authority. Initiating users are
+  provenance, never reconstructed background sessions. Private read/commit/effect
+  fences remain separate from physical completion and provider delivery.
+- Retire-before-disable is explicit. `calendar:false` stays inert and cannot record
+  a retirement that never happened. Retained unknown work requires an evidence-
+  capable setup and visible resolution, not silent provider removal.
+- Keep the existing browser-session ceiling until native/API-key parity is
+  separately implemented and qualified. Facebook/external-calendar integration,
+  cross-tenant atomic booking, a backup service and legal certification are not
+  added to this Calendar finish line.
+- Review-mode booking supports an explicit capacity policy: reserve with bounded
+  expiry, or unreserved request with a fresh conflict decision at approval. Neither
+  may be shown as confirmed or guaranteed before its canonical acceptance.
+- Optional contact/guest/Storage/presence/AI/channel capability must either have an
+  admitted adapter and end-to-end proof or remain explicitly unavailable. Never
+  silently widen Guardian-user references or expose private provider handles.
+
+### Execution and verification discipline
+
+Implement F1/F2 foundations before opening automatic integration; pure F4/F5
+domain/engine and F8 component work can proceed independently behind closed
+capabilities. Connect canonical persistence, facades and UI together per feature,
+then integrate real coverage/effects and public setup. Do not keep declaring tiny
+internal slices as if the full system were almost released.
+
+Each package has focused native tests and independent security/lifecycle review.
+Run the broad frozen candidate suite and exact-package/browser/Linux/updater gates
+once the complete candidate is ready, rather than restarting unrelated release
+qualification for every source iteration. Document baseline versus later focused
+checks honestly; follow repository rules if a runtime change invalidates the final
+candidate. All generated fixtures need exact ownership and `finally` cleanup.
+
+The current filesystem-integrity hold blocks physical fixtures, installs, builds,
+Docker and release packaging. Source work and the established cache-off MEMORY
+checks can continue; no internal-disk fallback or fabricated deployment pass is
+allowed. Verified filesystem recovery is an external prerequisite for F9/F10,
+not a reason to mark unfinished implementation complete.
 
 ## 1. Review outcome and baseline
 
@@ -508,10 +603,12 @@ Dispatchers use a distinct private, fixed-operation calendar owner facade. They
 do not invent a `CalendarActor`, retain request authority or expose raw Jobs to
 request code. Source acquisitions are existing-only, require established/current
 SYSTEM ownership, and verify the physical `_calendar_owner` on the acquired
-lease. The native cold actor still runs its existing schema-open/validation path;
-this source facade does not itself prove that schema preparation happens only
-after physical owner verification. Physical startup/ownership qualification
-remains a gate before managed activation.
+lease. Native cold admission now proves the owner and current physical ledger/
+declared schema through a read-only handle before writable actor preparation;
+explicit older-schema preparation must first prove established ownership.
+Each replacement generation receives and acknowledges the detached contract.
+This is not full arbitrary-trigger equivalence or current request authority.
+Physical startup/ownership qualification remains a gate before managed activation.
 
 The cross-file protocol is explicit: local activating epoch → exact Jobs source
 registration → local activation acknowledgment. Retirement closes local intake
