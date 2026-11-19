@@ -36,6 +36,7 @@ import { installCalendarIntegrationPolicy, activateCalendarIntegrationPolicy, re
 import { readCalendarIntegrationPolicy, listCalendarIntegrationPolicies, readCalendarIntegrationIntent, listPendingCalendarIntegrations, readCalendarIntegrationEffect, readCalendarIntegrationNextWake } from './integration-queries';
 import { CALENDAR_APPOINTMENT_UPDATE_TABLES, migrateCalendarAppointmentUpdates } from './realm-appointment-update-migration';
 import { updateCalendarAppointment } from './appointment-update';
+import { CALENDAR_MIGRATION_TABLE_STAGES } from './realm-migration-table-stages';
 
 function query(handler: (context: Parameters<DatabaseReadQueryHandler>[0], input: unknown) => unknown): DatabaseReadQueryHandler {
   // Native runDatabaseRealmQuery validates/clones the returned value at its boundary.
@@ -44,6 +45,7 @@ function query(handler: (context: Parameters<DatabaseReadQueryHandler>[0], input
 
 export const calendarRealm = defineDatabaseRealm({
   name: 'zero.calendar.internal', version: '16', tables: CALENDAR_APPOINTMENT_UPDATE_TABLES,
+  migrationTableStages: CALENDAR_MIGRATION_TABLE_STAGES,
   // Preserve the inline historical expression layout: Bun's method reprinting
   // participates in the pinned 001 checksum. New entries must not reformat it.
   migrations: [{ version: '001', description: 'Private one-off calendar conflict domain', up(database) {

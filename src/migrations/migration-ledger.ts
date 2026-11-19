@@ -37,9 +37,8 @@ export function readMigrationLedgerState(
     ORDER BY id ASC
   `);
   try {
-    const rows = statement.all() as MigrationLedgerRecord[];
     const state = new Map<string, MigrationLedgerRecord>();
-    for (const row of rows) state.set(row.version, row);
+    for (const row of statement.iterate() as IterableIterator<MigrationLedgerRecord>) state.set(row.version, row);
     return state;
   } finally {
     statement.finalize();

@@ -137,7 +137,7 @@ test('private managed construction is dormant; exact fixed pins prepare capture 
   const f = await fixture(), pin = spyOn(f.memory.bridge, 'pinRegistered');
   try {
     const owner = await f.prepare();
-    expect(owner.coordinator.diagnostics()).toMatchObject({ state: 'dormant', retainedOwners: 0, scheduledAt: null });
+    expect(owner.coordinator.diagnostics()).toMatchObject({ state: 'dormant', retainedOwners: null, residentOwners: 0, scheduledAt: null });
     expect(f.jobs.service.diagnostics().automaticWakes).toBe(false); expect(f.scheduler.list()).toEqual([]);
     expect(f.memory.commands).toHaveLength(0); expect(pin).not.toHaveBeenCalled();
     expect(f.openCalendar.mock.calls[0]![0].source).toBeDefined();
@@ -170,7 +170,8 @@ test('integrated empty passes become quiet instead of endlessly rearming their o
       const wake = f.scheduler.list().find(entry => entry.name.startsWith('calendar-integration:'));
       expect(wake).toBeDefined(); expect(f.scheduler.run(wake!.name)).toBe(true);
       await untilMemoryJobs(() => owner.coordinator.diagnostics().scheduledAt === null
-        && owner.coordinator.diagnostics().intake.active === 0);
+        && owner.coordinator.diagnostics().intake.active === 0
+        && !owner.coordinator.diagnostics().wakeActive);
       expect(f.scheduler.list().filter(entry => entry.name.startsWith('calendar-integration:'))).toEqual([]);
     }
     expect(f.contexts).toHaveLength(0);
@@ -277,9 +278,9 @@ test('retained native observation evidence executes through a newly prepared dor
     // Same retained native Jobs/Torrent records, a fresh managed owner. This is
     // recovery-path composition evidence, not a file/process restart claim.
     const owner = await f.prepare();
-    expect(owner.coordinator.diagnostics()).toMatchObject({ state: 'dormant', retainedOwners: 0 });
+    expect(owner.coordinator.diagnostics()).toMatchObject({ state: 'dormant', retainedOwners: null, residentOwners: 0 });
     expect(await owner.execute(f.contexts[0]! as Parameters<ManagedCalendarIntegrationOwner['execute']>[0])).toMatchObject({ state: 'observed' });
-    expect(owner.coordinator.diagnostics()).toMatchObject({ state: 'dormant', retainedOwners: 0 });
+    expect(owner.coordinator.diagnostics()).toMatchObject({ state: 'dormant', retainedOwners: null, residentOwners: 0 });
     expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_effect_outcomes')).toHaveLength(1);
     release.resolve();
   } finally {

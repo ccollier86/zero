@@ -519,6 +519,85 @@ test('wake startup resumes bounded metadata pages beyond64 owners without acquir
   } finally { await f.close(); }
 });
 
+test('catalog startup isolates missing private owners while preserving metadata admission and existing-only per-owner proof', async () => {
+  const f = fixture();
+  try {
+    await f.runtime.write(scope, 'calendar.resource.create', resource, resource.requestId, noop);
+    const healthy = f.runtime.integrationOwnerForScope(scope)!, missingScope = trustedSystemServiceDataScope({ scopeKind: 'tenant', tenantId: 'missing-private-owner' });
+    const missing: CalendarOwnerRecord = { id: calendarDatabaseId('tenant:missing-private-owner'), scope_id: 'tenant:missing-private-owner',
+      owner_id: 'cal_00000000-0000-4000-8000-000000000002', root_hash: healthy.root_hash, realm_fingerprint: calendarRealm.fingerprint, established: 1 };
+    f.system.prepare('INSERT INTO _calendar_owners(id,scope_id,owner_id,root_hash,realm_fingerprint,established) VALUES(?,?,?,?,?,1)')
+      .run(missing.id, missing.scope_id, missing.owner_id, missing.root_hash, missing.realm_fingerprint);
+    const internal = f.runtime as unknown as { startupOwners(): CalendarOwnerRecord[]; filePresent(id: string): boolean };
+    const probes: string[] = [];
+    internal.filePresent = id => { probes.push(id); return id === healthy.id; };
+    expect(() => internal.startupOwners()).toThrow(expect.objectContaining({ code: 'CALENDAR_STATE_INVALID' }));
+    expect(probes).toContain(missing.id); probes.length = 0;
+    const catalog = await f.enableWake(), before = f.stats();
+    expect(internal.startupOwners().map(record => record.id).sort()).toEqual([healthy.id, missing.id].sort());
+    expect(probes).toEqual([]); expect(f.stats()).toEqual(before);
+    await f.runtime.prepareIntegrationWakes('synthetic-isolated-startup', 1, noop);
+    expect(f.runtime.integrationOwnerForScope(missingScope)).toEqual(missing);
+    expect(f.runtime.integrationOwnerPage({ limit: 10 }).owners).toHaveLength(2); expect(probes).toEqual([]);
+    expect(() => f.runtime.forIntegrationOwner(missing)).toThrow(expect.objectContaining({ code: 'CALENDAR_STATE_INVALID' }));
+    expect(f.stats()).toEqual(before); probes.length = 0;
+    expect(await f.runtime.refreshIntegrationWake(missing, { classification: 'review', nextWakeAt: 5000 })).toBe(5000);
+    expect(probes).toEqual([]); expect(f.stats()).toEqual(before);
+    expect(f.system.prepare('SELECT classification,wake_at FROM _calendar_integration_wakes WHERE id=?').get(missing.id))
+      .toEqual({ classification: 'review', wake_at: 5000 });
+    await f.runtime.forIntegrationOwner(healthy).verify(); expect(probes).toContain(healthy.id);
+    expect(f.stats().acquisitions).toBe(before.acquisitions + 1); expect(catalog.coverage().complete).toBe(true);
+    expect(f.system.prepare('SELECT * FROM _calendar_owners WHERE id=?').get(missing.id)).toEqual(missing);
+  } finally { await f.close(); }
+});
+
+test('catalog startup retains exact root/scope/owner/realm/state and retained-capacity fences without a private probe', async () => {
+  const changes: ReadonlyArray<readonly [string, string | number]> = [
+    ['id', 'calendar:' + 'f'.repeat(64)], ['scope_id', 'tenant:wrong-scope'], ['owner_id', 'invalid-owner'],
+    ['root_hash', 'wrong-root'], ['realm_fingerprint', 'invalid-realm'], ['established', 2],
+  ];
+  for (const [field, value] of changes) {
+    const f = fixture();
+    try {
+      await f.enableWake(); await f.runtime.write(scope, 'calendar.resource.create', resource, resource.requestId, noop);
+      const internal = f.runtime as unknown as { startupOwners(): CalendarOwnerRecord[]; filePresent(id: string): boolean };
+      internal.filePresent = () => { throw new Error('Startup touched a private path before rejecting metadata.'); };
+      // Simulate retained corruption in this disposable MEMORY handle only.
+      f.system.getRawDatabase().run('PRAGMA foreign_keys=OFF');
+      f.system.getRawDatabase().run('PRAGMA ignore_check_constraints=ON');
+      f.system.prepare('UPDATE _calendar_owners SET ' + field + '=?').run(value);
+      expect(() => internal.startupOwners()).toThrow(expect.objectContaining({ code: 'CALENDAR_STATE_INVALID' }));
+    } finally { await f.close(); }
+  }
+  const f = fixture({ maxDatabaseFiles: 1 });
+  try {
+    await f.enableWake(); await f.runtime.write(scope, 'calendar.resource.create', resource, resource.requestId, noop);
+    const retained = f.runtime.integrationOwnerForScope(scope)!, scopeId = 'tenant:capacity-owner';
+    f.system.prepare('INSERT INTO _calendar_owners(id,scope_id,owner_id,root_hash,realm_fingerprint,established) VALUES(?,?,?,?,?,1)')
+      .run(calendarDatabaseId(scopeId), scopeId, 'cal_00000000-0000-4000-8000-000000000002', retained.root_hash, calendarRealm.fingerprint);
+    const internal = f.runtime as unknown as { startupOwners(): CalendarOwnerRecord[]; filePresent(id: string): boolean };
+    internal.filePresent = () => { throw new Error('Capacity admission touched a private path.'); };
+    expect(() => internal.startupOwners()).toThrow(expect.objectContaining({ code: 'CALENDAR_CAPACITY' }));
+  } finally { await f.close(); }
+});
+
+test('catalog startup does not grant migration permission or turn a retained missing scope into an empty read', async () => {
+  const f = fixture();
+  try {
+    await f.enableWake(); await f.runtime.write(scope, 'calendar.resource.create', resource, resource.requestId, noop);
+    const internal = f.runtime as unknown as { startupOwners(): CalendarOwnerRecord[]; options: CalendarRuntimeOptions };
+    f.missingFile(); expect(internal.startupOwners()).toHaveLength(1);
+    const before = f.stats();
+    await expect(f.runtime.read(scope, 'calendar.resources', { actor }, noop)).rejects.toMatchObject({ code: 'CALENDAR_STATE_INVALID' });
+    expect(f.stats()).toEqual(before);
+    f.system.prepare('UPDATE _calendar_owners SET realm_fingerprint=?').run('sha256:' + '0'.repeat(64));
+    expect(internal.startupOwners()).toHaveLength(1); // Existing explicit install permission, not a writable admission.
+    internal.options = { ...internal.options, installAllowed: false };
+    expect(() => internal.startupOwners()).toThrow(expect.objectContaining({ code: 'CALENDAR_NOT_READY' }));
+    expect(f.stats()).toEqual(before);
+  } finally { await f.close(); }
+});
+
 test('final runtime close joins wake publication after its private read has already released', async () => {
   const f = fixture(); let release!: () => void, entered!: () => void;
   let remove: (() => void) | undefined;

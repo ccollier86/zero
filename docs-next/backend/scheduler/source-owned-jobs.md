@@ -293,7 +293,7 @@ and joins pre-gate owner confirmations/evidence reads before closing SQL. Earlie
 quiesce/drain deliberately keeps evidence available for dependent Torrent work.
 There is no timeout that fabricates physical settlement.
 
-The native `JobsService.tryDetachSources(handles)` now releases an entire
+The native `JobsService.tryDetachSources(handles, expectedSourceIds?)` releases an entire
 minted-handle set atomically. It validates all owner guards, then every physical
 pin and exact current capability, before the no-callback/no-await removal phase.
 Absent bindings succeed; a live replacement outside the supplied set or any
@@ -303,9 +303,24 @@ handles for one source can be supplied together. Individual `tryDetach()` uses
 the same path. This changes residency only, not registration, retirement,
 receipts, epochs, working capacity, settlement reserve or evidence lifetime.
 
-These source-checked primitives do not by themselves implement a scalable
-Calendar owner registry or automatic on-demand hydration. Those remaining native
-SYSTEM wake/residency paths and physical deployment qualification stay open.
+The optional expected IDs are refusal predicates only: any still-live unknown
+binding or physical activity for an ID prevents release. Naming an ID does not
+grant a capability to detach it.
+
+The private native Calendar composition now binds a construction-only source
+hydrator before Jobs start/tick. The runner still inspects original Torrent
+evidence first, proves native dispatch admission before the callback and proves
+it again afterward. A callback cannot substitute registration or confer
+authority. Missing, retired or presently unselected local capability remains
+recoverable not-ready unless the durable source actually retired.
+
+Registration, retirement, read-only attachment and registration-evidence barriers
+use an independent bounded source-control pool; schedule operations retain their
+original per-schedule pool/order. A different key in the schedule pool would
+still deadlock when every schedule slot awaited attachment. Early drain keeps
+both evidence lanes available; final close joins both actual callback sets
+before persistence closes. The Calendar registry is now source/MEMORY checked;
+physical file/actor/deployment scalability qualification remains open.
 
 The [private calendar protocol](../calendar/integrations.md) now implements
 bounded indexed dispatch beside immutable effect references, exact Jobs/Torrent

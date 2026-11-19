@@ -256,6 +256,19 @@ describe('database realm composition', () => {
     expect(versionTwo.fingerprint).not.toBe(versionOne.fingerprint);
   });
 
+  test('native migration stages cannot be silently discarded by the existing-realm contribution adapter', () => {
+    const tables = { native_records: table() };
+    const native = defineDatabaseRealm({
+      name: 'native-staged-realm', version: '1', tables,
+      migrations: [{ version: '001', description: 'Native original boundary', up() {} }],
+      migrationTableStages: [{ version: '001', tables, prepare: 'create-added-tables' }],
+    });
+    const original = native.fingerprint;
+    expect(() => databaseRealmContribution(native)).toThrow(expect.objectContaining({ code: 'DATABASE_CONFIG_INVALID' }));
+    expect(native.fingerprint).toBe(original);
+    expect(native.migrationTableStages).toHaveLength(1);
+  });
+
   test('adapts an existing realm without rewriting its base definition', () => {
     const base = defineDatabaseRealm({
       name: 'existing-app-realm',

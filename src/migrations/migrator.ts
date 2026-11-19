@@ -31,6 +31,9 @@ import {
   runSynchronousMigrationHandler,
 } from './migration-handler-boundary';
 import { OBS_CODES } from '../observability/codes';
+import { DatabaseError } from '../databases/database-error';
+import { requireDatabaseRealmMigrationTableStages, assertDatabaseRealmMigrationSource, prepareDatabaseRealmMigrationTableStage,
+  assertDatabaseRealmMigrationTableStage, type DatabaseRealmMigrationTableStage } from '../databases/database-realm-migration-tables';
 import { emitPlatformCode } from '../observability/sink';
 import type {
   Migration,
@@ -54,6 +57,7 @@ export type {
 export class Migrator {
   private db: Database;
   private readonly migrations: MigrationRegistry;
+  private readonly migrationTableStages: readonly DatabaseRealmMigrationTableStage[] | undefined;
   private log: (...args: unknown[]) => void;
   private dbPath: string;
   private ownsDatabase: boolean;
@@ -71,12 +75,14 @@ export class Migrator {
       throw new Error('[migrator] dbPath is required when database is not provided.');
     }
     const migrations = createMigrationRegistry(config.migrations);
+    const migrationTableStages = requireDatabaseRealmMigrationTableStages(config.migrationTableStages, migrations);
     this.busyTimeoutMs = normalizeBusyTimeout(config.busyTimeoutMs ?? 30_000);
 
     this.db = config.database ?? new Database(config.dbPath!);
     this.dbPath = config.dbPath ?? ':memory:';
     this.ownsDatabase = config.database ? config.ownsDatabase ?? false : true;
     this.migrations = migrations;
+    this.migrationTableStages = migrationTableStages;
     this.log = config.log ?? defaultMigratorLog;
     this.allowDestructive = config.allowDestructive ?? false;
     this.allowDestructiveDown = config.allowDestructiveDown ?? false;
@@ -84,6 +90,8 @@ export class Migrator {
     this.createBackups = config.createBackups ?? true;
 
     try {
+      // This must precede pragmas and EVERY ledger/history/artifact initializer.
+      if (this.migrationTableStages) assertDatabaseRealmMigrationSource(this.db, this.migrationTableStages, migrations);
       // busy_timeout is connection-local and is required even when callers opt
       // out of the other platform pragmas. Concurrent replicas serialize on an
       // IMMEDIATE migration transaction instead of failing on a transient lock.
@@ -174,11 +182,17 @@ export class Migrator {
         }
         this.assertForwardDependenciesApplied(migration);
 
+        // Re-prove changed pending source before attempt/artifact metadata. A
+        // source refusal is not a migration attempt, and preparation plus the
+        // original handler still share this exact native transaction.
+        if (this.migrationTableStages) prepareDatabaseRealmMigrationTableStage(this.db, this.migrationTableStages, this.migrations, migration.version);
+
         attemptBatch = batch ?? this.ledger.nextBatch();
         batch = attemptBatch;
         attemptStarted = true;
         if (backup) this.recordBackupArtifact(migration, backup);
         runSynchronousMigrationHandler(migration.up, this.db, 'up', migration);
+        if (this.migrationTableStages) assertDatabaseRealmMigrationTableStage(this.db, this.migrationTableStages[this.migrations.indexOf(migration)]!);
 
         const durationMs = Math.round(performance.now() - start);
         const snapshot = inspectDatabaseSchema(this.db);
@@ -245,6 +259,7 @@ export class Migrator {
    * If omitted, rolls back only the latest applied migration.
    */
   rollback(toVersion?: string): string[] {
+    if (this.migrationTableStages) throw new DatabaseError('DATABASE_OPERATION_UNSUPPORTED', 'Staged native migrations are forward-only.', { outcome: 'not-started', retryable: false });
     const latest = this.ledger.stateByVersion();
     this.assertRegistryCoversDurableStates(latest);
     const applied = this.migrations.filter((migration) => {

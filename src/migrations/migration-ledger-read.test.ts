@@ -46,7 +46,7 @@ test('readonly ledger reader finalizes its exact statement on success and query 
   let finalizations = 0;
   for (const fails of [false, true]) {
     const database = { prepare() {
-      return { all() { if (fails) throw new Error('synthetic query failure'); return []; },
+      return { *iterate() { if (fails) throw new Error('synthetic query failure'); },
         finalize() { finalizations++; } };
     } } as unknown as Pick<Database, 'prepare'>;
     if (fails) expect(() => readMigrationLedgerState(database)).toThrow('synthetic query failure');

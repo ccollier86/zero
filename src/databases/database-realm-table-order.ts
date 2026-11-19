@@ -28,7 +28,7 @@ export function orderDatabaseRealmTables<T extends Readonly<TableSchema>>(
     const entryDependencies = new Set<string>();
     for (const [field, definition] of Object.entries(entry.value)) {
       if (field === '_identity' || typeof definition !== 'string') continue;
-      for (const referencedName of readReferencedTables(definition)) {
+      for (const referencedName of readDatabaseRealmReferencedTables(definition)) {
         const referenced = byName.get(foldName(referencedName));
         if (!referenced) continue;
         const dependencyName = foldName(referenced.name);
@@ -70,7 +70,7 @@ export function orderDatabaseRealmTables<T extends Readonly<TableSchema>>(
   return ordered;
 }
 
-function readReferencedTables(definition: string): readonly string[] {
+export function readDatabaseRealmReferencedTables(definition: string): readonly string[] {
   let index = 0;
   let depth = 0;
   let expectsTable = false;

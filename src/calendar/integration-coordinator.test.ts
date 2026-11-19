@@ -8,6 +8,8 @@ import { trustedSystemServiceDataScope } from '../auth/service-data-scope';
 import { createDatabaseRef } from '../databases/database-file';
 import { observeDatabaseCoordinatorCommits } from '../databases/database-coordinator-commit-notifications';
 import { JobsError } from '../jobs/error';
+import type { JobsSourceBroker, SourceJobs } from '../jobs/source-service';
+import type { WorkPool } from '../workers/work-pool';
 import { memorySourceJobsFixture, untilMemoryJobs, type MemoryJobsOperation } from '../jobs/test-support/memory-source-fixture';
 import { currentLoggingAttribution, runWithLoggingAttribution } from '../logging/logging-attribution';
 import { loggingContext } from '../logging/test-support/logging-fixture';
@@ -20,6 +22,7 @@ import type { CalendarIntegrationOwner } from './integration-runtime';
 import type { CalendarRuntime, CalendarRuntimeSource } from './runtime';
 import { memoryCalendarServiceFixture } from './test-support/memory-service-fixture';
 import { calendarHash } from './validation';
+import { CalendarIntegrationWakeCatalog, installCalendarIntegrationWakeCatalog } from './integration-wake-catalog';
 
 function deferred() { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; }
 const capture = <T>(task: Promise<T>) => task.then(value => ({ ok: true as const, value }), error => ({ ok: false as const, error }));
@@ -48,6 +51,7 @@ function scheduler() {
 }
 
 async function fixture(options: { tenancy?: 'single' | 'multi'; maxOwners?: number; commitHints?: boolean; nativeJobsWriter?: boolean;
+  catalog?: true;
   refreshWake?: CalendarIntegrationCoordinatorOptions['refreshWake'];
   beforeJobsRead?: (operation: MemoryJobsOperation) => void | Promise<void>;
   beforeJobsWrite?: (operation: MemoryJobsOperation) => void | Promise<void>;
@@ -55,6 +59,7 @@ async function fixture(options: { tenancy?: 'single' | 'multi'; maxOwners?: numb
   const calendar = memoryCalendarServiceFixture({ tenancy: options.tenancy ?? 'single' });
   const all: CalendarIntegrationCoordinator[] = [], contexts: StepContext[] = [], attributionOwner = {};
   const attributions: unknown[] = [], sourceReads: string[] = [];
+  const clients: SourceJobs[] = [];
   let coordinator: CalendarIntegrationCoordinator | undefined;
   let jobs: Awaited<ReturnType<typeof memorySourceJobsFixture>> | undefined;
   let clock: ReturnType<typeof spyOn<typeof Date, 'now'>> | undefined;
@@ -71,6 +76,12 @@ async function fixture(options: { tenancy?: 'single' | 'multi'; maxOwners?: numb
         contexts.push(context); await beforeObservation?.(); return coordinator!.execute(context);
       } })); }, beforeRead: options.beforeJobsRead, beforeWrite: options.beforeJobsWrite, afterWrite: options.afterJobsWrite });
     clock = spyOn(Date, 'now').mockImplementation(() => jobs!.now());
+    let wakeCatalog: CalendarIntegrationWakeCatalog | undefined;
+    if (options.catalog) {
+      const native = calendar.runtime as unknown as { rootHash: string; wakeCatalog: CalendarIntegrationWakeCatalog };
+      await installCalendarIntegrationWakeCatalog(calendar.system, true);
+      wakeCatalog = new CalendarIntegrationWakeCatalog(calendar.system, native.rootHash); native.wakeCatalog = wakeCatalog;
+    }
     const nativeOwner = (record: Parameters<CalendarRuntime['forIntegrationOwner']>[0]): CalendarIntegrationOwner => {
       ownerCalls++;
       const owner = calendar.runtime.forIntegrationOwner(record);
@@ -92,8 +103,11 @@ async function fixture(options: { tenancy?: 'single' | 'multi'; maxOwners?: numb
             CALENDAR_OBSERVATION_WORKFLOW, calendarObservationPinInput(), 1);
           return pinFingerprint === null ? pin : { ...pin, fingerprint: pinFingerprint };
         },
-        jobs: { forSource(source) { capabilityCalls++; expect(calendar.stats().activeLeases).toBe(0); return jobs!.service.forSource(source); } },
-        inspect: (id, scope) => jobs!.workflows.getInstance(id, scope), now: () => jobs!.now(), refreshWake: options.refreshWake,
+        jobs: { forSource(source) { capabilityCalls++; expect(calendar.stats().activeLeases).toBe(0); const client = jobs!.service.forSource(source); clients.push(client); return client; },
+          tryDetachSources: (handles, ids) => jobs!.service.tryDetachSources(handles, ids) },
+        ...(wakeCatalog ? { wakeCatalog: () => wakeCatalog! } : {}),
+        inspect: (id, scope) => jobs!.workflows.getInstance(id, scope), now: () => jobs!.now(),
+        refreshWake: options.refreshWake ?? (wakeCatalog ? (record, failure) => calendar.runtime.refreshIntegrationWake(record, failure) : undefined),
       });
       all.push(value); return value;
     };
@@ -106,7 +120,8 @@ async function fixture(options: { tenancy?: 'single' | 'multi'; maxOwners?: numb
     const owner = calendar.runtime.forIntegrationOwner(record);
     const appointment = (key = 'appointment', offset = 0) => session.api.appointments.create({ title: 'PRIVATE_TITLE', resourceIds: [resource.id],
       startAt: new Date(jobs!.now() + offset).toISOString(), endAt: new Date(jobs!.now() + offset + 60_000).toISOString(), timeZone: 'UTC' }, { idempotencyKey: key });
-    return { calendar, jobs, session, resource, record, owner, contexts, attributions, sourceReads, attributionOwner, appointment,
+    return { calendar, jobs, session, resource, record, owner, contexts, attributions, sourceReads, attributionOwner, appointment, clients, wakeCatalog,
+      async configure() { await calendar.runtime.prepareIntegrationWakes(coordinator!.configurationStamp(), jobs!.now(), () => undefined); },
       get coordinator() { return coordinator!; },
       install() { source(coordinator!.source); },
       replace(rules?: readonly CalendarObservationRule[]) { coordinator = make(rules); source(coordinator.source); return coordinator; },
@@ -163,6 +178,106 @@ test('configuration stamp is detached, deterministic and inert across coordinato
     const different = f.replace([{ id: 'observe', version: '2', dueOffsetMs: 0, maxLatenessMs: 60_000 }]);
     expect(different.configurationStamp()).not.toBe(stamp); expect(f.counters()).toEqual(before);
   } finally { await f.close(); }
+});
+
+test('catalog demand attaches only the original accepted control with all schedule slots and owner intake held, spending no write/key', async () => {
+  const f = await fixture({ catalog: true, nativeJobsWriter: true }), wake = scheduler(), held = deferred(), entered = deferred();
+  let blocker: Promise<unknown> | undefined; const pending: Promise<unknown>[] = [];
+  try {
+    f.install(); await f.configure(); await f.coordinator.ready(f.record); await f.appointment('demand-original', 1000);
+    await f.coordinator.start(wake); await wake.flush(f.jobs.now());
+    const original = f.clients.find(client => client.hydration!.inspect().attached)!;
+    const row = f.jobs.rows(f.session.scope, 'job_schedules')[0]!, detail = await original.schedules.get(String(row.id));
+    expect(f.jobs.service.tryDetachSources([original])).toBe('detached');
+    f.jobs.service.bindNativeSourceHydrator((scope, admission, signal) => f.coordinator.hydrateSource(scope, admission, signal));
+    const controls = f.calendar.sourceRows(f.session.scope, '_calendar_integration_controls'), writes = f.attributions.length, commands = f.jobs.commands.length;
+    const sequence = f.jobs.torrentDb.currentSeq, admission = f.jobs.native(f.session.scope)!.engine.inspectAdmission();
+    const ownerPool = (f.coordinator as unknown as { intake: WorkPool }).intake;
+    blocker = ownerPool.run(async () => { entered.resolve(); await held.promise; }, { key: 'calendar-owner:' + calendarHash(f.record.id) });
+    await entered.promise;
+    const native = f.jobs.service as unknown as { gate: WorkPool; sources: JobsSourceBroker };
+    for (let index = 0; index < native.gate.capacity; index++) pending.push(native.gate.run(async () => {
+      const pin = await native.sources.prepareDispatch(f.session.scope, detail.admission);
+      try { return await pin.run(() => { pin.assertCurrent(); return true; }); } finally { pin.abandon(); }
+    }, { key: 'held-schedule-slot-' + index }));
+    expect(await Promise.all(pending)).toEqual(new Array(native.gate.capacity).fill(true));
+    expect(original.hydration!.inspect().attached).toBe(true);
+    expect(f.jobs.native(f.session.scope)!.engine.inspectAdmission()).toEqual(admission);
+    expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_controls')).toEqual(controls);
+    expect(f.attributions).toHaveLength(writes); expect(f.jobs.commands).toHaveLength(commands); expect(f.jobs.torrentDb.currentSeq).toBe(sequence);
+    expect(f.coordinator.diagnostics().residency).toMatchObject({ queued: 0, physical: 0 });
+  } finally { held.resolve(); await blocker; await Promise.allSettled(pending); await f.close(); }
+});
+
+test('catalog native eviction/revisit detaches exact bindings without retirement and reconstructs original activation read-only', async () => {
+  const f = await fixture({ catalog: true, nativeJobsWriter: true, tenancy: 'multi', maxOwners: 1 }), wake = scheduler();
+  try {
+    f.install(); await f.configure(); await f.coordinator.ready(f.record); await f.appointment('eviction-original', 1000);
+    await f.coordinator.start(wake); await wake.flush(f.jobs.now());
+    const original = f.clients.find(client => client.hydration!.inspect().attached)!, registration = await original.registration.get();
+    const schedule = f.jobs.rows(f.session.scope, 'job_schedules')[0]!, detail = await original.schedules.get(String(schedule.id));
+    const other = f.calendar.session('resident-other', { tenantId: 'resident-other', manager: true });
+    await other.api.resources.create({ label: 'Other', kind: 'person', timeZone: 'UTC' }, { idempotencyKey: 'other-resident' });
+    expect(original.hydration!.inspect().attached).toBe(false); expect(await original.registration.get()).toEqual(registration);
+    expect(f.coordinator.diagnostics()).toMatchObject({ residentOwners: 1, residency: { evictedOwners: 1 } });
+    const commands = f.jobs.commands.length, writes = f.attributions.length;
+    expect(await f.coordinator.hydrateSource(f.session.scope, detail.admission, new AbortController().signal)).toBe(true);
+    expect(f.coordinator.diagnostics()).toMatchObject({ residentOwners: 1, residency: { evictedOwners: 2 } });
+    const replacement = f.clients.find(client => client.hydration!.inspect().attached)!;
+    expect(replacement).not.toBe(original); expect(original.hydration!.tryDetach()).toBe('not-current');
+    expect(await replacement.registration.get()).toEqual(registration);
+    expect(await original.receipts.get(f.calendar.sourceRows(f.session.scope, '_calendar_integration_controls')[0]!.jobs_key as string)).toEqual(registration);
+    expect(f.jobs.commands).toHaveLength(commands); expect(f.attributions).toHaveLength(writes); expect(f.owner.signal.aborted).toBe(false);
+    expect(f.jobs.rows(f.session.scope, '_jobs_sources')[0]?.state).toBe('active');
+  } finally { await f.close(); }
+});
+
+test('catalog native all-busy and inherited unknown-capability proofs keep the existing resident charged', async () => {
+  const f = await fixture({ catalog: true, nativeJobsWriter: true, tenancy: 'multi', maxOwners: 1 }), wake = scheduler();
+  let pin: Awaited<ReturnType<JobsSourceBroker['prepareDispatch']>> | undefined;
+  try {
+    f.install(); await f.configure(); await f.coordinator.ready(f.record); await f.appointment('busy-original', 1000);
+    await f.coordinator.start(wake); await wake.flush(f.jobs.now());
+    const original = f.clients.find(client => client.hydration!.inspect().attached)!, schedule = f.jobs.rows(f.session.scope, 'job_schedules')[0]!;
+    const detail = await original.schedules.get(String(schedule.id));
+    const native = f.jobs.service as unknown as { sources: JobsSourceBroker };
+    pin = await native.sources.prepareDispatch(f.session.scope, detail.admission);
+    const other = f.calendar.session('busy-other', { tenantId: 'busy-other', manager: true });
+    await expect(other.api.resources.create({ label: 'Other', kind: 'person', timeZone: 'UTC' }, { idempotencyKey: 'busy-other' }))
+      .rejects.toMatchObject({ code: 'CALENDAR_NOT_READY' });
+    expect(original.hydration!.inspect().attached).toBe(true); expect(f.coordinator.diagnostics().residency.evictedOwners).toBe(0);
+    pin.abandon(); pin = undefined;
+    await f.coordinator.drain(); const next = f.replace(); await next.ready(f.record);
+    expect(next.diagnostics().residency.sourceBindings).toBe(0); // ready remains capture-only
+    const otherRecord = f.calendar.runtime.integrationOwnerForScope(other.scope)!;
+    await expect(next.ready(otherRecord)).rejects.toMatchObject({ code: 'CALENDAR_NOT_READY' });
+    expect(original.hydration!.inspect().attached).toBe(true); expect(next.diagnostics().residency.evictedOwners).toBe(0);
+    expect(f.owner.signal.aborted).toBe(false);
+  } finally { pin?.abandon(); await f.close(); }
+});
+
+test('demand rejects removed/current-desired mismatch and pin drift during attach without fresh activation fallback', async () => {
+  let hold = false; const entered = deferred(), held = deferred();
+  const f = await fixture({ catalog: true, nativeJobsWriter: true, beforeJobsRead: async operation => {
+    if (hold && operation.name === 'jobs.source.receipt') { entered.resolve(); await held.promise; }
+  } }), wake = scheduler(); let pending: Promise<unknown> | undefined;
+  try {
+    f.install(); await f.configure(); await f.coordinator.ready(f.record); await f.appointment('drift-original', 1000);
+    await f.coordinator.start(wake); await wake.flush(f.jobs.now());
+    const original = f.clients.find(client => client.hydration!.inspect().attached)!, schedule = f.jobs.rows(f.session.scope, 'job_schedules')[0]!;
+    const detail = await original.schedules.get(String(schedule.id)); original.hydration!.tryDetach();
+    const commands = f.jobs.commands.length, writes = f.attributions.length;
+    f.overridePinFingerprint('f'.repeat(64));
+    await expect(f.coordinator.hydrateSource(f.session.scope, detail.admission, new AbortController().signal)).rejects.toMatchObject({ code: 'JOBS_NOT_READY' });
+    expect(original.hydration!.inspect().attached).toBe(false); f.overridePinFingerprint(null);
+    hold = true; pending = f.coordinator.hydrateSource(f.session.scope, detail.admission, new AbortController().signal);
+    const captured = capture(pending); await entered.promise; f.overridePinFingerprint('e'.repeat(64)); held.resolve();
+    expect((await captured).ok).toBe(false); expect(original.hydration!.inspect().attached).toBe(false);
+    expect(f.jobs.commands).toHaveLength(commands); expect(f.attributions).toHaveLength(writes);
+    f.overridePinFingerprint(null); hold = false; await f.coordinator.drain(); const removed = f.replace([]); await removed.start(wake);
+    await expect(removed.hydrateSource(f.session.scope, detail.admission, new AbortController().signal)).rejects.toMatchObject({ code: 'JOBS_NOT_READY' });
+    expect(f.jobs.commands.filter(command => command.name === 'jobs.source.register')).toHaveLength(1);
+  } finally { held.resolve(); await pending?.catch(() => {}); await f.close(); }
 });
 
 test('native wake publication runs once after a full owner pass and replaces the redundant source wake query', async () => {

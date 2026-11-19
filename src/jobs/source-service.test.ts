@@ -62,12 +62,12 @@ for (const phase of ['before', 'after'] as const) test(`registration receipt set
     expect(await activating).toMatchObject({ error: { code: 'JOBS_OUTCOME_UNKNOWN' } }); source.retireEligibility();
     const before = f.commands.length; let settled = false;
     reconciling = source.api.registration.reconcile(activate.idempotencyKey).then(value => { settled = true; return value; });
-    await untilMemoryJobs(() => f.service.diagnostics().gate.queued === 1); expect(settled).toBe(false);
+    await untilMemoryJobs(() => f.service.diagnostics().sourceGate.queued === 1); expect(settled).toBe(false);
     barrier.release(); const result = await reconciling;
     expect(result).toEqual(await source.api.receipts.get(activate.idempotencyKey));
     if (phase === 'before') { expect(result).toBeNull(); expect(f.stats().planes).toBe(0); }
     else expect(result).toMatchObject({ generation: 1, revision: 1, state: 'active' });
-    expect(f.commands).toHaveLength(before); expect(f.service.diagnostics().gate).toMatchObject({ active: 0, queued: 0 });
+    expect(f.commands).toHaveLength(before); expect(f.service.diagnostics().sourceGate).toMatchObject({ active: 0, queued: 0 });
     expect(f.stats()).toMatchObject({ activeLeases: 0, backendLeases: 0 });
   } finally { barrier.release(); await Promise.allSettled([activating, reconciling].filter((value): value is Promise<unknown> => !!value)); await f.close(); }
 });
@@ -482,7 +482,7 @@ test('an aborted queued retirement cannot permanently fence the activation alrea
     const abort = new AbortController(), reason = new JobsError('JOBS_NOT_READY');
     retiring = a.api.registration.retire({ expectedRevision: 1, idempotencyKey: 'abort-queued-retire', signal: abort.signal });
     const retirementResult = retiring.then(value => ({ value }), error => ({ error }));
-    await untilMemoryJobs(() => f.service.diagnostics().gate.queued === 1); abort.abort(reason);
+    await untilMemoryJobs(() => f.service.diagnostics().sourceGate.queued === 1); abort.abort(reason);
     expect(await retirementResult).toEqual({ error: reason });
     barrier.release();
     expect(await activationResult).toMatchObject({ value: { generation: 2, revision: 2, state: 'active' } });
@@ -629,7 +629,7 @@ test('retirement fences an activation waiting at the actual Jobs writer, not onl
     // Native promise handling must not block before the held writer is released.
     const rejected = activating.then(() => null, error => error);
     retiring = a.api.registration.retire({ expectedRevision: 1, idempotencyKey: 'retire-A-before-B-commit' });
-    await untilMemoryJobs(() => f.service.diagnostics().gate.queued === 1);
+    await untilMemoryJobs(() => f.service.diagnostics().sourceGate.queued === 1);
     barrier.release(); expect(await rejected).toMatchObject({ code: 'JOBS_AUTHORITY_RETIRED' });
     expect(await retiring).toMatchObject({ generation: 1, revision: 2, state: 'retired' });
     expect(await b.api.receipts.get('pending-B-write')).toBeNull();

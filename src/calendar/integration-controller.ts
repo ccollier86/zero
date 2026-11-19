@@ -36,7 +36,8 @@ export interface CalendarIntegrationRetirementResult {
   readonly policy: CalendarIntegrationPolicyView; readonly control: CalendarIntegrationControlView | null;
   readonly result: 'retired' | 'no-registration'; readonly registration: JobSourceRegistration | null;
 }
-interface Cell { readonly id: string; readonly hash: string; readonly sourceId: string; quiesced: boolean; jobs?: SourceJobs }
+interface Cell { readonly id: string; readonly epoch: number; readonly hash: string; readonly sourceId: string;
+  readonly hydrationGuards: Set<() => void>; quiesced: boolean; jobs?: SourceJobs }
 /** Native handles only. This snapshot is NOT permission to release an owner:
  * an owner registry must first fence new intake and join actual callbacks. */
 export interface CalendarIntegrationSourceBinding {
@@ -190,7 +191,7 @@ export class CalendarIntegrationPolicyController {
         ? this.beginRetirement(ruleId, cell, !!opts.expected) : null;
       return this.run<CalendarIntegrationRetirementResult>(ruleId, async signal => {
         let policy = await this.requirePolicy(ruleId, signal); this.assertSelection(policy, opts.expected);
-        if (!marker) marker = this.beginRetirement(ruleId, { id: policy.id, hash: calendarHash(policy.policy), sourceId: jobSourceId(policy.policy.source.identity), quiesced: true }, !!opts.expected);
+        if (!marker) marker = this.beginRetirement(ruleId, { id: policy.id, epoch: policy.epoch, hash: calendarHash(policy.policy), sourceId: jobSourceId(policy.policy.source.identity), hydrationGuards: new Set(), quiesced: true }, !!opts.expected);
         marker.id = policy.id; marker.hash = calendarHash(policy.policy); marker.started = true; marker.settled = false;
         await this.retireLocalIfCurrent(policy, signal, opts.expected);
         policy = await this.requirePolicy(ruleId, signal); this.assertSelection(policy, opts.expected); this.bind(policy);
@@ -244,6 +245,21 @@ export class CalendarIntegrationPolicyController {
    * An exact policy may remain quiesced; its original evidence stays usable. */
   sourceBinding(ruleId: string, policyHash: string): SourceJobs | null {
     const cell = this.cells.get(ruleId); return cell?.hash === policyHash ? cell.jobs ?? null : null;
+  }
+  /** Native demand proof only: no pool wait, policy/control mutation or Jobs
+   * activation. Caller must prove current desired policy + original accepted
+   * control; the capability still confirms canonical selection at attach. */
+  sourceBindingForHydration(policy: CalendarIntegrationPolicyView, assertDesired: () => void): { readonly jobs: SourceJobs; release(): void } {
+    this.assertOpen(); this.assertPolicyOwner(policy.policy);
+    if (policy.state !== 'active' || policy.ruleId !== policy.policy.ruleId
+      || policy.id !== calendarHash([this.options.owner.owner.scope_id, policy.ruleId, calendarInteger(policy.epoch, 1)])
+      || this.retirementPending(policy.ruleId, policy.id) || this.explicitRetirement(policy.ruleId, policy.id)) throw new CalendarError('CALENDAR_NOT_READY');
+    const cell = this.bind(policy);
+    if (cell.quiesced) throw new CalendarError('CALENDAR_NOT_READY');
+    assertDesired(); cell.hydrationGuards.add(assertDesired);
+    try {
+      return { jobs: this.broker(policy), release() { cell.hydrationGuards.delete(assertDesired); } };
+    } catch (error) { cell.hydrationGuards.delete(assertDesired); throw error; }
   }
   /** At most two handles per permanent rule: selected + previous attachment.
    * Consumers must inspect exact native hydration again under their own owner
@@ -312,6 +328,8 @@ export class CalendarIntegrationPolicyController {
   }
   private bind(policy: CalendarIntegrationPolicyView, restore = false): Cell {
     const hash = calendarHash(policy.policy), prior = this.cells.get(policy.ruleId);
+    if (prior && prior.epoch > policy.epoch) throw new CalendarError('CALENDAR_POLICY_STALE');
+    if (prior && prior.epoch === policy.epoch && (prior.id !== policy.id || prior.hash !== hash)) throw new CalendarError('CALENDAR_STATE_INVALID');
     if (prior?.id === policy.id && prior.hash === hash) {
       if (policy.state === 'retired') prior.quiesced = true;
       else if (restore && !this.retirementPending(policy.ruleId, policy.id) && !this.explicitRetirement(policy.ruleId, policy.id)) prior.quiesced = false;
@@ -328,17 +346,18 @@ export class CalendarIntegrationPolicyController {
         try { if (prior.jobs.hydration.inspect().attached) this.retainedBindings.set(policy.ruleId, prior); } catch { /* Retain an earlier proven attachment, if any. */ }
       }
     }
-    const cell: Cell = { id: policy.id, hash, sourceId: jobSourceId(policy.policy.source.identity), quiesced: policy.state === 'retired' || this.closing || this.retirementPending(policy.ruleId, policy.id) || this.explicitRetirement(policy.ruleId, policy.id) };
+    const cell: Cell = { id: policy.id, epoch: policy.epoch, hash, sourceId: jobSourceId(policy.policy.source.identity), hydrationGuards: new Set(), quiesced: policy.state === 'retired' || this.closing || this.retirementPending(policy.ruleId, policy.id) || this.explicitRetirement(policy.ruleId, policy.id) };
     this.cells.set(policy.ruleId, cell); return cell;
   }
   private broker(policy: CalendarIntegrationPolicyView): SourceJobs {
     const current = this.cells.get(policy.ruleId), hash = calendarHash(policy.policy);
     const selected = current?.id === policy.id && current.hash === hash;
-    const cell: Cell = selected ? current : { id: policy.id, hash, sourceId: jobSourceId(policy.policy.source.identity), quiesced: true };
+    const cell: Cell = selected ? current : { id: policy.id, epoch: policy.epoch, hash, sourceId: jobSourceId(policy.policy.source.identity), hydrationGuards: new Set(), quiesced: true };
     if (selected && cell.jobs) return cell.jobs;
     const assertEligible = () => {
       this.assertOpen();
       if (cell.quiesced || this.cells.get(policy.ruleId) !== cell || this.retirementPending(policy.ruleId, policy.id) || this.explicitRetirement(policy.ruleId, policy.id)) throw new JobsError('JOBS_AUTHORITY_RETIRED');
+      for (const guard of cell.hydrationGuards) guard();
     };
     const jobs = this.options.jobs(policy.policy, { assertEligible, confirmEligible: async () => {
       assertEligible(); const selected = await this.policy(policy.ruleId); assertEligible();

@@ -539,10 +539,23 @@ The controller now retains its exact selected native capability separately from
 transient historical evidence handles, including a prior attachment while policy
 replacement settles. Historical reads cannot silently replace that inventory.
 Physical callback/claim-cleanup diagnostics are not an owner-release certificate.
-The coordinator still has its explicit 64-owner resident envelope: catalog-driven
-global discovery, atomic multi-source idle release, owner lease pins and demand
-attachment must be integrated before that ceiling can represent only residency.
-No metadata scan alone completes scalable hydration or safe disable.
+The private native coordinator now uses the durable catalog for its global wake
+and bounded due turns. At most 64 owner cells are resident, independently of the
+retained owner count. Physical proof and full retained policy inventory precede
+cell publication. An unreadable owner remains durably due/backed off without
+using a resident cell. Queued readiness, actual intake/control/evidence bodies,
+prepared dispatch and uninvoked-claim cleanup prevent idle release. Exact native
+multi-source detach must succeed before removing the cell; failed cleanup stops
+new allocation rather than pretending release succeeded.
+
+Jobs can request native demand attachment after original Torrent receipt
+inspection. It proves the exact current owner, intent, configured policy/pin,
+accepted activation key and registration before attaching read-only. Stale,
+removed or unknown controls return recoverable not-ready; they do not register a
+replacement or enter Calendar's intake/dispatcher queue. Jobs uses a separate
+bounded source-control pool so even all occupied schedule slots cannot deadlock
+the attachment they await. Historical evidence retains its separate lifetime.
+These source/MEMORY results are not physical scalability or safe-disable proof.
 
 ## Capacity and remaining activation gates
 
@@ -566,7 +579,7 @@ schedules/source, 10,000 schedules/file and 100,000 ordinary intents/occurrences
 configured changes do not delete history or manufacture physical headroom. See
 [source-owned capacity](../scheduler/source-owned-jobs.md). This bridge is **not
 yet an enabled automatic reminder service**. Public managed configuration, final native catalog
-mounting, larger catalog discovery/hydration, public audited operator retirement/adoption,
+mounting, public audited operator retirement/adoption,
 capacity management,
 provider-specific uncertainty handling and physical/browser/Linux/package/updater
 qualification remain explicit gates. Current source/memory evidence and test

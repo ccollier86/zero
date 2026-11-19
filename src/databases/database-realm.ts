@@ -56,6 +56,7 @@ import {
   databaseRealmTableNameAdmissionIssue,
 } from './database-realm-schema-admission';
 import { orderDatabaseRealmTables } from './database-realm-table-order';
+import { admitDatabaseRealmMigrationTableStages, databaseRealmMigrationTableStagesFingerprint, type DatabaseRealmMigrationTableStage } from './database-realm-migration-tables';
 import type { DatabaseReadQueryContext } from './database-read-query-capability';
 import { admitDatabaseWriterAdmission, type DatabaseWriterAdmissionDefinition } from './database-writer-admission';
 import {
@@ -97,6 +98,7 @@ const REALM_FIELDS = new Set([
   'commands',
   'automations',
   'writerAdmission',
+  'migrationTableStages',
 ]);
 const MIGRATION_FIELDS = new Set([
   'version',
@@ -164,6 +166,8 @@ export interface DatabaseRealmDefinition<
   readonly tables: Readonly<Record<string, TableSchema>>;
   /** Ordered application migrations. */
   readonly migrations?: readonly Migration[];
+  /** Native-only historical checkpoints and per-original-migration table preparation. */
+  readonly migrationTableStages?: readonly DatabaseRealmMigrationTableStage[];
   /** Named synchronous read handlers imported inside reader actors. */
   readonly queries?: TQueries;
   /** Named synchronous write handlers imported inside writer actors. */
@@ -189,6 +193,7 @@ export interface DatabaseRealm<
   readonly version: string;
   readonly tables: Readonly<Record<string, Readonly<TableSchema>>>;
   readonly migrations: MigrationRegistry;
+  readonly migrationTableStages?: readonly DatabaseRealmMigrationTableStage[];
   readonly queries: Readonly<TQueries>;
   readonly commands: Readonly<TCommands>;
   /**
@@ -224,6 +229,7 @@ export function defineDatabaseRealm<
   const version = requireRealmVersion(record.version);
   const tables = cloneTableRegistry(record.tables);
   const migrations = cloneMigrationRegistry(record.migrations);
+  const migrationTableStages = admitDatabaseRealmMigrationTableStages(record.migrationTableStages, migrations, tables);
   const queries = cloneHandlerRegistry(
     record.queries,
     'query',
@@ -247,6 +253,10 @@ export function defineDatabaseRealm<
   const guardianAnchorTables = guardianAnchorTableNames(
     guardianAnchorRequirements,
   );
+  if (migrationTableStages && (guardianAnchorRequirements.length > 0 || automations !== undefined
+    || Object.hasOwn(tables, PRESENCE_TABLE) || Object.hasOwn(tables, PRESENCE_OWNER_TABLE))) {
+    throw configInvalid('Migration table stages do not support Guardian anchors, presence or automations.');
+  }
   for (const tableName of Object.keys(tables)) {
     if ([...guardianAnchorTables, PRESENCE_TABLE, PRESENCE_OWNER_TABLE, '_guardian_presence_projection_binding', 'guardian_presence_current'].some((anchor) =>
       anchor.toLowerCase() === tableName.toLowerCase())) {
@@ -276,6 +286,7 @@ export function defineDatabaseRealm<
       checksum: hashMigration(migration),
     })));
   const fingerprint = createRealmFingerprint({
+    ...(migrationTableStages === undefined ? {} : { migrationTableStages: databaseRealmMigrationTableStagesFingerprint(migrationTableStages) }),
     ...(writerAdmission === undefined ? {} : { writerAdmission: writerAdmission.id }),
     name,
     version,
@@ -302,6 +313,7 @@ export function defineDatabaseRealm<
     version,
     tables,
     migrations,
+    ...(migrationTableStages === undefined ? {} : { migrationTableStages }),
     queries: queries as Readonly<TQueries>,
     commands: commands as Readonly<TCommands>,
     ...(automations === undefined ? {} : { automations }),
@@ -806,6 +818,7 @@ function cloneHandlerRegistry(
 }
 
 function createRealmFingerprint(input: {
+  migrationTableStages?: readonly unknown[];
   writerAdmission?: string;
   name: string;
   version: string;

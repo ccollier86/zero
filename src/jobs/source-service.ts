@@ -1,6 +1,6 @@
 /** Internal native-service facade over the SAME Jobs runner, pool and Torrent receipts. */
 import { types as utilTypes } from 'node:util';
-import type { ServiceDataScope } from '../auth/service-data-scope';
+import { serviceDataScopeKey, type ServiceDataScope } from '../auth/service-data-scope';
 import type { WorkPool } from '../workers/work-pool';
 import { SchedulerError } from '../scheduler/scheduler-error';
 import type { WorkflowDeferredStartBridge } from '../workflows/workflow-deferred-start-bridge';
@@ -43,6 +43,8 @@ export interface SourceJobDispatchPin {
   abandon(): boolean;
 }
 export type SourceJobsDetachResult = 'detached' | 'busy' | 'not-current';
+/** Construction-time native composition only. Never worker IPC/config/request data. */
+export type NativeJobSourceHydrator = (scope: ServiceDataScope, admission: JobAdmission, signal: AbortSignal) => boolean | PromiseLike<boolean>;
 /** Private evidence/control surface; it is not a request API or an alternative general scheduler. */
 export interface SourceJobs {
   /** Native residency only; absence on a legacy embedding is not scalable hydration readiness. */
@@ -76,7 +78,7 @@ export interface SourceJobs {
 }
 interface Options {
   readonly config: ResolvedJobsConfig; readonly runtime: JobsRuntime; readonly bridge: WorkflowDeferredStartBridge;
-  readonly gate: WorkPool; readonly signal: AbortSignal; readonly now: () => number; readonly wake: () => void;
+  readonly gate: WorkPool; readonly sourceGate: WorkPool; readonly signal: AbortSignal; readonly now: () => number; readonly wake: () => void;
 }
 interface LiveBinding {
   readonly source: TrustedJobSource; readonly contract: JobSourceContract; readonly registration: JobSourceRegistration;
@@ -88,6 +90,7 @@ type PinPhase = 'preparing' | 'queued' | 'active' | 'preparedDispatch' | 'active
 type PhysicalCounts = Record<PinPhase, number>;
 interface PhysicalPin { move(phase: PinPhase): void; release(): void }
 interface SourceHandle { readonly id: string; readonly capability: TrustedJobSource; readonly guard: () => void }
+interface HydratorBinding { readonly callback: NativeJobSourceHydrator; readonly stop: AbortController; active: boolean }
 export class JobsSourceBroker {
   private readonly live = new Map<string, LiveBinding>();
   private readonly handles = new WeakMap<object, SourceHandle>();
@@ -99,6 +102,8 @@ export class JobsSourceBroker {
   private pendingActivationCount = 0;
   private pendingRetirementCount = 0;
   private readonly intake = new AbortController();
+  private hydratorBound = false;
+  private hydrator: HydratorBinding | null = null;
   private closed = false;
   constructor(private readonly options: Options) {}
   /** Mutation retirement is independent of historical owner/evidence lifetime. */
@@ -109,6 +114,7 @@ export class JobsSourceBroker {
     // physical barrier. Earlier quiesce deliberately leaves evidence usable.
     this.closed = true;
     this.quiesce();
+    this.retireHydrator();
     this.live.clear();
     for (const pending of this.pendingActivations.values()) for (const token of pending) token.retired = true;
     // Only a never-invoked permit is safe to release here. Preparing owner/read
@@ -121,9 +127,17 @@ export class JobsSourceBroker {
     if (!this.closed) throw new JobsError('JOBS_NOT_READY');
     while (this.physical.size) await new Promise<void>(resolve => { this.physicalWaiters.add(resolve); });
   }
+  /** @internal Called once by the owning JobsService during native construction. */
+  bindNativeSourceHydrator(callback: NativeJobSourceHydrator): () => void {
+    this.assertReady();
+    if (this.hydratorBound || typeof callback !== 'function' || utilTypes.isProxy(callback)) throw new JobsError('JOBS_CONFIG_INVALID');
+    const binding: HydratorBinding = { callback, stop: new AbortController(), active: true };
+    this.hydratorBound = true; this.hydrator = binding;
+    return () => { if (this.hydrator === binding) this.retireHydrator(); };
+  }
   /** Native all-or-nothing residency release. No supplied handle properties or
    * iterators are evaluated, and owner guards run before ALL final inspection. */
-  tryDetachSources(supplied: readonly SourceJobs[]): SourceJobsDetachResult {
+  tryDetachSources(supplied: readonly SourceJobs[], expectedSourceIds?: readonly string[]): SourceJobsDetachResult {
     function reject(): never { throw new JobsError('JOBS_INPUT_INVALID'); }
     if (!supplied || typeof supplied !== 'object' || utilTypes.isProxy(supplied) || !Array.isArray(supplied)
       || Object.getPrototypeOf(supplied) !== Array.prototype || supplied.length > 1024) reject();
@@ -138,6 +152,20 @@ export class JobsSourceBroker {
       selected.add(source);
       let members = groups.get(source.id); if (!members) groups.set(source.id, members = new Set());
       members.add(source.capability);
+    }
+    if (expectedSourceIds !== undefined) {
+      if (!expectedSourceIds || typeof expectedSourceIds !== 'object' || utilTypes.isProxy(expectedSourceIds) || !Array.isArray(expectedSourceIds)
+        || Object.getPrototypeOf(expectedSourceIds) !== Array.prototype || expectedSourceIds.length > 1024) reject();
+      if (Reflect.ownKeys(expectedSourceIds).length !== expectedSourceIds.length + 1) reject();
+      for (let index = 0; index < expectedSourceIds.length; index++) {
+        const descriptor = Object.getOwnPropertyDescriptor(expectedSourceIds, String(index));
+        if (!descriptor || !('value' in descriptor)) reject();
+        const id: unknown = descriptor.value;
+        if (typeof id !== 'string' || !/^src_[a-f0-9]{64}$/.test(id)) reject();
+        // An ID is an absence/refusal predicate, NEVER deletion authority. A
+        // retained current binding still requires one of its minted handles.
+        if (!groups.has(id)) groups.set(id, new Set());
+      }
     }
     this.assertReady();
     // An owner guard is required to be synchronous. A reentrant detach from
@@ -196,7 +224,8 @@ export class JobsSourceBroker {
         if (!('sourceId' in value) || value.id !== scheduleId || value.sourceId !== id
           || value.control !== 'active' || value.revision !== 1 || value.generation !== 1) throw new JobsError('JOBS_INTENT_CONFLICT');
         return value;
-      }, { key: scheduleId === null ? sourceGateKey(id) : jobGateKey(source.scope, scheduleId), signal: operationSignal });
+      }, { key: scheduleId === null ? sourceGateKey(id) : jobGateKey(source.scope, scheduleId), signal: operationSignal },
+      kind === 'registration' ? this.options.sourceGate : this.options.gate);
     };
     const write = async <T>(name: string, input: unknown, operation: { signal: AbortSignal; markWriteAttempted(): void }, eligible: boolean,
       fence: () => void = () => {}, beforeWrite: () => void = () => {}): Promise<T> => {
@@ -316,7 +345,7 @@ export class JobsSourceBroker {
               if (old && old.source !== capability && this.dispatchPins(id)) throw new JobsError('JOBS_NOT_READY');
               this.live.set(id, { source: capability, contract, registration: selected });
               return selected;
-            }, { key: sourceGateKey(id), signal: operationSignal });
+            }, { key: sourceGateKey(id), signal: operationSignal }, this.options.sourceGate);
           } finally { this.endActivation(id, token); }
         }),
         tryDetach: () => this.tryDetachSources([facade]),
@@ -372,7 +401,7 @@ export class JobsSourceBroker {
                   || old.registration.policyHash !== selected.policyHash) this.live.set(id, { source: capability, contract, registration: selected });
                 this.options.wake(); return result;
               } catch (error) { if (!prior) throw new JobsError('JOBS_OUTCOME_UNKNOWN'); throw error; }
-            }, { key: sourceGateKey(id), signal: opts.signal });
+            }, { key: sourceGateKey(id), signal: opts.signal }, this.options.sourceGate);
           } finally { this.endActivation(id, token); }
         }),
         retire: owned(async (input: SourceRevisionOptions) => {
@@ -417,7 +446,7 @@ export class JobsSourceBroker {
                 return await write<JobSourceRegistration>('jobs.source.retire', { identity: source.identity,
                   expectedRevision: opts.expectedRevision, requestId: opts.key, now: this.options.now() }, operation, false);
               } finally { if (attempted) invalidate(); }
-            }, { key: sourceGateKey(id), signal: opts.signal });
+            }, { key: sourceGateKey(id), signal: opts.signal }, this.options.sourceGate);
           } finally {
             retirement.active = false; for (const token of marked) token.retirements.delete(retirement);
             this.pendingRetirementCount--;
@@ -471,27 +500,52 @@ export class JobsSourceBroker {
   }
   /** Called only AFTER exact Torrent receipt inspection, and after the schedule pool wait. */
   async prepareDispatch(scope: ServiceDataScope, admission: JobAdmission): Promise<SourceJobDispatchPin> {
-    if (!admission.source) throw new JobsError('JOBS_INPUT_INVALID');
-    const pin = this.pin(admission.source.id, 'preparing');
+    const normalized = normalizeJobAdmission(admission);
+    if (!normalized.source || normalized.scopeId !== serviceDataScopeKey(scope)) throw new JobsError('JOBS_INPUT_INVALID');
+    const origin = normalized.source, pin = this.pin(origin.id, 'preparing');
     try {
       const runtimeGuard = () => { this.assertReady(); this.intake.signal.throwIfAborted(); this.options.bridge.assertRuntimeCurrent(); };
-      runtimeGuard();
       // Retained epoch retirement is definitive. A native source which has not
       // hydrated on this process yet is merely not ready, not permanently revoked.
-      const selected = await this.options.runtime.readExisting(scope, 'jobs.source.dispatch',
-        { scopeId: admission.scopeId, source: admission.source }, runtimeGuard, this.options.signal);
-      if (selected !== true) throw new JobsError('JOBS_STATE_INVALID');
-      const { id, generation, policyHash } = admission.source, live = this.live.get(id);
+      const proveRetained = async () => {
+        runtimeGuard();
+        const selected = await this.options.runtime.readExisting(scope, 'jobs.source.dispatch',
+          { scopeId: normalized.scopeId, source: origin }, runtimeGuard, this.options.signal);
+        runtimeGuard(); if (selected !== true) throw new JobsError('JOBS_STATE_INVALID');
+      };
+      await proveRetained();
+      const { id, generation, policyHash } = origin;
+      if (!this.live.has(id)) {
+        const binding = this.hydrator;
+        if (!binding) throw new JobsError('JOBS_NOT_READY');
+        const signal = AbortSignal.any([this.options.signal, this.intake.signal, binding.stop.signal]);
+        const currentBinding = () => {
+          runtimeGuard(); signal.throwIfAborted();
+          if (!binding.active || this.hydrator !== binding) throw new JobsError('JOBS_NOT_READY');
+        };
+        currentBinding();
+        let matched: unknown;
+        try { matched = await binding.callback(Object.freeze({ ...scope }), normalizeJobAdmission(normalized), signal); }
+        catch { runtimeGuard(); throw new JobsError('JOBS_NOT_READY'); }
+        currentBinding();
+        if (matched !== true) throw new JobsError('JOBS_NOT_READY');
+        // Callback success is not a durable/source authority certificate. Read
+        // the original admission fence again and select exact current live state.
+        await proveRetained(); currentBinding();
+      }
+      const live = this.live.get(id);
       if (!live) throw new JobsError('JOBS_NOT_READY');
       if (live.quiescedBy) throw new JobsError('JOBS_NOT_READY');
-      if (live.registration.generation !== generation || live.registration.policyHash !== policyHash) throw new JobsError('JOBS_AUTHORITY_RETIRED');
+      // The retained proof above is authoritative. A stale local binding is a
+      // hydration/readiness gap, not evidence that this admitted origin retired.
+      if (live.registration.generation !== generation || live.registration.policyHash !== policyHash) throw new JobsError('JOBS_NOT_READY');
       const source = requireJobSource(live.source);
       const guard = () => {
         this.assertReady(); this.intake.signal.throwIfAborted(); if (this.live.get(id) !== live || live.quiescedBy) throw new JobsError('JOBS_NOT_READY');
         assertJobSourceEligible(source);
       };
       guard(); await confirmJobSource(source, true); guard();
-      if (source.identity.scopeId !== admission.scopeId) throw new JobsError('JOBS_STATE_INVALID');
+      if (source.identity.scopeId !== normalized.scopeId) throw new JobsError('JOBS_STATE_INVALID');
       guard(); pin.move('preparedDispatch');
       let state: 'prepared' | 'running' | 'settled' | 'abandoned' = 'prepared';
       const current = () => { if (state !== 'prepared' && state !== 'running') throw new JobsError('JOBS_NOT_READY'); guard(); };
@@ -546,12 +600,13 @@ export class JobsSourceBroker {
     try { return invoke(work).finally(() => { if (!started) pin.release(); }); }
     catch (error) { if (!started) pin.release(); return Promise.reject(error); }
   }
-  private pinnedRun<T>(id: string, work: (signal: AbortSignal) => T | PromiseLike<T>, options: { readonly key: string; readonly signal: AbortSignal }): Promise<T> {
-    return this.invocation(id, work, callback => this.options.gate.run(callback, options));
+  private pinnedRun<T>(id: string, work: (signal: AbortSignal) => T | PromiseLike<T>, options: { readonly key: string; readonly signal: AbortSignal },
+    gate: WorkPool = this.options.gate): Promise<T> {
+    return this.invocation(id, work, callback => gate.run(callback, options));
   }
   private pinnedMutation<T>(id: string, work: (context: { readonly signal: AbortSignal; markWriteAttempted(): void }) => T | PromiseLike<T>,
-    options: { readonly key: string; readonly signal: AbortSignal }): Promise<T> {
-    return this.invocation(id, work, callback => sourceGateMutation(this.options.gate, callback, options));
+    options: { readonly key: string; readonly signal: AbortSignal }, gate: WorkPool = this.options.gate): Promise<T> {
+    return this.invocation(id, work, callback => sourceGateMutation(gate, callback, options));
   }
   private dispatchPins(id: string): number {
     const pins = this.physical.get(id); return pins ? pins.preparedDispatch + pins.activeDispatch : 0;
@@ -579,6 +634,11 @@ export class JobsSourceBroker {
     const pending = this.pendingActivations.get(id);
     if (!pending?.delete(token)) return;
     this.pendingActivationCount--; if (!pending.size) this.pendingActivations.delete(id);
+  }
+  private retireHydrator(): void {
+    const binding = this.hydrator;
+    if (!binding) return;
+    this.hydrator = null; binding.active = false; binding.stop.abort(new JobsError('JOBS_NOT_READY'));
   }
   private assertReady(): void { if (this.closed || this.options.signal.aborted) throw new JobsError('JOBS_NOT_READY'); }
 }

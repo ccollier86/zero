@@ -123,6 +123,11 @@ export function databaseRealmContribution<
 >(
   realm: DatabaseRealm<TQueries, TCommands>,
 ): DatabaseRealmContribution<TQueries, TCommands> {
+  // Stage maps describe one complete native schema at each original boundary.
+  // A contribution cannot silently discard or merge that preparation contract.
+  if (Object.getOwnPropertyDescriptor(realm, 'migrationTableStages')) {
+    throw configInvalid('Native migration table stages cannot be adapted into a realm contribution.');
+  }
   return defineDatabaseRealmContribution<TQueries, TCommands>({
     name: realm.name,
     version: realm.version,

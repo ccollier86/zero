@@ -97,3 +97,47 @@ See [realm composition](./realm-composition.md) for plugins,
 [operations](./operations.md) for invocation, and
 [automations](../database-automations/index.md) for functions/triggers.
 Function code stays local; only names and serializable input cross IPC.
+
+## Native historical table stages
+
+The Calendar integration branch adds an optional native `migrationTableStages`
+contract for a specific legacy pattern: an unchanged historical migration creates
+indexes/triggers on tables supplied by its original runtime rather than creating
+those tables itself. Ordinary application migrations should continue to own their
+DDL; do not precreate a latest schema over an older populated database.
+
+Each stage declares a migration version, its exact cumulative post-migration
+table map and, where needed, `prepare: 'create-added-tables'`. Native admission
+detaches/freezes the declarations, proves an exact ordered prefix and includes
+their schema/flags in the realm fingerprint. Omission preserves the previous
+realm fingerprint and behavior. The pending boundary creates only that stage's
+new tables/natural-identity indexes inside the **same transaction** as the original
+`up`, final schema validation and ledger append. Original migration functions,
+checksums and successful ledger rows are not rewritten.
+
+Read-only source inspection precedes writable constructors and proves native
+binding/ownership before preparation. Missing old tables, unexplained future
+tables, ledger holes, wrong checksums or unknown framework objects fail closed;
+this is not an automatic legacy import or repair API. Framework metadata is
+explicitly classified rather than hidden behind an underscore-prefix allowlist.
+Table-stage declarations do not attest every application trigger's SQL.
+
+Current complete-prefix admission and no-op preparation prove exact native
+objects/fixed metadata, the ledger prefix and domain schema, retaining the
+existing streamed Sync-format proof once. They do not repeatedly decode every
+permanent receipt and logging payload. This is structural/no-migration admission,
+not a forensic attestation of all retained content. Actual pending migration
+preparation still performs deep retained-source checks before writable
+initialization and inside each original migration boundary. Malformed retained
+payloads are never rewritten to make them pass.
+
+This initial native contract rejects Guardian/presence/automation-dependent
+staged realms and unsupported composition rather than silently dropping those
+features. The existing-realm contribution adapter also rejects staged realms;
+it cannot discard their preparation contract. Staged migration rollback is
+explicitly unsupported for this forward-only increment, before any backup,
+checkpoint, down handler or evidence write. Ordinary unopted rollback is unchanged.
+Actual Calendar uses its original 001–016 handlers and retains its
+previous 016 policy fingerprint for historical evidence. Source/MEMORY migration
+checks are not installed-file, WAL/HOT, actor or update qualification; see the
+[Calendar qualification record](../calendar/qualification.md).

@@ -68,7 +68,7 @@ function fixture() {
 
 test('factoring preserves exact current016 metadata and introduces no public registry entry or migration', () => {
   expect(calendarRealm.version).toBe('16'); expect(calendarRealm.migrations).toHaveLength(16);
-  expect(calendarRealm.fingerprint).toBe('sha256:2b0e98dabe59b6cf27edf49b3bb37b3f11dc6b1e6d0274c6a590db5a3ba601b5');
+  expect(calendarRealm.fingerprint).toBe('sha256:fcfd500b5352a27f6bc43d9122c1af8cdafc85680994f4191ee75903485179f8');
   expect(hashSchemaSnapshot(snapshotDeclaredTables(calendarRealm.tables))).toBe('a9de3c82718367f9dfb5db628706f7a2b2fda542d12fc27be8d2d589a8d1f2a4');
   expect(hashMigration(calendarRealm.migrations[15]!)).toBe('0553be4d7a34a76f3e0c9335f056c7abaefab7fac910c127d503060ee061a2d8');
   expect([...Object.keys(calendarRealm.commands), ...Object.keys(calendarRealm.queries)].some(name => name.includes('series') || name.includes('admission'))).toBe(false);

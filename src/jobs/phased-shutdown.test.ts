@@ -163,7 +163,7 @@ test('a registration committed before quiesce stays unknown until physical settl
     expect(await activating).toMatchObject({ error: { code: 'JOBS_OUTCOME_UNKNOWN', outcome: 'unknown' } });
     let drained = false; draining = f.service.drain().then(() => { drained = true; });
     reconciling = source.api.registration.reconcile(activate.idempotencyKey);
-    await untilMemoryJobs(() => f.service.diagnostics().gate.queued === 1);
+    await untilMemoryJobs(() => f.service.diagnostics().sourceGate.queued === 1);
     expect(drained).toBe(false); barrier.release(); await draining;
     expect(await reconciling).toEqual(await source.api.registration.get());
     expect(await source.api.registration.get()).toMatchObject({ state: 'active', generation: 1, revision: 1 });

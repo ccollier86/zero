@@ -105,8 +105,7 @@ export class CalendarRuntime implements CalendarServiceBroker {
     const runtime = new CalendarRuntime(options, owner);
     prepared = runtime;
     try {
-      const records = runtime.records();
-      for (const record of records) runtime.assertRetained(record);
+      const records = runtime.startupOwners();
       runtime.source = await options.source?.(owner) ?? null;
       for (const record of records) runtime.source?.prepare(record);
       // The native owner alone announces actual commits, including commits whose
@@ -433,6 +432,18 @@ export class CalendarRuntime implements CalendarServiceBroker {
   private records(): CalendarOwnerRecord[] {
     const records = this.options.system.prepare('SELECT * FROM _calendar_owners ORDER BY id LIMIT ?').all(this.options.config.maxDatabaseFiles + 1) as CalendarOwnerRecord[];
     if (records.length > this.options.config.maxDatabaseFiles) throw new CalendarError('CALENDAR_CAPACITY');
+    return records;
+  }
+  /** Integrated discovery admits exact SYSTEM ownership metadata only. One
+   * missing private file must become that owner's durable review obligation,
+   * not prevent other owners from starting. Staged source/query admission
+   * still performs the unchanged existing-only physical proof. */
+  private startupOwners(): CalendarOwnerRecord[] {
+    const records = this.records();
+    for (const record of records) {
+      if (this.wakeCatalog) assertCalendarOwnerRecord(record, this.rootHash, calendarRealm.fingerprint, this.options.installAllowed);
+      else this.assertRetained(record);
+    }
     return records;
   }
   private record(id: string): CalendarOwnerRecord | null {

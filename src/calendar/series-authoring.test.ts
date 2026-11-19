@@ -131,6 +131,6 @@ test('source/template authority/query fields and hostile descriptors reject with
     rejects(() => normalizeCalendarTimedSeriesAuthoring(bad, limits)); rejects(() => admitCalendarTimedSeriesAuthoring(bad, limits));
   }
   expect(touched).toBe(0);
-  expect(calendarRealm.version).toBe('16'); expect(calendarRealm.fingerprint).toBe('sha256:2b0e98dabe59b6cf27edf49b3bb37b3f11dc6b1e6d0274c6a590db5a3ba601b5');
+  expect(calendarRealm.version).toBe('16'); expect(calendarRealm.fingerprint).toBe('sha256:fcfd500b5352a27f6bc43d9122c1af8cdafc85680994f4191ee75903485179f8');
   expect(Object.keys(calendarRealm.commands).some(name => name.includes('series'))).toBe(false);
 });

@@ -135,7 +135,8 @@ const CHANGE_LOG_TRIGGER_SQL = Object.freeze({
   `,
 });
 
-const CHANGE_LOG_TRIGGER_DEFINITIONS = Object.freeze([
+/** @internal Immutable native fence declarations for constructor-free source admission. */
+export const CHANGE_LOG_TRIGGER_DEFINITIONS = Object.freeze([
   ['_zero_sync_changes_insert_fence_v1', CHANGE_LOG_TRIGGER_SQL.insert],
   ['_zero_sync_changes_update_fence_v1', CHANGE_LOG_TRIGGER_SQL.update],
   ['_zero_sync_changes_delete_fence_v1', CHANGE_LOG_TRIGGER_SQL.delete],

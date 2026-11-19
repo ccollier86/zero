@@ -11,7 +11,7 @@ import type { JobAdmission, JobScheduleRow } from './model';
 import { JobOperatorPolicy } from './operator-policy';
 import type { JobScheduleReadDetail, JobScheduleReadSummary } from './operator-views';
 import type { ActorJobScheduleRow } from './realm-model';
-import { JobsSourceBroker, type SourceJobs, type SourceJobsDetachResult } from './source-service';
+import { JobsSourceBroker, type NativeJobSourceHydrator, type SourceJobs, type SourceJobsDetachResult } from './source-service';
 import type { TrustedJobSource } from './source-authority';
 import { JobsRunner, jobGateKey } from './runner';
 import { JobsRuntime } from './runtime';
@@ -33,6 +33,7 @@ type SchedulePatch = { definition?: string | JobDefinition; input?: unknown; tim
 type Control = 'pause' | 'cancel' | 'resume' | 'update' | 'runNow';
 export class JobsService {
   private readonly gate: JobsGate;
+  private readonly sourceGate: JobsGate;
   private readonly runner: JobsRunner;
   private readonly sources: JobsSourceBroker;
   private readonly abort = new AbortController();
@@ -40,28 +41,43 @@ export class JobsService {
   private readonly intake = new AbortController();
   private readonly now: () => number;
   private automaticWakes = false;
+  private nativeBindingsSealed = false;
   private closeTask: Promise<void> | null = null;
   constructor(private readonly options: ServiceOptions) {
     this.now = options.now ?? Date.now;
     this.gate = new JobsGate({ concurrency: options.config.concurrency, maxConcurrentPerKey: 1,
       maxQueued: options.config.concurrency * 4, maxQueuedPerKey: Math.min(16, options.config.concurrency * 4), queueTimeoutMs: 5000 });
-    this.sources = new JobsSourceBroker({ ...options, gate: this.gate, signal: this.abort.signal, now: this.now, wake: () => this.wakeAutomatically() });
+    // Separate capacity, not merely a different key: all schedule slots may be
+    // occupied by runners awaiting read-only source attachment.
+    this.sourceGate = new JobsGate({ concurrency: options.config.concurrency, maxConcurrentPerKey: 1,
+      maxQueued: options.config.concurrency * 4, maxQueuedPerKey: Math.min(16, options.config.concurrency * 4), queueTimeoutMs: 5000 });
+    this.sources = new JobsSourceBroker({ ...options, gate: this.gate, sourceGate: this.sourceGate,
+      signal: this.abort.signal, now: this.now, wake: () => this.wakeAutomatically() });
     this.runner = new JobsRunner({ ...options, gate: this.gate, sources: this.sources,
       autoReady: () => this.automaticWakes && !this.abort.signal.aborted });
   }
   start(scheduler: SchedulerService): void {
     if (this.intake.signal.aborted) throw new JobsError('JOBS_NOT_READY');
+    this.nativeBindingsSealed = true;
     // Registration must succeed before mutation hints or scheduler callbacks
     // gain automatic intake. A failed attempt cannot enable a later callback.
     this.runner.start(scheduler); this.automaticWakes = true; this.wakeAutomatically();
   }
   /** Trusted lifecycle/test composition. Request code only receives forAuthority(). */
-  tick(): Promise<void> { return this.runner.tick(); }
+  tick(): Promise<void> { this.nativeBindingsSealed = true; return this.runner.tick(); }
+  /** @internal Construction-only fixed native resolver; never request/config/IPC. */
+  bindNativeSourceHydrator(callback: NativeJobSourceHydrator): () => void {
+    if (this.nativeBindingsSealed || this.intake.signal.aborted) throw new JobsError('JOBS_NOT_READY');
+    return this.sources.bindNativeSourceHydrator(callback);
+  }
   /** @internal Native source lifecycle only; never project this method to a request/activity. */
   forSource(source: TrustedJobSource): SourceJobs { return this.sources.forSource(source); }
   /** @internal Native atomic idle release only. Never project to a request/activity. */
-  tryDetachSources(handles: readonly SourceJobs[]): SourceJobsDetachResult { return this.sources.tryDetachSources(handles); }
-  diagnostics() { return { automaticWakes: this.automaticWakes, gate: this.gate.status(), runner: this.runner.diagnostics(), persistence: this.options.runtime.diagnostics() }; }
+  tryDetachSources(handles: readonly SourceJobs[], expectedSourceIds?: readonly string[]): SourceJobsDetachResult {
+    return this.sources.tryDetachSources(handles, expectedSourceIds);
+  }
+  diagnostics() { return { automaticWakes: this.automaticWakes, gate: this.gate.status(), sourceGate: this.sourceGate.status(),
+    runner: this.runner.diagnostics(), persistence: this.options.runtime.diagnostics() }; }
   /** @internal Stop new work, but retain native owner/evidence capability until Torrent stops. */
   quiesce(): void {
     this.automaticWakes = false;
@@ -73,7 +89,7 @@ export class JobsService {
     // Runner remembers an unregister failure and reports it after its callers
     // drain. Still reach the physical gate barrier in that failure case.
     try { this.quiesce(); } catch { /* Reported by runner.drain(). */ }
-    try { await this.runner.drain(); } finally { await this.gate.drain(); }
+    try { await this.runner.drain(); } finally { try { await this.gate.drain(); } finally { await this.sourceGate.drain(); } }
   }
   close(): Promise<void> {
     if (this.closeTask) return this.closeTask;
@@ -82,13 +98,13 @@ export class JobsService {
     this.sources.close();
     this.closeTask = (async () => {
       try { await drained; } finally {
-        try { await this.runner.close(); } finally { try { await this.gate.close(); } finally {
+        try { await this.runner.close(); } finally { try { await this.gate.close(); } finally { try { await this.sourceGate.close(); } finally {
           // Source owner confirmations and evidence reads can be physically
           // running before they enter the shared gate. Final closure seals new
           // source admission; only their actual settlement permits SQL teardown.
-          await this.sources.drainPhysical();
+          await this.gate.drain(); await this.sourceGate.drain(); await this.sources.drainPhysical();
           await this.options.runtime.close();
-        } }
+        } } }
       }
     })();
     return this.closeTask;

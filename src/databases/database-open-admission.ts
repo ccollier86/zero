@@ -8,22 +8,14 @@
 import { Database, type Statement } from 'bun:sqlite';
 import { createHash } from 'node:crypto';
 import { types as utilTypes } from 'node:util';
-import { assertExactIdentityAnchorSQLiteTables } from '../auth/identity-projection-schema';
 import { readMigrationLedgerState } from '../migrations/migration-ledger';
 import { diffSchemaSnapshots } from '../migrations/schema-diff';
 import { inspectDatabaseSchema } from '../migrations/schema-inspector';
 import { snapshotDeclaredTables, stableStringify } from '../migrations/schema-snapshot';
-import { presenceProjectionSchemaReady } from '../presence/presence-projection-schema';
-import { hasGuardianPresenceRealm } from '../presence/presence-realm';
 import { inspectGuardianReferenceSchema } from '../schema/guardian-references';
 import { quoteSqlIdentifier } from '../sync/identity';
-import {
-  validateChangeLogStateRow,
-  validateRetainedHistory,
-  type ChangeLogStateRow,
-} from '../sync/reactive-db-change-codec';
 import { canonicalDatabaseRowId } from '../sync/row-identity';
-import type { ChangeRow, TableSchema } from '../sync/types';
+import type { TableSchema } from '../sync/types';
 import { readDatabaseBindingIdentity, type DatabaseBindingIdentity } from './database-binding-identity';
 import { DatabaseError } from './database-error';
 import type { DatabaseRef } from './database-file';
@@ -33,8 +25,9 @@ import {
   isDatabaseTableName,
   type DatabaseSerializableScalar,
 } from './database-operations';
-import { databaseReceiptSchemaReady } from './database-receipt-schema';
+import { assertCurrentDatabaseSourceFramework, assertCurrentDatabaseSourceFrameworkAfterManifest } from './database-realm-source-framework';
 import { createDatabaseRealmOperationCatalog, type DatabaseRealm } from './database-realm';
+import { assertDatabaseRealmCurrentMigrationSource, assertDatabaseRealmMigrationSource } from './database-realm-migration-tables';
 
 export interface DatabaseOpenRowAdmission {
   readonly table: string;
@@ -119,7 +112,7 @@ export function resolveDatabaseOpenAdmission(
   id: string,
   realm: DatabaseRealm,
 ): DatabaseOpenAdmission | undefined {
-  if (resolver === undefined) return undefined;
+  if (resolver === undefined) return realm.migrationTableStages ? Object.freeze({ schema: 'prepare' }) : undefined;
   if (typeof resolver !== 'function' || utilTypes.isAsyncFunction(resolver)
     || utilTypes.isGeneratorFunction(resolver)) throw configInvalid();
   const value: unknown = resolver(id);
@@ -127,7 +120,7 @@ export function resolveDatabaseOpenAdmission(
     void Promise.resolve(value).catch(() => undefined);
     throw configInvalid();
   }
-  return value === undefined ? undefined : normalizeDatabaseOpenAdmission(value, realm);
+  return value === undefined ? realm.migrationTableStages ? Object.freeze({ schema: 'prepare' }) : undefined : normalizeDatabaseOpenAdmission(value, realm);
 }
 
 /** Pinned row identity may be strengthened, never retargeted or weakened. */
@@ -215,6 +208,10 @@ export function assertDatabaseOpenAdmission(options: DatabaseOpenAdmissionOption
       // Owner mismatch must precede EVERY mutating preparation branch, even
       // when explicit preparation is allowed to upgrade an old schema.
       if (admission.row) assertRow(database, realm, admission.row);
+      if (realm.migrationTableStages) {
+        if (admission.schema === 'current') assertDatabaseRealmCurrentMigrationSource(database, realm.migrationTableStages, realm.migrations);
+        else assertDatabaseRealmMigrationSource(database, realm.migrationTableStages, realm.migrations);
+      }
       if (admission.schema === 'prepare') return;
       assertCurrentLedger(database, realm);
       assertCurrentRealmSchema(database, realm);
@@ -305,42 +302,10 @@ function assertCurrentRealmSchema(database: Database, realm: DatabaseRealm): voi
 }
 
 function assertCurrentFrameworkSchema(database: Database, realm: DatabaseRealm): void {
-  if (realm.guardianAnchorRequirements.length > 0) {
-    assertExactIdentityAnchorSQLiteTables(database, {
-      membership: realm.guardianAnchorRequirements.includes('membership'),
-    });
-  }
-  if (!databaseReceiptSchemaReady(database)) throw schemaMismatch('receipts');
-  if (hasGuardianPresenceRealm(realm) && !presenceProjectionSchemaReady(database)) {
-    throw schemaMismatch('presence');
-  }
-  const states = readAll<ChangeLogStateRow>(database,
-    'SELECT singleton, schema_version, write_format, min_reader_format, seq, prune_through '
-      + 'FROM main._zero_sync_log_state LIMIT 2');
-  if (states.length !== 1) throw schemaMismatch('sync');
-  const state = validateChangeLogStateRow(states[0]!);
-  const sentinels = readAll<ChangeRow>(database,
-    'SELECT *, typeof(format_version) AS format_version_type FROM main._changes WHERE seq=0 LIMIT 2');
-  const sentinel = sentinels[0];
-  if (sentinels.length !== 1 || !sentinel || sentinel.seq !== 0 || sentinel.tbl !== '_zero_sync_fence'
-    || sentinel.op !== 'INSERT' || sentinel.row_id !== 'format-v1'
-    || sentinel.data !== null || sentinel.previous_data !== null || sentinel.ts !== 0
-    || sentinel.origin !== null || sentinel.format_version !== 1
-    || sentinel.format_version_type !== 'integer') throw schemaMismatch('sync');
-  const history = database.prepare('SELECT *, typeof(format_version) AS format_version_type '
-    + 'FROM main._changes WHERE seq IS NOT 0 ORDER BY seq');
-  try {
-    // Do not buffer an unbounded retained log. Include malformed NULL/negative
-    // sequence rows so streaming never turns their rejection into omission.
-    validateRetainedHistory(state, history.iterate() as IterableIterator<ChangeRow>);
-  } finally { history.finalize(); }
-  const sequence = readAll<{ singleton: number; seq: number }>(database,
-    'SELECT singleton, seq FROM main._change_sequence LIMIT 2');
-  // This deliberately frozen legacy allocator is NOT the current cursor.
-  // Managed writes advance only _zero_sync_log_state after fence installation.
-  if (sequence.length !== 1 || sequence[0]!.singleton !== 1
-    || !Number.isSafeInteger(sequence[0]!.seq) || sequence[0]!.seq < 0
-    || sequence[0]!.seq > state.seq) throw schemaMismatch('sync');
+  // SAME readonly transaction as the manifest proof above. No cross-open or
+  // actor/request authority is cached; unopted F1 still proves its own history.
+  if (realm.migrationTableStages) assertCurrentDatabaseSourceFrameworkAfterManifest(database, realm);
+  else assertCurrentDatabaseSourceFramework(database, realm);
 }
 
 function readOne<T>(database: Database, sql: string, ...params: (string | number)[]): T | null {

@@ -194,6 +194,22 @@ test('caller cancellation does not hide an actual controller callback or release
   } finally { gate.resolve(); await activating; await f.close(); }
 });
 
+test('a delayed demand proof cannot lower a newer local epoch, and temporary desired guards retire only their own hydration span', async () => {
+  const f = await fixture(); try {
+    const c = f.controller(); await c.prepare(f.policy()); const a = (await c.activate('observation')).policy;
+    await c.prepare(f.policy('observation', '2')); const b = (await c.activate('observation')).policy;
+    const selected = c.sourceBinding(b.ruleId, calendarHash(b.policy)), calls = f.factoryCalls();
+    if (!selected) throw new Error('Synthetic active policy has no native source binding.');
+    expect(() => c.sourceBindingForHydration(a, () => undefined)).toThrow(expect.objectContaining({ code: 'CALENDAR_POLICY_STALE' }));
+    expect(c.sourceBinding(b.ruleId, calendarHash(b.policy))).toBe(selected); expect(f.factoryCalls()).toBe(calls);
+    let current = true;
+    const binding = c.sourceBindingForHydration(b, () => { if (!current) throw new JobsError('JOBS_NOT_READY'); });
+    expect(binding.jobs).toBe(selected); current = false;
+    expect(() => f.bindings.at(-1)!.guards.assertEligible()).toThrow(expect.objectContaining({ code: 'JOBS_NOT_READY' }));
+    binding.release(); binding.release(); f.bindings.at(-1)!.guards.assertEligible(); expect(f.owner.signal.aborted).toBe(false);
+  } finally { await f.close(); }
+});
+
 test('a pending A control blocks prepare B and evidence recovery never silently revives its quiesced source', async () => {
   const f = await fixture(); try {
     const c = f.controller(); await c.prepare(f.policy()); f.loseActivation(); await expect(c.activate('observation')).rejects.toBeDefined();

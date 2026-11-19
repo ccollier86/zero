@@ -7,6 +7,7 @@
 
 import type { Database } from 'bun:sqlite';
 import type { TableSchema } from '../sync/types';
+import type { DatabaseRealmMigrationTableStage } from '../databases/database-realm-migration-tables';
 
 /** Safety classification used by migrate, doctor, and plan tooling. */
 export type MigrationSafety = 'safe' | 'guarded' | 'destructive' | 'manual';
@@ -64,6 +65,8 @@ export interface MigrationStatus {
 }
 
 export interface MigratorConfig {
+  /** Optional actor-imported declarative checkpoints; absent preserves legacy behavior. */
+  migrationTableStages?: readonly DatabaseRealmMigrationTableStage[];
   /** Path to the SQLite database file, used for backups and standalone CLI runs. */
   dbPath?: string;
   /** Existing SQLite handle. When provided, caller owns lifecycle by default. */

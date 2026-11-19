@@ -158,6 +158,14 @@ const RECEIPT_TRIGGER_SQL = Object.freeze({
   [RECEIPT_DELETE_GUARD_TRIGGER]: RECEIPT_DELETE_GUARD_SQL,
 });
 
+/** @internal Canonical native objects; inspection must never run the installer. */
+export const DATABASE_RECEIPT_SCHEMA_OBJECTS = Object.freeze([
+  Object.freeze([DATABASE_RECEIPT_TABLE, 'table', RECEIPT_STORED_SQL] as const),
+  Object.freeze([DATABASE_RECEIPT_STATS_TABLE, 'table', RECEIPT_STATS_STORED_SQL] as const),
+  Object.freeze([RECEIPT_RETENTION_INDEX, 'index', RECEIPT_RETENTION_INDEX_SQL] as const),
+  ...Object.entries(RECEIPT_TRIGGER_SQL).map(([name, sql]) => Object.freeze([name, 'trigger', sql] as const)),
+]);
+
 /** Read-only admission check for optional pinned services with migrations disabled. */
 export function databaseReceiptSchemaReady(db: Pick<ReactiveDB, 'prepare'>): boolean {
   const objects = [

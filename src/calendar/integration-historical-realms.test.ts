@@ -8,12 +8,14 @@ import { CALENDAR_INTEGRATION_CONTROL_TABLES } from './realm-integration-control
 import { CALENDAR_INTEGRATION_QUEUE_TABLES } from './realm-integration-queue-migration';
 import { CALENDAR_INTEGRATION_INSPECTION_TABLES } from './realm-integration-inspection-migration';
 import { CALENDAR_INTEGRATION_OPERATOR_TABLES } from './realm-integration-operator-migration';
+import { CALENDAR_APPOINTMENT_UPDATE_TABLES } from './realm-appointment-update-migration';
 import { CALENDAR_INTEGRATION_HISTORICAL_REALMS, isCalendarIntegrationHistoricalRealmFingerprint } from './integration-historical-realms';
 import { calendarInspectionHistoricalRealm } from './test-support/integration-inspection-fixture';
 
 // Original registry names read from the committed realm.ts at 11e9bbc/c32d307,
 // 6b3bf16 and fdc8262 respectively. 010/011 had neither the 012 controls nor
-// 013 nextWake; 012 had controls but no nextWake. None had 014 inspection.
+// 013 nextWake; 012 had controls but no nextWake. Pre-manifest016 includes
+// atomic update but no native migration-table-stage manifest.
 const CONTROL_COMMANDS = new Set(['calendar.integration.control.prepare', 'calendar.integration.control.ack', 'calendar.integration.control.fail']);
 const CONTROL_QUERIES = new Set(['calendar.integration.control', 'calendar.integration.controls', 'calendar.integration.controlEvidence']);
 const generations = [
@@ -29,12 +31,14 @@ const generations = [
     schema: 'a2f91077414b0a49d44a69e5c8e8f96fbccaf03e224542c5290bdc447f7dcb83' },
   { version: '015', count: 15, tables: CALENDAR_INTEGRATION_OPERATOR_TABLES, commands: 36, queries: 35,
     schema: '67d756b28b2671d19eeb37afda6f65c75540d83bf55ebf6514db99e5c06a8df0' },
+  { version: '016', count: 16, tables: CALENDAR_APPOINTMENT_UPDATE_TABLES, commands: 37, queries: 35,
+    schema: 'a9de3c82718367f9dfb5db628706f7a2b2fda542d12fc27be8d2d589a8d1f2a4' },
 ] as const;
 
-test('retained source compatibility pins are genuine complete 010–015 realms, not current-registry approximations', () => {
+test('retained source compatibility pins are genuine complete010–016 realms, including pre-manifest016', () => {
   expect(CALENDAR_INTEGRATION_HISTORICAL_REALMS.map(realm => realm.version)).toEqual(generations.map(realm => realm.version));
   for (const generation of generations) {
-    const commands = Object.fromEntries(Object.entries(calendarRealm.commands).filter(([name]) => name !== 'calendar.appointment.update'
+    const commands = Object.fromEntries(Object.entries(calendarRealm.commands).filter(([name]) => (generation.count >= 16 || name !== 'calendar.appointment.update')
       && (generation.count >= 15 || !name.startsWith('calendar.integration.operator.')) && (generation.count >= 12 || !CONTROL_COMMANDS.has(name))));
     const queries = Object.fromEntries(Object.entries(calendarRealm.queries).filter(([name]) => (generation.count >= 15 || !name.startsWith('calendar.integration.operator.')) && (generation.count >= 14 || name !== 'calendar.integration.inspection')
       && (generation.count >= 13 || name !== 'calendar.integration.nextWake') && (generation.count >= 12 || !CONTROL_QUERIES.has(name))));

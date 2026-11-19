@@ -100,6 +100,8 @@ export function openWriterBinding(
   realm: DatabaseRealm,
   callbacks: DatabaseActorHotSnapshotCallbacks,
 ): DatabaseActorWriterBinding {
+  if (realm.migrationTableStages && payload.openAdmission === undefined) throw new DatabaseError('DATABASE_CONFIG_INVALID',
+    'Migration table stages require native readonly source admission.', { outcome: 'not-started' });
   const { ringBufferDepth, ...sqliteOptions } = payload.sqlite;
   let sqlite: ReturnType<typeof createPlatformSQLiteService> | null = null;
   let runtime: DatabaseRuntime | null = null;
@@ -182,6 +184,7 @@ export function openWriterBinding(
         ? {}
         : { reactive: { ringBufferDepth } }),
       migrations: realm.migrations,
+      ...(realm.migrationTableStages === undefined ? {} : { migrationTableStages: realm.migrationTableStages }),
       migrate: payload.openAdmission?.schema !== 'current',
       tables: {
         ...identityAnchorReactiveTableSchemas(realm.guardianAnchorRequirements),

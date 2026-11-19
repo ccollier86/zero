@@ -65,6 +65,7 @@ export async function prepareManagedCalendarIntegration(input: ManagedCalendarIn
   let provider: ManagedCalendarProviderOwner | null = null;
   let preparation: Promise<ManagedCalendarCoreOwner | null> | null = null;
   let coordinator: CalendarIntegrationCoordinator | undefined;
+  let removeHydrator: (() => void) | undefined;
   const construction = new AbortController();
   const signal = input.signal ? AbortSignal.any([input.signal, construction.signal]) : construction.signal;
   const failuresAfter = async (label: string, operations: readonly (() => void | Promise<void>)[]) => {
@@ -95,6 +96,10 @@ export async function prepareManagedCalendarIntegration(input: ManagedCalendarIn
         if (!provider) throw new CalendarError('CALENDAR_NOT_READY');
         return provider.persistence.refreshIntegrationWake(record, failure);
       },
+      wakeCatalog: () => {
+        if (!provider) throw new CalendarError('CALENDAR_NOT_READY');
+        return provider.persistence.integrationWakeCatalog();
+      },
       pin: owner => bridge.pinRegistered(bridge.system({ principal: 'calendar:observation:catalog',
         reason: 'Fixed native Calendar observation graph', scope: owner.scope }),
       CALENDAR_OBSERVATION_WORKFLOW, calendarObservationPinInput(), CALENDAR_OBSERVATION_WORKFLOW_VERSION),
@@ -106,10 +111,12 @@ export async function prepareManagedCalendarIntegration(input: ManagedCalendarIn
       }),
     });
     const selected = coordinator;
+    removeHydrator = jobs.service.bindNativeSourceHydrator((scope, admission, sourceSignal) => selected.hydrateSource(scope, admission, sourceSignal));
     jobs.attachDependency({
       quiesce() {
         // Retire the facade and construction before cancelling native intake.
         construction.abort(new CalendarError('CALENDAR_NOT_READY'));
+        removeHydrator?.();
         provider?.quiesce(); selected.quiesce();
       },
       async drainIntake() {
@@ -184,6 +191,7 @@ export async function prepareManagedCalendarIntegration(input: ManagedCalendarIn
     // the same physical joins; recursively awaiting it here could deadlock the
     // Workflow stop that is already joining this dependency-preparation hook.
     const failures: unknown[] = [error];
+    try { removeHydrator?.(); } catch (cleanup) { failures.push(cleanup); }
     try { await jobs.cancelPreparation(); } catch (cleanup) {
       failures.push(cleanup);
       // cancelPreparation is forbidden once shared close/sealing began. Do not

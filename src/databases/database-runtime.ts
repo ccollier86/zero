@@ -3,6 +3,7 @@ import { Migrator, type Migration } from '../migrations';
 import { createReactiveDB, type ReactiveDB } from '../sync/reactive-db';
 import type { ReactiveDBConfig, TableSchema } from '../sync/types';
 import { DatabaseError, isDatabaseError } from './database-error';
+import { admitDatabaseRealmMigrationTableStages, assertDatabaseRealmCurrentMigrationSource, type DatabaseRealmMigrationTableStage } from './database-realm-migration-tables';
 
 /** Stable purpose assigned to one physical database runtime. */
 export type DatabaseRuntimeRole = 'system' | 'default' | 'service' | 'named' | 'tenant';
@@ -27,6 +28,7 @@ export interface DatabaseRuntimeOptions {
   reactive?: DatabaseReactiveConfig;
   /** Ordered migration registry assigned specifically to this database role. */
   migrations?: readonly Migration[];
+  migrationTableStages?: readonly DatabaseRealmMigrationTableStage[];
   /** Run the assigned migration registry before ReactiveDB is created. */
   migrate?: boolean;
   /** Optional app tables to initialize before the runtime is published. */
@@ -81,8 +83,14 @@ export class DatabaseRuntime {
     let phase: DatabaseRuntimeStartupPhase = 'storage-limit';
 
     try {
+      if (options.migrationTableStages !== undefined) {
+        phase = 'migration';
+        const stages = admitDatabaseRealmMigrationTableStages(options.migrationTableStages, options.migrations ?? [], options.tables ?? {});
+        options = { ...options, migrationTableStages: stages };
+        if (!options.migrate) assertDatabaseRealmCurrentMigrationSource(options.sqlite.raw, stages!, options.migrations ?? []);
+      }
       const hotPageBudget = captureHotPageBudget(options.sqlite);
-      if (options.migrate && options.sqlite.mode !== 'ephemeral') {
+      if (options.migrate && (options.sqlite.mode !== 'ephemeral' || options.migrationTableStages !== undefined)) {
         phase = 'migration';
         runRuntimeMigrations(options);
         phase = 'storage-limit';
@@ -312,6 +320,7 @@ function runRuntimeMigrations(options: DatabaseRuntimeOptions): void {
       database: options.sqlite.raw,
       dbPath: options.sqlite.snapshotPath ?? options.sqlite.path ?? ':memory:',
       migrations: [...(options.migrations ?? [])],
+      ...(options.migrationTableStages === undefined ? {} : { migrationTableStages: options.migrationTableStages }),
       applyPragmas: false,
       createBackups: options.sqlite.mode !== 'ephemeral',
       ...(options.migrationLog === undefined
@@ -496,7 +505,7 @@ function assertDatabaseRuntimeOptions(options: DatabaseRuntimeOptions): void {
     && typeof options.migrationLog !== 'function') {
     throw invalidRuntimeConfig('Database runtime migration logger is invalid.');
   }
-  if (options.sqlite.mode === 'ephemeral' && options.migrate) {
+  if (options.sqlite.mode === 'ephemeral' && options.migrate && options.migrationTableStages === undefined) {
     // Preserve createApp's historical behavior: migrations are durable setup,
     // while ephemeral schemas are initialized through ReactiveDB definitions.
     return;

@@ -20,6 +20,102 @@ or data migration is authorized by these checks.
 
 ## November 18 finish-line review: cold admission and retained evidence
 
+### November 19 follow-up: bounded residency and original migration boundaries
+
+The private managed composition now selects catalog-driven bounded residency and
+binds native Jobs demand hydration before start/tick seals construction. The
+combined native managed/coordinator/residency/controller/source-hydration set
+passed **145 tests, 4,099 assertions, five files** in 80.56 seconds. These are
+MEMORY SQL plus explicit native transport/scheduler doubles, not createApp/file,
+real browser, actor or deployment qualification. They cover more than 64 retained
+owners through a bounded resident set, permanent failed stages consuming no slots,
+idle eviction/revisit, exact multi-source refusal, retained evidence, current pin
+and policy drift, full schedule pools and held owner intake during original-key
+read-only attachment. The broker-only quota test covers 1,025 sequential retained
+registrations without increasing its 1,024 resident ceiling.
+
+The first managed composition run had **13 passes and two failures**. One test
+observed intake idle before the complete global wake had finalized; it now waits
+for the explicit read-only `wakeActive` diagnostic as well. The other exposed a
+real cancellation-propagation defect: catalog processing discarded a started
+callback's original unknown result during quiesce, later reporting only not-ready.
+It now preserves that original lifecycle error. The clean 145-test set includes
+both corrections; the first failing run is not relabelled as passing.
+
+Native source controls have their own bounded pool, independent of per-schedule
+capacity. Final physical drainage joins both before persistence closes; early
+drain retains evidence for Torrent. Unreadable Calendar private files no longer
+block every owner at native catalog startup. Exact SYSTEM metadata is still
+validated globally, and every individual owner retains existing-only physical
+proof before use. The runtime suite passed **25 tests, 200 assertions** including
+missing-owner isolation, healthy-owner proof and all metadata/refusal fences.
+
+The optional native table-stage repair passed **79 tests, 1,062 assertions,
+six files** before Calendar activation. Actual Calendar opt-in/provenance then
+passed **44 tests, 904 assertions, five files**, plus a focused original-hash/
+receipt set of **two tests, 165 assertions**. Tests now run actual raw fresh
+Calendar 001–016, every populated prefix, and the 011/012/014/016 derived
+backfills, without precreating the latest schema. Original functions, hashes,
+successful ledgers, retained rows and receipt identities stay intact. Version16,
+37 commands, 35 queries and schema checksum
+`a9de3c82718367f9dfb5db628706f7a2b2fda542d12fc27be8d2d589a8d1f2a4`
+are unchanged. The manifest-bearing fingerprint is
+`sha256:fcfd500b5352a27f6bc43d9122c1af8cdafc85680994f4191ee75903485179f8`;
+the genuine previous016 fingerprint remains an explicitly reconstructed
+historical policy pin.017 is still unregistered.
+
+Framework-source review found and fixed a valid native legacy logging ALTER
+shape rejection and oversized TEXT materialization before codec checks. SQL now
+applies native text/UTF-8 ceilings before returning those values to JavaScript,
+without introducing a new Sync history limit. That focused set passed **71 tests,
+437 assertions, four files**, including 27 helper cases. Current-file admission
+must not repeatedly decode all permanent receipts and log payloads; the separate
+current/preparation proof and its final tests are recorded with the completed
+checkpoint, not inferred from these earlier results.
+
+The first combined no-emit check exposed five test typing errors: a nullable
+binding expectation and missing explicit generic protocol-double parameter
+types. They were corrected without widening runtime contracts. An initial
+broader realm-test load also lacked the existing Valibot ESM alias; the approved
+external dependency overlay resolved it without installing dependencies.
+Focused sets overlap and are not summed. Final combined checking and any later
+corrections must be distinguished from these initial runs.
+
+The complete combined native checkpoint subsequently passed **284 tests, 5,911
+assertions across14 files** in131.42 seconds. It includes native managed wiring,
+runtime isolation, coordinator/controller/residency, source hydration/service/
+shutdown, actual Calendar table stages, genuine historical realms/bindings,
+booking admission, private series authoring and the unregistered017 time facts.
+Combined no-emit checking passed **505 roots, 4,094 sources, zero diagnostics**.
+An independent20-test realm-composition pass exposed/guards the existing-realm
+adapter seam: a native stage manifest cannot silently disappear when adapting a
+realm into a contribution. Documentation validation reports **907 reachable
+pages/unique IDs, zero problems**. These remain MEMORY/source results, not a
+measured file-mode performance or physical deployment claim.
+
+Final migration/source/current-admission checking passed **152 tests, 1,451
+assertions across nine files** in19.57 seconds. The focused performance/refusal
+set passed **89 tests, 527 assertions across four files**. SQL-observation tests
+prove one retained Sync-format stream and no receipt/log-payload streams on
+current/full-prefix no-op admission, while actual pending migrations still reject
+malformed retained content before initialization and under the boundary lock.
+This is structural current-source admission, not a claim to attest every retained
+payload. Native staged rollback—including no-op targets—rejects before SQL,
+backup or checkpoint; ordinary rollback remains supported.
+
+A final source-dispatch review found a real classification defect: after native
+durable dispatch proof succeeded, a stale local binding was reported permanently
+retired. It now returns recoverable not-ready. The focused native Jobs set passed
+**85 tests, 2,787 assertions across three files** in17.23 seconds. Actual MEMORY
+writer/runner tests prove claim deferral without permanent blocking, zero-key
+read-only reattachment, one original Torrent execution and continued definitive
+rejection of the genuinely retired old generation.
+
+No physical fixture, dependency install, emitted build/cache, Docker resource,
+archive or production data was created. F3 public feature activation/adoption,
+F4–F8 completion and real physical/browser/Linux/package/updater gates remain
+open. There is no main merge or normal updater selection in this checkpoint.
+
 ### November 19 follow-up: durable wake admission and stable native residency
 
 The new native SYSTEM wake catalog and original owner-schema tests passed
