@@ -12,6 +12,7 @@ export interface CalendarOwnerRecord {
 }
 
 export const CALENDAR_OWNER_SCHEMA = 'CREATE TABLE IF NOT EXISTS _calendar_owners (id TEXT PRIMARY KEY,scope_id TEXT NOT NULL UNIQUE,owner_id TEXT NOT NULL,root_hash TEXT NOT NULL,realm_fingerprint TEXT NOT NULL,established INTEGER NOT NULL CHECK(established IN (0,1)))';
+export const CALENDAR_OWNER_READY_INDEX = 'CREATE INDEX calendar_owners_established ON _calendar_owners(established,id)';
 
 const normalize = (sql: string) => sql.replace(/\bIF\s+NOT\s+EXISTS\s+/gi, '').replace(/\s+/g, ' ').trim();
 
@@ -26,6 +27,10 @@ export function inspectCalendarOwnerSchema(database: Pick<ReactiveDB, 'prepare'>
 export function installCalendarOwnerSchema(database: Pick<ReactiveDB, 'prepare' | 'exec'>, installAllowed: boolean): boolean {
   const state = inspectCalendarOwnerSchema(database);
   if (state === 'invalid') throw new CalendarError('CALENDAR_STATE_INVALID');
-  if (state === 'missing' && installAllowed === true) database.exec(CALENDAR_OWNER_SCHEMA);
-  return state === 'ready' || installAllowed === true;
+  const index = database.prepare("SELECT type,tbl_name,sql FROM sqlite_master WHERE name=? COLLATE NOCASE").get('calendar_owners_established') as { type: string; tbl_name: string; sql: string | null } | null;
+  if (index && (index.type !== 'index' || index.tbl_name !== '_calendar_owners' || !index.sql || normalize(index.sql) !== normalize(CALENDAR_OWNER_READY_INDEX))) throw new CalendarError('CALENDAR_STATE_INVALID');
+  if (state === 'missing' && installAllowed !== true) return false;
+  if (state === 'missing') database.exec(CALENDAR_OWNER_SCHEMA);
+  if (!index && installAllowed === true) database.exec(CALENDAR_OWNER_READY_INDEX);
+  return !!index || installAllowed === true;
 }

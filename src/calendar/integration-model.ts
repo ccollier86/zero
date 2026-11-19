@@ -13,7 +13,7 @@ export const CALENDAR_INTEGRATION_COMMANDS = ['calendar.integration.policy.insta
   'calendar.integration.claim', 'calendar.integration.ack', 'calendar.integration.defer', 'calendar.integration.suppress',
   'calendar.integration.effect.admit', 'calendar.integration.effect.settle', 'calendar.integration.control.prepare', 'calendar.integration.control.ack', 'calendar.integration.control.fail'] as const;
 export const CALENDAR_INTEGRATION_QUERIES = ['calendar.integration.policy', 'calendar.integration.policies', 'calendar.integration.intent',
-  'calendar.integration.pending', 'calendar.integration.effect', 'calendar.integration.control', 'calendar.integration.controls', 'calendar.integration.controlEvidence'] as const;
+  'calendar.integration.pending', 'calendar.integration.effect', 'calendar.integration.control', 'calendar.integration.controls', 'calendar.integration.controlEvidence', 'calendar.integration.nextWake'] as const;
 export const CALENDAR_INTEGRATION_LIMITS = Object.freeze({ rules: 8, policies: 10_000, intents: 100_000, page: 100, leaseMs: 60_000, horizonMs: 31 * 86_400_000 });
 /** Jobs' once parser deliberately admits four-digit UTC years, unlike calendar display instants. */
 export const CALENDAR_INTEGRATION_MAX_DUE_MS = 253_402_300_799_999;
@@ -40,6 +40,7 @@ export interface CalendarIntegrationIntentView {
   readonly jobsReceipt: JobSourceScheduleReceipt | null; readonly createAttempted: boolean;
 }
 export interface CalendarIntegrationClaim { readonly id: string; readonly nonce: string; readonly claimGeneration: number; readonly previouslyAttempted: boolean; readonly intent: CalendarIntegrationIntentView }
+export interface CalendarIntegrationNextWake { readonly nextWakeAt: number | null }
 export interface CalendarIntegrationEffectView { readonly id: string; readonly intentId: string; readonly executionId: string; readonly nonce: string; readonly admittedAt: number; readonly outcome: 'observed' | null }
 export interface CalendarIntegrationOwner { readonly scopeId: string; readonly expectedOwnerId: string }
 export interface IntegrationPolicyRow extends Row { id: string; scope_id: string; rule_id: string; epoch: number; request_id: string; digest: string; policy_json: string; source_id: string; source_policy_hash: string; created_ms: number }

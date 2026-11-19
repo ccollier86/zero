@@ -92,10 +92,18 @@ keeps late factual evidence and distinguishes never-registered from missing
 previously registered state. Controller/dispatcher close does not claim shared
 Jobs/Torrent drainage. `calendar:true` does not enable this private automation.
 
-Resume with managed before-recovery dependency composition, dormant owner
-hydration, phased shutdown with evidence kept alive, explicit retire-before-disable
-operator controls, indexed fair restart/retry discovery and retained-capacity
-management. See stage 14 of the [integration plan](./calendar-integration-plan.md#14-delivery-stages-and-acceptance-gates).
+The next source pass now implements the shared managed before-recovery Jobs seam,
+its phased physical drain/evidence lifetime, and a bounded private calendar
+coordinator. Additive `013` rotates source work classes durably. Canonical source
+wake queries and indexed SYSTEM owner pages drive one absolute Scheduler wake,
+not a per-appointment timer or idle owner poll. The coordinator recovers pending
+original controls, handles live retirement, keeps historical execution available
+before startup/after intake drainage, and refuses stale config resurrection.
+Its current 64-owner envelope/shared retained Jobs limits remain explicit.
+
+Resume with actual managed calendar/config composition and operator
+retire/reactivate-before-disable controls, larger catalog hydration and sustainable
+retained-capacity management. See stage 14 of the [integration plan](./calendar-integration-plan.md#14-delivery-stages-and-acceptance-gates).
 Physical/package qualification still requires storage recovery. No main/updater,
 application, live state or hosted-demo change accompanies these source phases.
 

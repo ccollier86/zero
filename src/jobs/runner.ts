@@ -29,6 +29,9 @@ export class JobsRunner {
   private discoveryCursor: JobsDueCursor | undefined;
   private discoveryHorizon: number | undefined;
   private closeTask: Promise<void> | null = null;
+  private drainTask: Promise<void> | null = null;
+  private quiesceFailed = false;
+  private quiesceFailure: unknown;
   private readonly scopeTasks = new Map<string, Promise<void>>();
   // Durable wake publication may be fenced by another scope write or fail.
   // Keep this local fence too, so completion-driven refill cannot busy-loop
@@ -110,16 +113,29 @@ export class JobsRunner {
     }).finally(() => { this.tickTask = null; if (continueScan) this.wake(); });
     return this.tickTask;
   }
-  close(): Promise<void> {
-    if (this.closeTask) return this.closeTask;
+  /** Stop scheduler/refill intake without retiring the Jobs evidence owner. */
+  quiesce(): void {
+    if (this.state !== 'ready') { if (this.quiesceFailed) throw this.quiesceFailure; return; }
     this.state = 'closing'; this.startAttempt = null;
     const scheduler = this.scheduler, timerRun = this.timerRun; this.scheduler = null; this.timerRun = null;
-    if (scheduler && timerRun) scheduler.unregister('zero-durable-jobs', timerRun);
-    this.abort.abort();
-    this.closeTask = (async () => {
+    try { if (scheduler && timerRun) scheduler.unregister('zero-durable-jobs', timerRun); }
+    catch (error) { this.quiesceFailed = true; this.quiesceFailure = error; throw error; }
+    finally { this.abort.abort(new JobsError('JOBS_NOT_READY')); }
+  }
+  /** Caller/task barrier only; JobsService separately awaits physical pool callbacks. */
+  drain(): Promise<void> {
+    if (this.drainTask) return this.drainTask;
+    try { this.quiesce(); } catch { /* Report after all runner callers settle. */ }
+    this.drainTask = (async () => {
       await Promise.allSettled([...(this.tickTask ? [this.tickTask] : []), ...this.scopeTasks.values()]);
-      this.scopeTasks.clear(); this.completionCursors.clear(); this.retryNotBefore.clear(); this.discoveryCursor = undefined; this.discoveryHorizon = undefined; this.state = 'closed';
+      this.scopeTasks.clear(); this.completionCursors.clear(); this.retryNotBefore.clear(); this.discoveryCursor = undefined; this.discoveryHorizon = undefined;
+      if (this.quiesceFailed) throw this.quiesceFailure;
     })();
+    return this.drainTask;
+  }
+  close(): Promise<void> {
+    if (this.closeTask) return this.closeTask;
+    this.closeTask = this.drain().finally(() => { this.state = 'closed'; });
     return this.closeTask;
   }
   diagnostics() { return { state: this.state, ticking: this.tickTask !== null, activeScopes: this.scopeTasks.size, reportedFailures: [...this.reported], suppressedFailures: this.suppressedFailures }; }

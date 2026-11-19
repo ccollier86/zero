@@ -335,6 +335,11 @@ export class WorkflowGraphRuntime {
     }
   }
 
+  /** @internal Actual admitted callbacks remain joinable after dispose grace. */
+  async drainPhysical(): Promise<void> {
+    await Promise.all([this.activityExecutor.drainPhysical(), this.interactionValidator.drainPhysical(), this.interactions.drainPhysical()]);
+  }
+
   private dispatch(instanceId: string, phase: string): void {
     this.driver.dispatch(instanceId, phase);
   }

@@ -5,6 +5,7 @@ import { jobSourceId } from '../jobs/source-model';
 import { CalendarError, calendarCommand } from './error';
 import { calendarHash, calendarInteger, calendarJson, calendarKey } from './validation';
 import { calendarNow } from './hold-time';
+import { selectCalendarIntegrationQueue } from './integration-queue';
 import { effectiveCalendarAppointmentStatus, isCalendarLifecycleTerminal } from './lifecycle-model';
 import type { CalendarAppointmentRow } from './realm-model';
 import { assertIntegrationClaim, assertIntegrationOwner, CALENDAR_INTEGRATION_CODES, CALENDAR_INTEGRATION_LIMITS, integrationBudget,
@@ -80,7 +81,7 @@ export function retireCalendarIntegrationPolicy(context: DatabaseWriteCommandCon
   });
 }
 
-/** Two bounded index probes: ready work and expired physical claims. Never page retained intent history. */
+/** Bounded index probes and durable three-class fairness. Never page retained intent history. */
 export function claimCalendarIntegrations(context: DatabaseWriteCommandContext, input: unknown) {
   return calendarCommand(() => {
     const { r, owner } = owned(context, input, ['now', 'nonce', 'leaseMs', 'limit']);
@@ -100,12 +101,20 @@ export function claimCalendarIntegrations(context: DatabaseWriteCommandContext, 
     for (const policy of policies) retired.push(...context.db.find('_calendar_integration_dispatch', { filters: [eq('scope_id', owner.scopeId), eq('rule_id', policy.rule_id),
       eq('state', 'accepted'), eq('claim_nonce', null), eq('blocked_code', null), { type: 'field', field: 'policy_epoch', operator: policy.state === 'retired' ? 'lte' : 'lt', value: policy.epoch }],
       order: [{ field: 'policy_epoch', direction: 'asc' }, { field: 'next_attempt_ms', direction: 'asc' }, { field: 'id', direction: 'asc' }], limit }) as IntegrationDispatchRow[]);
-    const selected = [...new Map([...expired, ...retired, ...ready].map(row => [row.id, row])).values()].slice(0, limit), claimed: CalendarIntegrationClaim[] = [];
+    retired.sort((a, b) => a.policy_epoch - b.policy_epoch || a.next_attempt_ms - b.next_attempt_ms || a.id.localeCompare(b.id));
+    const cursor = context.db.get('_calendar_integration_queue_cursor', 'dispatch');
+    if (cursor && cursor.scope_id !== owner.scopeId) throw new CalendarError('CALENDAR_STATE_INVALID');
+    const { selected, nextClass } = selectCalendarIntegrationQueue([expired, retired, ready], cursor ? calendarInteger(cursor.next_class, 0, 2) : 0, limit);
+    const claimed: CalendarIntegrationClaim[] = [];
     for (const dispatch of selected) {
       const stored = integrationContext(context, owner.scopeId, dispatch.id), view = stored.view(now), generation = next(dispatch.claim_generation);
       context.db.update('_calendar_integration_dispatch', dispatch.id, { eligibility: view.eligibility, claim_nonce: nonce, claim_generation: generation, claim_until_ms: until,
         claim_previous_attempted: dispatch.create_attempted, create_attempted: 1 });
       claimed.push({ id: dispatch.id, nonce, claimGeneration: generation, previouslyAttempted: dispatch.create_attempted === 1, intent: stored.view(now) });
+    }
+    if (claimed.length) {
+      if (cursor) context.db.update('_calendar_integration_queue_cursor', 'dispatch', { next_class: nextClass });
+      else context.db.createStrict('_calendar_integration_queue_cursor', { id: 'dispatch', scope_id: owner.scopeId, next_class: nextClass });
     }
     return claimed;
   });

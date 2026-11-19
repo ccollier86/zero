@@ -390,10 +390,12 @@ describe('request-bound server services', () => {
       const deniedWorkflow = alpha.workflows as unknown as {
         getGraphRuntime(): unknown;
         dispose(): Promise<void>;
+        drainPhysical(): Promise<void>;
         pollTimeouts(): number;
       };
       expect(() => deniedWorkflow.getGraphRuntime()).toThrow('not available');
       expect(() => deniedWorkflow.dispose()).toThrow('not available');
+      expect(() => deniedWorkflow.drainPhysical()).toThrow('not available');
       expect(() => deniedWorkflow.pollTimeouts()).toThrow('not available');
       expect(() => (alpha.workflows as unknown as WorkflowService).startAsSystemOnce(
         'proof', {}, {
@@ -414,7 +416,8 @@ describe('request-bound server services', () => {
         },
       )).toThrow('not available');
     } finally {
-      fixture.db.dispose();
+      try { await fixture.workflows.dispose(); }
+      finally { await fixture.workflows.drainPhysical(); fixture.db.dispose(); }
     }
   });
 

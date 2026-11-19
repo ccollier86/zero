@@ -40,8 +40,8 @@ working on an application; do not assume this branch is available through update
   exceptions, frozen UTC policy snapshots and compatible legacy format handling.
 - [Private integration protocol](./integrations.md): source-atomic intents, bounded
   Jobs handoff, fixed observation catalog, owner readiness, durable registration
-  controls, exact Torrent execution proof and observation-only cutoff; not
-  yet activated or a public reminders API.
+  controls, bounded native coordinator, fair source wakes, exact Torrent execution
+  proof and observation-only cutoff; not yet activated or a public reminders API.
 - [Qualification and remaining gates](./qualification.md): current source review,
   completed memory checks and explicitly unexecuted physical/deployment scenarios.
 - [Frontend composition](../../frontend/calendar/index.md): connected core versus

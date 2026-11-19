@@ -17,6 +17,9 @@ interface ActiveExecution {
 
 export class WorkflowExecutionTracker {
   private readonly activeByStep = new Map<string, ActiveExecution>();
+  // Logical attempt replacement and dispose grace do not settle an authored
+  // callback. Retain only its physical lifetime, independently of those maps.
+  private readonly physical = new Set<ActiveExecution>();
   private disposed = false;
   private disposalPromise: Promise<void> | null = null;
 
@@ -32,7 +35,6 @@ export class WorkflowExecutionTracker {
     controller: AbortController,
     invocation: Promise<unknown>,
   ): void {
-    if (this.disposed) return;
     const active = {
       instanceId,
       stepId,
@@ -46,11 +48,23 @@ export class WorkflowExecutionTracker {
       () => undefined,
     ).then(() => {
       active.physicalDone = true;
-      if (this.activeByStep.get(stepId)?.attemptId === attemptId) {
+      this.physical.delete(active);
+      if (this.activeByStep.get(stepId) === active) {
         this.activeByStep.delete(stepId);
       }
     });
+    this.physical.add(active);
+    // A callback may already have begun before reentrant disposal. Observe it
+    // even then; abort also prevents a deferred invocation body starting late.
+    if (this.disposed) { this.abort(active, 'Workflow executor stopped'); return; }
     this.activeByStep.set(stepId, active);
+  }
+
+  /** @internal Join actual invocations after intake retirement; no timeout,
+   * persistence, authority checks or claim that cancellation stopped a body.
+   */
+  async drainPhysical(): Promise<void> {
+    while (this.physical.size) await Promise.all([...this.physical].map(active => active.physicalSettled));
   }
 
   isStepActive(stepId: string): boolean {
@@ -92,7 +106,7 @@ export class WorkflowExecutionTracker {
 
     const remaining = snapshot.filter((active) => !active.physicalDone);
     for (const active of remaining) {
-      if (this.activeByStep.get(active.stepId)?.attemptId === active.attemptId) {
+      if (this.activeByStep.get(active.stepId) === active) {
         this.activeByStep.delete(active.stepId);
       }
     }

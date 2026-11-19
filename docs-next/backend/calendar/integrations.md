@@ -21,9 +21,11 @@ configuration. It connects the canonical calendar writer, an owner-bound native
 dispatcher, source-owned Jobs, original sealed Torrent execution evidence and a
 source-local effect cutoff. The only effect adapter is an internal observation;
 it does not send messages or call providers. A fixed native catalog, readiness
-hook and durable policy controller are now implemented internally; managed
-startup/recovery, public configuration and operator integration remain pending. Do not import
-these internal modules into an application to bypass that boundary.
+hook, durable policy controller and bounded native coordinator are implemented
+internally. Managed Jobs now constructs dormant evidence before Torrent recovery;
+automatic calendar mounting, public configuration and operator integration remain
+pending. Do not import these internal modules into an application to bypass that
+boundary.
 
 ## Source truth and retained identities
 
@@ -47,6 +49,12 @@ historical truth after retirement without reactivating the current pointer.
 The migration checks the old guard before replacing it; unexpected definitions
 fail rather than being silently overwritten. Existing accepted registrations
 backfill a bounded source-presence marker, not fabricated control receipts.
+
+Additive `013` adds one durable scope-owned dispatch cursor, preserving all prior
+migration/declaration generations. Claims rotate between expired leases,
+obsolete-policy accepted work and ordinary ready work; a continuously nonempty
+class receives service within three successful selections, including limit-one
+batches and restarts. Empty claims and read-only previews do not advance state.
 
 A changed appointment's canonical writer records the ordinary receipt/effect seal,
 then captures integration work **in the same transaction**. Creation, hold
@@ -134,6 +142,60 @@ refill. A failed registration's captured callback stays inert after a later retr
 cleanup cannot unregister someone else's replacement. This is a dependency
 construction prerequisite, **not** completed calendar recovery composition.
 
+## Native coordinator and recovery order
+
+The private coordinator is inert on construction. Its source readiness prepares
+fixed policy captures without invoking Jobs; `start()` is a separate operation
+after dependencies recover. SYSTEM owner discovery is keyset-paged through the
+established-owner index, without provisioning or acquiring calendar actors.
+Recovered execution uses a direct canonical scope lookup and transient evidence
+capability, independent of discovery, intake capacity or successful hydration.
+
+The current **private envelope is 64 retained owners**, each with at most eight
+permanent rule identities. It deliberately does not evict/recreate identities to
+evade Jobs' shared 1,024-source limit. Those slots are not reserved exclusively
+for Calendar. Larger catalog hydration and sustainable retained schedule capacity
+remain public-activation gates; the normal calendar domain's 10,000-file ceiling
+is not a promise of 10,000 automatically hydrated integration owners.
+
+Explicitly retired rules are never resurrected by stale desired configuration.
+Removed/unselected retained rules stop for operator review before Jobs calls.
+Pending original controls settle before new policy versions are prepared, and
+live retirement is reconciled even when it retains the same policy ID. Retry
+wakes distinguish durable control backoff from local failures. Advisory commit
+hints are coalesced; bookkeeping does not create human-activity audit facts.
+
+Managed workflow construction now has a private before-recovery seam. It builds
+the Jobs evidence owner from the exact unpublished Torrent service, with runner
+wakes still disabled. Only after real recovery/publication does Jobs start.
+This hook cannot perform ordinary workflow starts or receipt inspection, which
+would invalidate initialization-only recovery. It must never await the recovery
+it is preparing. Cancellation waits its physical callback before disposing the
+workflow provider; partial Jobs construction cleans itself without recursively
+calling workflow stop from inside that hook.
+
+Shutdown order is intake quiescence → physical Jobs callback drainage → Torrent
+stop → Torrent physical drain → final native evidence/provider close.
+`JobsService.drain()` retains
+registration/receipt/execution evidence and does not use an elapsed timeout as
+proof of physical settlement. Torrent's ordinary stop/dispose grace is likewise
+not physical completion: its new native `drainPhysical()` joins actual tracked
+activity/validator/submission promises after logical retirement and before
+adjacent providers close. Detached, unawaited app work is not covered. Calendar
+intake drainage and `closeEvidence()` are separate phases. Native wake-cancellation
+failures retain their exact outstanding handle and reject clean drainage. Failed
+wake registration/rearming retires fresh Jobs eligibility to a diagnostic dormant
+state, not a falsely running service with no retry timer. Explicit native
+`start(scheduler)` can recover original durable work and rearm without rotating
+source identities or duplicating accepted schedules. Captured failed callbacks
+remain inert. A supervisor timeout still requires containment
+and unknown-outcome handling; it is not a successful drain.
+
+Automatic calendar composition/configuration is not enabled by this source pass.
+The existing `calendar: true` core remains independent of Jobs/Torrent, and false
+remains inert. Installed-file upgrades, actual managed workers/browser/Linux
+execution and normal updater selection remain unqualified.
+
 ## Bounded claim → Jobs → acknowledgment
 
 `CalendarIntegrationDispatcher` uses explicit bounded batches and coalesced
@@ -145,15 +207,18 @@ Healthy accepted rows do not repeatedly consume the ready queue. Retry state is
 updated in place; a failed attempt does not append unlimited diagnostic history.
 New work starts at the trusted source-write time, not zero, so a stream of fresh
 work does not always jump older due retries. Selection across expired claims,
-retired-policy work and ordinary ready classes is bounded/indexed but does not
-yet have a durable fairness bound. The managed coordinator must close that
-remaining starvation gate before production activation.
+retired-policy work and ordinary ready classes is bounded/indexed and uses `013`'s
+durable round-robin cursor. This is a selection bound, not a time-to-delivery
+guarantee when capacity or a downstream provider is unavailable.
 
-The initial adapter has no background retry timer. Later managed composition
-must supply startup discovery and coalesced scheduler wake-ups for durable
-backoff and expired claims. It must not create a recurring per-minute Jobs
-schedule, poll each appointment, or run providers in a database automation queue.
-Calling `wake()` alone does not establish restart recovery or future retries.
+The dispatcher itself has no background timer. The private native coordinator
+adds bounded startup discovery and one coalesced absolute Scheduler wake.
+`calendar.integration.nextWake({})` uses the source clock and indexed probes for
+ready retry times, claim expiry, obsolete accepted work and pending control
+attempts. Healthy accepted work sleeps until its expiry marker. Reads do not
+claim work or advance fairness. There is no recurring per-minute Jobs schedule,
+per-appointment timer, per-owner idle poll or provider call in a database queue.
+Calling a dispatcher's `wake()` alone still does not establish restart recovery.
 
 Original Jobs command receipts are checked first. A null receipt during an
 uncertain writer is **not** proof that no commit can still arrive. Recovery
@@ -251,7 +316,8 @@ Logging and dispatch sources can be composed with independent advisory wakes,
 partial-start cleanup and full reverse-order close. Managed composition must
 still mount dormant before recovery, hydrate after Jobs/Torrent are ready, stop
 source intake before those dependencies, and keep the owner alive for their
-drain. This stage does not change managed startup or enable those workers.
+drain. The shared managed Jobs preparation/stop sequence is now implemented;
+automatic calendar coordinator mounting remains disabled.
 
 Local retirement must happen before Jobs retirement and its exact acknowledgment;
 only a completed operator protocol may then declare safe-to-disable. A later
@@ -277,8 +343,9 @@ retain their broader supported range. Lateness is bounded separately to 31 days.
 
 Jobs still retains at most 1,000 schedules/source, 10,000 schedules/file and
 100,000 receipts/occurrences. This finite one-off bridge is **not yet a sustainable
-automatic reminder service**. Managed configuration, fixed workflow registration,
-restart/retry discovery, durable retirement operations, capacity management,
+automatic reminder service**. Public managed configuration, final native catalog
+mounting, larger catalog discovery/hydration, operator retirement/adoption,
+capacity management,
 provider-specific uncertainty handling and physical/browser/Linux/package/updater
 qualification remain explicit gates. Current source/memory evidence and test
 paths are recorded in the qualification guide.

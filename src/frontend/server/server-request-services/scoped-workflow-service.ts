@@ -86,6 +86,7 @@ type NonRequestWorkflowMember =
   | 'pollRetries'
   | 'pollTimeouts'
   | 'recoverInFlight'
+  | 'drainPhysical'
   | 'dispose';
 
 const WORKFLOW_SERVICE_INVENTORY: CompleteServiceMemberInventory<
@@ -98,6 +99,7 @@ void WORKFLOW_SERVICE_INVENTORY;
 // Preserve the established diagnostic wording for lifecycle worker methods.
 const DENIED_WORKFLOW_METHODS: ReadonlySet<string> = new Set([
   'dispose',
+  'drainPhysical',
   'getGraphRuntime',
   'pollRetries',
   'pollTimeouts',

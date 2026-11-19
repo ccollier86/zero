@@ -187,7 +187,7 @@ actual established owner and hydrate before intended dispatch. Jobs can now be
 constructed genuinely dormant: external mutation wakes remain disabled until
 successful scheduler startup, and failed startup callbacks never become live on
 retry. Explicit trusted ticks retain their internal refill behavior. Managed
-composition must still order this construction before Torrent recovery without
+composition now prepares this dormant Jobs owner before Torrent recovery without
 enabling premature dispatch. A source-owned
 effect-admission commit must recheck appointment revision/status, recipients,
 channel policy and expiry after pool waits. Its committed claim defines the
@@ -199,6 +199,23 @@ disable** protocol and new-generation reactivation; it does not infer A → disa
 → A from configuration equality. Automatic feature-manifest retirement is not
 implemented. Calendar automation must not be enabled until that lifecycle and its
 operational procedure are integrated and qualified.
+
+The subsequent source lifecycle now provides private Jobs `quiesce()` and
+`drain()` before final `close()`. Request/mutation intake retires separately from
+the native evidence owner. Drain waits the actual per-schedule gate callbacks,
+including callbacks whose cancelled callers already received unknown, while
+original receipts, keyed barriers and exact execution evidence remain readable
+for dependent Torrent work. It does not time out and declare settlement.
+`WorkPool.close()` alone is not that proof. Final close retires evidence only
+after its dependent execution has stopped; a forced outer deadline must report
+unconfirmed work and apply containment, not replay or false rollback.
+
+Managed Jobs now prepares this dormant owner through Torrent's private
+before-recovery hook, then starts dispatch after recovery/publication. This is
+framework composition, not a provider bag or an application setup callback.
+The private calendar coordinator additionally supplies indexed source wakes and
+durable class fairness, but its public configuration/operator/capacity and
+physical qualification gates are still open.
 
 File-backed actors, kill/restart/disk-full behavior, native logging workers,
 bundled Linux/amd64 and exact-archive/updater checks remain release gates. Memory

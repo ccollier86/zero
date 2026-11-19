@@ -18,6 +18,94 @@ This is feature-branch evidence, not a release certificate. No calendar backend
 archive has been selected by normal `zero-update`, and no application deployment
 or data migration is authorized by these checks.
 
+## November 18 managed dependency and native coordinator checkpoint
+
+The next source pass implements dormant managed Jobs preparation before Torrent
+recovery/publication, phased Jobs physical drainage, a separate Torrent physical
+invocation barrier, and a bounded private calendar coordinator. It does not enable
+automatic calendar configuration or select a release archive.
+
+The coordinator uses canonical SYSTEM scope lookup for recovered execution before
+startup, bounded keyset owner pages and one absolute Scheduler wake. Its private
+envelope is 64 retained owners, not the calendar domain's 10,000-file ceiling or
+a reservation of Jobs' shared source capacity. Additive `013` durably rotates the
+three source claim classes; canonical indexed next-wake reads do not write.
+The separate established-owner SYSTEM index requires explicit installation and
+rejects incompatible collisions before provisioning even an empty catalog.
+
+Review and native-memory regressions closed these boundaries:
+
+- The unpublished Torrent service can construct dormant evidence dependencies
+  before actual recovery, without beginning ordinary workflow operations.
+  Stop during asynchronous preparation aborts intake but waits the callback's
+  physical settlement before provider disposal/publication.
+- Jobs `quiesce()`/`drain()` keep original receipts, keyed barriers and execution
+  evidence readable while joining physical gate callbacks—not only cancelled
+  callers. A write accepted after quiescence remains unknown/reconcilable.
+- Torrent disposal grace can expire while authored callbacks still run. Its new
+  native `drainPhysical()` retains actual invocation promises independently of
+  logical timeout, step replacement and grace cleanup. Managed Jobs now joins
+  those bodies before final evidence/provider close. Public dispose/revocation
+  semantics stay unchanged. Detached unawaited work is not inferred or covered.
+- A live retirement keeps its policy ID, so hydration is state-aware and pending
+  controls are checked on every pass. Removed/retired rules do not resurrect.
+  Original A settles before desired B is prepared; lost acknowledgments retain
+  their permanent keys and exact durable backoff.
+- Initial activation failures and later backoff results process a bounded source
+  batch so ready work does not create an immediate-wake loop. Unjournaled owner,
+  read or pin failures use a bounded local retry instead of either spinning on
+  due work or sleeping until an unrelated accepted appointment expires.
+- Readiness has an independent bounded lane. It still verifies ownership and
+  freshly compares full current policy hashes; an exact existing capture avoids
+  a controller queue held by background Jobs. A real held registration-writer
+  test proves a new appointment commits first with the same policy epoch and no
+  source SQL lease over the Jobs wait. Changed policies remain serialized.
+- Native absolute Scheduler wakes use the existing Croner owner, round upward
+  to its second precision, remove exact entries before invocation, fence captured
+  failed callbacks and preserve replacements. Coalesced commit hints converge;
+  cancellation cleanup failure retains the exact handle and rejects clean drain.
+- The internal Torrent physical barrier is classified as a native lifecycle
+  member and rejected by the request facade, including runtime type-bypass
+  attempts. It grants no request-user shutdown or evidence capability.
+
+The expanded native-memory source run passed **829 tests, 16,825 assertions,
+96 files** in 169.16 seconds. It covers Calendar except its physical file test,
+related Jobs/Scheduler paths, native dependency construction, managed Jobs
+composition and actual Torrent physical drainage. A subsequent request-boundary
+and physical-lifecycle set passed **32 tests, 212 assertions, three files**.
+These are distinct runs, not additive test totals.
+
+Final review then found a runtime wake-registration recovery gap: replacing or
+rearming an absolute wake could fail while the coordinator still reported
+running. The final correction makes that state dormant and diagnostic, preserves
+exact cancellation ownership and retained evidence, and permits explicit native
+restart of original durable work. Old/failed callbacks remain inert; accepted
+Jobs schedules are not created twice. The final focused coordinator, owner,
+controller, Jobs, Scheduler, managed composition, Torrent and request-security
+run passed **112 tests, 1,139 assertions, 11 files** in 29.87 seconds. The expanded
+96-file run above is not represented as a run of that later runtime delta.
+
+After the final wake correction, the no-emit TypeScript graph passed with
+**387 roots, 3,989 source files and zero diagnostics**; both emission and
+incremental output were disabled. Documentation validation passed for **907
+pages**, all reachable, with zero structural problems. Intermediate fixture,
+timer-precision and exhaustive service-inventory failures were corrected and
+rechecked, not relabelled as original passes.
+
+All new fixtures use synthetic in-memory state, disable output caching and close
+owned databases, read sessions, pools, clocks and workflow owners in success and
+failure paths. No dependency install, build tree, file-backed fixture, Docker
+resource, preview server or archive was created. Source/history and existing
+held artifacts remain preserved; no new disposable output is intentionally kept.
+
+Actual Calendar/Guardian, Jobs and Torrent memory services exercise these paths.
+The scheduler also has a real absolute-timer test, not only a manual-trigger
+substitute. Physical actor/file transport, full managed authentication/logging,
+browser, installed Linux bundle and updater qualification are still unexecuted
+under the unchanged filesystem-integrity hold. The coordinator is private and
+not mounted by `calendar:true`. No application, live state, hosted demo, main or
+selected archive changed.
+
 ## November 18 durable policy lifecycle checkpoint
 
 The next reviewed source phase adds a fixed native observation catalog,

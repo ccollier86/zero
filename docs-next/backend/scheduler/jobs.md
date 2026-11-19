@@ -96,6 +96,24 @@ promise of exact wall-clock delivery under CPU load, process downtime or a
 blocked event loop. For exact durable deadlines, Torrent owns the persisted
 wake/recovery state.
 
+## Unreleased branch: absolute advisory wakes
+
+The calendar-integration feature branch adds `scheduler.scheduleAt({ name, at,
+run })`, returning an immutable `{ cancel() }` handle. `at` is an integer UTC
+epoch millisecond value; the installed Croner owner rounds **up** to its next
+whole second. Past instants schedule as soon as possible, not a replay of missed
+durable work. Supported timer instants fit the native four-digit UTC year range;
+a boundary that cannot be rounded into that range is rejected.
+
+This uses the same named registry, observability, callback signal and shutdown
+tracking as cron—not a second timer manager. A one-shot removes its exact entry
+before invoking work, so its callback can rearm the same name. Cancellation or a
+captured callback from failed registration cannot run later or remove another
+owner's replacement. `cancel()` stops future firing, not a callback already
+running or an external effect. Consumers still recheck their own durable
+deadlines/current authority. This API is **not** in the selected 2.11.0 archive;
+verify a later qualified package before adopting it.
+
 ## Pause And Resume
 
 pause(name) and resume(name) return false for a missing job and true for an

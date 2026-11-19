@@ -771,17 +771,33 @@ their exact CAS and operation key before crossing the file boundary. Local
 retirement and synchronous eligibility quiescence precede downstream retirement.
 Late accepted acknowledgments preserve history without restoring intake.
 
-Next is managed coordinator composition, not a new reminder/provider adapter:
+The following source pass now implements a bounded private coordinator and the
+shared managed Jobs dependency seam. It adds additive `013` source-class fairness,
+canonical indexed next-wake queries, indexed SYSTEM owner pages, one native
+absolute Scheduler wake, state-aware control recovery and separate intake/evidence
+drainage. Managed Jobs is constructed dormant before Torrent recovery and starts
+dispatch only after publication. The native coordinator is still not mounted by
+public calendar configuration. Its explicit 64-retained-owner envelope is not a
+claim to automatically hydrate the full 10,000-file domain catalog.
 
-1. Construct inert Jobs evidence dependencies before Torrent recovery can run
-   a recovered observation. Do not put recovery behind an activity's own promise.
-2. Compose native owner readiness and logging; hydrate fixed current policies
+Current managed-coordinator integration checklist, not a reminder/provider adapter:
+
+1. **Implemented in source:** inert Jobs evidence construction before recovery;
+   cancellation waits actual dependency preparation. Do not put recovery behind
+   an activity's own promise, inspect receipts or start work from that hook.
+2. **Native composition implemented, public mount pending:** compose owner
+   readiness and logging; hydrate fixed current policies
    and pending control keys without request-user authority or source-lease waits.
-3. Add indexed startup discovery and one coalesced scheduler wake, including
-   future retries/expired claims and durable fairness across work classes.
-4. Implement phased quiesce/drain/final close so Calendar and Jobs evidence stay
+3. **Implemented in the private envelope:** indexed startup discovery and one
+   coalesced absolute wake, future retries/expired claims and durable fairness.
+   Resolve larger catalog hydration and shared retained capacity before public activation.
+4. **Native phases implemented; managed calendar composition pending:** the
+   quiesce/drain/final-close boundaries keep Calendar and Jobs evidence
    available until physical callbacks and recovered Torrent work settle. Current
-   controller/dispatcher close is not a shared physical drain certificate.
+   controller/dispatcher close is not a shared physical drain certificate. Jobs
+   now tracks actual callback settlement separately from cancelled callers.
+   Torrent's native physical barrier also retains ignored/late invocation bodies
+   after compatibility disposal grace; managed Jobs joins it before final close.
 5. Add explicit retire-before-disable/operator inspection, retained-capacity
    handling and bounded/lazy owner hydration before opening configuration.
 6. Qualify actual actors, interruption/restart, managed logging, browser, Linux

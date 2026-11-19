@@ -65,15 +65,20 @@ export class JobsSourceBroker {
   private readonly pendingActivations = new Map<string, Set<ActivationToken>>();
   private pendingActivationCount = 0;
   private pendingRetirementCount = 0;
+  private readonly intake = new AbortController();
   private closed = false;
   constructor(private readonly options: Options) {}
+  /** Mutation retirement is independent of historical owner/evidence lifetime. */
+  quiesce(): void { this.intake.abort(new JobsError('JOBS_NOT_READY')); }
   close(): void {
+    this.quiesce();
     this.closed = true; this.live.clear();
     for (const pending of this.pendingActivations.values()) for (const token of pending) token.retired = true;
   }
   forSource(capability: TrustedJobSource): SourceJobs {
     const source = requireJobSource(capability), id = jobSourceId(source.identity);
-    const signal = (supplied?: AbortSignal) => AbortSignal.any([this.options.signal, source.signal, ...(supplied ? [supplied] : [])]);
+    const signal = (supplied?: AbortSignal, mutation = false) => AbortSignal.any([this.options.signal, source.signal,
+      ...(mutation ? [this.intake.signal] : []), ...(supplied ? [supplied] : [])]);
     const guard = () => { this.assertReady(); this.options.bridge.assertRuntimeCurrent(); assertJobSourceOwner(source); };
     const confirm = async (eligible = false) => { guard(); await confirmJobSource(source, eligible); guard(); };
     const read = async <T>(name: string, input: unknown): Promise<T> => {
@@ -119,9 +124,10 @@ export class JobsSourceBroker {
     };
     const current = () => this.requireLive(capability, id);
     const normalizeOptions = (input: unknown, revision: boolean, pin = false, mapping = false) => {
+      this.intake.signal.throwIfAborted();
       const r = jobRecord(input, ['idempotencyKey', 'signal', ...(revision ? ['expectedRevision'] : []), ...(pin ? ['pinInput'] : []), ...(mapping ? ['expectedRegistration'] : [])]);
       if (r.signal !== undefined && !(r.signal instanceof AbortSignal)) throw new JobsError('JOBS_INPUT_INVALID');
-      return { key: jobKey(r.idempotencyKey), signal: signal(r.signal as AbortSignal | undefined),
+      return { key: jobKey(r.idempotencyKey), signal: signal(r.signal as AbortSignal | undefined, true),
         expectedRevision: revision ? jobInteger(r.expectedRevision, 0) : 0, pinInput: r.pinInput,
         expectedRegistration: r.expectedRegistration === undefined ? undefined : expectedSourceRegistration(r.expectedRegistration) };
     };
@@ -326,7 +332,7 @@ export class JobsSourceBroker {
   /** Called only AFTER exact Torrent receipt inspection, and after the schedule pool wait. */
   async prepareDispatch(scope: ServiceDataScope, admission: JobAdmission): Promise<() => void> {
     if (!admission.source) return () => {};
-    const runtimeGuard = () => { this.assertReady(); this.options.bridge.assertRuntimeCurrent(); };
+    const runtimeGuard = () => { this.assertReady(); this.intake.signal.throwIfAborted(); this.options.bridge.assertRuntimeCurrent(); };
     runtimeGuard();
     // Retained epoch retirement is definitive. A native source which has not
     // hydrated on this process yet is merely not ready, not permanently revoked.
@@ -339,7 +345,7 @@ export class JobsSourceBroker {
     if (live.registration.generation !== generation || live.registration.policyHash !== policyHash) throw new JobsError('JOBS_AUTHORITY_RETIRED');
     const source = requireJobSource(live.source);
     const guard = () => {
-      this.assertReady(); if (this.live.get(id) !== live || live.quiescedBy) throw new JobsError('JOBS_NOT_READY');
+      this.assertReady(); this.intake.signal.throwIfAborted(); if (this.live.get(id) !== live || live.quiescedBy) throw new JobsError('JOBS_NOT_READY');
       assertJobSourceEligible(source);
     };
     guard(); await confirmJobSource(source, true); guard();

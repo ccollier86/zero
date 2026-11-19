@@ -75,6 +75,13 @@ create a domain. Owner catalog installation requires the ordinary explicit
 migration permission (or ephemeral test storage). Incompatible metadata is not
 rewritten, dropped or relabeled.
 
+The source branch also admits a separate `(established,id)` discovery index on
+that catalog. A canonical older table without the index is not corrupt, but
+read-only `migrate:false` startup does not create it implicitly: perform the
+ordinary explicit metadata upgrade. A conflicting retained index is rejected,
+never overwritten. Bounded integration discovery reads SYSTEM metadata only;
+it does not authorize opening a domain or repair an old/missing physical owner.
+
 Lexical and canonical preflight reject overlap with app/SYSTEM DBs, application
 Fabric, Storage, app/assets/generated paths and configured or known default
 logging/blog/messaging/Jobs roots. Historical custom placement of an absent
@@ -106,7 +113,7 @@ deployment and custom actor launch are not qualified public managed options.
    normal migration path, not copied SQL or a private framework import.
 5. Create real resources through the scoped facade and assign grants deliberately.
    Owners/grantees are opaque existing identity references; this core does not
-   creates accounts or invitations. The optional [native participant directory](./participants.md)
+   create accounts or invitations. The optional [native participant directory](./participants.md)
    uses a separate explicit trusted subject policy and scope-manager admission.
    Optional appointment types/policies use the same managed scope. Catalog/policy
    editing requires scope management; restrictive policy does not cancel existing

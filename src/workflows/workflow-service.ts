@@ -659,6 +659,15 @@ export class WorkflowService {
     return this.disposalPromise;
   }
 
+  /** @internal Native dependency teardown only, never request/activity projection.
+   * Call after dispose()/owner stop retires intake. Unlike dispose's public
+   * grace period, this joins actual authored callbacks without a time bound.
+   * It performs no database/current-authority operations and restores no rights.
+   */
+  async drainPhysical(): Promise<void> {
+    await Promise.all([this.executor.drainPhysical(), this.graph.drainPhysical()]);
+  }
+
   getInstance(instanceId: string, scope?: ServiceDataScope): WorkflowInstanceRecord | null {
     return this.queries.getInstance(instanceId, scope);
   }

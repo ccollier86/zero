@@ -55,7 +55,9 @@ import { createPresencePlugin } from '../../presence/presence.plugin';
 import { composeManagedUserAvatars } from './app-user-avatars';
 import { mountManagedBlog } from './app-blog';
 import { mountManagedMessaging } from './app-messaging';
-import { mountManagedJobs } from './app-jobs';
+import { prepareManagedJobs, type ManagedJobsOwner } from './app-jobs';
+import { JobsError } from '../../jobs/error';
+import type { WorkflowService } from '../../workflows/workflow-service';
 import { mountManagedCalendar } from './app-calendar';
 import { ZERO_MESSAGING_JOBS } from '../../messaging/jobs';
 import { registerMessagingJobWorkflow } from '../../messaging/jobs-workflow';
@@ -102,6 +104,7 @@ export async function mountPlatformServices({
   const managedInitializers: Array<() => Promise<void>> = [];
   const workflowInitializers: Array<() => Promise<void>> = [];
   const workflowLifecycle: { stop?: () => Promise<void> } = {};
+  const preparedJobs: { owner: ManagedJobsOwner | null } = { owner: null };
 
   app.use(createPlatformTokenPlugin({ db: systemDB, runtime }));
 
@@ -297,6 +300,11 @@ export async function mountPlatformServices({
         registerManaged: config.messaging
           ? registry => registerMessagingJobWorkflow(registry, () => runtime.require(ZERO_MESSAGING_JOBS)) : undefined,
         onStopCreated: stop => { workflowLifecycle.stop = stop; },
+        async beforeRecovery(workflows, { signal }) {
+          signal.throwIfAborted();
+          preparedJobs.owner = await prepareManagedJobs(app, runtime, config, workflows, async () => { await workflowLifecycle.stop?.(); });
+          signal.throwIfAborted();
+        },
       });
     }
   }
@@ -314,7 +322,8 @@ export async function mountPlatformServices({
   if (workflowLifecycle.stop) runtime.addCleanup(async () => { await workflowLifecycle.stop?.(); });
   await Promise.all(workflowInitializers.map(initialize => initialize()));
   runtime.get(ZERO_MESSAGING_JOBS)?.start(runtime.require(ZERO_WORKFLOW_SERVICE));
-  await mountManagedJobs(app, runtime, config, scheduler);
+  if (config.jobs && !preparedJobs.owner) throw new JobsError('JOBS_NOT_READY');
+  preparedJobs.owner?.start(scheduler);
 }
 
 interface WorkflowMountInput {
@@ -328,6 +337,7 @@ interface WorkflowMountInput {
   readonly workflowConfig: Exclude<ResolvedConfig['workflows'], false>;
   readonly registerManaged?: (registry: import('../../workflows/workflow-registry').WorkflowRegistry) => void;
   readonly onStopCreated: (stop: () => Promise<void>) => void;
+  readonly beforeRecovery?: (service: WorkflowService, context: { readonly signal: AbortSignal }) => Promise<void>;
   readonly managedStartup: {
     auth: AuthRuntime | null;
   };
@@ -345,6 +355,7 @@ function mountWorkflowService({
   workflowConfig,
   registerManaged,
   onStopCreated,
+  beforeRecovery,
 }: WorkflowMountInput): void {
   app.use(createWorkflowPlugin({
     db: systemDB,
@@ -367,6 +378,7 @@ function mountWorkflowService({
   }, {
     managedStartup: true,
     onStopCreated,
+    beforeRecovery,
     onInitializerCreated(initialize) {
       managedInitializers.push(initialize);
     },

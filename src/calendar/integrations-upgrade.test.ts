@@ -6,7 +6,7 @@ import { createReactiveDB } from '../sync/reactive-db';
 import { calendarRealm } from './realm';
 import { CALENDAR_AVAILABILITY_POLICY_TABLES } from './realm-working-hours-migration';
 import { CALENDAR_INTEGRATION_ADDITIONS } from './realm-integrations-migration';
-import { CALENDAR_INTEGRATION_CONTROL_TABLES } from './realm-integration-controls-migration';
+import { CALENDAR_INTEGRATION_QUEUE_TABLES } from './realm-integration-queue-migration';
 import { calendarHash, calendarJson } from './validation';
 
 // Recorded from actual ff2a05a before the 010 source edit, not grandfathered
@@ -70,13 +70,13 @@ function fixture() {
 }
 
 test('010 preserves actual nine migration closures, registered checksums and complete 009 declarations', () => {
-  expect(calendarRealm.version).toBe('12');
-  expect(calendarRealm.migrations.map(m => m.version)).toEqual([...versions, '010', '011', '012']);
+  expect(calendarRealm.version).toBe('13');
+  expect(calendarRealm.migrations.map(m => m.version)).toEqual([...versions, '010', '011', '012', '013']);
   expect(calendarRealm.migrations.slice(0, 9).map(hashMigration)).toEqual([...ORIGINAL_009_CHECKSUMS]);
   expect(calendarRealm.migrationChecksums.slice(0, 9)).toEqual(ORIGINAL_009_CHECKSUMS.map((checksum, i) => ({ version: versions[i], checksum })));
   expect(hashSchemaSnapshot(snapshotDeclaredTables(CALENDAR_AVAILABILITY_POLICY_TABLES))).toBe(ORIGINAL_009_TABLES);
   for (const [name, schema] of Object.entries(CALENDAR_AVAILABILITY_POLICY_TABLES)) expect(calendarRealm.tables[name]).toEqual(schema);
-  expect(calendarRealm.tables).toEqual(CALENDAR_INTEGRATION_CONTROL_TABLES);
+  expect(calendarRealm.tables).toEqual(CALENDAR_INTEGRATION_QUEUE_TABLES);
   expect(Object.isFrozen(CALENDAR_INTEGRATION_ADDITIONS)).toBe(true);
 });
 
@@ -84,7 +84,7 @@ test('real populated 009 upgrade preserves evidence, guards, ledger and sequence
   const f = fixture(); try {
     for (const table of Object.keys(CALENDAR_INTEGRATION_ADDITIONS)) expect(f.raw.query("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table)).toBeNull();
     const before = f.rows(), sequence = f.db.currentSeq, ledger = f.raw.query('SELECT * FROM _migrations ORDER BY version').all(), definitions = f.definitions();
-    expect(f.upgrade()).toEqual(['010', '011', '012']);
+    expect(f.upgrade()).toEqual(['010', '011', '012', '013']);
     expect(f.rows()).toEqual(before); expect(f.db.currentSeq).toBe(sequence);
     expect(f.raw.query("SELECT * FROM _migrations WHERE version<='009' ORDER BY version").all()).toEqual(ledger);
     for (const definition of definitions as { type: string; name: string; sql: string }[]) expect(f.raw.query('SELECT type,name,sql FROM sqlite_master WHERE type=? AND name=?').get(definition.type, definition.name)).toEqual(definition);
@@ -106,6 +106,6 @@ test('a late 010 migration failure rolls back its SQL changes and ledger, retain
     try { expect(() => failing.run()).toThrow('Synthetic late 010 migration failure.'); } finally { failing.dispose(); }
     expect(f.rows()).toEqual(rows); expect(f.definitions()).toEqual(definitions); expect(f.db.currentSeq).toBe(sequence);
     expect(f.raw.query('SELECT * FROM _migrations ORDER BY version').all()).toEqual(ledger);
-    expect(f.upgrade()).toEqual(['010', '011', '012']); expect(f.raw.query('PRAGMA foreign_key_check').all()).toEqual([]);
+    expect(f.upgrade()).toEqual(['010', '011', '012', '013']); expect(f.raw.query('PRAGMA foreign_key_check').all()).toEqual([]);
   } finally { f.close(); }
 });

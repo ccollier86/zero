@@ -69,6 +69,29 @@ Use [runtime shutdown](../runtime/shutdown.md) for extension drain ordering.
 A standalone Elysia plugin installs a stop barrier; explicit low-level service
 composition must arrange awaited disposal itself.
 
+### Unreleased native dependency drain
+
+The calendar-integration branch adds a separate native
+`WorkflowService.drainPhysical()` barrier. Compatibility `dispose()` still
+fences/aborts work and honors its configured grace. An expired grace is not
+physical callback completion. The new barrier joins actual legacy/graph activity,
+validator and interaction-submission promises retained beyond logical timeout,
+attempt replacement and grace exhaustion. It performs no database reads and
+does not grant authority or replay permission.
+
+Native owners that must preserve adjacent evidence/providers use the order:
+retire dependent intake → Jobs physical drain → Torrent stop/dispose → Torrent
+physical drain → final evidence/provider/database close. The managed Jobs owner
+now enforces this order. Keep the databases alive through physical settlement;
+late guards may need them while rejecting retired authority.
+
+This barrier has no timeout that could silently claim settlement. An outer
+supervisor may impose containment, but must report unconfirmed work rather than
+clean completion. It tracks awaited framework invocation boundaries, not
+arbitrary detached promises or external operations that an activity starts and
+does not await. Do not launch unowned background work from activities. This is
+unreleased branch-source behavior, not a claim about the installed 2.11.0 archive.
+
 ## Verification
 
 Hold a handler/validator at a controlled promise, pause/cancel/stop, then release

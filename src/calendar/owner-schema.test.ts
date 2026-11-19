@@ -75,6 +75,33 @@ test('canonical owner schema accepts SQLite-normalized whitespace and omitted IF
   try {
     f.database.exec(CALENDAR_OWNER_SCHEMA.replace(' IF NOT EXISTS', '').replaceAll(' ', '\n  '));
     expect(inspectCalendarOwnerSchema(f.database)).toBe('ready');
+    // A legacy canonical table is admitted, but readonly startup cannot create
+    // the new bounded discovery index without an explicit migration decision.
+    const before = f.database.prepare('SELECT type,name,sql FROM sqlite_master ORDER BY name').all();
+    expect(installCalendarOwnerSchema(f.database, false)).toBe(false);
+    expect(f.database.prepare('SELECT type,name,sql FROM sqlite_master ORDER BY name').all()).toEqual(before);
+    expect(installCalendarOwnerSchema(f.database, true)).toBe(true);
     expect(installCalendarOwnerSchema(f.database, false)).toBe(true);
+  } finally { f.close(); }
+});
+
+test('an incompatible established-owner discovery index is rejected without repair or retained data changes', () => {
+  const f = fixture(); try {
+    f.database.exec(CALENDAR_OWNER_SCHEMA);
+    f.database.exec('CREATE INDEX calendar_owners_established ON _calendar_owners(scope_id,id)');
+    const before = f.database.prepare('SELECT type,name,sql FROM sqlite_master ORDER BY name').all();
+    for (const allowed of [false, true]) expect(() => installCalendarOwnerSchema(f.database, allowed)).toThrow(expect.objectContaining({ code: 'CALENDAR_STATE_INVALID' }));
+    expect(f.database.prepare('SELECT type,name,sql FROM sqlite_master ORDER BY name').all()).toEqual(before);
+  } finally { f.close(); }
+});
+
+test('a colliding discovery index is rejected before even an empty owner table is installed', () => {
+  const f = fixture(); try {
+    f.database.exec('CREATE TABLE retained_application_data (id TEXT PRIMARY KEY)');
+    f.database.exec('CREATE INDEX calendar_owners_established ON retained_application_data(id)');
+    const before = f.database.prepare('SELECT type,name,sql FROM sqlite_master ORDER BY name').all();
+    expect(() => installCalendarOwnerSchema(f.database, true)).toThrow(expect.objectContaining({ code: 'CALENDAR_STATE_INVALID' }));
+    expect(f.database.prepare('SELECT type,name,sql FROM sqlite_master ORDER BY name').all()).toEqual(before);
+    expect(inspectCalendarOwnerSchema(f.database)).toBe('missing');
   } finally { f.close(); }
 });

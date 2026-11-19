@@ -24,11 +24,12 @@ import { readCalendarAppointmentParticipants, readCalendarHoldParticipants, read
 import { CALENDAR_INTEGRATION_TABLES, migrateCalendarIntegrations } from './realm-integrations-migration';
 import { CALENDAR_INTEGRATION_OWNERSHIP_TABLES, migrateCalendarIntegrationOwnership } from './realm-integration-ownership-migration';
 import { CALENDAR_INTEGRATION_CONTROL_TABLES, migrateCalendarIntegrationControls } from './realm-integration-controls-migration';
+import { CALENDAR_INTEGRATION_QUEUE_TABLES, migrateCalendarIntegrationQueue } from './realm-integration-queue-migration';
 import { prepareCalendarIntegrationControl, acknowledgeCalendarIntegrationControl, failCalendarIntegrationControl, readCalendarIntegrationControl, listPendingCalendarIntegrationControls,
   readCalendarIntegrationControlEvidence } from './integration-controls';
 import { installCalendarIntegrationPolicy, activateCalendarIntegrationPolicy, retireCalendarIntegrationPolicy, claimCalendarIntegrations, acknowledgeCalendarIntegration,
   deferCalendarIntegration, suppressCalendarIntegration, admitCalendarIntegrationEffect, settleCalendarIntegrationEffect } from './integration-commands';
-import { readCalendarIntegrationPolicy, listCalendarIntegrationPolicies, readCalendarIntegrationIntent, listPendingCalendarIntegrations, readCalendarIntegrationEffect } from './integration-queries';
+import { readCalendarIntegrationPolicy, listCalendarIntegrationPolicies, readCalendarIntegrationIntent, listPendingCalendarIntegrations, readCalendarIntegrationEffect, readCalendarIntegrationNextWake } from './integration-queries';
 
 function query(handler: (context: Parameters<DatabaseReadQueryHandler>[0], input: unknown) => unknown): DatabaseReadQueryHandler {
   // Native runDatabaseRealmQuery validates/clones the returned value at its boundary.
@@ -36,7 +37,7 @@ function query(handler: (context: Parameters<DatabaseReadQueryHandler>[0], input
 }
 
 export const calendarRealm = defineDatabaseRealm({
-  name: 'zero.calendar.internal', version: '12', tables: CALENDAR_INTEGRATION_CONTROL_TABLES,
+  name: 'zero.calendar.internal', version: '13', tables: CALENDAR_INTEGRATION_QUEUE_TABLES,
   // Preserve the inline historical expression layout: Bun's method reprinting
   // participates in the pinned 001 checksum. New entries must not reformat it.
   migrations: [{ version: '001', description: 'Private one-off calendar conflict domain', up(database) {
@@ -71,7 +72,7 @@ export const calendarRealm = defineDatabaseRealm({
     database.run(`CREATE TRIGGER calendar_reservation_identity BEFORE UPDATE OF appointment_id,resource_id ON _calendar_reservations WHEN OLD.appointment_id IS NOT NEW.appointment_id OR OLD.resource_id IS NOT NEW.resource_id BEGIN SELECT RAISE(ABORT,'Private reservation identity is immutable'); END`);
     database.run(`CREATE TRIGGER calendar_resource_revision BEFORE UPDATE ON calendar_resources WHEN NEW.revision<>OLD.revision+1 OR OLD.owner_id IS NOT NEW.owner_id OR OLD.kind IS NOT NEW.kind BEGIN SELECT RAISE(ABORT,'Private resource revision is inconsistent'); END`);
     database.run(`CREATE TRIGGER calendar_appointment_revision BEFORE UPDATE ON calendar_appointments WHEN NEW.revision<>OLD.revision+1 OR OLD.created_by IS NOT NEW.created_by OR OLD.status='cancelled' BEGIN SELECT RAISE(ABORT,'Private appointment revision is inconsistent'); END`);
-  } }, { version: '002', description: 'Versioned availability and one-off resource blocks', up: migrateCalendarScheduling }, { version: '003', description: 'Authenticated expiring calendar booking holds', up: migrateCalendarHolds }, { version: '004', description: 'Versioned calendar locations and resource assignments', up: migrateCalendarLocations }, { version: '005', description: 'Versioned appointment types and resource admission policies', up: migrateCalendarTypes }, { version: '006', description: 'Versioned lifecycle policy and private appointment outcomes', up: migrateCalendarLifecycle }, { version: '007', description: 'Private versioned visit and location bindings', up: migrateCalendarVisitBindings }, { version: '008', description: 'Private versioned canonical participant references', up: migrateCalendarParticipantBindings }, { version: '009', description: 'Versioned availability sources and frozen weekly working hours', up: migrateCalendarWorkingHours }, { version: '010', description: 'Private bounded source-owned observation integration protocol', up: migrateCalendarIntegrations }, { version: '011', description: 'Permanent one-to-one calendar rule and Jobs source ownership', up: migrateCalendarIntegrationOwnership }, { version: '012', description: 'Durable source-owned Jobs registration control journal', up: migrateCalendarIntegrationControls }],
+  } }, { version: '002', description: 'Versioned availability and one-off resource blocks', up: migrateCalendarScheduling }, { version: '003', description: 'Authenticated expiring calendar booking holds', up: migrateCalendarHolds }, { version: '004', description: 'Versioned calendar locations and resource assignments', up: migrateCalendarLocations }, { version: '005', description: 'Versioned appointment types and resource admission policies', up: migrateCalendarTypes }, { version: '006', description: 'Versioned lifecycle policy and private appointment outcomes', up: migrateCalendarLifecycle }, { version: '007', description: 'Private versioned visit and location bindings', up: migrateCalendarVisitBindings }, { version: '008', description: 'Private versioned canonical participant references', up: migrateCalendarParticipantBindings }, { version: '009', description: 'Versioned availability sources and frozen weekly working hours', up: migrateCalendarWorkingHours }, { version: '010', description: 'Private bounded source-owned observation integration protocol', up: migrateCalendarIntegrations }, { version: '011', description: 'Permanent one-to-one calendar rule and Jobs source ownership', up: migrateCalendarIntegrationOwnership }, { version: '012', description: 'Durable source-owned Jobs registration control journal', up: migrateCalendarIntegrationControls }, { version: '013', description: 'Durable bounded calendar dispatch class fairness', up: migrateCalendarIntegrationQueue }],
   commands: { 'calendar.owner.bind': bindCalendarOwner, 'calendar.resource.create': createCalendarResource, 'calendar.resource.grant': changeCalendarGrant,
     'calendar.appointment.create': createCalendarAppointment, 'calendar.appointment.reschedule': rescheduleCalendarAppointment, 'calendar.appointment.cancel': cancelCalendarAppointment,
     'calendar.resource.availability': replaceCalendarAvailability, 'calendar.resource.availability-policy': replaceCalendarAvailabilityPolicy, 'calendar.block.create': createCalendarBlock,
@@ -99,5 +100,6 @@ export const calendarRealm = defineDatabaseRealm({
     'calendar.holdParticipantAdmission': query(readCalendarHoldParticipantAdmission),
     'calendar.integration.policy': query(readCalendarIntegrationPolicy), 'calendar.integration.policies': query(listCalendarIntegrationPolicies),
     'calendar.integration.intent': query(readCalendarIntegrationIntent), 'calendar.integration.pending': query(listPendingCalendarIntegrations), 'calendar.integration.effect': query(readCalendarIntegrationEffect),
-    'calendar.integration.control': query(readCalendarIntegrationControl), 'calendar.integration.controls': query(listPendingCalendarIntegrationControls), 'calendar.integration.controlEvidence': query(readCalendarIntegrationControlEvidence) },
+    'calendar.integration.control': query(readCalendarIntegrationControl), 'calendar.integration.controls': query(listPendingCalendarIntegrationControls), 'calendar.integration.controlEvidence': query(readCalendarIntegrationControlEvidence),
+    'calendar.integration.nextWake': query(readCalendarIntegrationNextWake) },
 });

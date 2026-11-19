@@ -216,6 +216,9 @@ export class WorkflowGraphActivityExecutor {
     return this.tracker.dispose();
   }
 
+  /** @internal Raw authored activity settlement, not its abort race. */
+  drainPhysical(): Promise<void> { return this.tracker.drainPhysical(); }
+
   private prepare(
     instanceId: string,
     stepId: string,

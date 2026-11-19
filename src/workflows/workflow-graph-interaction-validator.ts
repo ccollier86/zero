@@ -160,6 +160,9 @@ export class WorkflowGraphInteractionValidator {
     this.disposed = true;
     return this.tracker.dispose();
   }
+
+  /** @internal Raw validator activity settlement, not its abort race. */
+  drainPhysical(): Promise<void> { return this.tracker.drainPhysical(); }
 }
 
 function unavailable(): WorkflowError {

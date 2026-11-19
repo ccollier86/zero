@@ -92,6 +92,11 @@ export type WorkflowPluginLifecycleOptions =
       onInitializerCreated: (initialize: () => Promise<void>) => void;
       onStopCreated?: (stop: () => Promise<void>) => void;
       onServiceCreated?: (service: WorkflowService) => void;
+      /** @internal Construct dormant native evidence providers before recovered
+       * activities can run. This service is not yet published/request-ready.
+       * Never wait for initialize()/recovery from inside this dependency hook.
+       */
+      beforeRecovery?: (service: WorkflowService, context: { readonly signal: AbortSignal }) => Promise<void>;
     };
 
 export interface WorkflowPluginRuntimeOwner {
@@ -176,6 +181,8 @@ export function createWorkflowPluginRuntimeOwner(
   let initializePromise: Promise<void> | null = null;
   let stopPromise: Promise<void> | null = null;
   let stopped = false;
+  const preparationLifetime = new AbortController();
+  let dependencyPreparation: Promise<void> | null = null;
   let lifecycleStarted = false;
   let runtimeCleanupRegistration: (() => void) | null = null;
   const disposalByService = new WeakMap<WorkflowService, Promise<void>>();
@@ -316,6 +323,16 @@ export function createWorkflowPluginRuntimeOwner(
       });
       created = recoveringService;
       startingService = recoveringService;
+      if (lifecycleOptions.managedStartup && lifecycleOptions.beforeRecovery) {
+        startupPhase = 'dependencies';
+        dependencyPreparation = Promise.resolve().then(() => {
+          assertStarting();
+          return lifecycleOptions.beforeRecovery!(recoveringService, Object.freeze({ signal: preparationLifetime.signal }));
+        });
+        await dependencyPreparation;
+        assertStarting();
+      }
+      startupPhase = 'recovery';
       let publicationStarted = false;
       let publicationCompleted = false;
       let recovered: number;
@@ -394,6 +411,7 @@ export function createWorkflowPluginRuntimeOwner(
   function stop(): Promise<void> {
     if (stopPromise) return stopPromise;
     stopped = true;
+    preparationLifetime.abort(new WorkflowError('Workflow preparation stopped', 'WORKFLOW_NOT_READY', 503));
     lifecycleStarted = false;
     stopPromise = (async () => {
       const failures: unknown[] = [];
@@ -408,6 +426,10 @@ export function createWorkflowPluginRuntimeOwner(
       lostService = null;
       hideOwner(current);
       if (current) {
+        // A dependency factory can still be closing resources constructed after
+        // cancellation. Do not dispose its workflow/authority provider beneath
+        // that physical callback or claim cancellation made it disappear.
+        await dependencyPreparation?.catch(() => undefined);
         const initialization = initializePromise?.catch(() => undefined);
         const settlements = await Promise.allSettled([
           disposeOnce(current),

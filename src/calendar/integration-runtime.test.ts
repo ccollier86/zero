@@ -85,6 +85,29 @@ test('native owner enumeration is detached, established-only and does not acquir
   } finally { await f.close(); }
 });
 
+test('bounded native discovery uses the established-owner index and scope lookup without touching physical state', async () => {
+  const f = fixture(); try {
+    f.put(f.record);
+    for (let i = 0; i < 12; i++) f.put({ ...f.record, id: calendarDatabaseId('tenant:scope-' + i), scope_id: 'tenant:scope-' + i, established: i % 2 });
+    const expected = (f.system.prepare('SELECT * FROM _calendar_owners WHERE established=1 ORDER BY id').all() as typeof f.record[]);
+    f.fileMissing(); // Metadata discovery is not physical-owner authorization.
+    const seen: typeof f.record[] = []; let after: string | undefined;
+    for (;;) {
+      const page = f.runtime.integrationOwnerPage({ limit: 2, ...(after ? { after } : {}) });
+      expect(page.owners.length).toBeLessThanOrEqual(2); expect(Object.isFrozen(page.owners)).toBe(true);
+      seen.push(...page.owners);
+      if (page.nextCursor === null) break;
+      expect(page.nextCursor).toBe(page.owners.at(-1)!.id); after = page.nextCursor;
+    }
+    expect(seen).toEqual(expected); expect(f.runtime.integrationOwnerForScope(applicationServiceDataScope())).toEqual(f.record);
+    expect(f.stats().acquisitions).toBe(0); expect(f.operations).toEqual([]);
+    expect(() => f.runtime.forIntegrationOwner(seen[0]!)).toThrow();
+    expect(() => f.runtime.integrationOwnerPage({ limit: 101 })).toThrow();
+    const plan = JSON.stringify(f.system.prepare("EXPLAIN QUERY PLAN SELECT * FROM _calendar_owners INDEXED BY calendar_owners_established WHERE established=1 AND id>'a' ORDER BY id LIMIT 2").all());
+    expect(plan).toContain('calendar_owners_established'); expect(plan).not.toContain('TEMP B-TREE'); expect(plan).not.toContain('SCAN ');
+  } finally { await f.close(); }
+});
+
 test('native scope/owner/request identity is injected and every acquisition verifies its physical owner first', async () => {
   const f = fixture(); f.put(f.record);
   try {

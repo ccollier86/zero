@@ -1,6 +1,6 @@
 /** Admitted jobs facade. The shared per-schedule gate orders controls against handoff without holding a SQL lease. */
 import type { SchedulerService } from '../scheduler/scheduler-service';
-import { WorkPool } from '../workers/work-pool';
+import { WorkPool, type WorkPoolRunOptions } from '../workers/work-pool';
 import type { WorkflowDeferredStartBridge } from '../workflows/workflow-deferred-start-bridge';
 import { prepareJobAdmission } from './admission';
 import type { ResolvedJobsConfig } from './config';
@@ -32,23 +32,25 @@ interface ScheduleContext { readonly schedule: ActorJobScheduleRow; readonly adm
 type SchedulePatch = { definition?: string | JobDefinition; input?: unknown; timing?: ScheduleTiming; overlap?: JobAdmission['overlap']; ownership?: JobAdmission['runAs'] };
 type Control = 'pause' | 'cancel' | 'resume' | 'update' | 'runNow';
 export class JobsService {
-  private readonly gate: WorkPool;
+  private readonly gate: JobsGate;
   private readonly runner: JobsRunner;
   private readonly sources: JobsSourceBroker;
   private readonly abort = new AbortController();
+  // Request/mutation intake is separate from native evidence/owner lifetime.
+  private readonly intake = new AbortController();
   private readonly now: () => number;
   private automaticWakes = false;
   private closeTask: Promise<void> | null = null;
   constructor(private readonly options: ServiceOptions) {
     this.now = options.now ?? Date.now;
-    this.gate = new WorkPool({ concurrency: options.config.concurrency, maxConcurrentPerKey: 1,
+    this.gate = new JobsGate({ concurrency: options.config.concurrency, maxConcurrentPerKey: 1,
       maxQueued: options.config.concurrency * 4, maxQueuedPerKey: Math.min(16, options.config.concurrency * 4), queueTimeoutMs: 5000 });
     this.sources = new JobsSourceBroker({ ...options, gate: this.gate, signal: this.abort.signal, now: this.now, wake: () => this.wakeAutomatically() });
     this.runner = new JobsRunner({ ...options, gate: this.gate, sources: this.sources,
       autoReady: () => this.automaticWakes && !this.abort.signal.aborted });
   }
   start(scheduler: SchedulerService): void {
-    if (this.abort.signal.aborted) throw new JobsError('JOBS_NOT_READY');
+    if (this.intake.signal.aborted) throw new JobsError('JOBS_NOT_READY');
     // Registration must succeed before mutation hints or scheduler callbacks
     // gain automatic intake. A failed attempt cannot enable a later callback.
     this.runner.start(scheduler); this.automaticWakes = true; this.wakeAutomatically();
@@ -58,18 +60,33 @@ export class JobsService {
   /** @internal Native source lifecycle only; never project this method to a request/activity. */
   forSource(source: TrustedJobSource): SourceJobs { return this.sources.forSource(source); }
   diagnostics() { return { automaticWakes: this.automaticWakes, gate: this.gate.status(), runner: this.runner.diagnostics(), persistence: this.options.runtime.diagnostics() }; }
+  /** @internal Stop new work, but retain native owner/evidence capability until Torrent stops. */
+  quiesce(): void {
+    this.automaticWakes = false;
+    this.intake.abort(new JobsError('JOBS_NOT_READY'));
+    this.sources.quiesce(); this.runner.quiesce();
+  }
+  /** @internal Physical Jobs callback barrier, not a Torrent/activity drain or a bounded timeout. */
+  async drain(): Promise<void> {
+    // Runner remembers an unregister failure and reports it after its callers
+    // drain. Still reach the physical gate barrier in that failure case.
+    try { this.quiesce(); } catch { /* Reported by runner.drain(). */ }
+    try { await this.runner.drain(); } finally { await this.gate.drain(); }
+  }
   close(): Promise<void> {
     if (this.closeTask) return this.closeTask;
-    this.automaticWakes = false;
+    const drained = this.drain();
     this.abort.abort(new JobsError('JOBS_NOT_READY'));
     this.sources.close();
     this.closeTask = (async () => {
-      try { await this.runner.close(); } finally { try { await this.gate.close(); } finally { await this.options.runtime.close(); } }
+      try { await drained; } finally {
+        try { await this.runner.close(); } finally { try { await this.gate.close(); } finally { await this.options.runtime.close(); } }
+      }
     })();
     return this.closeTask;
   }
   forAuthority(request: JobsAuthority): ScopedJobs {
-    const admit = (signal?: AbortSignal) => admitJobRequest(request, this.options.bridge, this.options.config, this.abort.signal, signal);
+    const admit = (signal?: AbortSignal) => admitJobRequest(request, this.options.bridge, this.options.config, this.intake.signal, signal);
     const enqueue = async (target: string | JobDefinition, input: unknown, options: JobEnqueueOptions) => {
       const opts = requestOptions(options, ['ownership', 'maxLatenessMs']), context = await admit(opts.signal);
       const patch = this.patch({ definition: target, input, ownership: opts.ownership ?? 'actor' });
@@ -101,7 +118,7 @@ export class JobsService {
           const r = jobRecord(options, ['query', 'signal', 'onError']), query = page(r.query, true);
           if (typeof listener !== 'function' || r.onError !== undefined && typeof r.onError !== 'function'
             || r.signal !== undefined && !(r.signal instanceof AbortSignal)) throw new JobsError('JOBS_INPUT_INVALID');
-          const signal = AbortSignal.any([this.abort.signal, ...[request.signal, r.signal].filter((item): item is AbortSignal => item instanceof AbortSignal)]);
+          const signal = AbortSignal.any([this.intake.signal, ...[request.signal, r.signal].filter((item): item is AbortSignal => item instanceof AbortSignal)]);
           return watchJobSchedules({ listener, signal, onError: r.onError as ((error: unknown) => void) | undefined, prepare: async () => {
             const context = await admit(signal);
             return { read: () => this.readSchedules(request, context, query),
@@ -132,7 +149,7 @@ export class JobsService {
   }
   private async control(request: JobsAuthority, action: Control, suppliedId: string, input: Partial<JobScheduleInput>, options: JobControlOptions): Promise<JobScheduleView> {
     const opts = requestOptions(options, ['expectedRevision']), expectedRevision = jobInteger(opts.expectedRevision, 1);
-    const context = await admitJobRequest(request, this.options.bridge, this.options.config, this.abort.signal, opts.signal);
+    const context = await admitJobRequest(request, this.options.bridge, this.options.config, this.intake.signal, opts.signal);
     const id = jobText(suppliedId, 96), patch = this.patch(input), key = opts.idempotencyKey;
     const intentHash = jobHash([action, id, expectedRevision, this.intentPatch(patch)]);
     return jobGateMutation(this.gate, async operation => {
@@ -195,7 +212,32 @@ export class JobsService {
     try { await context.confirm(); operation.signal.throwIfAborted(); } catch { throw new JobsError('JOBS_OUTCOME_UNKNOWN'); }
     this.wakeAutomatically(); return result;
   }
-  private wakeAutomatically(): void { if (this.automaticWakes && !this.abort.signal.aborted) this.runner.wake(); }
+  private wakeAutomatically(): void { if (this.automaticWakes && !this.intake.signal.aborted) this.runner.wake(); }
+}
+/** WorkPool caller cancellation/close is not physical settlement. Keep the
+ * original callback lifetime, including queued evidence barriers, separately.
+ * The pool remains open through drain so Torrent can still reconcile evidence.
+ */
+class JobsGate extends WorkPool {
+  private readonly callbacks = new Set<Promise<void>>();
+  override run<T>(work: (signal: AbortSignal) => T | PromiseLike<T>, options: WorkPoolRunOptions = {}): Promise<T> {
+    let started = false, finish!: () => void;
+    const physical = new Promise<void>(resolve => { finish = resolve; });
+    const complete = () => { this.callbacks.delete(physical); finish(); };
+    this.callbacks.add(physical);
+    const result = super.run(async signal => {
+      started = true;
+      try { return await work(signal); } finally { complete(); }
+    }, options);
+    // An admission refusal or queued cancellation has no callback to await.
+    void result.then(() => { if (!started) complete(); }, () => { if (!started) complete(); });
+    return result;
+  }
+  async drain(): Promise<void> {
+    while (this.callbacks.size) await Promise.all([...this.callbacks]);
+    // Allow WorkPool's callback-completion bookkeeping to release its slots.
+    await Promise.resolve();
+  }
 }
 function scheduleId(context: JobRequestAuthority, key: string): string { return 'job_' + jobHash([context.actor.scopeId, context.actor.principal, key]); }
 function requestOptions(input: unknown, extra: readonly string[] = []): JobRequestOptions & Record<string, unknown> {

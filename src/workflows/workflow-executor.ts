@@ -223,6 +223,9 @@ export class WorkflowExecutor {
     return this.executions.dispose();
   }
 
+  /** @internal Raw authored handler settlement, independent of dispose grace. */
+  drainPhysical(): Promise<void> { return this.executions.drainPhysical(); }
+
   private async executePrepared(
     prepared: PreparedWorkflowExecution,
     authorityLease: WorkflowAuthorityLease,

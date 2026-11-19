@@ -20,6 +20,14 @@ export interface SchedulerServiceOptions {
   shutdownGraceMs?: number;
 }
 
+/** One app-local advisory wake, not durable execution or effect authority. */
+export interface SchedulerWakeDefinition {
+  readonly name: string;
+  readonly at: number;
+  readonly run: JobDefinition['run'];
+}
+export interface SchedulerWakeHandle { cancel(): void }
+
 // ─── SchedulerService ────────────────────────────────────────────────────────
 
 /**
@@ -118,6 +126,43 @@ export class SchedulerService {
   /** Canonical create alias for register(). */
   create(def: JobDefinition): void {
     this.register(def);
+  }
+
+  /** Absolute one-shot using the same registry/Croner owner as recurring jobs.
+   * Past instants wake as soon as possible, rounded UP to Croner's next second.
+   * Subsecond instants must not be truncated into a past/already-missed second.
+   * Durable consumers must independently
+   * recheck their own trusted deadline/authority; a timer is never that proof.
+   * The exact entry is removed BEFORE callback work, so it may rearm its name.
+   */
+  scheduleAt(input: SchedulerWakeDefinition): SchedulerWakeHandle {
+    if (!input || typeof input !== 'object' || utilTypes.isProxy(input) || ![Object.prototype, null].includes(Object.getPrototypeOf(input))) throw invalidJob();
+    const descriptors = Object.getOwnPropertyDescriptors(input);
+    if (Reflect.ownKeys(input).some(key => typeof key !== 'string' || !['name', 'at', 'run'].includes(key) || !descriptors[key]?.enumerable || !('value' in descriptors[key]!))) throw invalidJob();
+    const { name, at, run } = input;
+    if (!Number.isSafeInteger(at) || at < 0 || at > 253_402_300_799_999 || typeof run !== 'function') throw invalidJob();
+    const scheduledAt = Math.ceil(Math.max(at, Date.now() + 1) / 1000) * 1000;
+    if (scheduledAt > 253_402_300_799_999) throw invalidJob();
+    let live = false;
+    const execute: JobDefinition['run'] = async context => {
+      if (!live) return;
+      live = false;
+      // Replacement/cancellation retires this callback even if a scheduler
+      // implementation had already captured it outside the registry.
+      if (!this.unregister(name, execute)) return;
+      await run(context);
+    };
+    const cancel = () => { live = false; this.unregister(name, execute); };
+    try {
+      this.register({ name, pattern: new Date(scheduledAt).toISOString(), timezone: 'UTC', protect: true, run: execute });
+      live = true;
+    } catch (error) {
+      live = false;
+      try { this.unregister(name, execute); }
+      catch (cleanup) { throw new AggregateError([error, cleanup], 'Scheduler one-shot registration and cleanup failed.'); }
+      throw error;
+    }
+    return Object.freeze({ cancel });
   }
 
   /**

@@ -398,6 +398,9 @@ export class WorkflowInteractionService {
     return this.tracker.dispose();
   }
 
+  /** @internal Submission settlement includes awaited policy/schema providers. */
+  drainPhysical(): Promise<void> { return this.tracker.drainPhysical(); }
+
   private requireInteraction(interactionId: string): WorkflowInteractionRecord {
     const interaction = this.store.get(interactionId);
     if (!interaction) {

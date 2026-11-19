@@ -205,6 +205,33 @@ export class CalendarRuntime implements CalendarServiceBroker {
     return Object.freeze(owners);
   }
 
+  /** @internal Bounded indexed SYSTEM metadata only. Physical owner admission
+   * and file proof belong to forIntegrationOwner()/verify(), never discovery.
+   */
+  integrationOwnerPage(input: { readonly after?: string; readonly limit?: number } = {}): { readonly owners: readonly CalendarOwnerRecord[]; readonly nextCursor: string | null } {
+    this.assertReady();
+    const r = calendarRecord(input, ['after', 'limit']), limit = calendarInteger(r.limit ?? 25, 1, 100);
+    const after = r.after === undefined ? null : calendarKey(r.after, 128);
+    const rows = this.options.system.prepare(`SELECT * FROM _calendar_owners INDEXED BY calendar_owners_established
+      WHERE established=1 ${after === null ? '' : 'AND id>?'} ORDER BY id LIMIT ?`).all(...(after === null ? [] : [after]), limit + 1) as CalendarOwnerRecord[];
+    const owners = rows.slice(0, limit).map(record => {
+      assertCalendarOwnerRecord(record, this.rootHash, calendarRealm.fingerprint, false);
+      return Object.freeze({ ...record });
+    });
+    return Object.freeze({ owners: Object.freeze(owners), nextCursor: rows.length > limit ? owners.at(-1)!.id : null });
+  }
+
+  /** @internal Canonical scope lookup for recovered effects before discovery.
+   * No actor/file is provisioned and an unestablished record is not an owner.
+   */
+  integrationOwnerForScope(scope: ServiceDataScope): CalendarOwnerRecord | null {
+    this.assertReady(); const scopeId = serviceDataScopeKey(scope), record = this.record(calendarDatabaseId(scopeId));
+    if (!record || record.established !== 1) return null;
+    assertCalendarOwnerRecord(record, this.rootHash, calendarRealm.fingerprint, false);
+    if (record.scope_id !== scopeId) throw new CalendarError('CALENDAR_STATE_INVALID');
+    return Object.freeze({ ...record });
+  }
+
   /** @internal Native lifecycle only; this capability is never projected through CalendarService. */
   forIntegrationOwner(input: CalendarOwnerRecord): CalendarIntegrationOwner {
     const owner = Object.freeze({ ...calendarRecord(calendarValue(input), ['id', 'scope_id', 'owner_id', 'root_hash', 'realm_fingerprint', 'established']) }) as unknown as CalendarOwnerRecord;

@@ -8,6 +8,7 @@ import { jobSourceId } from '../jobs/source-model';
 import { calendarRealm } from './realm';
 import { CALENDAR_INTEGRATION_OWNERSHIP_TABLES } from './realm-integration-ownership-migration';
 import { CALENDAR_INTEGRATION_CONTROL_ADDITIONS, CALENDAR_INTEGRATION_CONTROL_TABLES } from './realm-integration-controls-migration';
+import { CALENDAR_INTEGRATION_QUEUE_TABLES } from './realm-integration-queue-migration';
 import { calendarHash, calendarJson } from './validation';
 
 const ORIGINAL_011_CHECKSUM = '973644331b5d77442e142596ed1fda02d987c9abe7b72a83050471ef07de4707';
@@ -46,7 +47,7 @@ function fixture() {
     const definitions = () => raw.query("SELECT type,name,sql FROM sqlite_master WHERE type IN ('table','index','trigger') AND name NOT LIKE 'sqlite_%' ORDER BY type,name").all();
     const define = () => { for (const [name, schema] of Object.entries(CALENDAR_INTEGRATION_CONTROL_ADDITIONS)) db.defineTable(name, schema); };
     const upgrade = () => {
-      define(); const migrator = new Migrator({ database: raw, dbPath: ':memory:', migrations: calendarRealm.migrations, createBackups: false, log() {} });
+      define(); const migrator = new Migrator({ database: raw, dbPath: ':memory:', migrations: calendarRealm.migrations.slice(0, 12), createBackups: false, log() {} });
       try { const applied = migrator.run(); expect(migrator.status().every(row => row.checksumMatches)).toBe(true); return applied; } finally { migrator.dispose(); }
     };
     return { db, raw, scope, seed, rows, definitions, define, upgrade, close: () => db.dispose() };
@@ -57,8 +58,8 @@ test('012 preserves committed 011 migration/map identity and declares separate f
   expect(hashMigration(calendarRealm.migrations[10]!)).toBe(ORIGINAL_011_CHECKSUM);
   expect(calendarRealm.migrationChecksums[10]).toEqual({ version: '011', checksum: ORIGINAL_011_CHECKSUM });
   expect(hashSchemaSnapshot(snapshotDeclaredTables(CALENDAR_INTEGRATION_OWNERSHIP_TABLES))).toBe(ORIGINAL_011_TABLES);
-  expect(calendarRealm.version).toBe('12'); expect(calendarRealm.migrations[11]?.version).toBe('012');
-  expect(calendarRealm.tables).toEqual(CALENDAR_INTEGRATION_CONTROL_TABLES);
+  expect(calendarRealm.version).toBe('13'); expect(calendarRealm.migrations[11]?.version).toBe('012');
+  expect(calendarRealm.tables).toEqual(CALENDAR_INTEGRATION_QUEUE_TABLES);
   for (const [name, schema] of Object.entries(CALENDAR_INTEGRATION_OWNERSHIP_TABLES)) expect(calendarRealm.tables[name]).toEqual(schema);
   expect(Object.isFrozen(CALENDAR_INTEGRATION_CONTROL_ADDITIONS)).toBe(true); expect(Object.isFrozen(CALENDAR_INTEGRATION_CONTROL_TABLES)).toBe(true);
 });
