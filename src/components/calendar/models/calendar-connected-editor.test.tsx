@@ -138,6 +138,7 @@ test('selected type defaults keep an arbitrary exact minute and dispatch exact d
 
 test('newer local edits survive a real accepted write without closing or being marked saved', async () => {
   const f = fixture(); await mountEditor(f);
+  expect(opening().descriptor?.allowEditingWhilePending).toBe(true);
   await changeTitle('Submitted title'); await submitForm();
   await changeTitle('Newer unsent title');
   await acceptWrite(f);
@@ -293,6 +294,7 @@ test('participant unknown settlement retains its exact identity and never resend
 
 test('an accepted participant request preserves newer unsent choices and leaves the native editor open', async () => {
   const f = fixture(); await mountParticipants(f); await chooseParticipants([person.ref]); await submitForm();
+  expect(opening().descriptor?.allowEditingWhilePending).toBe(true);
   await chooseParticipants([]); await acceptWrite(f);
   expect(f.accepted).toHaveLength(1); expect(f.closed).toBe(0);
   expect(findElement(value => value.type === CalendarParticipantFields).props.value).toEqual([]);

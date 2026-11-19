@@ -6,6 +6,8 @@
  */
 
 import { DatabaseError } from './database-error';
+import { createDatabaseWriteCommandSession } from './database-write-command-capability';
+import { databaseWriterAdmissionFingerprint, normalizeDatabaseWriterAdmission, synchronousAdmissionValue, type DatabaseWriterAdmissionContext, type DatabaseWriterAdmissionInspection } from './database-writer-admission';
 import { validateDatabaseActorExecuteResult } from './database-actor-result-validation';
 import {
   createDatabaseSequenceToken,
@@ -16,6 +18,7 @@ import {
   type DatabaseOperationCatalog,
   type DatabaseReadOperation,
   type DatabaseWriteOperation,
+  type DatabaseSerializableValue,
 } from './database-operations';
 import {
   createDatabaseRealmOperationCatalog,
@@ -80,6 +83,8 @@ export type {
 } from './database-writer-contracts';
 
 export interface DatabaseWriterOperationEngineOptions {
+  /** @internal Trusted one-time bind data, interpreted only by imported realm code. */
+  readonly writerPolicy?: DatabaseSerializableValue;
   /** Open, writer-owned runtime dedicated to this engine's database file. */
   readonly runtime: DatabaseRuntime;
   /** Realm imported independently inside this actor process. */
@@ -108,10 +113,14 @@ export class DatabaseWriterOperationEngine {
   private pendingReceiptCompaction: DatabaseWriterReceiptCompaction | null = null;
   private closing = false;
   private closed = false;
+  readonly writerPolicy: DatabaseSerializableValue | undefined;
+  readonly writerPolicyFingerprint: string | undefined;
 
   constructor(options: DatabaseWriterOperationEngineOptions) {
     this.runtime = options.runtime;
     this.realm = options.realm;
+    this.writerPolicy = normalizeDatabaseWriterAdmission(options.realm, options.writerPolicy);
+    this.writerPolicyFingerprint = databaseWriterAdmissionFingerprint(options.realm, this.writerPolicy);
     this.catalog = createDatabaseRealmOperationCatalog(options.realm);
 
     if (options.runtime.diagnostics().closed) {
@@ -208,6 +217,23 @@ export class DatabaseWriterOperationEngine {
     return this.receipts.retentionCounts();
   }
 
+  /** Non-mutating, actor-code-owned aggregate projection, also available at capacity. */
+  inspectAdmission(): DatabaseWriterAdmissionInspection {
+    this.assertOpen();
+    return this.runtime.db.transaction(() => this.withAdmissionContext(context => Object.freeze({
+      policyFingerprint: this.writerPolicyFingerprint ?? null,
+      receipts: context.receipts,
+      admission: this.realm.writerAdmission ? synchronousAdmissionValue(this.realm.writerAdmission.project(context)) : null,
+    })));
+  }
+
+  private withAdmissionContext<T>(run: (context: DatabaseWriterAdmissionContext) => T): T {
+    const session = createDatabaseWriteCommandSession(this.runtime.db);
+    try {
+      return run(Object.freeze({ get: session.context.db.get, policy: this.writerPolicy ?? null, receipts: this.receipts.retentionCounts() }));
+    } finally { session.close(); }
+  }
+
   /** Read one bounded contiguous retained-change page. */
   replayChanges(afterSeq: number, limit: number): DatabaseChangeReplayResult {
     this.assertOpen();
@@ -255,11 +281,18 @@ export class DatabaseWriterOperationEngine {
 
         // Exact replay and expiry take precedence over permanent key capacity.
         this.receipts.assertCanInsert();
+        const admission = this.realm.writerAdmission;
+        const snapshot = admission ? this.withAdmissionContext(context => synchronousAdmissionValue(admission.snapshot(context))) : null;
         const value = executeDatabaseWriterWriteValue(
           this.runtime,
           this.realm,
           operation,
+          this.writerPolicy,
         );
+        if (admission) this.withAdmissionContext(context => {
+          const checked = admission.validate(context, operation, snapshot);
+          if (checked !== undefined) { void Promise.resolve(checked).catch(() => undefined); throw new DatabaseError('DATABASE_CONFIG_INVALID', 'Native writer admission must be synchronous.'); }
+        });
         const finalSeq = this.runtime.db.currentSeq;
         // Validate and correlate the producer-owned value in one result
         // boundary. Malformed/oversized handler output is a result failure,

@@ -9,6 +9,7 @@ import { jobSourceId, normalizeJobSourceContract, normalizeJobSourceIdentity, ty
 import { assertSourceAdmission, assertSourceRow, assertSourceSchedule, JOB_SOURCE_LIMITS, sourceIntent, sourcePolicyId,
   sourceRegistration, sourceScheduleReceipt, writeSourcePolicy, type JobSourceRow } from './source-realm-model';
 import { jobHash, jobInteger, jobJson, jobRecord, jobText, jobTime } from './validation';
+import { initializeJobSourceSettlement, refreshJobSourceSettlement } from './settlement-model';
 
 export function registerJobSource(context: DatabaseWriteCommandContext, input: unknown) {
   return jobCommand(() => {
@@ -23,6 +24,7 @@ export function registerJobSource(context: DatabaseWriteCommandContext, input: u
           current_generation: 1, revision: 1, state: 'active', created_at: now, updated_at: now };
         context.db.createStrict('_jobs_sources', row);
         initializeJobSourceWork(context, row.id);
+        initializeJobSourceSettlement(context, row.id);
         const policy = { id: sourcePolicyId(row.id, 1), scope_id: identity.scopeId, source_id: row.id, generation: 1,
           contract_json: jobJson(contract), digest: hash, created_at: now };
         context.db.createStrict('_jobs_source_policies', policy);
@@ -38,6 +40,7 @@ export function registerJobSource(context: DatabaseWriteCommandContext, input: u
       const policy = { id: sourcePolicyId(next.id, next.current_generation), scope_id: identity.scopeId, source_id: next.id, generation: next.current_generation,
         contract_json: jobJson(contract), digest: hash, created_at: now };
       context.db.createStrict('_jobs_source_policies', policy); context.db.update('_jobs_sources', next.id, next);
+      refreshJobSourceSettlement(context, next.id);
       return { value: sourceRegistration(next, policy, identity), policyGeneration: next.current_generation };
     });
   });
@@ -53,6 +56,7 @@ export function retireJobSource(context: DatabaseWriteCommandContext, input: unk
       if (row.state === 'retired') return { value: registration, policyGeneration: row.current_generation };
       const next: JobSourceRow = { ...row, revision: nextJobInteger(row.revision), state: 'retired', updated_at: now };
       context.db.update('_jobs_sources', row.id, next);
+      refreshJobSourceSettlement(context, row.id);
       return { value: sourceRegistration(next, policy, identity), policyGeneration: row.current_generation };
     }, 'recovery');
   });

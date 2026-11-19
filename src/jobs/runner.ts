@@ -181,6 +181,26 @@ export class JobsRunner {
   }
   private async dispatch(scope: ServiceDataScope, id: string): Promise<void> {
     if (this.state !== 'ready') return;
+    // A permanent accepted fact is inspected before spending another claim key.
+    // The schedule gate above still owns physical callback settlement; a missing
+    // receipt is never itself an absence/rollback proof for an old claim.
+    const retained = await this.context(scope, id), retainedBinding = jobBinding(retained.admission, retained.occurrence.generation);
+    const retainedAuthority = this.options.bridge.open(retained.seal, retainedBinding);
+    assertJobExecutionIdentity(retained.admission, retainedAuthority);
+    const factual = this.options.bridge.inspect(retainedAuthority, retained.admission.workflow, retained.admission.input, jobDispatchKey(id), retainedBinding);
+    if (factual) {
+      if (retained.occurrence.state === 'claimed') {
+        await this.write(scope, 'jobs.dispatch.reconcile', { scopeId: serviceDataScopeKey(scope), id,
+          nonce: retained.occurrence.lease_nonce, leaseGeneration: retained.occurrence.lease_generation, receipt: factual.receipt, now: this.now() });
+      } else if (retained.occurrence.state !== 'dispatched' && retained.occurrence.state !== 'terminal') throw new JobsError('JOBS_STATE_INVALID');
+      await this.finish(scope, id, factual); return;
+    }
+    if (this.now() < retained.occurrence.scheduled_at) throw new JobsError('JOBS_NOT_READY');
+    if (retained.occurrence.state === 'pending' && !retained.dispatchAllowed) {
+      if (this.now() < retained.occurrence.scheduled_at) return;
+      await this.write(scope, 'jobs.pending.close', { scopeId: serviceDataScopeKey(scope), id, generation: retained.occurrence.generation, now: this.now() }); return;
+    }
+    if (retained.occurrence.state === 'claimed' && retained.occurrence.lease_until !== null && retained.occurrence.lease_until > this.now()) return;
     const scopeId = serviceDataScopeKey(scope), nonce = 'claim_' + crypto.randomUUID();
     const claim = await this.write<{ claimed: boolean; leaseGeneration?: number }>(scope, 'jobs.claim', { scopeId, id, nonce, leaseMs: 60_000, now: this.now() });
     if (!claim.claimed) return;

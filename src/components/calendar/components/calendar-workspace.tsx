@@ -11,7 +11,8 @@ import type { Client } from '../../../frontend/client/sdk';
 import { CalendarSchedule } from './calendar-schedule';
 import { CalendarHeader } from '../recovered/calendar/components/calendar-header';
 import { CalendarSelect } from './calendar-select';
-import { CalendarCoreEditor } from './calendar-core-editor';
+import { CalendarAppointmentEditor } from './calendar-appointment-editor';
+import type { CalendarAppointmentEditorSession } from '../models/calendar-appointment-editor-model';
 import { CalendarAppointmentParticipantsDialog } from './calendar-appointment-participants-dialog';
 import { calendarVisitDraft, calendarVisitLabel } from '../models/calendar-visit-model';
 import { CalendarAppointmentTransitionDialog } from './calendar-transition-dialog';
@@ -21,10 +22,15 @@ import { Button, Checkbox, Group, Stack, Text } from './calendar-ui';
 import { IconPlus, IconRotateClockwise } from './calendar-icons';
 import { dateKey, parseDay, shiftCalendarDate } from '../models/calendar-model';
 import { CalendarPendingRequestLedger, calendarPendingReceiptMatches, calendarDisplayDays, calendarUiResource, calendarWallTimeCandidates,
-  calendarWorkspaceQueries, calendarZonedParts, projectCalendarAppointments, type CalendarCoreSession, type CalendarPendingRequest as PendingIdentity } from '../models/calendar-workspace-model';
+  calendarWorkspaceQueries, calendarZonedParts, projectCalendarAppointments, type CalendarPendingRequest as PendingIdentity } from '../models/calendar-workspace-model';
 import type { CalendarViewMode } from '../recovered/calendar/types/calendar-view-mode';
 import type { MenuTarget, SlotTarget } from '../types';
 import '../styles/calendar-workspace.css';
+
+interface WorkspaceEditorSession extends CalendarAppointmentEditorSession {
+  readonly selection: string;
+  readonly participantAccess: boolean;
+}
 
 export interface ConnectedCalendarWorkspaceProps {
   /** Explicit display policy, never a guessed scheduling timezone. Resource scheduling zones remain authoritative. */
@@ -53,7 +59,7 @@ function CurrentCalendarWorkspace({ client, scopeKey, ...props }: ConnectedCalen
   const catalog = useCalendarResources(catalogCursor === null ? {} : { after: catalogCursor });
   const [date, setDate] = useState(() => props.initialDate ?? parseDay(calendarZonedParts(Date.now(), props.displayTimeZone).date));
   const [view, setView] = useState<CalendarViewMode>(props.initialView ?? 'week'), [selected, setSelected] = useState<string[]>([]), [focus, setFocus] = useState<string | null>(null);
-  const [session, setSession] = useState<CalendarCoreSession | null>(null), [details, setDetails] = useState<{ id: string; selection: string; trigger?: HTMLElement } | null>(null);
+  const [session, setSession] = useState<WorkspaceEditorSession | null>(null), [details, setDetails] = useState<{ id: string; selection: string; trigger?: HTMLElement } | null>(null);
   const [participantSession, setParticipantSession] = useState<{ record: CalendarAppointmentView; selection: string; trigger?: HTMLElement } | null>(null);
   const [transition, setTransition] = useState<{ record: CalendarAppointmentView; proposal: CalendarTransitionProposal; selection: string; trigger?: HTMLElement } | null>(null);
   const [pending, setPending] = useState<PendingIdentity | null>(null), [notice, setNotice] = useState(''), sessionKey = useRef(0);
@@ -79,7 +85,7 @@ function CurrentCalendarWorkspace({ client, scopeKey, ...props }: ConnectedCalen
   // Denial/loading retires private overlays immediately. Ordinary admitted live snapshots do not replace a dirty draft.
   const overlayAllowed = !failed && !rangeUnsupported && capabilities.status === 'ready' && catalog.status === 'ready' && (ready || !queries.length);
   const participantsAllowed = props.participants !== false && capabilities.status === 'ready' && capabilities.value?.participants === true;
-  const editorModeCurrent = !session || !!session.record || session.participantAccess === participantsAllowed;
+  const editorModeCurrent = !session || session.participantAccess === participantsAllowed;
   const selectionKey = JSON.stringify([displayed.map(resource => resource.id), days, props.displayTimeZone]);
   useEffect(() => { setDetails(null); setSession(null); setTransition(null); setParticipantSession(null); }, [selectionKey]);
   useEffect(() => { if (!overlayAllowed) { setDetails(null); setSession(null); setTransition(null); setParticipantSession(null); } }, [overlayAllowed]);
@@ -121,8 +127,8 @@ function CurrentCalendarWorkspace({ client, scopeKey, ...props }: ConnectedCalen
       if (from.date !== to.date || from.minute >= to.minute || from.offset !== to.offset) { setNotice('This slot needs an exact-instant booking through the calendar API. The core editor will not change its date or guess a timezone offset.'); return; }
       day = from.date; start = from.minute; end = to.minute;
     }
-    setSession({ key: ++sessionKey.current, selection: selectionKey, trigger, participantAccess: participantsAllowed,
-      initial: { resourceId, title: '', date: day, start, end } });
+    setSession({ key: ++sessionKey.current, selection: selectionKey, trigger, participantAccess: participantsAllowed, timeZone: resource.timeZone,
+      initial: { resourceIds: [resourceId], title: '', date: day, start, end } });
   }
   function menu(target: MenuTarget, trigger: HTMLElement) {
     if (target.kind === 'slot') create(target.slot, trigger);
@@ -135,7 +141,8 @@ function CurrentCalendarWorkspace({ client, scopeKey, ...props }: ConnectedCalen
       || Date.parse(record.startAt) % 60000 !== 0 || Date.parse(record.endAt) % 60000 !== 0) {
       setNotice('This appointment needs an exact-instant reschedule through the calendar API; the minute-precision core editor will not alter it.'); return;
     }
-    setSession({ key: ++sessionKey.current, selection: selectionKey, record, trigger, initial: { resourceId: record.resourceIds[0]!, title: record.title, date: start.date, start: start.minute, end: end.minute, ...calendarVisitDraft(record.visit) } });
+    setSession({ key: ++sessionKey.current, selection: selectionKey, record, trigger, participantAccess: participantsAllowed, timeZone: record.timeZone,
+      initial: { resourceIds: [...record.resourceIds], title: record.title, date: start.date, start: start.minute, end: end.minute, ...calendarVisitDraft(record.visit) } });
   }
   async function reconcile() {
     if (!pending || !calendarScopeReadable(client, scopeKey)) return;
@@ -191,8 +198,8 @@ function CurrentCalendarWorkspace({ client, scopeKey, ...props }: ConnectedCalen
       maxParticipants={capabilities.value?.limits.maxParticipants}
       onClose={() => setParticipantSession(null)} onAuthorityLost={() => { setParticipantSession(null); setNotice('Participant controls were withdrawn because current access changed.'); }}
       onUnknown={trackPending} onRejected={settlePending} onAccepted={request => { if (settlePending(request)) setNotice('The submitted participant set was accepted.'); }} />}
-    {overlayAllowed && editorModeCurrent && session?.selection === selectionKey && <CalendarCoreEditor key={session.key} session={session} resources={resources} client={client} scopeKey={scopeKey}
-      participants={participantsAllowed} maxParticipants={capabilities.value?.limits.maxParticipants}
+    {overlayAllowed && editorModeCurrent && session?.selection === selectionKey && <CalendarAppointmentEditor key={session.key} session={session} resources={resources} client={client} scopeKey={scopeKey}
+      participants={participantsAllowed} maxParticipants={capabilities.value?.limits.maxParticipants} maxResources={resourceLimit}
       readRevision={`${first.invalidationRevision}/${first.reconnectRevision}/${second.invalidationRevision}/${second.reconnectRevision}/${session.record ? byId.get(session.record.id)?.revision ?? 'unlisted' : 'new'}`}
       onAuthorityLost={() => { setSession(null); setNotice('The appointment editor was withdrawn because current details are no longer authorized. Any unsettled request still requires reconciliation.'); }}
       onClose={() => setSession(null)} onUnknown={trackPending} onRejected={settlePending} onAccepted={request => { if (settlePending(request)) setNotice('The submitted calendar request was accepted.'); }} />}

@@ -59,6 +59,7 @@ export interface CoordinatorTenantSyncSnapshotStart {
 
 /** Narrow host boundary implemented by DatabaseCoordinator. */
 export interface DatabaseCoordinatorCapabilityHost {
+  inspectWriterAdmission?(entry: DatabaseCoordinatorEntry, options?: DatabaseExecutionOptions): Promise<import('./database-writer-admission').DatabaseWriterAdmissionInspection>;
   executeLoggingDeliveryProbe?(entry: DatabaseCoordinatorEntry, nonce: string): Promise<void>;
   executeLoggingSource?(entry: DatabaseCoordinatorEntry, scope: LoggingScope, acknowledge?: readonly string[]): Promise<LoggingActorSourcePage>;
   executePresenceProjection(entry: DatabaseCoordinatorEntry, publication: PresencePublication,
@@ -173,6 +174,11 @@ export class CoordinatorLease implements DatabaseCoordinatorLease {
     return this.#entry.databaseRef;
   }
   get trustedWriter(): DatabaseTrustedWriteExecutor { return this.#trustedWriter; }
+  inspectWriterAdmission(options?: DatabaseExecutionOptions): Promise<import('./database-writer-admission').DatabaseWriterAdmissionInspection> {
+    this.assertActive();
+    if (!this.#coordinator.inspectWriterAdmission) throw new DatabaseError('DATABASE_OPERATION_UNSUPPORTED', 'Native writer admission inspection is unavailable.');
+    return this.#coordinator.inspectWriterAdmission(this.#entry, options);
+  }
 
   /** @internal No raw source transport is projected into a request-owned data client. */
   executeLoggingSource(scope: LoggingScope, acknowledge?: readonly string[]): Promise<LoggingActorSourcePage> {
@@ -358,6 +364,12 @@ class CoordinatorTrustedWriter implements DatabaseTrustedWriteExecutor {
   constructor(lease: CoordinatorLease) {
     this.#lease = lease;
     Object.freeze(this);
+  }
+  async inspectAdmission(options?: DatabaseTrustedReceiptExecutionOptions): Promise<import('./database-writer-admission').DatabaseWriterAdmissionInspection> {
+    this.#lease.assertTenantSyncAuthority();
+    const result = await this.#lease.inspectWriterAdmission(options);
+    this.#lease.assertTenantSyncAuthority();
+    return result;
   }
 
   async findReceipt(

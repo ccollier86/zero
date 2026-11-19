@@ -28,7 +28,7 @@ export interface JobSourceScheduleReceipt {
 }
 /** Private owner-authorized retained accounting, never a scheduling reservation. */
 export interface JobRetainedCapacity { readonly used: number; readonly limit: number; readonly remaining: number }
-export interface JobSourceCapacity {
+export interface JobSourceCapacityRows {
   readonly version: 2;
   readonly source: { readonly id: string; readonly registered: boolean };
   readonly working: {
@@ -43,6 +43,17 @@ export interface JobSourceCapacity {
       readonly sources: JobRetainedCapacity; readonly sourcePolicies: JobRetainedCapacity;
     };
   };
+}
+export interface JobTransportCapacity {
+  readonly policyFingerprint: string; readonly permanentKeys: number; readonly keyLimit: number; readonly hardKeyLimit: number;
+  readonly settlementUnits: number; readonly ordinaryRemaining: number; readonly settlementRemaining: number; readonly deficit: number;
+  readonly actorControlUnits: number; readonly sourceControlUnits: number;
+  readonly retainedResults: number; readonly expiredTombstones: number; readonly retainedResultBytes: number; readonly retainedByteLimit: number;
+}
+export interface JobSourceCapacity extends Omit<JobSourceCapacityRows, 'version' | 'retained'> {
+  readonly version: 3;
+  readonly retained: Omit<JobSourceCapacityRows['retained'], 'file'> & { readonly file: JobSourceCapacityRows['retained']['file'] & { readonly actorRecoveryIntents: JobRetainedCapacity } };
+  readonly transport: JobTransportCapacity;
 }
 /** Read-only proof of the original permanent Torrent start, never permission for a new effect. */
 export interface JobSourceExecutionEvidence {

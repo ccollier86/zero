@@ -41,6 +41,7 @@ import {
   type DatabaseWriterLaneOperationClass,
 } from './database-coordinator-runtime';
 import { DatabaseError } from './database-error';
+import { validateDatabaseWriterAdmissionInspection, type DatabaseWriterAdmissionInspection } from './database-writer-admission';
 import type {
   DatabaseExecutor,
   DatabaseExecutorValue,
@@ -295,6 +296,27 @@ export class DatabaseCoordinatorOperationRuntime {
       commitAuthority,
       logicalReceiptFingerprint,
     ) as Promise<DatabaseCommitResult<DatabaseWriterCommitValue>>;
+  }
+
+  inspectWriterAdmission(entry: DatabaseCoordinatorEntry, execution: DatabaseExecutionOptions = {}): Promise<DatabaseWriterAdmissionInspection> {
+    this.options.assertStarted();
+    if (this.options.canAwaitOpening(entry)) return this.awaitReplacementOpening(entry, execution, 'query', () => this.inspectWriterAdmission(entry, execution));
+    this.options.assertUsableEntry(entry);
+    return this.enqueueLane(entry, 'query', execution, async () => {
+      const writer = this.options.requireWriter(entry);
+      const { startedAt, timeoutMs } = this.prepareActorDispatch(execution);
+      try {
+        const raw = await writer.execute({ operation: DATABASE_ACTOR_OPERATIONS.inspectAdmission, kind: 'read', payload: { databaseRef: entry.databaseRef } }, { timeoutMs });
+        return validateDatabaseWriterAdmissionInspection(raw);
+      } catch (caught) {
+        const error = safeCoordinatorError(caught);
+        this.options.emit({ type: error.outcome === 'unknown' ? 'operation-outcome-unknown' : 'operation-failed',
+          databaseRef: entry.databaseRef, placement: entry.placement.mode, role: 'writer', slot: entry.slot,
+          generation: writer.diagnostics().generation, operation: 'query', durationMs: this.diagnosticElapsed(startedAt), error });
+        await this.retireIfTerminal(entry, writer, error);
+        throw error;
+      }
+    });
   }
 
   findTrustedReceipt(

@@ -4,6 +4,7 @@ import type { Row } from '../sync/types';
 import { JobsError } from './error';
 import { digest, type JobAdmission, type JobScheduleRow } from './model';
 import { jobBudget, JOB_LIMITS } from './realm-model';
+import { readJobSettlementSnapshot } from './settlement-model';
 import { jobSourceId, normalizeJobSourceContract, type JobSourceContract, type JobSourceIdentity, type JobSourceRegistration, type JobSourceScheduleReceipt } from './source-model';
 import { jobHash, jobInteger, jobJson, jobKey, jobRecord, jobText, jobTime, jobValue, type JobValue } from './validation';
 
@@ -98,9 +99,12 @@ export function sourceIntent<T>(context: DatabaseWriteCommandContext, identity: 
   // The immutable namespace/digest/result and original-key replay remain shared
   // with historical receipts. Only new native cancel/retire commands reserve
   // separate headroom; neither this budget nor ordinary admission is unlimited.
-  jobBudget(context, budget === 'recovery' ? 'sourceRecoveryIntents' : 'intents',
-    budget === 'recovery' ? JOB_SOURCE_RECOVERY_INTENTS_LIMIT : JOB_LIMITS.intents);
+  const ledger = context.db.hasTable('_jobs_settlement_usage');
+  const controlBefore = ledger && budget === 'recovery' ? readJobSettlementSnapshot(context.db).sourceControlUnits : 0;
   const result = run(), json = jobJson(result.value);
+  const controlAfter = ledger && budget === 'recovery' ? readJobSettlementSnapshot(context.db).sourceControlUnits : 0;
+  const reserved = budget === 'recovery' && (!ledger || controlAfter < controlBefore);
+  jobBudget(context, reserved ? 'sourceRecoveryIntents' : 'intents', reserved ? JOB_SOURCE_RECOVERY_INTENTS_LIMIT : JOB_LIMITS.intents);
   context.db.createStrict('_jobs_source_intents', { id, scope_id: identity.scopeId, source_id: jobSourceId(identity),
     policy_generation: result.policyGeneration, digest: hash, result_json: json, created_at: now });
   return JSON.parse(json) as T;

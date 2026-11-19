@@ -1,5 +1,6 @@
-import { CalendarSelect as Select } from '../../../../components/calendar-select';
 'use client';
+
+import { CalendarSelect as Select } from '../../../../components/calendar-select';
 
 import { ActionIcon, Badge, Box, Button, Divider, Group, Stack, Switch, Text, TextInput, Textarea, UnstyledButton } from '../../../../components/calendar-ui';
 import {
@@ -18,6 +19,7 @@ import {
 import type { AppointmentFormControls, CalendarEvent, SelectOption } from '../../types/index';
 import { CalendarModal, CalendarManagedForm, CalendarDismiss } from '../../../../components/calendar-surfaces';
 import { CalendarDateField } from '../../../../components/calendar-date-field';
+import type { ReactNode } from 'react';
 
 export interface AppointmentModalProps {
   opened: boolean;
@@ -36,6 +38,13 @@ export interface AppointmentModalProps {
   /** Additive controlled behavior: retain the original compact presentation. */
   form?: AppointmentFormControls;
 }
+
+/** Content only: a connected adapter supplies its native async modal/form owner. */
+export type AppointmentModalContentProps = Omit<AppointmentModalProps, 'opened' | 'onClose' | 'form'> & {
+  form?: Omit<AppointmentFormControls, 'onSubmit'>;
+  footer?: ReactNode;
+  titleMaxLength?: number;
+};
 
 const defaultPatientOptions: SelectOption[] = [
   { value: 'patient-1', label: 'Roy Houchin' },
@@ -96,18 +105,23 @@ export function AppointmentModal({
   const block = form?.kind === 'block';
   const heading = form?.heading ?? (block ? isAddMode ? 'Block Time' : 'Edit Time Block' : isAddMode ? 'New Appointment' : 'Edit Appointment');
 
-  return (
-    <CalendarModal
-      opened={opened}
-      onClose={onClose}
-      size="var(--calendar-size-420)"
-      radius="md"
-      title={heading}
-      padding={0}
-      trigger={form?.trigger}
-      closeOnEscape={form?.closeOnEscape}
-    >
-      <CalendarManagedForm noValidate onAccept={() => form ? !form.submitDisabled && form.onSubmit() !== false : true}>
+  return <CalendarModal opened={opened} onClose={onClose} size="var(--calendar-size-420)" radius="md" title={heading}
+    padding={0} trigger={form?.trigger} closeOnEscape={form?.closeOnEscape}>
+    <CalendarManagedForm noValidate onAccept={() => form ? !form.submitDisabled && form.onSubmit() !== false : true}>
+      <AppointmentModalContent event={event} isAddMode={isAddMode} selectedStartTime={selectedStartTime} selectedEndTime={selectedEndTime}
+        startTimeOptions={startTimeOptions} endTimeOptions={endTimeOptions} onStartTimeChange={onStartTimeChange} onEndTimeChange={onEndTimeChange}
+        patientOptions={patientOptions} providerOptions={providerOptions} visitTypeOptions={visitTypeOptions} form={form} />
+    </CalendarManagedForm>
+  </CalendarModal>;
+}
+
+/** Same recovered compact content; no modal, form submission or acceptance is owned here. */
+export function AppointmentModalContent({ event, isAddMode, selectedStartTime, selectedEndTime, startTimeOptions, endTimeOptions,
+  onStartTimeChange, onEndTimeChange, patientOptions = defaultPatientOptions, providerOptions = defaultProviderOptions,
+  visitTypeOptions = defaultVisitTypeOptions, form, footer, titleMaxLength = 160 }: AppointmentModalContentProps) {
+  if (!event) return null;
+  const block = form?.kind === 'block';
+  return <>
 
         {/* Content */}
         <Stack gap="var(--calendar-size-0)" px="md" py="sm">
@@ -120,7 +134,7 @@ export function AppointmentModal({
             onChange={e => form?.onChange({ title: e.currentTarget.value })}
             defaultValue={form ? undefined : isAddMode ? '' : event.title}
             data-autofocus
-            maxLength={160}
+            maxLength={titleMaxLength}
             styles={{
               input: {
                 fontWeight: 'var(--calendar-weight-medium)',
@@ -211,7 +225,7 @@ export function AppointmentModal({
           {/* Provider */}
           <Group gap="xs" py="var(--calendar-size-4)">
             <IconStethoscope size="var(--calendar-size-14)" style={{ color: 'var(--calendar-color-gray-5)' }} />
-            <Select
+            {form?.resourceControl !== undefined ? <Box style={{ flex: 1, minWidth: 0 }}>{form.resourceControl}</Box> : <Select
               size="xs"
               variant="unstyled"
               placeholder="Assign provider"
@@ -224,7 +238,7 @@ export function AppointmentModal({
               styles={{ input: { padding: 0, minHeight: 'var(--calendar-size-20)', height: 'var(--calendar-size-20)' } }}
               style={{ flex: 1 }}
               searchable
-            />
+            />}
           </Group>
 
           {!block && form?.siteOptions && <Group gap="xs" py="var(--calendar-size-4)">
@@ -255,7 +269,7 @@ export function AppointmentModal({
           {/* Location */}
           {!block && <Group gap="xs" py="var(--calendar-size-4)">
             <IconMapPin size="var(--calendar-size-14)" style={{ color: 'var(--calendar-color-gray-5)' }} />
-            <Select
+            {form?.locationControl !== undefined ? <Box style={{ flex: 1, minWidth: 0 }}>{form.locationControl}</Box> : <Select
               size="xs"
               variant="unstyled"
               aria-label="Location"
@@ -266,11 +280,11 @@ export function AppointmentModal({
               data={locationOptions}
               styles={{ input: { padding: 0, minHeight: 'var(--calendar-size-20)', height: 'var(--calendar-size-20)' } }}
               w="var(--calendar-size-100)"
-            />
+            />}
           </Group>}
 
           {/* Video Link */}
-          {!block && (!form || form.value.location === 'telehealth') && <Group gap="xs" py="var(--calendar-size-4)">
+          {!block && form?.telehealthControl !== undefined ? form.telehealthControl : !block && (!form || form.value.location === 'telehealth') && <Group gap="xs" py="var(--calendar-size-4)">
             <IconVideo size="var(--calendar-size-14)" style={{ color: 'var(--calendar-color-blue-5)' }} />
             <UnstyledButton onClick={form?.onPreviewTelehealth} aria-label="Preview Telehealth link"><Text size="xs" c="blue">
               Join with Telehealth
@@ -291,7 +305,7 @@ export function AppointmentModal({
               size="var(--calendar-size-14)"
               style={{ color: 'var(--calendar-color-gray-5)', marginTop: 'var(--calendar-size-2)' }}
             />
-            <Textarea
+            {form?.notesControl !== undefined ? form.notesControl : <Textarea
               aria-label="Notes"
               value={form?.value.notes}
               onChange={e => form?.onChange({ notes: e.currentTarget.value })}
@@ -304,13 +318,13 @@ export function AppointmentModal({
               maxRows={3}
               styles={{ input: { padding: 0 } }}
               style={{ flex: 1 }}
-            />
+            />}
           </Group>
 
           {/* Reminder */}
           {!block && <Group gap="xs" py="var(--calendar-size-4)">
             <IconBell size="var(--calendar-size-14)" style={{ color: 'var(--calendar-color-gray-5)' }} />
-            <Select
+            {form?.reminderControl !== undefined ? <Box style={{ flex: 1, minWidth: 0 }}>{form.reminderControl}</Box> : <Select
               size="xs"
               variant="unstyled"
               aria-label="Reminder"
@@ -321,7 +335,7 @@ export function AppointmentModal({
               data={reminderOptions}
               styles={{ input: { padding: 0, minHeight: 'var(--calendar-size-20)', height: 'var(--calendar-size-20)' } }}
               w="var(--calendar-size-120)"
-            />
+            />}
           </Group>}
 
           {!block && form?.workflowControl}
@@ -335,17 +349,17 @@ export function AppointmentModal({
               <Text size="xs" c="dimmed">
                 •
               </Text>
-              <Switch
+              {form?.sendReminderControl !== undefined ? form.sendReminderControl : <Switch
                 size="xs"
                 checked={form?.value.sendReminder}
                 onChange={checked => form?.onChange({ sendReminder: checked })}
                 defaultChecked={form ? undefined : true}
                 styles={{ label: { fontSize: 'var(--calendar-size-10)' } }}
                 label="Send reminder"
-              />
+              />}
             </Group>
           )}
-          {!block && form?.workflowControl && <Switch size="xs" checked={form.value.sendReminder} onChange={checked => form.onChange({ sendReminder: checked })} styles={{ label: { fontSize: 'var(--calendar-size-10)' } }} label="Send reminder" />}
+          {!block && form?.workflowControl && (form.sendReminderControl !== undefined ? form.sendReminderControl : <Switch size="xs" checked={form.value.sendReminder} onChange={checked => form.onChange({ sendReminder: checked })} styles={{ label: { fontSize: 'var(--calendar-size-10)' } }} label="Send reminder" />)}
           {form?.warning && <Text size="xs" c="orange.8" mt="xs" role="status">{form.warning}</Text>}
           {form?.error && <Text size="xs" c="red" mt="xs" role="alert">{form.error}</Text>}
           {form?.notice && <Text size="xs" c="dimmed" mt="xs">{form.notice}</Text>}
@@ -358,7 +372,7 @@ export function AppointmentModal({
           py="sm"
           style={{ borderTop: 'var(--calendar-size-1) solid var(--calendar-color-gray-2)' }}
         >
-          {!isAddMode ? (
+          {footer !== undefined ? footer : <>{!isAddMode ? (
             <Button
               variant="subtle"
               color="red"
@@ -378,9 +392,7 @@ export function AppointmentModal({
             <Button size="xs" type="submit" disabled={form?.submitDisabled}>
               {isAddMode ? block ? 'Block Time' : 'Create' : 'Save'}
             </Button>
-          </Group>
+          </Group></>}
         </Group>
-      </CalendarManagedForm>
-    </CalendarModal>
-  );
+  </>;
 }

@@ -129,7 +129,7 @@ function ParticipantsDialog(props: CalendarAppointmentParticipantsDialogProps) {
   return <ControlledModal<CalendarCommandReceipt> open={!denied} identityKey={`${record.id}:${record.revision}:participants`}
     busy={!denied && busy} dirty={!denied && (dirty || phase === 'unknown' || phase === 'accepted')}
     error={denied ? null : error} onOpenChange={open => { if (!open) props.onClose(); }}
-    descriptor={{ title: 'Edit appointment participants', trigger: props.trigger, size: 'sm', customSize: { width: 'var(--calendar-size-420)' },
+    descriptor={{ title: 'Edit appointment participants', trigger: props.trigger, allowEditingWhilePending: true, size: 'sm', customSize: { width: 'var(--calendar-size-420)' },
       className: 'calendar-managed-dialog calendar-managed-radius-md', body: context => denied ? null : <form onSubmit={event => { event.preventDefault(); void submit(context); }}>
         <Stack gap="sm" p="md"><Text fw="var(--calendar-weight-heading)">{record.title}</Text>
           {selection.fields}

@@ -14,6 +14,7 @@ import type {
   DatabaseExecutorFactory,
 } from './database-coordinator-contract';
 import { DatabaseError } from './database-error';
+import { normalizeDatabaseWriterAdmission } from './database-writer-admission';
 import type { DatabaseObservability } from './database-observability';
 import type { DatabaseOpenAdmissionResolver } from './database-open-admission';
 import {
@@ -49,6 +50,7 @@ const MIN_SWEEP_INTERVAL_MS = 1_000;
 const MAX_SWEEP_INTERVAL_MS = 30_000;
 
 export interface NormalizedDatabaseCoordinatorConfig {
+  readonly writerPolicy?: import('./database-operations').DatabaseSerializableValue;
   readonly rootDirectory: string;
   readonly realm: DatabaseRealm;
   readonly operationCatalog: ReturnType<typeof createDatabaseRealmOperationCatalog>;
@@ -240,7 +242,9 @@ export function normalizeDatabaseCoordinatorConfig(
     );
   }
 
+  const writerPolicy = normalizeDatabaseWriterAdmission(options.realm, options.writerPolicy);
   return Object.freeze({
+    ...(writerPolicy === undefined ? {} : { writerPolicy }),
     rootDirectory: options.rootDirectory,
     realm: options.realm,
     operationCatalog,

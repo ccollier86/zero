@@ -137,6 +137,31 @@ WAL/HOT/subprocess or packaged-deployment qualified; see its
 [qualification boundary](../calendar/qualification.md). No selected release is
 claimed by this extension.
 
+### Native writer-admission policy (unreleased branch extension)
+
+Trusted realm authors may define `writerAdmission` with an explicit semantic ID
+and synchronous normalization, snapshot, validation and aggregate-projection
+functions. Only those imported realm functions execute inside the actor.
+Coordinator `writerPolicy` binding carries detached bounded JSON, never executable
+callbacks or SQL. The normalized frozen policy fingerprint must match both the
+actor acknowledgment and current parent binding. Omission preserves the old realm
+fingerprint and does not add unused policy fields to ordinary binds.
+
+The hook's snapshot and validation run inside the existing root transaction,
+around the domain mutation and before generic receipt insertion and the final
+authority guard. Exact receipt replay/expiry takes precedence over new-key
+admission. Throwing rolls domain changes, policy-ledger changes and receipt/key
+accounting back together. Hooks receive only revocable primary-key reads, bound
+policy and aggregate receipt counts; they cannot await, open a connection, run
+provider work or acquire an application permission through JSON.
+
+The trusted writer's private `inspectAdmission()` uses the actor's same imported
+aggregate projector under current lease/authority. It is not a public CRUD/SDK
+escape and returns no raw receipt identities. Jobs uses it for its finite
+history/control/transport policy; Fabric imports no Jobs implementation.
+These branch-source contracts still require real actor/installed-package
+qualification before release.
+
 ## Capacity And Restart
 
 See the complete [capacity matrix](./capacity.md). Readers default true.

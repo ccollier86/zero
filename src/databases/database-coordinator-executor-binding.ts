@@ -22,8 +22,10 @@ import type { DatabaseHotDurabilitySupervisor } from './database-hot-durability-
 import type { DatabaseObservability } from './database-observability';
 import { databaseOpenAdmissionFingerprint } from './database-open-admission';
 import type { DatabaseRealm } from './database-realm';
+import { databaseWriterAdmissionFingerprint } from './database-writer-admission';
 
 interface DatabaseCoordinatorExecutorBindingOptions {
+  readonly writerPolicy?: import('./database-operations').DatabaseSerializableValue;
   readonly realm: DatabaseRealm;
   readonly createExecutor: DatabaseExecutorFactory;
   readonly hotDurabilitySupervisor: DatabaseHotDurabilitySupervisor;
@@ -39,6 +41,7 @@ interface DatabaseCoordinatorExecutorBindingOptions {
 
 /** Owns the parent-side executor identity boundary for coordinator entries. */
 export class DatabaseCoordinatorExecutorBinding {
+  readonly #writerPolicyFingerprint: string | undefined;
   readonly #realm: DatabaseRealm;
   readonly #createExecutor: DatabaseExecutorFactory;
   readonly #hotDurabilitySupervisor: DatabaseHotDurabilitySupervisor;
@@ -52,6 +55,7 @@ export class DatabaseCoordinatorExecutorBinding {
   readonly #lastGenerationBySlot = new Map<string, number>();
 
   constructor(options: DatabaseCoordinatorExecutorBindingOptions) {
+    this.#writerPolicyFingerprint = databaseWriterAdmissionFingerprint(options.realm, options.writerPolicy);
     this.#realm = options.realm;
     this.#createExecutor = options.createExecutor;
     this.#hotDurabilitySupervisor = options.hotDurabilitySupervisor;
@@ -141,6 +145,7 @@ export class DatabaseCoordinatorExecutorBinding {
       || !sameCoordinatorActorPlacement(result.placement, entry.placement)
       || result.realmFingerprint !== this.#realm.fingerprint
       || result.schemaChecksum !== this.#realm.schemaChecksum
+      || result.writerPolicyFingerprint !== this.#writerPolicyFingerprint
       || result.openAdmissionFingerprint !== (entry.openAdmission === undefined
         ? undefined : databaseOpenAdmissionFingerprint(entry.openAdmission))) {
       throw new DatabaseError(

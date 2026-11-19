@@ -20,7 +20,9 @@ import type { ModalContext, ModalDescriptor } from '../../../modals/modal-system
 import type { ControlledModalProps } from '../../../modals/modal-controlled';
 import { ConnectedCalendarWorkspace, type ConnectedCalendarWorkspaceProps } from '../components/calendar-workspace';
 import { CalendarSchedule } from '../components/calendar-schedule';
-import { CalendarCoreEditor } from '../components/calendar-core-editor';
+import { CalendarAppointmentEditor } from '../components/calendar-appointment-editor';
+import { CalendarAppointmentResourceFields } from '../components/calendar-appointment-resource-fields';
+import { AppointmentModalContent, type AppointmentModalContentProps } from '../recovered/appointment-modal/components/appointment-modal/AppointmentModal';
 import { CalendarAppointmentParticipantsDialog } from '../components/calendar-appointment-participants-dialog';
 import { CalendarAppointmentTransitionDialog } from '../components/calendar-transition-dialog';
 import { CalendarParticipantFields } from '../components/calendar-participant-fields';
@@ -41,13 +43,43 @@ test('the parent respects native participant capability and an explicit true UI 
   await chooseCalendar(view); await clickView(view, 'New appointment');
   expect(f.directories).toHaveLength(0);
   expect(elements(body()).some(value => value.type === CalendarParticipantFields)).toBe(false);
-  expect(view.find(value => value.type === CalendarCoreEditor).props.participants).toBe(false);
+  expect(view.find(value => value.type === CalendarAppointmentEditor).props.participants).toBe(false);
 });
 
 test('an explicit false participant UI option avoids both directory and private binding reads despite native capability', async () => {
   const f = fixture(), view = await mountWorkspace(f, { participants: false }); await chooseCalendar(view); await openDetails(view);
   expect(f.bindings).toHaveLength(0); expect(f.directories).toHaveLength(0);
   expect(textContent(body())).not.toContain(person.name); expect(textContent(body())).not.toContain('Manage participants…');
+});
+
+test('workspace opens the approved rich editor with native limits and saves changed resources, title and participants in one command', async () => {
+  const f = fixture(), view = await mountWorkspace(f), replacement = { ...resource, id: 'resource-b', label: 'Second authorized calendar', timeZone: 'America/New_York' };
+  await act(async () => f.catalogs[0]!.resolve({ items: [resource, replacement], truncated: false, nextAfter: null }));
+  await chooseCalendar(view); await openDetails(view); await clickBody('Edit appointment');
+  const editor = view.find(value => value.type === CalendarAppointmentEditor);
+  expect(editor.props.maxResources).toBe(capabilities.limits.maxResources);
+  expect(editor.props.maxParticipants).toBe(capabilities.limits.maxParticipants);
+  expect(editor.props.session.timeZone).toBe('UTC');
+  expect(editor.props.session.initial.resourceIds).toEqual([resource.id]);
+  expect(elements(body()).filter(value => value.type === AppointmentModalContent)).toHaveLength(1);
+  expect(activeOpening()?.descriptor?.allowEditingWhilePending).toBe(true);
+  await act(async () => {
+    bodyFind(value => value.props['aria-label'] === 'Appointment title').props.onChange({ currentTarget: { value: 'One combined change' } });
+    bodyFind(value => value.type === CalendarAppointmentResourceFields).props.onChange([replacement.id]);
+    bodyFind(value => value.type === CalendarParticipantFields).props.onChange([]);
+  });
+  await act(async () => bodyFind(value => value.type === 'form').props.onSubmit({ preventDefault() {} }));
+  expect(f.writes).toHaveLength(1);
+  expect(f.writes[0]).toMatchObject({ operation: 'appointment.updated', control: { expectedRevision: record.revision },
+    input: { title: 'One combined change', resourceIds: [replacement.id], participants: [] } });
+  expect(view.find(value => value.type === CalendarAppointmentEditor).props.session.timeZone).toBe('UTC');
+  await act(async () => bodyFind(value => value.props['aria-label'] === 'Appointment title').props.onChange({ currentTarget: { value: 'Newer unsent title' } }));
+  await act(async () => f.writes[0]!.pending.resolve({ requestId: f.writes[0]!.control.idempotencyKey, operation: 'appointment.updated',
+    id: record.id, revision: record.revision + 1, changed: true }));
+  expect(activeOpening()?.title).toBe('Edit appointment');
+  expect(bodyFind(value => value.props['aria-label'] === 'Appointment title').props.value).toBe('Newer unsent title');
+  expect(bodyFind(value => value.props.type === 'submit').props.disabled).toBe(true);
+  expect(f.writes).toHaveLength(1);
 });
 
 test('participant capability retirement cannot silently create a booking after removing chosen references', async () => {
@@ -110,7 +142,7 @@ test('a retained details reschedule action cannot open an editor after current m
   await act(async () => { f.transitions[0]!.options.onError?.(new CalendarReadError('CALENDAR_FORBIDDEN', 403, true)); });
   expect(textContent(body())).not.toContain('Edit appointment');
   await act(async () => { retained(); });
-  expect(view.all().some(value => value.type === CalendarCoreEditor)).toBe(false);
+  expect(view.all().some(value => value.type === CalendarAppointmentEditor)).toBe(false);
 });
 
 test('retired participant management never resurrects its stored opening when capability returns', async () => {
@@ -148,13 +180,14 @@ function deferred<T>() { let resolve!: (value: T) => void, reject!: (error: unkn
 function fixture(initialCapabilities = capabilities) {
   const caps: Subscription<CalendarCapabilities>[] = [], catalogs: Subscription<CalendarResourcePage>[] = [], ranges: Subscription<CalendarAppointmentPage>[] = [];
   const bindings: Subscription<CalendarParticipantsView>[] = [], directories: Subscription<CalendarParticipantDirectoryPage>[] = [], transitions: Subscription<CalendarAppointmentTransitions>[] = [];
-  const writes: { operation: 'appointment.participants-changed' | 'appointment.created'; input: unknown; control: CalendarControlOptions; pending: ReturnType<typeof deferred<CalendarCommandReceipt>> }[] = [];
+  const writes: { operation: 'appointment.participants-changed' | 'appointment.created' | 'appointment.updated'; input: unknown; control: CalendarControlOptions; pending: ReturnType<typeof deferred<CalendarCommandReceipt>> }[] = [];
   const f = { caps, catalogs, ranges, bindings, directories, transitions, writes, receipt: null as CalendarCommandReceipt | null, receiptKeys: [] as string[] };
   const client = { calendar: {
     capabilities: { watch(resolve: Subscription<CalendarCapabilities>['resolve'], options: CalendarWatchOptions) { return watch(caps, resolve, options, initialCapabilities); } },
     resources: { watch(_query: unknown, resolve: Subscription<CalendarResourcePage>['resolve'], options: CalendarWatchOptions) { return watch(catalogs, resolve, options, { items: [resource], truncated: false, nextAfter: null }); } },
     appointments: {
       get: async () => record,
+      update(_id: string, input: unknown, control: CalendarControlOptions) { const pending = deferred<CalendarCommandReceipt>(); writes.push({ operation: 'appointment.updated', input, control, pending }); return pending.promise; },
       watch(_query: unknown, resolve: Subscription<CalendarAppointmentPage>['resolve'], options: CalendarWatchOptions) { return watch(ranges, resolve, options, { items: [record], truncated: false }); },
       watchTransitions(_id: string, resolve: Subscription<CalendarAppointmentTransitions>['resolve'], options: CalendarWatchOptions) { return watch(transitions, resolve, options, {
         id: record.id, revision: record.revision, policyRevision: 1, status: 'confirmed', allowed: [],
@@ -177,7 +210,7 @@ async function mountWorkspace(f: ReturnType<typeof fixture>, options: Partial<Co
     // The returned component executes under this stable React hook owner. Its actual
     // overlay elements are mounted normally; host layout/widgets remain unrendered.
     tree = (element.type as (props: Record<string, unknown>) => ReactNode)(element.props);
-    const overlays = elements(tree).filter(value => value.type === CalendarCoreEditor || value.type === CalendarAppointmentParticipantsDialog
+    const overlays = elements(tree).filter(value => value.type === CalendarAppointmentEditor || value.type === CalendarAppointmentParticipantsDialog
       || value.type === CalendarAppointmentTransitionDialog || typeof value.type === 'function' && value.type.name === 'CoreDetails');
     return createElement(Fragment, null, ...overlays);
   }
@@ -206,7 +239,8 @@ function body(): ReactNode {
 }
 function elements(node: ReactNode): ReactElement<Record<string, any>>[] {
   if (Array.isArray(node)) return node.flatMap(elements);
-  return isValidElement<Record<string, any>>(node) ? [node, ...elements(node.props.children)] : [];
+  return isValidElement<Record<string, any>>(node) ? [node, ...elements(node.type === AppointmentModalContent
+    ? AppointmentModalContent(node.props as unknown as AppointmentModalContentProps) : node.props.children)] : [];
 }
 function textContent(node: ReactNode): string {
   if (node === null || node === undefined || typeof node === 'boolean') return '';

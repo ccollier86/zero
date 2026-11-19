@@ -82,7 +82,7 @@ async function runnerCase(options: { now: number; receipt?: boolean; enqueueAt?:
   const scope = trustedSystemServiceDataScope({ scopeKind: 'application' }), writes: { name: string; input: any }[] = [];
   let now = options.now, accepted = options.receipt ?? false, enqueues = 0, inspections = 0;
   const occurrence: JobOccurrenceRow = { id: occurrenceId, scope_id: actor.scopeId, schedule_id: admission.id, admission_id: admission.id + ':1',
-    generation: 1, scheduled_at: due, state: 'claimed', lease_nonce: 'synthetic-claim', lease_until: due + 60_000, lease_generation: 1,
+    generation: 1, scheduled_at: due, state: options.receipt || options.dispatchAllowed === false ? 'claimed' : 'pending', lease_nonce: 'synthetic-claim', lease_until: due + 60_000, lease_generation: 1,
     workflow_id: null, receipt_json: null, terminal_status: null, error_code: null, created_at: due, updated_at: due };
   const runtime = {
     async read(_scope: unknown, name: string) {
@@ -90,7 +90,9 @@ async function runnerCase(options: { now: number; receipt?: boolean; enqueueAt?:
       return { occurrence, admission, seal: { authorityJson: '{}', authorityMac: 'synthetic-seal' }, dispatchAllowed: options.dispatchAllowed ?? true };
     },
     async write(_scope: unknown, name: string, input: unknown) {
-      writes.push({ name, input }); return name === 'jobs.claim' ? { claimed: true, leaseGeneration: 1 } : {};
+      writes.push({ name, input });
+      if (name === 'jobs.claim') { occurrence.state = 'claimed'; occurrence.lease_nonce = (input as { nonce: string }).nonce; return { claimed: true, leaseGeneration: 1 }; }
+      return {};
     },
   } as unknown as JobsRuntime;
   const bridge = {
@@ -114,18 +116,18 @@ async function runnerCase(options: { now: number; receipt?: boolean; enqueueAt?:
 test('an early uncertain claim reconciles an accepted receipt before applying not-before', async () => {
   const result = await runnerCase({ now: due - 1, receipt: true, dispatchAllowed: false });
   expect(result.error).toBeUndefined(); expect(result.enqueues).toBe(0); expect(result.inspections).toBe(1);
-  expect(result.writes.map(write => write.name)).toEqual(['jobs.claim', 'jobs.dispatch']);
+  expect(result.writes.map(write => write.name)).toEqual(['jobs.dispatch.reconcile']);
 });
 
 test('an early uncertain claim without a receipt remains recoverable instead of being blocked as revoked', async () => {
   const result = await runnerCase({ now: due - 1, dispatchAllowed: false });
   expect(result.error).toMatchObject({ code: 'JOBS_NOT_READY' }); expect(result.enqueues).toBe(0); expect(result.inspections).toBe(1);
-  expect(result.writes.map(write => write.name)).toEqual(['jobs.claim']);
+  expect(result.writes.map(write => write.name)).toEqual([]);
 });
 
 test('the repeated final handoff fence rejects a backward clock step after enqueue admission waits', async () => {
   const result = await runnerCase({ now: due, enqueueAt: due - 1 });
-  expect(result.error).toMatchObject({ code: 'JOBS_NOT_READY' }); expect(result.enqueues).toBe(1); expect(result.inspections).toBe(2);
+  expect(result.error).toMatchObject({ code: 'JOBS_NOT_READY' }); expect(result.enqueues).toBe(1); expect(result.inspections).toBe(3);
   expect(result.writes.map(write => write.name)).toEqual(['jobs.claim', 'jobs.claim.defer']);
 });
 

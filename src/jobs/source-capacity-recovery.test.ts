@@ -8,7 +8,7 @@ import { JOB_LIMITS } from './realm-model';
 import { JOB_WORK_LIMITS } from './realm-capacity';
 import { JOB_SOURCE_LIMITS, JOB_SOURCE_RECOVERY_INTENTS_LIMIT, sourceIntentId } from './source-realm-model';
 import type { TrustedJobSource } from './source-authority';
-import { jobSourceId, type JobSourceIdentity, type JobSourceRegistration, type JobSourceScheduleReceipt } from './source-model';
+import { jobSourceId, type JobSourceCapacityRows, type JobSourceIdentity, type JobSourceRegistration, type JobSourceScheduleReceipt } from './source-model';
 import { jobHash, jobJson } from './validation';
 import { memorySourceJobsFixture, untilMemoryJobs } from './test-support/memory-source-fixture';
 
@@ -117,7 +117,9 @@ test('versioned capacity separates working occupancy from factual retained histo
     await source.api.registration.activate(activate);
     const created = await source.api.schedules.create(once(f), { idempotencyKey: 'capacity-once' });
     await source.api.schedules.cancel(created.id, { expectedRevision: 1, idempotencyKey: 'capacity-cancel' });
-    const result = await source.api.capacity.get();
+    // This fixture deliberately exercises the raw row-only realm lane. Native
+    // writer composition and truthful v3 transport counters have separate tests.
+    const result = await f.query<JobSourceCapacityRows>(source.scope, 'jobs.source.capacity', { identity: source.identity });
     expect(result).toEqual({ version: 2, source: { id: created.sourceId, registered: true },
       working: { sourceSchedules: { used: 0, limit: JOB_WORK_LIMITS.schedulesPerSource, remaining: JOB_WORK_LIMITS.schedulesPerSource },
         fileSchedules: { used: 0, limit: JOB_WORK_LIMITS.schedules, remaining: JOB_WORK_LIMITS.schedules },
@@ -129,7 +131,8 @@ test('versioned capacity separates working occupancy from factual retained histo
         sources: { used: 1, limit: JOB_SOURCE_LIMITS.sources, remaining: JOB_SOURCE_LIMITS.sources - 1 },
         sourcePolicies: { used: 1, limit: JOB_SOURCE_LIMITS.policies, remaining: JOB_SOURCE_LIMITS.policies - 1 } } } });
     expect(JSON.stringify(result)).not.toMatch(/PRIVATE_CAPACITY_INPUT|authority|contract|principal|workflow|rootHash|ownerId|databaseId/);
-    const other = f.source({ identity: { databaseId: 'another-synthetic-source' } }), otherResult = await other.api.capacity.get();
+    const other = f.source({ identity: { databaseId: 'another-synthetic-source' } });
+    const otherResult = await f.query<JobSourceCapacityRows>(other.scope, 'jobs.source.capacity', { identity: other.identity });
     expect(otherResult?.source).toMatchObject({ registered: false });
     expect(otherResult?.working.sourceSchedules).toMatchObject({ used: 0, remaining: JOB_WORK_LIMITS.schedulesPerSource });
     expect(otherResult?.retained.sourceSchedules).toEqual({ used: 0 });
@@ -137,8 +140,10 @@ test('versioned capacity separates working occupancy from factual retained histo
     const tenant = f.source({ scope: trustedSystemServiceDataScope({ scopeKind: 'tenant', tenantId: 'absent' }) });
     expect(await tenant.api.capacity.get()).toBeNull(); expect(f.stats().planes).toBe(1);
     accounting(f, source, 'intents', JOB_LIMITS.intents + 1);
-    expect((await source.api.capacity.get())?.retained.file.intents).toEqual({ used: JOB_LIMITS.intents + 1, limit: JOB_LIMITS.intents, remaining: 0 });
-    source.retireEligibility(); expect((await source.api.capacity.get())?.source.registered).toBe(true);
+    expect((await f.query<JobSourceCapacityRows>(source.scope, 'jobs.source.capacity', { identity: source.identity }))?.retained.file.intents)
+      .toEqual({ used: JOB_LIMITS.intents + 1, limit: JOB_LIMITS.intents, remaining: 0 });
+    source.retireEligibility();
+    expect((await f.query<JobSourceCapacityRows>(source.scope, 'jobs.source.capacity', { identity: source.identity }))?.source.registered).toBe(true);
     expect('capacity' in f.request()).toBe(false);
   } finally { await f.close(); }
 });

@@ -8,6 +8,7 @@ import type { IdentityKey } from '../sync/identity';
 import type { Change, Row } from '../sync/types';
 import { DatabaseError } from './database-error';
 import type { DatabaseFindInput, DatabaseFindRows } from './database-operations';
+import type { DatabaseSerializableValue } from './database-operations';
 import { databaseOperationRecord } from './database-operation-payload';
 import { validateDatabaseFindOperation } from './database-find-validation';
 import { runDatabaseFind } from './database-find';
@@ -93,6 +94,8 @@ export interface DatabaseWriteCommandCapability {
 /** Context supplied only to a registered writer command. */
 export interface DatabaseWriteCommandContext {
   readonly db: DatabaseWriteCommandCapability;
+  /** @internal Detached frozen native bind policy. Never sourced from command JSON. */
+  readonly writerPolicy?: DatabaseSerializableValue;
 }
 
 /** Internal revocable lifetime for one registered-command invocation. */
@@ -109,6 +112,7 @@ export interface DatabaseWriteCommandSession {
 export function createDatabaseWriteCommandSession(
   database: ReactiveDB,
   readOnlyTables: readonly string[] = [],
+  writerPolicy?: DatabaseSerializableValue,
 ): DatabaseWriteCommandSession {
   let active = true;
   let capability!: DatabaseWriteCommandCapability;
@@ -278,7 +282,8 @@ export function createDatabaseWriteCommandSession(
   ));
 
   capability = Object.freeze(methods) as unknown as DatabaseWriteCommandCapability;
-  const context = Object.create(null) as { db: DatabaseWriteCommandCapability };
+  const context = Object.create(null) as { db: DatabaseWriteCommandCapability; writerPolicy?: DatabaseSerializableValue };
+  if (writerPolicy !== undefined) Object.defineProperty(context, 'writerPolicy', { value: writerPolicy, enumerable: true });
   Object.defineProperty(context, 'db', {
     value: capability,
     enumerable: true,

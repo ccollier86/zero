@@ -164,9 +164,11 @@ back by a later refusal.
 Inspection is existing-only and bounded. It returns retained usage budgets,
 current selections, one indexed pending control per rule, dispatch existence
 flags, admitted-but-unsettled presence, redacted downstream registration facts
-and Jobs capacity. Its native version-2 capacity distinguishes bounded working
+and Jobs capacity. Its native version-3 capacity distinguishes bounded working
 schedule/occurrence occupancy from retained file-history budgets and the source's
-factual lifetime schedule count. Completed history is not silently shown as a
+factual lifetime schedule count, and includes actual writer key/byte measurements,
+current policy proof, settlement obligations and visible deficit/headroom. Calendar
+does not read Jobs receipt tables or infer transport counts. Completed history is not silently shown as a
 live slot. Neither a free work slot nor an empty queue certifies physical effects
 have drained. It never provisions missing owners/files, hydrates rules,
 pins workflows, starts timers or mutates Jobs. Source policy changes across Jobs

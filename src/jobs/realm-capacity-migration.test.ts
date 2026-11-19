@@ -44,7 +44,7 @@ function historical(seed: (fixture: ReturnType<typeof memoryCapacityFixture>) =>
   } finally { database.close(true); current.close(); }
 }
 function migrate(database: Database) {
-  const migrator = new Migrator({ database, dbPath: ':memory:', migrations: jobsRealm.migrations,
+  const migrator = new Migrator({ database, dbPath: ':memory:', migrations: jobsRealm.migrations.slice(0, 3),
     createBackups: false, applyPragmas: false, log() {} });
   try { migrator.run(); return migrator.status(); } finally { migrator.dispose(); }
 }
@@ -52,7 +52,7 @@ function migrate(database: Database) {
 test('003 is additive and 001/002 declaration maps and checksums remain historical', () => {
   expect(hashMigration(jobsRealm.migrations[0]!)).toBe('e685208b804564ef8099324f5218dbd6cc783d8d0541e4689cba348fb42a4749');
   expect(hashMigration(jobsRealm.migrations[1]!)).toBe(hashMigration(JOB_SOURCE_MIGRATION));
-  expect(jobsRealm.migrations.map(migration => migration.version)).toEqual(['001', '002', '003']);
+  expect(jobsRealm.migrations.slice(0, 3).map(migration => migration.version)).toEqual(['001', '002', '003']);
   expect(CURRENT_JOB_TABLES._jobs_schedule_work).toBeUndefined();
   expect(Object.isFrozen(CURRENT_JOB_TABLES)).toBe(true); expect(Object.isFrozen(JOB_CAPACITY_TABLES)).toBe(true);
 });

@@ -37,6 +37,8 @@ export type DatabaseTrustedReceiptLookup =
 
 /** Authority-fenced writer-only receipt capability. */
 export interface DatabaseTrustedWriteExecutor {
+  /** @internal Aggregate-only, non-mutating native writer capacity. */
+  inspectAdmission?(options?: DatabaseTrustedReceiptExecutionOptions): Promise<import('./database-writer-admission').DatabaseWriterAdmissionInspection>;
   findReceipt(
     idempotencyKey: string,
     logicalReceiptFingerprint: DatabaseLogicalReceiptFingerprint,

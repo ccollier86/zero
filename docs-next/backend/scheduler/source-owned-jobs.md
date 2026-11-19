@@ -79,9 +79,10 @@ The private `JobsService.forSource` surface supports:
   Cron/source recurrence is deliberately rejected by this first integration.
 - Current schedule inspection and original command-receipt reconciliation, even
   after retirement or cancellation. Evidence reads do not run current parsers.
-- Private `capacity.get()` returns explicit **version 2** working occupancy and
-  retained-history accounting. It verifies the existing owner and uses a fixed
-  number of usage primary-key lookups, not history scans. Missing existing Jobs storage
+- Private `capacity.get()` returns explicit **version 3** working, retained-history
+  and native transport-settlement accounting. It verifies the existing owner and
+  current bound capacity policy on the same retained lease; aggregate usage uses
+  fixed primary-key lookups, not history scans. Missing existing Jobs storage
   returns `null`, not an invented empty/provisioned database. Registration
   presence is not proof that a source is currently eligible or active. No seal,
   executable contract, scheduling input or other source identity is exposed.
@@ -210,13 +211,19 @@ changing the old fields' meaning:
 
 ```ts
 {
-  version: 2,
+  version: 3,
   source: { id, registered },
   working: { sourceSchedules, fileSchedules, fileOccurrences },
   retained: {
     sourceSchedules: { used }, // factual lifetime count, no fictitious limit
-    file: { schedules, intents, sourceRecoveryIntents, occurrences,
+    file: { schedules, intents, actorRecoveryIntents, sourceRecoveryIntents, occurrences,
             sources, sourcePolicies }
+  },
+  transport: {
+    policyFingerprint, permanentKeys, keyLimit, hardKeyLimit, settlementUnits,
+    ordinaryRemaining, settlementRemaining, deficit,
+    actorControlUnits, sourceControlUnits,
+    retainedResults, expiredTombstones, retainedResultBytes, retainedByteLimit
   }
 }
 ```
@@ -225,10 +232,31 @@ Budget entries have `{used, limit, remaining}`. The unbounded-in-principle sourc
 history measurement has only `used`; the existing file history budgets remain
 finite and enforced. Working closure does not decrement those history counters.
 This permits more than 1,000 sequential closed one-shots on the same source,
-not unlimited retained disk usage. Explicit configurable history budgets, the
-separate generic writer transport-key budget/recovery reserve and larger bounded
-owner hydration remain Calendar production gates. Do not call transport result
-compaction evidence deletion or a solution to permanent key exhaustion.
+not unlimited retained disk usage. Version 2 was the prior branch-only row
+projection; version 3 composes those facts with the actual writer's receipt store
+and current policy. It does not fabricate transport counts from domain rows.
+
+Additive `004` derives settlement memberships without altering the original
+`001`–`003` closures, counters, receipts or identities. Pending/claimed/blocked
+occurrences owe two transport units; dispatched owes one, terminal/cancelled
+owes zero. Active/paused occupied actor schedules owe two/one control units;
+occupied source schedules and active sources owe one each. Every generation
+counts. The actual native writer conserves permanent transport keys plus these
+obligations inside the domain/receipt/final-authority transaction. Fresh ordinary
+claims, defers and retries cannot spend settlement reserve. Pressure permits only
+fixed native factual/control commands whose accepted transaction reduces the
+obligation; failed/no-op retries do not consume reserved keys. Exact-key replay
+still precedes new-key admission.
+
+The native runner checks the original sealed Torrent handoff before buying a new
+claim. Accepted original evidence may settle after lease expiry with exact claim
+CAS; it cannot authorize enqueue. Missing evidence remains unknown, not rollback.
+Legacy policy deficits freeze ordinary admission and remain visible. Genuine
+settlement may only preserve/reduce those deficits and cannot bypass the hard
+physical key ceiling. An already hard-full file cannot mint another key merely
+because its logical obligations shrink. Result compaction does not erase
+permanent identity tombstones. Larger bounded resident-owner hydration and real
+file/actor qualification remain Calendar production gates.
 
 Canonical schedule changes use the existing native logging source/outbox. Events
 distinguish source/policy generation and factual initiation without impersonating

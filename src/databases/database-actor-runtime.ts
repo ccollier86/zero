@@ -7,6 +7,7 @@
  */
 
 import { DatabaseError } from './database-error';
+import { databaseWriterAdmissionFingerprint } from './database-writer-admission';
 import { LOGGING_ACTOR_SOURCE_OPERATION } from '../logging/logging-actor-source';
 import { LOGGING_ACTOR_PROBE_OPERATION, probeLoggingDeliveryDatabase } from '../logging/logging-control-realm';
 import { loggingRecord } from '../logging/logging-validation';
@@ -204,6 +205,13 @@ export class DatabaseActorRuntime implements Disposable {
           return asExecutorValue(this.tenantSyncSnapshotAbort(request));
         case DATABASE_ACTOR_OPERATIONS.findReceipt:
           return asExecutorValue(this.findReceipt(request));
+        case DATABASE_ACTOR_OPERATIONS.inspectAdmission: {
+          const payload = validateDatabaseActorUnbindPayload(request.payload);
+          const binding = this.requireBinding(payload.databaseRef);
+          requireOperationKind(request.kind, 'read');
+          if (binding.role !== 'writer') throw new DatabaseError('DATABASE_OPERATION_UNSUPPORTED', 'Writer admission inspection requires the writer.');
+          return asExecutorValue(binding.engine.inspectAdmission());
+        }
         case DATABASE_ACTOR_OPERATIONS.identityProjection:
           return asExecutorValue(this.identityProjection(request));
         case DATABASE_ACTOR_OPERATIONS.presenceProjection:
@@ -332,6 +340,7 @@ export class DatabaseActorRuntime implements Disposable {
           : null,
         ...(candidate!.role === 'writer' && candidate!.loggingSource ? { loggingPolicyFingerprint: loggingDigest(candidate!.loggingSource.policy) } : {}),
         ...(candidate!.openAdmissionFingerprint === undefined ? {} : { openAdmissionFingerprint: candidate!.openAdmissionFingerprint }),
+        ...(candidate!.writerPolicyFingerprint === undefined ? {} : { writerPolicyFingerprint: candidate!.writerPolicyFingerprint }),
       }));
       if (result.databaseRef !== payload.databaseRef
         || result.role !== this.role
@@ -342,6 +351,7 @@ export class DatabaseActorRuntime implements Disposable {
         || result.instanceId !== payload.instanceId
         || !sameActorPlacement(result.placement, payload.placement)
         || result.realmFingerprint !== payload.realmFingerprint
+        || result.writerPolicyFingerprint !== databaseWriterAdmissionFingerprint(this.realm, payload.writerPolicy)
         || result.schemaChecksum !== this.realm.schemaChecksum) {
         throw new DatabaseError(
           'DATABASE_PROTOCOL_ERROR',

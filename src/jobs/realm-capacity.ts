@@ -4,6 +4,7 @@ import type { Row } from '../sync/types';
 import { JobsError } from './error';
 import type { JobOccurrenceRow, JobScheduleRow } from './model';
 import { jobInteger } from './validation';
+import { initializeJobScheduleSettlement, refreshJobScheduleSettlement, initializeJobOccurrenceSettlement, refreshJobOccurrenceSettlement } from './settlement-model';
 
 export const JOB_WORK_LIMITS = Object.freeze({ schedules: 10_000, schedulesPerSource: 1_000, occurrences: 100_000 });
 export const jobWorkSourceKey = (sourceId: string): string => 'source:' + sourceId;
@@ -34,6 +35,7 @@ export function initializeJobScheduleWork(context: DatabaseWriteCommandContext, 
   if (schedule.source_id) usage(context, jobWorkSourceKey(schedule.source_id), 1, JOB_WORK_LIMITS.schedulesPerSource);
   context.db.createStrict('_jobs_schedule_work', { id: schedule.id, scope_id: schedule.scope_id,
     source_id: schedule.source_id ?? null, open_occurrences: 0, occupied: 1 });
+  initializeJobScheduleSettlement(context, schedule.id);
 }
 /** No retained-history scan: the aggregate includes unresolved occurrences from
  * ALL generations. Closure never asserts physical/provider completion.
@@ -53,14 +55,17 @@ export function refreshJobScheduleWork(context: DatabaseWriteCommandContext, sch
   usage(context, 'schedules', delta, JOB_WORK_LIMITS.schedules);
   if (row.source_id) usage(context, jobWorkSourceKey(row.source_id), delta, JOB_WORK_LIMITS.schedulesPerSource);
   if (count !== previous || occupied !== row.occupied) context.db.update('_jobs_schedule_work', row.id, { open_occurrences: count, occupied });
+  refreshJobScheduleSettlement(context, scheduleId);
 }
 /** Charge only newly materialized unresolved work; known superseded history is retained but not live. */
 export function recordJobOccurrenceWork(context: DatabaseWriteCommandContext, occurrence: JobOccurrenceRow): void {
   refreshJobScheduleWork(context, occurrence.schedule_id, open(occurrence.state) ? 1 : 0);
+  initializeJobOccurrenceSettlement(context, occurrence.id);
 }
 /** Call only after the canonical transition accepted. Replays that did not
  * update an occurrence must not repeat this state delta.
  */
 export function changeJobOccurrenceWork(context: DatabaseWriteCommandContext, previous: JobOccurrenceRow, state: JobOccurrenceRow['state']): void {
   refreshJobScheduleWork(context, previous.schedule_id, Number(open(state)) - Number(open(previous.state)));
+  refreshJobOccurrenceSettlement(context, previous.id);
 }

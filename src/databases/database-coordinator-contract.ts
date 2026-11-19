@@ -45,6 +45,8 @@ export type DatabaseExecutorFactory = (
 ) => DatabaseExecutor;
 
 export interface DatabaseCoordinatorOptions {
+  /** @internal Immutable native policy, normalized by the actor-imported realm. */
+  readonly writerPolicy?: import('./database-operations').DatabaseSerializableValue;
   /** Private root containing only Zero-managed flat database files. */
   readonly rootDirectory: string;
   /** Immutable actor-local schema and named-operation registry. */

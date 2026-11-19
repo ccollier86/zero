@@ -8,13 +8,12 @@ import { normalizeCalendarTimedInterval, normalizeCalendarTimeZone, type Calenda
 import { calendarInteger, calendarKey, calendarRecord, calendarScope, calendarText, calendarValue } from './validation';
 import { calendarSelection } from './realm-model';
 import { appendCalendarSemanticAudit } from './semantic-audit';
-import { assertCalendarResourcesAvailable } from './occupancy';
-import { assertCalendarAvailability } from './availability-model';
+import { admitCalendarBookingCandidate } from './booking-admission';
 import { assertCalendarLifecycleReason, bindCalendarAppointmentLifecycle, calendarLifecycleReason, currentCalendarAppointmentLifecycle,
   currentCalendarLifecyclePolicy, effectiveCalendarAppointmentStatus, isCalendarLifecycleTerminal } from './lifecycle-model';
-import { assertCalendarBookingType, bindCalendarAppointmentType, calendarAppointmentTypeAtRevision, calendarAppointmentTypeReference,
+import { bindCalendarAppointmentType, calendarAppointmentTypeAtRevision, calendarAppointmentTypeReference,
   assertCalendarTypePolicy, calendarCurrentAppointmentType, normalizeCalendarTypedBooking, normalizeCalendarTypedIntentInterval, sameCalendarAppointmentType } from './appointment-type-bindings';
-import { assertCalendarBookingVisit, assertCalendarVisitPolicy, bindCalendarAppointmentVisit, calendarAppointmentVisitAtRevision,
+import { assertCalendarVisitPolicy, bindCalendarAppointmentVisit, calendarAppointmentVisitAtRevision,
   calendarCurrentAppointmentVisit, calendarVisitInput, sameCalendarVisit } from './visit-bindings';
 import { bindCalendarAppointmentParticipants, calendarParticipantReferences, requireCalendarParticipantManager } from './participant-bindings';
 import { replaceCalendarAppointmentResourceCurrent } from './appointment-resource-bindings';
@@ -123,12 +122,10 @@ export function commitCalendarAppointment(context: DatabaseWriteCommandContext, 
     const resource = calendarResource(context, actor, resourceId); requireCalendarRight(context, actor, resource, 'book');
     if (!resource.active) throw new CalendarError('CALENDAR_FORBIDDEN');
   }
-  assertCalendarTypePolicy(context, actor, resourceIds, options?.appointmentType); assertCalendarVisitPolicy(context, actor, resourceIds, options?.visit);
-  assertCalendarBookingType(context, actor, resourceIds, interval, options?.appointmentType);
-  const visit = assertCalendarBookingVisit(context, actor, resourceIds, options?.visit);
-  assertCalendarAvailability(context, actor.scopeId, resourceIds, interval);
-  assertCalendarResourcesAvailable(context, actor.scopeId, resourceIds, interval,
-    options?.exceptHoldId === undefined ? undefined : { kind: 'hold', id: options.exceptHoldId }, options?.now);
+  const { visit } = admitCalendarBookingCandidate(context, actor.scopeId,
+    { resourceIds, interval, appointmentType: options?.appointmentType, visit: options?.visit },
+    { type: true, visit: true, availabilityResourceIds: resourceIds,
+      occupancy: { except: options?.exceptHoldId === undefined ? undefined : { kind: 'hold', id: options.exceptHoldId }, now: options?.now } });
   calendarBudget(context, 'appointments');
   const change = context.db.createStrict('calendar_appointments', { id, scope_id: actor.scopeId, title, ...intervalFields(interval), status: 'confirmed', revision: 1, created_by: actor.userId });
   if (options?.appointmentType) bindCalendarAppointmentType(context, actor.scopeId, id, 1, options.appointmentType);
@@ -171,12 +168,9 @@ export function rescheduleCalendarAppointment(context: DatabaseWriteCommandConte
       // A zone-only display correction does not invalidate grandfathered UTC occupancy.
       const occupancyChanged = row.start_ms !== interval.startMs || row.end_ms !== interval.endMs || row.buffer_before !== interval.bufferBeforeMinutes
         || row.buffer_after !== interval.bufferAfterMinutes;
-      if (occupancyChanged || typeChanged) assertCalendarTypePolicy(context, actor, resourceIds, typeRef);
-      if (occupancyChanged || visitChanged) assertCalendarVisitPolicy(context, actor, resourceIds, visitRef);
-      if (occupancyChanged || typeChanged) assertCalendarBookingType(context, actor, resourceIds, interval, typeRef);
-      if (occupancyChanged || visitChanged) assertCalendarBookingVisit(context, actor, resourceIds, visitRef);
-      if (occupancyChanged) assertCalendarAvailability(context, actor.scopeId, resourceIds, interval);
-      assertCalendarResourcesAvailable(context, actor.scopeId, resourceIds, interval, { kind: 'appointment', id: row.id });
+      admitCalendarBookingCandidate(context, actor.scopeId, { resourceIds, interval, appointmentType: typeRef, visit: visitRef },
+        { type: occupancyChanged || typeChanged, visit: occupancyChanged || visitChanged,
+          availabilityResourceIds: occupancyChanged ? resourceIds : [], occupancy: { except: { kind: 'appointment', id: row.id } } });
       const revision = nextCalendarRevision(row.revision), change = context.db.update('calendar_appointments', row.id, { ...intervalFields(interval), revision });
       if (typeChanged) bindCalendarAppointmentType(context, actor.scopeId, row.id, revision, typeRef);
       if (visitChanged) bindCalendarAppointmentVisit(context, actor.scopeId, row.id, revision, visitRef);

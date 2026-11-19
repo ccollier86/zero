@@ -9,6 +9,7 @@
 import { isAbsolute, normalize, resolve } from 'node:path';
 
 import { DatabaseError } from './database-error';
+import { normalizeDatabaseWriterAdmission } from './database-writer-admission';
 import { normalizeDatabaseOpenAdmission, type DatabaseOpenAdmission } from './database-open-admission';
 import type { DatabaseRealm } from './database-realm';
 import { normalizeLoggingActorSourceBinding, type LoggingActorSourceBinding } from '../logging/logging-actor-source';
@@ -55,6 +56,7 @@ export const DATABASE_ACTOR_OPERATIONS = Object.freeze({
   tenantSyncSnapshotPage: 'database.tenant-sync.snapshot.page',
   tenantSyncSnapshotAbort: 'database.tenant-sync.snapshot.abort',
   findReceipt: 'database.receipt.find',
+  inspectAdmission: 'database.writer.admission.inspect',
   identityProjection: 'database.identity-projection',
   presenceProjection: 'database.presence-projection',
   unbind: 'database.unbind',
@@ -85,6 +87,7 @@ const BIND_FIELDS = new Set([
   'authorityCommitFence',
   'logging',
   'openAdmission',
+  'writerPolicy',
 ]);
 const REQUIRED_BIND_FIELDS = Object.freeze([
   'databaseRef',
@@ -190,6 +193,7 @@ export interface DatabaseActorBindPayload {
   readonly authorityCommitFence?: DatabaseActorAuthorityCommitFenceConfig;
   readonly logging?: LoggingActorSourceBinding;
   readonly openAdmission?: DatabaseOpenAdmission;
+  readonly writerPolicy?: import('./database-operations').DatabaseSerializableValue;
 }
 
 /** Actor readiness proof returned after open/migration/schema validation. */
@@ -197,6 +201,7 @@ export interface DatabaseActorBindResult {
   /** Required by managed audit admission when the parent supplied a source policy. */
   readonly loggingPolicyFingerprint?: string;
   readonly openAdmissionFingerprint?: string;
+  readonly writerPolicyFingerprint?: string;
   readonly databaseRef: DatabaseRef;
   readonly role: DatabaseActorRole;
   readonly fileIdentity: DatabaseFileIdentityProof;
@@ -254,7 +259,10 @@ export function validateDatabaseActorBindPayload(
     try { openAdmission = normalizeDatabaseOpenAdmission(record.openAdmission, realm); }
     catch { throw payloadInvalid('Invalid database open admission.'); }
   }
+  const writerPolicy = realm === undefined ? record.writerPolicy as import('./database-operations').DatabaseSerializableValue | undefined
+    : normalizeDatabaseWriterAdmission(realm, record.writerPolicy as import('./database-operations').DatabaseSerializableValue | undefined);
   const result = {
+    ...(writerPolicy === undefined ? {} : { writerPolicy }),
     databaseRef: parseDatabaseRef(record.databaseRef),
     filePath: parseCanonicalFilePath(record.filePath),
     fileIdentity: validateDatabaseFileIdentityProof(record.fileIdentity),
@@ -289,10 +297,13 @@ export function validateDatabaseActorBindResult(
     'syncEpoch',
     'loggingPolicyFingerprint',
     'openAdmissionFingerprint',
+    'writerPolicyFingerprint',
   ]), false);
   if (record.loggingPolicyFingerprint !== undefined && (typeof record.loggingPolicyFingerprint !== 'string' || !SCHEMA_CHECKSUM_PATTERN.test(record.loggingPolicyFingerprint))) throw payloadInvalid('Invalid actor audit readiness proof.');
   if (record.openAdmissionFingerprint !== undefined && (typeof record.openAdmissionFingerprint !== 'string'
     || !SCHEMA_CHECKSUM_PATTERN.test(record.openAdmissionFingerprint))) throw payloadInvalid('Invalid actor open admission proof.');
+  if (record.writerPolicyFingerprint !== undefined && (typeof record.writerPolicyFingerprint !== 'string'
+    || !SCHEMA_CHECKSUM_PATTERN.test(record.writerPolicyFingerprint))) throw payloadInvalid('Invalid actor writer policy proof.');
   if (record.role !== 'writer' && record.role !== 'reader') {
     throw payloadInvalid('Invalid database actor role.');
   }
@@ -327,6 +338,7 @@ export function validateDatabaseActorBindResult(
     syncEpoch: record.syncEpoch,
     ...(record.loggingPolicyFingerprint === undefined ? {} : { loggingPolicyFingerprint: record.loggingPolicyFingerprint as string }),
     ...(record.openAdmissionFingerprint === undefined ? {} : { openAdmissionFingerprint: record.openAdmissionFingerprint as string }),
+    ...(record.writerPolicyFingerprint === undefined ? {} : { writerPolicyFingerprint: record.writerPolicyFingerprint as string }),
   });
 }
 

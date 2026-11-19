@@ -353,7 +353,9 @@ test('a committed Torrent handoff with no Jobs dispatch reply reconciles the sam
     await source.api.registration.retire({ expectedRevision: 1, idempotencyKey: 'retire-after-commit' }); source.retireEligibility();
     f.advance(60_001); await f.tick();
     const recovered = f.rows(source.scope, '_jobs_occurrences')[0] as JobOccurrenceRow;
-    expect(recovered).toMatchObject({ id: claimed.id, state: 'terminal', terminal_status: 'completed', lease_generation: 2, workflow_id: committed.receipt.instanceId });
+    expect(recovered).toMatchObject({ id: claimed.id, state: 'terminal', terminal_status: 'completed', lease_generation: 1, workflow_id: committed.receipt.instanceId });
+    expect(f.commands.filter(command => command.name === 'jobs.claim')).toHaveLength(1);
+    expect(f.commands.filter(command => command.name === 'jobs.dispatch.reconcile')).toHaveLength(1);
     expect(JSON.parse(recovered.receipt_json!)).toEqual(committed.receipt);
     expect(f.calls).toHaveLength(1); expect(f.torrentDb.prepare('SELECT count(*) AS n FROM _workflow_system_start_receipts').get()).toEqual({ n: 1 });
     expect(f.failures).toContain('dispatch:JOBS_NOT_READY');

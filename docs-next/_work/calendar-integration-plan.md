@@ -66,13 +66,13 @@ demo change is implied by framework completion.
 | Order | Work package and completion test | Current state |
 | --- | --- | --- |
 | F1 | **Existing-owner and lifecycle admission.** Reject stale physical schema/ledger or wrong/missing/substituted owner before write-capable open/preparation. Explicit setup can migrate only after proving established ownership. Retired rules do not block unrelated bookings; removed active rules require review without orphaning accepted/unknown evidence. Zero-rule evidence-only recovery remains possible. | Source-atomic operator requests, ordered physical drain, read-only native cold admission and readiness/evidence split implemented/source checked. Physical rejection proof unexecuted. |
-| F2 | **Working versus durable-history capacity.** Completed history must not exhaust a live-work quota. Preserve original schedule/receipt/Torrent identities and factual historical counters. Bound active/unknown/review occupancy, expose pressure, keep retirement/reconciliation headroom and use an explicit configurable storage/history budget. More than 1,000 completed reminders on one unchanged source must remain readable and permit new work. Scale resident owner/capability hydration separately from retained files. | Additive Jobs003 working membership, all-generation settlement and truthful capacity v2 source checked, including >1,000 sequential closures. Configurable retained budget, transport settlement obligations and bounded resident-owner hydration remain required. No deletion, identity rotation or limit bump is a solution. |
+| F2 | **Working versus durable-history capacity.** Completed history must not exhaust a live-work quota. Preserve original schedule/receipt/Torrent identities and factual historical counters. Bound active/unknown/review occupancy, expose pressure, keep retirement/reconciliation headroom and use an explicit configurable storage/history budget. More than 1,000 completed reminders on one unchanged source must remain readable and permit new work. Scale resident owner/capability hydration separately from retained files. | Additive Jobs003 working membership and004 all-generation settlement, trusted configurable finite retained policy, transactional transport/control reserve and native capacity v3 implemented/source checked and independently reviewed. Bounded resident-owner hydration is the next required lane below. No deletion or identity rotation. |
 | F3 | **Managed activation, adoption and controls.** Wire the existing dormant Calendar/Jobs/Torrent owner into normal startup, typed opt-in config, authorized operator API/SDK and clear readiness. Add read-only adoption planning, explicit prepare/retire/reactivate/disable procedure and Doctor checks. Unknown/nonterminal work prevents a false safe-disable result. | Private native owner, inspection and audited actor acceptance source checked; public mount and operational procedure queued after F1/F2. |
 | F4 | **Complete canonical scheduling commands.** Support the rich editor's persisted fields through one atomic update contract, current resource/type/visit/participant policy, receipts and semantic evidence. Independent override permission/reason; retain history. Add local-date all-day handling and reviewed effective eligibility where supported. No sequential saves presented as atomic or raw CRUD bypass. | Additive016 atomic title/resource/time/type/visit/participant update, private update history, facade/HTTP/SDK and connected edit source checked alongside earlier core. All-day/override/remaining eligibility queued. |
-| F5 | **Series and coverage.** Standards-tested daily/weekly/monthly/yearly engine, nominal occurrence identity, exceptions, one/future/all edits and split lineage. Bounded all-resource materialization commits conflicts consistently; expose durable coverage, not unbounded free-time promises. Existing Jobs/Torrent extends horizons without a second Calendar timer system. | Private bounded timed recurrence engine/conformance source checked, including zone gap/fold and Gregorian boundary cases. Series persistence, automatic coverage and facade/UI connection queued. |
+| F5 | **Series and coverage.** Standards-tested daily/weekly/monthly/yearly engine, nominal occurrence identity, exceptions, one/future/all edits and split lineage. Bounded all-resource materialization commits conflicts consistently; expose durable coverage, not unbounded free-time promises. Existing Jobs/Torrent extends horizons without a second Calendar timer system. | Private bounded timed engine/conformance source checked. Reviewed implementation design below specifies immutable versions, staged atomic publication, explicit one/future/all semantics and sparse UTC coverage. No series persistence, automatic coverage or facade/UI activation yet. |
 | F6 | **Authoritative self-booking and invitations.** Real bounded offers, member/invitation/approved-guest proof, notice/horizon/type/recipient policy, abuse limits, actual any-provider allocation, expiry and atomic confirmation. Explicit pending-review capacity semantics and approve/reject. Hash/revoke capabilities; no private busy/detail leak or staff-audit requirement for public artwork. | Authenticated subject-bound holds/confirm source checked. Offers/proofs/review/RSVP/public routes and native booking UI queued. |
 | F7 | **Actual effects and optional service adapters.** Versioned source-owned reminder/transition rules, immutable due/lateness, fresh recipient/domain checks after waits, native notification/email adapters and exact supersede/cancel/reconciliation. Partial acceptance and unknown SMTP remain distinct; manual review never invents provider evidence. Storage/presence/contact/AI adapters are optional and admitted explicitly. | Observation-only cutoff/recovery source checked. No actual reminder/channel, invitation or AI adapter is enabled. |
-| F8 | **Connected clinical and management experience.** Canonical optional progress/outcome/lobby/attention axes and current action/reason policy; online presence never implies arrival. Connect the reviewed rich editor, all card/agenda/context/status entry points, scoped geography, catalogs/hours/blocks/grants and public booking through the shared async controller. Day/week/month/list, fixed gutter, dense provider scrolling, empty/setup/denied/unknown states and native modal lifecycle work with real data. | Connected core atomic edit/types/visits/native-account/status-reason subset source checked. Approved rich-editor async seam under review; management/clinical/booking completion remains required. |
+| F8 | **Connected clinical and management experience.** Canonical optional progress/outcome/lobby/attention axes and current action/reason policy; online presence never implies arrival. Connect the reviewed rich editor, all card/agenda/context/status entry points, scoped geography, catalogs/hours/blocks/grants and public booking through the shared async controller. Day/week/month/list, fixed gutter, dense provider scrolling, empty/setup/denied/unknown states and native modal lifecycle work with real data. | Approved rich content composes one native async owner and is the connected workspace default, with whole-resource-set/type/visit/participant atomic writes. Lifecycle/receipt review and combined source checks passed. Management/clinical/booking completion remains required. |
 | F9 | **Integration and operational qualification.** Single/multi tenancy, populated upgrades, files/WAL/HOT/restarts/kill, real managed optional/compliance logging, quiet revocation/reconnect, measured file-mode budgets and real Chromium. No passing mock/model/unit result substitutes for a browser or actor run. | Extensive source/MEMORY evidence; physical definitions partly prepared. Real physical/browser/performance qualification blocked by the existing storage-integrity hold. |
 | F10 | **Release and adoption.** Final docs/Doctor/public exports, full frozen-candidate validation, exact installed source archive and official Linux/amd64 bundle/actors, updater preservation, commit/hash/provenance and both remotes. Normal updater selects the qualified artifact; handoff shows new/existing-app setup and app-owned hooks. | Queued. No Calendar backend release selected. |
 
@@ -89,7 +89,7 @@ separates these working measurements from the unchanged retained file ceilings;
 the retained per-source measurement has no fictional enforced limit/remaining.
 This increment is source/MEMORY checked, not a completed F2 or physical release.
 
-The next coherent package must enforce the following contract in the native
+The next coherent package implements the following contract in the native
 actor and final writer, not only in a parent preflight or application query:
 
 - A trusted Jobs capacity policy contains finite `retained` ceilings for
@@ -119,9 +119,11 @@ actor and final writer, not only in a parent preflight or application query:
   owes two units (handoff evidence and terminal evidence); dispatched owes one;
   terminal/cancelled owes zero. Review-blocked occurrences conservatively retain
   two units for their permitted factual resolution, even while current review
-  policy leaves them occupied. Each noncancelled occupied schedule (including
-  open occurrences after cursor closure) and each active source owes one further
-  control-settlement unit. All generations count. Keep separate actor/source
+  policy leaves them occupied. Each occupied source schedule and active source
+  owes one further control-settlement unit. An occupied active actor schedule
+  owes two (pause then cancel), a paused one owes one, and a cancelled/closed
+  schedule owes zero. Open occurrences after cursor closure remain counted.
+  All generations count. Keep separate actor/source
   control-unit aggregates so logical recovery-receipt reserve is conserved too.
   Track bounded per-object membership and aggregate counters transactionally;
   do not recount ordinary startup or scan history on an admission decision.
@@ -216,6 +218,521 @@ and repeated pressure retries consuming zero reserved keys. Facade tests prove
 bounded aggregate-only output and current policy fingerprint. After verified
 filesystem recovery, F9 must still run real file/actor/restart/WAL/corrupt-source
 and measured capacity gates; MEMORY evidence does not substitute for them.
+
+#### F2 remaining lane — bounded resident hydration and durable owner coverage
+
+This is the reviewed next implementation contract, not an implemented capability.
+The current coordinator discovers every retained owner into `cells`/`refs` before
+starting work and rejects the 65th owner. Its `nextWakeAt`/revision are RAM-only;
+a hint for a nonresident owner is ignored. Jobs' separate process-wide
+`JobsSourceBroker.live` retains up to 1,024 active native bindings until retirement
+or shutdown. The source-authority `WeakMap` is not that quota and must not be
+cleared to revoke evidence. Per-file retained source/history ceilings, the
+physical file budgets and Fabric actor-cache bounds remain independent. Eight
+rules times 64 owners is only the current 512-binding envelope, not support for
+the retained 10,000-owner Calendar catalog. Jobs' configured file budget can also
+be smaller than Calendar's; admission must report that finite pressure honestly.
+
+The target keeps the existing resident ceilings, original owner/source/receipt
+identities and one native absolute wake. It does not add a timer engine, rotate
+identities, auto-retire removed configuration or delete settled/unknown history.
+Durable unknown/review work retains Jobs working and settlement charges even
+when an idle physical capability is detached. It does **not** pin resident RAM
+forever. Actual queued/running callbacks, gates and physical source leases pin
+hydration until their real bodies settle; caller cancellation, an expired lease,
+an empty receipt lookup or a successful bounded drain is not that proof.
+
+1. **First increment: native Jobs read-only attach/detach.** Extend the private
+   `SourceJobs` facade with a closed native hydration surface, provisionally
+   `hydration.attach({originalActivateKey, expectedRegistration, pinInput})` and
+   `hydration.tryDetach()`. Names are implementation proposals, not public API.
+   Attach uses the installing capability's physical owner/current eligibility,
+   compiled native contract and fixed graph pin; it serializes on the source
+   gate, reconciles the original accepted activation receipt and proves the
+   exact current active registration/generation/revision/policy hash before
+   publishing the resident binding. It never invokes `jobs.source.register`,
+   creates a logical/transport receipt, changes an epoch or prepares a policy.
+   A missing original receipt is not permission to fall back to activation.
+   Stale/retired/unselected policy cannot hydrate fresh authority; original
+   evidence reads retain their independent lifetime.
+
+   Detach is a compare-and-release of the **exact** current capability/binding,
+   never of a guessed source id or a later replacement. It performs no durable
+   write and does not abort owner/evidence signals or delete the WeakMap entry.
+   Release succeeds only when no queued/running source control, schedule
+   mutation, reconciliation barrier or fresh-dispatch callback still references
+   that binding. Track physical pins inside the actual WorkPool callbacks and
+   release them in their inner `finally`, not when an outer cancelled promise or
+   activation token finishes. A dispatch pin survives `prepareDispatch()` until
+   the native enqueue callback physically settles, including late callbacks
+   after caller timeout. Full/busy hydration is recoverable `JOBS_NOT_READY`,
+   not a definitive no-start/retirement or permanent occurrence block. The
+   existing global 1,024 resident limit remains enforced and observable.
+
+2. **Durable SYSTEM coverage before idle Calendar eviction.** Add a separately
+   inspected/additively installed native integration-wake catalog, leaving the
+   existing `_calendar_owners` declaration, domain migration checksums and
+   established owner identities unchanged. It needs one row per established
+   owner, exact owner/root/scope identity, `wake_at`, monotonic dirty generation
+   and a bounded failure/retry classification. A small scan-state record stores
+   the configuration/reconciliation generation, keyset cursor, captured catalog
+   tail and an explicit `complete` flag. Seed/backfill in bounded indexed metadata
+   pages; new owner establishment seeds its wake atomically, including owners
+   inserted behind a running scan's cursor. Resuming a partial scan never implies
+   the unseen catalog is quiet. Configuration stamps schedule reconciliation;
+   they are not fresh source/effect authority.
+
+   Every relevant Calendar domain/native integration command marks its owner
+   dirty in SYSTEM **before** acquiring the private writer lease. Marker-admission
+   failure means that private write never started. The one-way order is a short
+   SYSTEM admission and release, then private verification/read/write and lease
+   release, then a short SYSTEM generation-CAS publication. Never retain a
+   Calendar/Jobs SQL lease across a SYSTEM wait or call SYSTEM while holding an
+   opposing source lease. Once all in-process owner writes settle, sample the
+   current dirty generation, read canonical `calendar.integration.nextWake`, and
+   publish only if that generation is unchanged. This must account for the
+   pass's own policy/claim/ack writes, not compare against a generation captured
+   before them. A crash after private commit but before publication leaves a due
+   marker. Failed physical owner proof gets a durable retry/review wake; it does
+   not repair the source or silently disappear from coverage.
+
+3. **Bounded Calendar resident leases and fair turns.** Replace total-catalog
+   retention with an async bounded resident registry. `ready`, operator control,
+   background processing and fresh hydration acquire the same canonical owner
+   cell with explicit pins; never create competing controllers for one owner.
+   Ordinary readiness remains a fresh physical proof plus capture preparation,
+   not dependency activation or a global all-owner readiness gate. Process bounded
+   due pages ordered by `(wake_at, owner_id)` with a fixed turn horizon and a
+   keyset continuation; a backed-off or permanently dirty early prefix cannot
+   starve later owners. The scan cursor/checkpoint and incomplete coverage remain
+   visible across restart. One global native absolute wake comes from the next
+   due catalog row or unfinished scan, not from the set of resident cells.
+
+   After publishing canonical wake state, release an idle cell only after its
+   readiness/intake/controller/dispatcher bodies and local uninvoked-claim cleanup
+   have physically settled, and all of its exact native source bindings can
+   detach. Closing that idle controller may fence its fresh eligibility; it must
+   not close the retained runtime/evidence owner or erase durable retirement
+   markers. A partially detachable multi-rule cell must not silently lose another
+   rule's physical pin. Keep busy cells charged and apply bounded backpressure;
+   do not call an LRU map deletion a safe release.
+
+4. **On-demand dispatch without a lock cycle.** After original Torrent receipt
+   inspection, Jobs may request attachment through a fixed native source-domain
+   resolver registered by managed composition, not application JSON or a provider
+   callback sent over IPC. Resolve the canonical retained source identity and
+   exact admitted origin through the existing Jobs native realm/facade, then
+   prove the Calendar owner and full current configured policy/pin. Reuse the
+   canonical controller/current-policy cell and the read-only attach operation.
+   Never hydrate an unselected active rule, locally retired rule, stale A epoch
+   during desired B activation, or a source whose original activation is still
+   unknown. Wake ordinary durable control reconciliation and return not-ready.
+
+   This path must not await `coordinator.process()`, `dispatcher.runBatch()` or an
+   owner intake queue that can be waiting on the same Jobs schedule gate: the
+   runner already holds that gate, so doing so creates a cycle. It performs only
+   owner/current-policy proof and exact existing-source attachment on the separate
+   source gate, with no fresh prepare/activate/create side effect. Accepted Torrent
+   facts and transient historical evidence execution continue without resident
+   intake allocation; their original owner lifetime survives idle release.
+
+Implement/review step 1 before Calendar wake/runtime changes. Its concrete files
+are `jobs/source-service.ts`, `source-authority.ts` only if lifetime helpers need
+to move, `runner.ts` for a physical dispatch pin, and focused native source-gate/
+service tests. Steps 2–4 then touch a dedicated Calendar SYSTEM wake module,
+`calendar/runtime.ts`, `integration-coordinator.ts`, narrow controller/dispatcher
+idle hooks, the native Jobs source-hydration query/facade and
+`frontend/server/app-calendar-integration.ts`. Keep public configuration/routes
+and release claims behind F3/F9. No app-owned SQL access is introduced.
+
+Required MEMORY gates include more than 64 retained owners and more than 1,024
+sequential resident attachments without exceeding either resident bound; physical
+pins refusing detach after cancellation until late acceptance/body settlement;
+idle detach preserving exact receipts, unknown working/settlement usage and later
+read-only attachment; stale capability detach unable to remove a replacement;
+retired/unselected/config-A→B attach refusal; zero domain/transport writes or
+provider calls during attach; original activation miss never registering fresh;
+full global hydration returning recoverable not-ready; and a schedule-gate-held
+hydration test proving no controller/dispatcher deadlock. Wake-catalog gates cover
+populated metadata upgrade, partial scan/restart with explicit incomplete
+coverage, insertion behind cursor, dirty-before-write refusal, private commit
+before publication failure, generation races, same-pass self-writes, permanent
+early failures, fair later-owner progress and cleanup refusal retaining occupancy.
+Operator inspection must distinguish retained owners, resident owners/bindings,
+physical pins, dirty/due/backed-off owners and incomplete catalog coverage. Until
+scan completion plus native unknown/physical evidence is proved, it must not
+report globally quiet or safe-to-disable. Physical restart/file/actor proof stays
+under the existing F9 integrity hold.
+
+### F3 implementation contract — managed activation, evidence and adoption
+
+This is an implementation sequence, not enabled public configuration or a passed
+readiness gate. Preserve the existing core configuration: `calendar: true` or a
+core object already enables authenticated one-off scheduling; omitted/false is
+inert, explicit `auth: false` rejects enablement, missing scheduling timezone
+requires setup, and unsupported recurrence/reminder/self-booking enablement
+fails closed. Do not rewrite those behaviors or imply Jobs/Torrent are missing
+from every Calendar application. Core-only Calendar must retain its independent
+mount, logging composition and no-integration readiness cost.
+
+**Existing native seams, not replacement infrastructure.**
+
+- `frontend/server/app-calendar.ts` already composes the canonical runtime,
+  participant directory, Guardian facade, logging and routes; it captures provider
+  ownership before fallible publication and makes close retryable without
+  reopening intake.
+- `frontend/server/app-calendar-integration.ts` already prepares one dormant
+  Calendar/Jobs/Torrent owner inside an unsealed native dependency hook. Its
+  source prepares capture before business writes, its fixed activity can reconcile
+  retained evidence before discovery/publication, and its dependency owns physical
+  intake/evidence joins and final Calendar provider release. Reuse this owner.
+- `app-jobs.ts` already exposes dormant preparation, exact-owner/catalog checks,
+  one construction-time dependency, sealing, pre-recovery cancellation and shared
+  close. `workflow-plugin-runtime.ts` already waits for `beforeRecovery` before
+  recovery/publication. Do not add a Calendar timer system, second Torrent owner,
+  service-provider bag or startup promise that recursively waits on itself.
+- Native inspection and source-atomic initiating-actor retire/reactivate requests
+  already exist. Original actor receipt lookup precedes new desired-policy
+  compilation; current Guardian/Logging authority still fences replay and delivery.
+  Local acceptance is distinct from downstream control settlement and effect
+  completion. Public HTTP/SDK/request-facade mounts are not implemented yet.
+
+**Closed configuration and catalog admission.** Add typed integration admission
+in `calendar/config.ts` and cross-service validation/composition in
+`frontend/server/types.ts`, with no files, actors, registration, schema work or
+timers during configuration resolution. Public configuration must select the
+approved F5 series/coverage and F7 reminder/workflow capabilities and their
+versioned domain rules. Do not publish the private observation exemplar's
+`CalendarObservationRule[]` as the permanent production configuration, or call
+observation execution reminder delivery. Keep observation private while it
+qualifies the wiring; actual feature enablement stays closed until that feature's
+canonical writer, fixed graph, adapters and controller are complete.
+
+Fresh-generation activation and evidence-only ownership need distinct admitted
+states. Evidence-only retains the native owner, exact historical graph versions,
+source identities, receipt/reconciliation and retirement lanes while admitting no
+new feature generation. A zero desired-rule set already supports evidence work;
+it is not proof that retained active rules were retired. A retired rule must not
+block unrelated bookings, while removal of a still-active rule remains explicit
+review/retirement, never inferred cleanup or silent reactivation. Plain omission
+or `false` must not be advertised as safe removal of an already-used integration.
+Any persisted adoption/disable marker is additive, owner-bound and versioned;
+configuration alone cannot reconstruct an unobserved A→disabled→A transition.
+
+Dependencies must be admitted, not silently enabled or replaced. Require the
+normal Jobs owner and non-disabled normal Torrent owner, explicit feature/adaptor
+dependencies, current Guardian and required Logging admission. Preserve existing
+workflow defaults; do not misreport that an already-enabled owner is absent just
+because its configuration object was omitted. Compose native source-only Job
+definitions into the existing catalog using exact branded identity, and register
+the fixed Workflow/activity catalog before application registration and recovery.
+Authored reserved-name collisions fail, even for equivalent clones. Retain the
+required historical code/graph versions in evidence-only mode. Neither browser
+JSON nor public config supplies raw SQL, provider handles, arbitrary activities,
+native source capability, workflow pins or recovery authority.
+
+**Normal startup and teardown sequence.** The concrete integration point is
+`frontend/server/app-platform-services.ts`, not an application entry point:
+
+1. Resolve the closed capability/configuration graph and catalog composition
+   before any optional provider is opened. Register native graphs purely with a
+   late lookup of the exact integrated executor; retain the existing Messaging
+   registration and app registry callback rather than replacing either.
+2. In the existing `beforeRecovery(workflows, {signal})`, prepare dormant Jobs,
+   then `prepareManagedCalendarIntegration` using that exact unpublished Torrent
+   service and Jobs owner. Supply current managed Auth/Logging dependencies.
+   Complete this attachment **before** `sealDependencies()`; the current ordinary
+   branch seals immediately after Jobs preparation and must change only for this
+   explicitly admitted integration branch.
+3. Do not separately call `mountManagedCalendar` for the integrated branch. The
+   integrated preparation already creates/publishes its core facade/routes once.
+   Continue the existing ordinary mount unchanged when integration is absent.
+4. Finish normal recovery/publication. The recovered fixed activity must already
+   find its native evidence owner; it must not look up a published service or wait
+   for the startup whose recovery it is currently executing.
+5. Verify the exact published Torrent owner, await integrated
+   `start(scheduler)`, recheck publication after waits, and only then call the
+   prepared Jobs owner's `start(scheduler)` to enable automatic wakes. Keep the
+   existing absolute Scheduler wake seam; construction, pinning and dormant
+   readiness do not start timers or dispatch Jobs.
+6. Reuse shared shutdown: quiesce Calendar facade/construction and fresh Calendar/
+   Jobs eligibility; join actual Calendar intake and Jobs runner callbacks; stop
+   Torrent and join its physical activities; join Calendar evidence callbacks;
+   close Jobs and finally Calendar's provider. Preserve exact-owner retry and
+   cleanup registration after failures. Cancellation inside an unsealed factory
+   may use `cancelPreparation`; it must not recursively stop its waiting Workflow
+   initializer or pretend bounded caller drainage is physical settlement.
+
+**Read-only adoption and explicit preparation.** Add a bounded native planning
+operation before enabling an existing installation. It inspects existing SYSTEM
+ownership and existing Calendar/Jobs/Torrent state without creating files,
+constructing a mutating ledger, migrating, pinning, registering sources or
+changing any source/receipt sequence. Reuse F1 readonly binding/owner admission
+and constructor-free ledger inspection, with actual file identity and query-only
+source handles, rather than a new private-SQL application inspection path.
+Report configured versus actual realm/catalog/policy generations, stale/missing/
+substituted ownership, retained rules and unresolved controls/effects, dependency
+and capacity gates, and exactly which explicit preparation is needed. Report
+unreadable/incomplete evidence as unknown, not as an empty new installation.
+Scope-owned views reveal only the admitted scope; host-wide planning is a separate
+trusted setup operation, not a tenant manager's cross-tenant directory.
+
+Current `CalendarRuntime.open` admits the SYSTEM owner catalog, but older established
+source files are upgraded lazily by the existing canonical provisioning/bind lane.
+Integration discovery is existing-only and must not implicitly migrate them. A
+public adoption procedure therefore still needs explicit per-owner preparation
+for populated files, rechecking its readonly plan and exact same owner immediately
+before preparation, with install permission and preserved original checksums,
+records, receipts and semantic identities. Do not rotate IDs, rebind a foreign
+file, backfill old appointments into fresh effects, or mark SYSTEM current before
+physical preparation succeeds. A current SYSTEM fingerprint with stale physical
+ledger is an integrity refusal, not blanket permission to repair. Interrupted
+multi-owner preparation needs truthful per-owner outcomes and resumable original
+identities; there is no cross-file atomic migration claim.
+
+**Operator facade and safe disable.** Extend the typed Calendar contract and
+native service composition with narrow scoped inspection/planning, original
+operator-request receipt reads, retire and reactivate operations; explicit setup
+preparation additionally requires the host's installation authority. Wire them
+through `calendar/http.ts`, native request-service projection and
+`frontend/client/calendar-client.ts`, with closed detached payloads, current
+browser/Guardian/Logging admission, expected policy selection and stable request
+keys. Reuse `integration-operator-request-service.ts`, not direct calls to
+`owner.operations`. Native providers/coordinators never become request or activity
+services. A source-local retire/reactivate receipt must not acquire invented
+downstream fields, physical drain claims or automatic retries after unknown.
+
+The operational sequence is plan → explicitly prepare → activate, then retire
+each selected generation → reconcile original controls/effects → retain
+evidence-only ownership until native physical/gate and terminal evidence permit
+removal. Existing inspection deliberately always says
+`evidenceOwnerRequired: true` and observes source/Jobs separately; neither an empty
+queue nor a downstream retirement acknowledgment currently certifies safe disable.
+F3 still needs a native admission/certificate for removal that covers every
+relevant owner/generation and outstanding Jobs/Torrent enqueue, callback, unknown,
+review-blocked and admitted-but-unsettled effect. Unavailable evidence or
+nonterminal work refuses a safe-disable result. Preserve historical receipts and
+readability after intake is stopped; never delete history to manufacture a pass.
+
+**Readiness, Doctor and acceptance.** Keep configuration admission, physical schema/
+owner readiness, capture readiness, downstream registration, automatic intake,
+evidence availability and channel delivery separate. `readiness: 'configured'`,
+an installed route, a running coordinator or a local actor receipt does not prove
+the others. Extend `doctor/platform-doctor-calendar.ts` with dependency/catalog
+and adoption/retirement findings; replace its outdated core-only capability hint.
+Reuse safe existing SYSTEM inspection and the readonly adoption planner for
+opted-in operational evidence. Doctor must never start the owner, migrate, create
+files, register work or expose appointment/recipient payloads. Missing evidence
+is a qualified warning/error, not a health assertion.
+
+F2's remaining resident-owner/capability hydration design is a gate: the private
+coordinator currently retains at most 64 owners and Jobs' resident/source budgets
+are shared. Its eight-rule/64-owner envelope is not scalable hydration of the
+10,000-file catalog, and a larger limit or identity rotation is not the solution.
+Adoption planning must expose those actual limits/pressure; broad automatic
+activation waits for the reviewed F2 design and final writer admission.
+
+Required MEMORY checks cover omitted/core compatibility and disabled inertness;
+invalid/callback-bearing config and missing dependencies; Job/Workflow collisions;
+one integrated core mount; exact startup order and retained execution before
+publication with dormant Jobs; construction/cancellation/publication failures and
+shared physical joins; zero-rule evidence and removed-active-rule review;
+readonly new/populated planning with zero mutations; explicit same-owner prepare
+and partial preparation outcome truth; scoped HTTP/SDK parsing, current authority,
+operator receipt replay/unknown and Logging attribution; and Doctor's no-write,
+no-provider/readiness distinctions. Actual createApp/file/actor/WAL/restart/kill,
+optional/compliance Logging and installed-bundle adoption remain F9/F10 gates.
+The storage-integrity hold currently prevents that physical qualification.
+
+### F5 implementation breakdown — canonical series and coverage
+
+This is the next **proposed** native vertical, not an enabled API or a passed
+runtime gate. Keep recurrence configuration closed until creation, exceptions,
+one/future/all edits, splits, on-demand/automatic coverage and their connected
+controllers work together. The reviewed timed engine is the compiler foundation;
+its 366-day query/work caps are not a permanent 31-day product horizon. All-day
+LocalDate series remain an explicit F4/F5 contract, never UTC-midnight conversion.
+
+**Source families.** Add after `016`, preserving every historical map/function:
+
+| Private records | Owned facts |
+| --- | --- |
+| `calendar_series`, `_calendar_series_generations`, `_calendar_series_segments` | Stable lineage/segment IDs, current published revision, immutable authored source/template, scheduling zone/fold, authority/policy and engine generations, split predecessor and nominal cut. |
+| `_calendar_series_occurrences`, `_calendar_series_occurrence_versions`, `_calendar_series_exception_history` | Unique `(lineage, segment, nominal key)` and stable logical appointment ID; immutable effective booking versions; explicit cancel/move/addition facts. Moving one instance never changes its anchor; EXDATE does not refund RRULE COUNT and extra dates do not consume it. |
+| `_calendar_series_publications`, `_calendar_series_publication_cells`, `_calendar_series_cell_members` | Durable preparation, immutable candidate facts and bounded working cell projections; a single publication marker exposes the complete change. Current cell selection indexes exclude retired/aborted preparation, not scans of retained history. |
+| `_calendar_series_resource_epochs`, `_calendar_series_coverage`, `_calendar_series_resource_members` | Current resource obligation index and sparse **UTC occupancy-slab** certificates, bound to the exact resource/series reservation epoch; per-effective-version resource sets remain bounded like `016` current membership. |
+| `_calendar_series_receipts`, `_calendar_series_native_receipts`, `_calendar_series_effect_intents` | Human command acceptance/publication links, source-owned batch outcomes and immutable child revision/binding seals. Human keys share the existing `(scope, principal, requestId)` namespace, including operator commands; native keys are a distinct `(scope, established owner, series generation, logical command)` family. |
+| `_calendar_series_horizon_intents`, `_calendar_series_horizon_dispatch` | Indexed bounded native claims, original Jobs operation/receipt associations, due/lateness and reconciliation, using the existing coordinator/source bridge rather than another timer. |
+
+Series children need immutable candidate/effective versions so a large edit can
+prepare without changing an accepted appointment. The common appointment resolver
+must select their published version and bounded resources; ordinary one-offs keep
+the `016` representation. Factor booking/type/visit/participant/occupancy admission
+into shared canonical helpers, not a second implementation of those invariants.
+Add cross-family logical-ID guards and additive seals for the new effect family;
+the old type/visit/participant/resource seals must not become bypassable merely
+because a child was committed by native series work.
+
+**Commands and cutover.** Proposed `series.preview/create/editOne/editFuture/`
+`editAll/cancel`, change inspection/watch/abort and native
+`series.coverage.prepare/commit/reconcile` all have closed payloads. Omission,
+reason rules, expected series/child/exception revisions and explicit
+preserve-versus-rebase exception policy participate in the normalized human
+intent. Exact receipt replay precedes fresh compilation. A plan receipt means
+**accepted for preparation**, not that all reservations changed; only its matching
+publication receipt may settle the UI as applied. Rejection before acceptance,
+blocked preparation, publication and unknown settlement remain distinct.
+
+Fixed native compilation runs outside SQL and Guardian leases. The private broker
+binds detached candidates to the authored intent hash, source/cursor/exception
+revisions, current code/policy generation and resource revision vector; browsers
+cannot submit compiled UTC candidates, cursors, grants or publication markers.
+The source writer verifies that exact native contribution and current CAS/final
+authority, then writes bounded batches. Small changes may use the same protocol's
+bounded fast path. Large plans stage capacity-consuming, expiring reservations;
+exclude only their exact selected old occurrences, never the whole series or other
+staged candidates. Old published reservations stay authoritative throughout.
+
+Publish one complete manifest atomically after every batch/claim/expiry/policy
+fence is current. Candidate appointment and resource-occupancy cells are indexed
+by fixed UTC ranges plus publication identity, so queries select current cells
+before pagination and never scan all superseded generations. Prepared-cell working
+membership is bounded separately from immutable evidence. A stale base requires
+explicit recompile/review; no partial visible sequence of browser updates may be
+called an all-series edit. Configurable horizon, cell, recipient, exception and
+edit-work/storage budgets need actual file-mode qualification; exceeding a short
+writer budget invokes durable staging, not a hidden months-ahead restriction.
+
+`editOne` keeps the nominal anchor. Time/template-only future edits preserve
+existing anchors; repeat-pattern replacement explicitly splits at a reviewed
+nominal key, retains the predecessor's past/accepted facts and records replaced
+future identities rather than silently renaming them. “All” must name its policy:
+all **unstarted** occurrences plus future source, preserving past/terminal facts;
+an authorized historical one-instance correction is a separate explicit action.
+Legacy appointment update/reschedule/cancel/transition/participant commands must
+reject a series child after current object admission and direct callers to the
+canonical series action; they cannot make an unrecorded exception.
+
+**Coverage and native authority.** A nominal engine watermark is not a UTC
+availability guarantee. On demand, compile every current series obligation that
+can overlap the requested UTC slab, including maximum elapsed duration/buffers,
+zone offsets, moved exceptions and split segments. A certificate is published only
+when all required reservations/conflicts are accounted for at the same resource
+epoch. Writes read indexed current certificates plus live occupancy/holds/staged
+claims in their final transaction. Missing coverage yields checking/setup/blocked,
+not free. A month-ahead request drives bounded on-demand qualification of that
+slab; it need not materialize every intervening date or wait for wall-clock time.
+Resource/time/rule/exception changes invalidate the relevant proof atomically;
+ordinary live reservations still use fresh conflict checks. Missing working-hours
+coverage is separately qualified from its exact retained policy generation.
+
+Automatic work uses a fixed source-owned **SeriesGrant**, not the initiating
+user's retained session or an invented `CalendarActor`. Separate reservation
+authority from factual `createdBy`/initiation. Fresh source ownership, generation,
+resource/type/visit policy and synchronous native SYSTEM participant eligibility
+are checked at the actual commit fence, including after pool waits. Persist a
+source-owned continuation bound to the qualified engine/source generation;
+COUNT/gap progress is never asserted by browser JSON or recomputed over accepted
+history after an unreviewed timezone-engine change.
+
+One fixed horizon Jobs/Torrent definition coalesces indexed work per established
+scope owner, not one source/timer per appointment. It performs the same preparation
+and publication protocol, reconciles original identities across every crash
+boundary and cannot revive retired generations. Source cancellation cutoff and
+actual physical settlement remain distinct. Logging records human acceptance and
+real publication/materialization facts once, not claims, polls or retries.
+
+**Implementation order and gates:** (1) source/authority/receipt plus immutable
+version/publication schema and genuine populated `016` upgrade; (2) atomic native
+batch/cell staging and publication with shared booking invariants; (3) complete
+one/future/all/exception/split commands and legacy guards; (4) sparse coverage,
+on-demand qualification and fixed Jobs/Torrent continuation; (5) scoped facade,
+SDK/hooks and reviewed connected controls. Qualify false-free prevention, whole
+change rollback/cutover, concurrent booking and competing plans, moved identity,
+COUNT/UNTIL/DST, unknown replay, revocation during every wait, stage expiry,
+retirement/engine change, coverage gaps, bounded query plans and nonterminal drain.
+This completes F5 only together with the physical/browser/release gates—not when
+the first series row or preview is implemented.
+
+#### First implementation family — compatibility and admission before series writes
+
+The complete `016` baseline is captured before this family changes the registry:
+realm fingerprint
+`sha256:2b0e98dabe59b6cf27edf49b3bb37b3f11dc6b1e6d0274c6a590db5a3ba601b5`,
+declared schema
+`a9de3c82718367f9dfb5db628706f7a2b2fda542d12fc27be8d2d589a8d1f2a4`,
+and `016` migration checksum
+`0553be4d7a34a76f3e0c9335f056c7abaefab7fac910c127d503060ee061a2d8`.
+Retain its exact table map, migration functions and explicit command/query name
+lists in genuine historical fixtures; filtering a later registry by version is
+not a historical definition. Pin native compatibility before appending `017`.
+
+First factor `appointment-type-bindings.ts` and `visit-bindings.ts` into private
+scope-only policy/catalog primitives, retaining their existing actor-taking
+wrappers. Their current policy implementations use only `actor.scopeId`; this
+does not justify creating a synthetic actor. A proposed `booking-admission.ts`
+owns one canonical `CalendarBookingCandidate` (normalized interval, complete
+resource set, type/visit references) and returns detached accepted snapshots.
+It performs **both** policy intersections before either selected catalog lookup,
+then exact duration/buffers, working-hours and live occupancy checks. Explicit
+create/edit revalidation masks preserve current grandfathering: all resulting
+resources for changed occupancy, added resources for availability on an unchanged
+interval, and the existing type/visit change rules. No-op/terminal checks, current
+old-manage/new-book authorization, participant-manager admission, CAS, replay,
+budgets, binding/history writes, receipts, effects and audit stay in their existing
+human wrappers. Hold confirmation keeps its exact captured hold exclusion. Prove
+unchanged old digests/results and rollback before routing series through this core.
+
+Native series admission is a separate fixed owner-bound route, analogous to the
+existing `CalendarIntegrationOwner`, not `CalendarActor` JSON. Its broker injects
+scope/physical owner identity and final synchronous fences; callers cannot supply
+those fields or compiled candidates. A durable **SeriesGrant** names exactly the
+series/source generation, sorted permitted resources and allowed native operation
+set. Issuance requires the configured trusted series authority and current human
+resource admission; a human request is not itself an enduring user session.
+Actual batches recheck the immutable owner, live grant/retirement generation,
+resource activity and current type/visit/availability policies. New occurrences
+re-admit every participant in SYSTEM at COMMIT; an edit checks the explicit added
+reference diff against the accepted child revision. No leases surround expansion
+or Jobs calls. Do not expose this route before the final participant fence works.
+
+The first additive schema contract is intentionally private/inert until the later
+publication/occupancy families are complete. Proposed row grains are:
+
+| Record | Required identity and binding columns |
+| --- | --- |
+| `calendar_series` | `(scope_id,id)`, monotone `control_revision`, factual `created_by`, lifecycle, current grant ID, published generation/publication IDs (nullable before first publication), at most one active preparation ID. A source acceptance revision is not an appointment publication revision. |
+| `_calendar_series_generations` | Unique `(scope_id,series_id,generation)`; immutable normalized authoring/template JSON and digest, predecessor generation, base publication ID, engine/policy generations, acceptance receipt ID. Timed-local and eventual native-LocalDate kinds are distinct; do not persist a falsely converted all-day rule. |
+| `_calendar_series_segments` | Unique stable segment ID within lineage; generation, predecessor segment and explicit nominal cut, immutable start/rule/template and local bounds. Time-only future edits retain anchors; pattern replacement creates a named successor segment. |
+| `_calendar_series_grants` | Unique `(scope_id,series_id,grant_revision)`; established owner/source identity, source generation, allowed operation/resource digest and issuance evidence. Immutable grant facts plus a current pointer/retirement epoch, never credentials or profile data. |
+| `_calendar_series_receipts` | Existing human key hash `(scope,principal,requestId)`; intent digest, series/control revision, accepted preparation ID and base publication ID. Immutable acceptance cannot say applied. |
+| `_calendar_series_native_receipts` | Domain-separated owner/source/generation/phase/logical-batch key; exact candidate/cursor/policy digest and outcome. Original-key reconciliation survives claim expiry; a fresh claim is not a fresh operation. |
+| `_calendar_series_publications` | Unique preparation/publication identity; series/base/new generation, accepted source/grant generation and complete immutable manifest digest. Mutable preparation/claim state is separate from the immutable final publication fact. |
+| `_calendar_series_effect_intents` | Human/native receipt family discriminator plus exact receipt, source generation, publication and child-version bindings; one seal per real accepted effect. This does not yet authorize legacy appointment-table writes. |
+
+Private acceptance and publication contracts are separate discriminated results:
+`series.plan.accepted` carries `requestId/seriesId/controlRevision/preparationId/`
+`basePublicationId`; `series.publication.applied` carries the preparation and exact
+published generation/manifest identity. A joined status read may report preparing,
+blocked, published, aborted or unknown, but never mutates the original receipt or
+settles an editor from plan acceptance alone. Public facade types remain absent
+while recurrence config is closed. Native keys use the fixed
+`calendar-series-native-v1` domain and never share the human principal namespace.
+
+Extend one fixed-family human-key resolver across ordinary, block, hold, location,
+type, lifecycle, operator and series receipts in **both** directions. This remains
+a bounded number of indexed point probes; do not add an unbounded history union.
+Additive `017` insert guards prevent a series acceptance and any existing family
+from occupying the same human tuple, including INSERT OR REPLACE. Existing
+001–016 SQL/source/checksums remain exact. The native receipt family is distinct
+and cannot be used to grant human replay access.
+
+Before any runtime mutation, review exact DDL, identity/scope/FK/retention/late-seal
+guards and CAS transitions against these grains. The migration must create and
+validate its own tables before ReactiveDB definition, leave all old rows/usage/
+sequence/effects intact, and roll back new DDL on late failure in a genuinely
+populated `016` native MEMORY upgrader. Admission factoring is a prerequisite,
+not permission to activate partial series creation or bypass sparse coverage.
 
 ### Recorded implementation decisions and boundaries
 

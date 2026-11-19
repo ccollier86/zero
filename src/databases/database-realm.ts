@@ -57,6 +57,7 @@ import {
 } from './database-realm-schema-admission';
 import { orderDatabaseRealmTables } from './database-realm-table-order';
 import type { DatabaseReadQueryContext } from './database-read-query-capability';
+import { admitDatabaseWriterAdmission, type DatabaseWriterAdmissionDefinition } from './database-writer-admission';
 import {
   createDatabaseWriteCommandSession,
   type DatabaseWriteCommandContext,
@@ -95,6 +96,7 @@ const REALM_FIELDS = new Set([
   'queries',
   'commands',
   'automations',
+  'writerAdmission',
 ]);
 const MIGRATION_FIELDS = new Set([
   'version',
@@ -168,6 +170,8 @@ export interface DatabaseRealmDefinition<
   readonly commands?: TCommands;
   /** Actor-local database functions and AFTER-trigger declarations. */
   readonly automations?: DatabaseAutomationRegistry;
+  /** @internal Native actor-imported admission; policy data is supplied only at trusted bind. */
+  readonly writerAdmission?: DatabaseWriterAdmissionDefinition;
 }
 
 /** One immutable migration checksum entry used by actor handshakes. */
@@ -192,6 +196,7 @@ export interface DatabaseRealm<
    * cross IPC; actor processes import the realm definition independently.
    */
   readonly automations?: DatabaseAutomationRegistry;
+  readonly writerAdmission?: DatabaseWriterAdmissionDefinition;
   /** Framework-owned identity anchors required by this actor realm. */
   readonly guardianAnchorRequirements: readonly GuardianReferenceKind[];
   readonly schemaChecksum: string;
@@ -228,6 +233,7 @@ export function defineDatabaseRealm<
     'command',
   ) as TCommands;
   const automations = admitDatabaseRealmAutomations(record.automations, tables);
+  const writerAdmission = admitDatabaseWriterAdmission(record.writerAdmission);
   const guardianAnchorRequirements = Object.freeze([
     ...(Object.values(tables).some((table) =>
       getGuardianAnchorRequirements(table).includes('user'))
@@ -270,6 +276,7 @@ export function defineDatabaseRealm<
       checksum: hashMigration(migration),
     })));
   const fingerprint = createRealmFingerprint({
+    ...(writerAdmission === undefined ? {} : { writerAdmission: writerAdmission.id }),
     name,
     version,
     schemaChecksum,
@@ -298,6 +305,7 @@ export function defineDatabaseRealm<
     queries: queries as Readonly<TQueries>,
     commands: commands as Readonly<TCommands>,
     ...(automations === undefined ? {} : { automations }),
+    ...(writerAdmission === undefined ? {} : { writerAdmission }),
     guardianAnchorRequirements,
     schemaChecksum,
     migrationChecksums,
@@ -353,6 +361,7 @@ export function runDatabaseRealmCommand(
   database: ReactiveDB,
   name: string,
   input: DatabaseSerializableValue,
+  writerPolicy?: DatabaseSerializableValue,
 ): DatabaseSerializableValue {
   if (!isDatabaseRegistryName(name)
     || !Object.prototype.hasOwnProperty.call(realm.commands, name)) {
@@ -367,6 +376,7 @@ export function runDatabaseRealmCommand(
     database,
     [...guardianAnchorTableNames(realm.guardianAnchorRequirements), PRESENCE_TABLE, PRESENCE_OWNER_TABLE,
       '_guardian_presence_projection_binding', 'guardian_presence_current'],
+    writerPolicy,
   );
   try {
     return database.transaction(() => {
@@ -796,6 +806,7 @@ function cloneHandlerRegistry(
 }
 
 function createRealmFingerprint(input: {
+  writerAdmission?: string;
   name: string;
   version: string;
   schemaChecksum: string;

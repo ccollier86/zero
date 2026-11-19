@@ -36,6 +36,13 @@ export interface AppointmentFormControls {
   titleHelper?: ReactNode;
   appearanceControl?: ReactNode;
   workflowControl?: ReactNode;
+  /** Undefined retains the reference control; null deliberately omits it. */
+  resourceControl?: ReactNode;
+  locationControl?: ReactNode;
+  notesControl?: ReactNode;
+  reminderControl?: ReactNode;
+  sendReminderControl?: ReactNode;
+  telehealthControl?: ReactNode;
   /** Nested composed menus may own Escape until they have closed. */
   closeOnEscape?: boolean;
 }

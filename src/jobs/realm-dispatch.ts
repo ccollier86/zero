@@ -112,6 +112,17 @@ export function deferJobOccurrenceClaim(context: DatabaseWriteCommandContext, in
 
 /** Store only a canonical Torrent start receipt; it is not a provider-delivery or workflow-completion claim. */
 export function receiveJobDispatch(context: DatabaseWriteCommandContext, input: unknown) {
+  return receiveDispatch(context, input, false);
+}
+
+/** Native factual lane only: the broker has inspected the original sealed
+ * Torrent key. Expiry removes enqueue authority, not an immutable accepted fact.
+ * Exact current claim CAS remains mandatory; no claim or lease is purchased.
+ */
+export function reconcileJobDispatch(context: DatabaseWriteCommandContext, input: unknown) {
+  return receiveDispatch(context, input, true);
+}
+function receiveDispatch(context: DatabaseWriteCommandContext, input: unknown, evidenceOnly: boolean) {
   return jobCommand(() => {
     const r = jobRecord(input, ['scopeId', 'id', 'nonce', 'leaseGeneration', 'receipt', 'now']), scope = jobScope(r.scopeId), now = jobTime(r.now);
     assertJobOwner(context, scope);
@@ -126,12 +137,35 @@ export function receiveJobDispatch(context: DatabaseWriteCommandContext, input: 
       if (row.workflow_id !== normalized.instanceId || row.receipt_json !== json) throw new JobsError('JOBS_INTENT_CONFLICT');
       return { dispatched: true, instanceId: normalized.instanceId };
     }
-    assertClaim(row, r.nonce, r.leaseGeneration, now);
+    if (evidenceOnly) {
+      if (row.state !== 'claimed' || row.lease_nonce !== jobKey(r.nonce) || row.lease_generation !== jobInteger(r.leaseGeneration, 1)) throw new JobsError('JOBS_STAGE_CONFLICT');
+    } else assertClaim(row, r.nonce, r.leaseGeneration, now);
     const change = context.db.update('_jobs_occurrences', row.id, { state: 'dispatched', workflow_id: normalized.instanceId, receipt_json: json,
       lease_nonce: null, lease_until: null, error_code: null, updated_at: now });
     changeJobOccurrenceWork(context, row, 'dispatched');
     appendJobSemanticAudit(context, 'jobs.occurrence.handed-off', change, { scheduleId: row.schedule_id, generation: row.generation, workflowId: normalized.instanceId });
     return { dispatched: true, instanceId: normalized.instanceId };
+  });
+}
+
+/** Pending is durable proof that no handoff claim was admitted. This command
+ * cannot claim/enqueue; it only closes an expired or explicitly stopped item.
+ */
+export function closePendingJobOccurrence(context: DatabaseWriteCommandContext, input: unknown) {
+  return jobCommand(() => {
+    const r = jobRecord(input, ['scopeId', 'id', 'generation', 'now']), scope = jobScope(r.scopeId), now = jobTime(r.now);
+    assertJobOwner(context, scope);
+    const row = occurrence(context, scope, r.id), parent = schedule(context, scope, row.schedule_id);
+    if (row.generation !== jobInteger(r.generation, 1) || row.state !== 'pending') throw new JobsError('JOBS_STAGE_CONFLICT');
+    const pinned = context.db.get('_jobs_admissions', row.admission_id);
+    if (!pinned) throw new JobsError('JOBS_STATE_INVALID');
+    const admission = decodeJobAdmission(pinned as import('./model').JobAdmissionRow);
+    const current = parent.control === 'active' && parent.generation === row.generation;
+    if (now < row.scheduled_at || current && now <= row.scheduled_at + admission.timing.maxLatenessMs) throw new JobsError('JOBS_NOT_READY');
+    const state = current ? 'terminal' : 'cancelled';
+    context.db.update('_jobs_occurrences', row.id, { state, terminal_status: current ? 'expired' : 'not-dispatched', updated_at: now });
+    changeJobOccurrenceWork(context, row, state);
+    return { closed: true };
   });
 }
 

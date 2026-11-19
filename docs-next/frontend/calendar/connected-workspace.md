@@ -71,15 +71,35 @@ surface through the same native live boundary. This pass adds no hours/holiday
 editor to the connected workspace or rich local preview. Missing coverage is a
 real server rejection, not a request to guess availability or bypass the policy.
 
-`CalendarCoreEditor` is separately composable, using `CalendarCoreSession` and
-`CalendarCoreDraft`. The workspace owns the opening/base and original-request
-recovery ledger. The richer recovered `AppointmentEditor` remains a separate
-synchronous local UI; passing a Promise to it does not install persistence.
+`CalendarAppointmentEditor` is now the connected workspace's default. It reuses
+the approved compact `AppointmentModalContent` with exactly one native async
+modal/form owner. `CalendarCoreEditor` remains separately composable through its
+original `CalendarCoreSession`/`CalendarCoreDraft`; the recovered local
+`AppointmentEditor` keeps its synchronous contract. Passing a Promise into that
+local `onSave` does not install persistence or native acceptance.
+
+The rich connected session uses `{key, timeZone, initial, record?, trigger?}`;
+`initial.resourceIds` is the entire resource set. Its accepted record and explicit
+scheduling zone are snapshotted per opening. A new base/zone needs a new opening,
+not an unnoticed reinterpretation of a dirty draft. Native capability discovery
+supplies resource/participant limits and participant availability; UI options
+grant no permission. The workspace owns the opening and scoped original-request
+recovery ledger.
+
+Supported changes—title, complete resource set, exact representable interval,
+buffers, native type/visit and changed account participants—use one canonical
+update, not sequential saves. `[]` clears participants, omission preserves them,
+and changing resources requires fresh all-resource catalog admission. Notes,
+per-appointment appearance/attention, clinical axes, recurrence, reminders,
+contact/guest invitations and provider call links remain explicitly unavailable;
+the current rich layout does not imply those APIs are enabled. Ordinary lifecycle
+actions remain separate authorized commands with their own reason policies.
 
 `CalendarCoreTypeFields` uses the currently authorized selected-resource type
 intersection, not an omitted manager-wide catalog. Editing queries the resulting
-selected resource set. A multi-resource appointment keeps its full set in the
-single-calendar selector; arbitrary set edits use the native update facade.
+selected resource set. The rich selector edits the complete resource set; the
+legacy compact editor preserves a multi-resource set rather than collapsing it
+through its single-calendar selector.
 The selector is paged and
 retryable, and source-accepted historical types remain distinguishable from new
 unsubmitted choices. A new choice missing from the current live page loses its
@@ -100,7 +120,13 @@ promise that changed occupancy passes today's policy. The server may reject an
 untyped booking when a resource requires a type. Catalog/policy administration UI
 is still a later stage; these controls select existing managed types.
 
-## Participants: separate facts and separate saves
+## Participants: native facts and explicit save ownership
+
+The rich editor may atomically include changed native account references with
+scheduling changes. It hydrates against the exact accepted appointment revision
+and does not mark the draft dirty merely for loading that baseline. The dedicated
+participant dialog below remains a separately composable, participant-only save;
+neither control sends invitations or grants calendar access.
 
 Native account participant controls appear only when scoped capability permits
 them. Their `useCalendarParticipantSelection` controller is also reusable. Search
@@ -121,21 +147,21 @@ all submitted targets; selection sends no invitation and grants no calendar acce
 Details resolve private participant presentation separately from the ordinary
 appointment DTO. `Manage participants…` opens
 `CalendarAppointmentParticipantsDialog`, a distinct revision-controlled
-`participants.replace` operation. The connected edit form sends one native
-`appointments.update` for its title/time/type/visit and single-calendar transfer;
-it does not silently chain a participant save. A programmatic native update can
-include participants in the same transaction when the configured permission is
-available. The legacy `reschedule` still never writes title, participants or
+`participants.replace` operation. The rich connected edit form instead sends one
+native `appointments.update` for its supported changed fields, including the full
+resource set and optional changed participants. It does not silently chain a
+participant save. The legacy compact editor still leaves participant changes to
+the dedicated dialog. The legacy `reschedule` never writes title, participants or
 resource membership. No pair of sequential saves is presented as atomic.
 Retained unavailable accounts remain removable. A pristine/reverted replacement
 cannot submit by button, Enter or a retained callback.
 
 Existing appointment titles are editable without a second save flow. A pristine
 or reverted edit has disabled Save and cannot submit through Enter or a retained
-callback. A single-calendar transfer refreshes type/location discovery against
+callback. A resource-set change refreshes type/location discovery against
 the selected result, not the old provider's accepted metadata. Missing replacement
 calendars cannot be submitted through a retained selector. Multi-resource sets
-are never collapsed by that single-value control. The existing native modal,
+are never silently collapsed. The existing native modal,
 unknown-request recovery, newer-typing protection and revision fences apply to
 the one atomic update acknowledgment.
 
@@ -168,6 +194,13 @@ Creation must acknowledge revision 1 with `changed: true`; status changes cannot
 claim quiet no-ops. An impossible receipt remains unsettled rather than being
 accepted merely because its key matches. A later receipt cannot settle a newer
 owner's pending work.
+
+The shared rich-draft controller requires synchronous scope-owned recovery
+registration through `onUnknown` **before** dispatch. A throwing or async
+registration prevents dispatch and reports a known-not-started operation. This is
+not an authority grant. Settlement observer/subscriber failures cannot turn a
+proven acceptance into an unknown write. The native descriptor explicitly permits
+newer editing while pending while the controller still blocks duplicate submit.
 
 Unknown participant outcomes and accepted writes with newer unsent edits also
 remain native dirty/review work, even if the visible selection was restored to

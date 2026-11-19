@@ -8,6 +8,7 @@
 
 import { createPlatformSQLiteService } from '../persistence';
 import { DatabaseError } from './database-error';
+import { databaseWriterAdmissionFingerprint } from './database-writer-admission';
 import { LoggingActorSource } from '../logging/logging-actor-source';
 import { DatabaseActorAutomationSession } from './database-actor-automation-session';
 import { DatabaseActorAuthorityCommitGuard } from './database-actor-authority-commit-guard';
@@ -51,6 +52,7 @@ import {
 } from '../schema/guardian-references';
 
 export interface DatabaseActorWriterBinding {
+  readonly writerPolicyFingerprint?: string;
   readonly role: 'writer';
   readonly databaseRef: DatabaseRef;
   readonly placement: DatabaseActorPlacementConfig;
@@ -68,6 +70,7 @@ export interface DatabaseActorWriterBinding {
 }
 
 export interface DatabaseActorReaderBinding {
+  readonly writerPolicyFingerprint?: string;
   readonly role: 'reader';
   readonly databaseRef: DatabaseRef;
   readonly placement: DatabaseActorPlacementConfig;
@@ -217,7 +220,7 @@ export function openWriterBinding(
       fileGuard.assertCurrent();
     }
     loggingSource = payload.logging ? new LoggingActorSource(runtime.db, payload.logging) : null;
-    engine = new DatabaseWriterOperationEngine({ runtime, realm });
+    engine = new DatabaseWriterOperationEngine({ runtime, realm, writerPolicy: payload.writerPolicy });
     snapshotSessions = new DatabaseTenantSyncSnapshotSessionStore({
       runtime,
       catalog: createDatabaseRealmOperationCatalog(realm),
@@ -260,6 +263,7 @@ export function openWriterBinding(
       openedFileIdentity: openedFileIdentity,
       bindingIdentity,
       ...(payload.openAdmission ? { openAdmissionFingerprint: databaseOpenAdmissionFingerprint(payload.openAdmission) } : {}),
+      ...(databaseWriterAdmissionFingerprint(realm, payload.writerPolicy) === undefined ? {} : { writerPolicyFingerprint: databaseWriterAdmissionFingerprint(realm, payload.writerPolicy)! }),
       livenessGuard,
       fileGuard,
     };
@@ -388,6 +392,7 @@ export function openReaderBinding(
       openedFileIdentity: fileGuard.proof,
       bindingIdentity: runtime.bindingIdentity,
       ...(payload.openAdmission ? { openAdmissionFingerprint: databaseOpenAdmissionFingerprint(payload.openAdmission) } : {}),
+      ...(databaseWriterAdmissionFingerprint(realm, payload.writerPolicy) === undefined ? {} : { writerPolicyFingerprint: databaseWriterAdmissionFingerprint(realm, payload.writerPolicy)! }),
       livenessGuard,
       fileGuard,
     };

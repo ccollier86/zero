@@ -8,12 +8,11 @@ import { calendarInteger, calendarJson, calendarKey, calendarRecord, calendarTex
 import { assertCalendarOwner, calendarActor, calendarAppointment, calendarBudget, calendarIntent, calendarResource, calendarRevision,
   nextCalendarRevision, requireCalendarRight, reservationId } from './realm-model';
 import { appendCalendarAppointmentUpdateHistory, calendarCurrentResourceMembership, replaceCalendarAppointmentResourceCurrent } from './appointment-resource-bindings';
-import { assertCalendarBookingType, assertCalendarTypePolicy, calendarCurrentAppointmentType, bindCalendarAppointmentType, sameCalendarAppointmentType } from './appointment-type-bindings';
-import { assertCalendarBookingVisit, assertCalendarVisitPolicy, calendarCurrentAppointmentVisit, bindCalendarAppointmentVisit, sameCalendarVisit } from './visit-bindings';
+import { calendarCurrentAppointmentType, bindCalendarAppointmentType, sameCalendarAppointmentType } from './appointment-type-bindings';
+import { calendarCurrentAppointmentVisit, bindCalendarAppointmentVisit, sameCalendarVisit } from './visit-bindings';
 import { bindCalendarAppointmentParticipants, calendarCurrentAppointmentParticipants, requireCalendarParticipantManager } from './participant-bindings';
 import { effectiveCalendarAppointmentStatus, isCalendarLifecycleTerminal } from './lifecycle-model';
-import { assertCalendarAvailability } from './availability-model';
-import { assertCalendarResourcesAvailable } from './occupancy';
+import { admitCalendarBookingCandidate } from './booking-admission';
 import { appendCalendarSemanticAudit } from './semantic-audit';
 
 export const CALENDAR_APPOINTMENT_UPDATE_FIELDS = Object.freeze([
@@ -106,15 +105,9 @@ export function updateCalendarAppointment(context: DatabaseWriteCommandContext, 
         if ((occupancyChanged || typeChanged || visitChanged || added.includes(id)) && !resource.active) throw new CalendarError('CALENDAR_FORBIDDEN');
       }
       const admitType = occupancyChanged || typeChanged || added.length > 0, admitVisit = occupancyChanged || visitChanged || added.length > 0;
-      // Finish BOTH policy intersections before resolving either selected private catalog generation.
-      if (admitType) assertCalendarTypePolicy(context, actor, resourceIds, type);
-      if (admitVisit) assertCalendarVisitPolicy(context, actor, resourceIds, visit);
-      if (admitType) assertCalendarBookingType(context, actor, resourceIds, interval, type);
-      if (admitVisit) assertCalendarBookingVisit(context, actor, resourceIds, visit);
-      if (occupancyChanged || added.length) {
-        assertCalendarAvailability(context, actor.scopeId, occupancyChanged ? resourceIds : added, interval);
-        assertCalendarResourcesAvailable(context, actor.scopeId, resourceIds, interval, { kind: 'appointment', id: row.id });
-      }
+      admitCalendarBookingCandidate(context, actor.scopeId, { resourceIds, interval, appointmentType: type, visit },
+        { type: admitType, visit: admitVisit, availabilityResourceIds: occupancyChanged ? resourceIds : added,
+          occupancy: occupancyChanged || added.length ? { except: { kind: 'appointment', id: row.id } } : false });
       const before = snapshot(row.title, oldResources, priorInterval, currentType, currentVisit, currentParticipants);
       const revision = nextCalendarRevision(row.revision);
       calendarBudget(context, 'appointmentUpdateHistory');

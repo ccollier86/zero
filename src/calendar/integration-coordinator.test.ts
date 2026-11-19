@@ -47,7 +47,7 @@ function scheduler() {
   };
 }
 
-async function fixture(options: { tenancy?: 'single' | 'multi'; maxOwners?: number; commitHints?: boolean;
+async function fixture(options: { tenancy?: 'single' | 'multi'; maxOwners?: number; commitHints?: boolean; nativeJobsWriter?: boolean;
   beforeJobsRead?: (operation: MemoryJobsOperation) => void | Promise<void>;
   beforeJobsWrite?: (operation: MemoryJobsOperation) => void | Promise<void>;
   afterJobsWrite?: (operation: MemoryJobsOperation) => void | Promise<void> } = {}) {
@@ -65,7 +65,7 @@ async function fixture(options: { tenancy?: 'single' | 'multi'; maxOwners?: numb
   let installedSource: CalendarRuntimeSource | null = null, removeHints: (() => void) | undefined;
   const source = (value: CalendarRuntimeSource) => { installedSource = value; (calendar.runtime as unknown as { source: CalendarRuntimeSource }).source = value; };
   try {
-    jobs = await memorySourceJobsFixture({ tenancy: options.tenancy ?? 'single', definition: CALENDAR_OBSERVATION_JOB,
+    jobs = await memorySourceJobsFixture({ tenancy: options.tenancy ?? 'single', definition: CALENDAR_OBSERVATION_JOB, nativeWriter: options.nativeJobsWriter,
       registerWorkflow(registry) { registerCalendarObservationWorkflow(registry, () => ({ async execute(context) {
         contexts.push(context); await beforeObservation?.(); return coordinator!.execute(context);
       } })); }, beforeRead: options.beforeJobsRead, beforeWrite: options.beforeJobsWrite, afterWrite: options.afterJobsWrite });
@@ -754,7 +754,7 @@ test('native inspection is existing-only and never hydrates an owner, pins a gra
 });
 
 test('native inspection reports bounded redacted source and Jobs facts before and after intake drainage', async () => {
-  const f = await fixture(), wake = scheduler(); try {
+  const f = await fixture({ nativeJobsWriter: true }), wake = scheduler(); try {
     await f.coordinator.ready(f.record); const appointment = await f.appointment(); await f.coordinator.start(wake);
     const commands = f.jobs.commands.length, sourceWrites = f.attributions.length, pins = f.counters().pinCalls;
     const view = await f.coordinator.inspect(f.session.scope), rule = view!.rules[0]!;
@@ -762,11 +762,20 @@ test('native inspection reports bounded redacted source and Jobs facts before an
       retained: { policies: { used: 1 }, intents: { used: 1 } },
       dispatch: { pending: false, unknown: false, blocked: false, accepted: true, claimed: false }, effects: { admittedButUnsettled: false } });
     expect(rule).toMatchObject({ ruleId: 'observe', epoch: 1, state: 'active', configured: true, pendingControl: null,
-      downstream: { generation: 1, revision: 1, state: 'active', matchesPolicy: true }, capacity: { version: 2,
+      downstream: { generation: 1, revision: 1, state: 'active', matchesPolicy: true }, capacity: { version: 3,
         retained: { sourceSchedules: { used: 1 }, file: { schedules: { used: 1 }, sources: { used: 1 }, sourcePolicies: { used: 1 } } },
         working: { sourceSchedules: { used: 1 }, fileSchedules: { used: 1 } } } });
     expect(rule.selection).toEqual({ id: rule.id, epoch: rule.epoch, policyDigest: rule.policyDigest });
     expect(rule.capacity!.retained.sourceSchedules).not.toHaveProperty('limit');
+    const transport = rule.capacity!.transport;
+    expect(transport.policyFingerprint).toMatch(/^[a-f0-9]{64}$/);
+    expect(transport.permanentKeys).toBeGreaterThan(0);
+    expect(transport.permanentKeys).toBe(transport.retainedResults + transport.expiredTombstones);
+    expect(transport.ordinaryRemaining).toBe(Math.max(0, transport.keyLimit - transport.permanentKeys - transport.settlementUnits));
+    expect(transport.settlementRemaining).toBe(Math.max(0, transport.keyLimit - transport.permanentKeys));
+    expect(transport.deficit).toBe(0);
+    expect(transport.sourceControlUnits).toBeGreaterThan(0);
+    expect(transport.actorControlUnits).toBe(0);
     for (const budget of [view!.retained.policies, view!.retained.intents, ...Object.values(rule.capacity!.working), ...Object.values(rule.capacity!.retained.file)]) {
       expect(budget.limit).toBeGreaterThanOrEqual(budget.used); expect(budget.remaining).toBe(budget.limit - budget.used);
     }

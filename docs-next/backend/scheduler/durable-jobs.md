@@ -299,6 +299,44 @@ external delivery has been undone. Inspect/control that actual run separately.
 - Missing established files, changed roots and inconsistent retained ownership
   require explicit recovery, never empty replacement.
 
+### Branch-source finite capacity policy
+
+The unreleased Calendar foundation adds optional typed `jobs.capacity` (also
+`JobsCapacityConfig` from `@zero/framework/jobs`). Omission preserves finite
+history defaults; this is not an unlimited disk/receipt promise:
+
+```ts
+jobs: {
+  definitions: [report],
+  concurrency: 'max',
+  capacity: {
+    retained: {
+      schedules: 10_000, schedulesPerOwner: 1_000, intents: 100_000,
+      actorRecoveryIntents: 20_000, sourceRecoveryIntents: 21_024,
+      occurrences: 100_000, sources: 1_024, sourcePolicies: 10_000,
+    },
+    transport: { keyLimit: 1_000_000 },
+  },
+}
+```
+
+Every supplied ceiling is a positive safe integer; explicit `null` is invalid,
+not omission. `transport.keyLimit` may only reduce Fabric's 1,000,000 permanent-key
+hard ceiling. Raising retained budgets is an explicit operator storage decision;
+configure adequate actor/source control headroom too. Current working ceilings
+are independent and unchanged. A lower retained ceiling does not delete evidence;
+it blocks affected new admission. Rebinding uses the normalized frozen policy and
+exact actor acknowledgment, never a browser-provided recovery flag.
+
+The `004` settlement projection and final native writer conserve transport and
+logical recovery reserve transactionally. Native aggregate inspection remains
+available under pressure. Exact source/transport replay remains evidence, not a
+new operation. See [native capacity](./source-owned-jobs.md#capacity-evidence-and-upgrade)
+for the versioned projection and legacy/hard-full limitations. This branch-source
+policy has MEMORY/type evidence only until a matching installed archive is
+qualified and selected; existing selected-package behavior must not be inferred
+from the examples.
+
 ## Live reads and logging
 
 The SDK's `client.jobs` uses the same native routes. Account/scope replacement

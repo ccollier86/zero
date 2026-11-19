@@ -223,6 +223,7 @@ function CurrentCalendarCoreEditor({ session, resources, client, scopeKey, readR
   if (authorityLost) return null;
   return <ControlledModal<CalendarCommandReceipt> open identityKey={session.key} busy={busy} dirty={dirty} error={error} onOpenChange={open => { if (!open) onClose(); }} descriptor={{
     title: session.record ? 'Edit appointment' : 'New appointment', trigger: session.trigger,
+    allowEditingWhilePending: true,
     size: 'sm', customSize: { width: 'var(--calendar-size-420)' }, className: 'calendar-managed-dialog calendar-managed-radius-md',
     body: context => detailPending ? <Stack p="md" gap="sm"><Text>Reauthorizing current appointment details and management…</Text>
       {(authority.status === 'error' || management.status === 'error') && <><Text size="xs">The read is unavailable. Your draft is preserved but cannot be submitted until current access is verified.</Text>

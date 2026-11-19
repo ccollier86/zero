@@ -71,6 +71,6 @@ export function changeJobSchedule(context: DatabaseWriteCommandContext, input: u
       appendJobSemanticAudit(context, admission ? 'jobs.schedule.readmitted' : r.action === 'pause' ? 'jobs.schedule.paused' : 'jobs.schedule.cancelled', change,
         { revision: next.revision, generation: next.generation, previousControl: row.control, control: next.control, ownership: row.run_as });
       return scheduleView(next);
-    });
+    }, r.action === 'pause' || r.action === 'cancel');
   });
 }

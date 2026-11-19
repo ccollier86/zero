@@ -20,7 +20,83 @@ or data migration is authorized by these checks.
 
 ## November 18 finish-line review: cold admission and retained evidence
 
-### Combined source checkpoint after working capacity and atomic editing
+### November 19 source checkpoint: final-writer capacity and rich connected editing
+
+The next combined cache-off pinned-Bun MEMORY/ReactDOM/native-HTTP/SDK/Jobs/
+Torrent set passed **1,285 tests, 26,522 assertions, 147 files** in 283.04 seconds.
+The real physical Calendar/app fixtures were explicitly excluded; the IPC/file
+seams that remain doubled are not deployment evidence. This run is not the full
+frozen-release suite. Counts from overlapping focused checks are not added to it.
+Final combined semantic checking passed with **485 roots, 4,074 imported source
+files and zero diagnostics**, with emit/incremental output disabled. The final
+three-file test-correction/adapter check passed **18 tests, 176 assertions**;
+documentation validation again passed **907 reachable pages**, zero problems.
+
+Additive Jobs `004` installs all-generation per-source/schedule/occurrence
+settlement membership and fixed aggregate counters. A real populated managed
+`003` → `004` MEMORY migration preserves every old row, counter, SQL object and
+ledger; corrupt work/history accounting, incompatible declarations and late DDL
+failure reject atomically. Actor pause/cancel obligations are counted separately
+from source controls. Unknown/blocked generations remain occupied. The new
+ledger/helpers alone passed **13 tests, 201 assertions** before integration.
+
+The normalized finite Jobs policy is bound and fingerprinted inside the actor.
+The final native writer conserves generic permanent keys plus outstanding
+settlement units in the same transaction as domain changes, original receipts
+and final authority. Source/actor recovery intents also retain logical headroom.
+At pressure, fresh ordinary claims/defers/no-op retries cannot spend that reserve.
+Original-key replay comes first. The native runner can reconcile an original
+MAC-sealed accepted Torrent handoff after claim expiry without buying a new claim
+or authorizing enqueue. A missing receipt is not absence proof. Hard-full legacy
+files cannot mint another physical key merely by conserving a policy deficit.
+
+Capacity v3 composes actual writer retention counts/current-policy proof with
+working and retained domain measurements under the same existing owner lease.
+It is read-only, aggregate-only and authority-fenced across awaits. Tests exercise
+the real coordinator FIFO and native MEMORY writer with an explicit IPC double,
+including queued cancellation, supported timeout options, malformed-producer
+protocol retirement and failure accounting. Independent review confirmed replay,
+binding, pressure and publication ordering. Hostile nested definition proxies are
+rejected without evaluating their traps.
+
+The default connected workspace now composes the approved rich modal content
+with one native async owner. Full resource sets, title/time/buffers, type, visit
+and changed native participants go through one canonical update. Exact initial
+participant hydration stays pristine; omitted sets remain unchanged. The modal
+permits newer editing while pending but blocks duplicate dispatch. Required
+synchronous parent recovery registration precedes dispatch; failed registration
+cannot start a write. Settlement observers cannot rewrite a proven acceptance.
+Unknown outcomes retain the original identity and reconcile by reading, never
+resending. The local synchronous modal contract/layout remains compatible.
+Unsupported clinical/appearance/notes/recurrence/reminder/invitation controls are
+explicitly unavailable, not fake persisted fields. This is not complete F8.
+
+Private shared booking admission now factors scope-only policy/catalog checks
+without granting authority or constructing background users. Human wrappers
+retain resource rights, participant fences, replay/CAS, grandfathering, budgets,
+audit and persistence. Native parity tests retain the exact `016` realm, schema
+and migration pins; no series registry or schema is enabled by this factoring.
+
+The first combined no-emit pass exposed an actual coordinator-inspection API
+mismatch plus test typing errors; the native path was corrected and given real
+FIFO/producer-failure regressions. A later pass exposed two test comparison-type
+errors, corrected by comparing the proper raw-row projection and explicit
+expected failures rather than casting production contracts. Earlier mixed UI
+checks also caught the intermediate old workspace harness while the rich owner
+was being integrated. Those initial failures are preserved, not relabelled as
+passing initial runs.
+
+The finish-line plan now specifies resident-owner hydration, managed activation/
+adoption and complete series/coverage publication. These are remaining contracts,
+not enabled production capabilities. F3/F5/F6/F7/F8 completion and all physical
+qualification remain open. No selected archive, main merge, updater change or
+application deployment is implied by this checkpoint.
+All owned test/compiler processes finished and MEMORY handles closed. No physical
+fixture, dependency tree, generated cache/build, Docker resource or archive was
+created. Source and small documentation evidence are retained; the unchanged
+external-volume integrity hold still prevents physical qualification/packaging.
+
+### Prior combined source checkpoint after working capacity and atomic editing
 
 The combined cache-off native MEMORY/ReactDOM/HTTP/SDK/Jobs/Torrent/worker set
 passed **1,282 tests, 25,906 assertions, 147 files** in 281.88 seconds. Physical

@@ -4,6 +4,8 @@ import type { DatabaseFindFilter } from '../databases/database-operations';
 import { JobsError } from './error';
 import { jobAdmissionDigest, jobAdmissionId, normalizeJobAdmission, type JobAdmission, type JobAdmissionRow, type JobScheduleRow, type JobSeal } from './model';
 import { jobHash, jobInteger, jobJson, jobKey, jobRecord, jobScope, jobText } from './validation';
+import { jobCapacityPolicy, jobHistoryLimit } from './capacity-policy';
+import { readJobSettlementSnapshot } from './settlement-model';
 export { jobScope } from './validation';
 
 export interface JobActor { readonly scopeId: string; readonly userId: string; readonly principal: string; readonly manageAll: boolean }
@@ -64,20 +66,24 @@ export function isActorJobSchedule(row: JobScheduleRow): row is ActorJobSchedule
   return row.source_id == null && typeof row.actor_id === 'string' && typeof row.principal === 'string' && typeof row.updated_by === 'string';
 }
 export function jobBudget(context: DatabaseWriteCommandContext, id: string, limit: number, amount = 1): void {
+  limit = jobHistoryLimit(context, id, limit);
   const row = context.db.get('_jobs_usage', id);
   const count = row ? jobInteger(row.count) : 0;
   if (count > limit - amount) throw new JobsError('JOBS_CAPACITY');
   if (row) context.db.update('_jobs_usage', id, { count: count + amount });
   else context.db.createStrict('_jobs_usage', { id, count: amount });
 }
-export function jobIntent<T>(context: DatabaseWriteCommandContext, actor: JobActor, requestId: unknown, intent: unknown, now: number, run: () => T): T {
+export function jobIntent<T>(context: DatabaseWriteCommandContext, actor: JobActor, requestId: unknown, intent: unknown, now: number, run: () => T, recovery = false): T {
   const id = jobHash([actor.scopeId, actor.principal, jobKey(requestId)]), digest = jobHash(intent), prior = context.db.get('_jobs_intents', id);
   if (prior) {
     if (prior.scope_id !== actor.scopeId || prior.principal !== actor.principal || prior.digest !== digest) throw new JobsError('JOBS_INTENT_CONFLICT');
     try { return JSON.parse(String(prior.result_json)) as T; } catch { throw new JobsError('JOBS_STATE_INVALID'); }
   }
-  jobBudget(context, 'intents', JOB_LIMITS.intents);
+  const controlBefore = recovery && context.db.hasTable('_jobs_settlement_usage') ? readJobSettlementSnapshot(context.db).actorControlUnits : 0;
   const value = run(), json = jobJson(value);
+  const controlAfter = recovery && context.db.hasTable('_jobs_settlement_usage') ? readJobSettlementSnapshot(context.db).actorControlUnits : 0;
+  const reserved = recovery && controlAfter < controlBefore;
+  jobBudget(context, reserved ? 'actorRecoveryIntents' : 'intents', reserved ? jobCapacityPolicy(context).retained.actorRecoveryIntents : JOB_LIMITS.intents);
   context.db.createStrict('_jobs_intents', { id, scope_id: actor.scopeId, principal: actor.principal, digest, result_json: json, created_at: now });
   return JSON.parse(json) as T;
 }

@@ -53,6 +53,7 @@ export type DatabaseBindingRetirementReason =
 export type DatabaseCloseReason = 'requested' | 'idle' | 'capacity' | 'shutdown';
 
 interface DatabaseCoordinatorEntryLifecycleOptions {
+  readonly writerPolicy?: import('./database-operations').DatabaseSerializableValue;
   readonly loggingBinding?: (entry: DatabaseCoordinatorEntry) => LoggingActorSourceBinding | undefined;
   readonly realm: DatabaseRealm;
   readonly openAdmission?: DatabaseOpenAdmissionResolver;
@@ -79,6 +80,7 @@ interface DatabaseCoordinatorEntryLifecycleOptions {
 }
 
 export class DatabaseCoordinatorEntryLifecycle {
+  readonly #writerPolicy: import('./database-operations').DatabaseSerializableValue | undefined;
   readonly #realm: DatabaseRealm;
   readonly #openAdmission: DatabaseOpenAdmissionResolver | undefined;
   readonly #sqlite: DatabaseActorSQLiteConfig;
@@ -105,6 +107,7 @@ export class DatabaseCoordinatorEntryLifecycle {
   readonly #loggingBinding: DatabaseCoordinatorEntryLifecycleOptions['loggingBinding'];
 
   constructor(options: DatabaseCoordinatorEntryLifecycleOptions) {
+    this.#writerPolicy = options.writerPolicy;
     this.#loggingBinding = options.loggingBinding;
     this.#realm = options.realm;
     this.#openAdmission = options.openAdmission;
@@ -153,6 +156,7 @@ export class DatabaseCoordinatorEntryLifecycle {
       },
     });
     this.#executorBinding = new DatabaseCoordinatorExecutorBinding({
+      writerPolicy: this.#writerPolicy,
       realm: this.#realm,
       createExecutor: options.createExecutor,
       hotDurabilitySupervisor: this.#hotDurabilitySupervisor,
@@ -645,6 +649,7 @@ export class DatabaseCoordinatorEntryLifecycle {
       realmFingerprint: this.#realm.fingerprint,
       sqlite: this.#sqlite,
       ...(openAdmission === undefined ? {} : { openAdmission }),
+      ...(this.#writerPolicy === undefined ? {} : { writerPolicy: this.#writerPolicy }),
       ...(logging ? { logging } : {}),
       ...(this.#authorityCommitFence ? { authorityCommitFence: this.#authorityCommitFence } : {}),
     }, this.#realm);

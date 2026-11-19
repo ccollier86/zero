@@ -201,6 +201,7 @@ export class DatabaseCoordinator implements AsyncDisposable {
       emit: (event) => this.emit(event),
     });
     this.entryLifecycle = new DatabaseCoordinatorEntryLifecycle({
+      ...(config.writerPolicy === undefined ? {} : { writerPolicy: config.writerPolicy }),
       realm: this.realm,
       ...(config.openAdmission ? { openAdmission: config.openAdmission } : {}),
       sqlite: config.sqlite,
@@ -865,6 +866,10 @@ export class DatabaseCoordinator implements AsyncDisposable {
       options,
       commitAuthority,
     );
+  }
+
+  inspectWriterAdmission(entry: DatabaseEntry, options: DatabaseExecutionOptions = {}): Promise<import('./database-writer-admission').DatabaseWriterAdmissionInspection> {
+    return this.operationRuntime.inspectWriterAdmission(entry, options);
   }
 
   findTrustedReceipt(

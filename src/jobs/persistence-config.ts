@@ -5,8 +5,10 @@ import { fileURLToPath } from 'node:url';
 import { createSubprocessDatabaseExecutorFactory, type SubprocessDatabaseExecutorFactory, type SubprocessDatabaseExecutorFactoryOptions } from '../databases/subprocess-database-executor-factory';
 import { JobsError } from './error';
 import { jobInteger, jobRecord } from './validation';
+import { normalizeJobsCapacityPolicy, type JobsCapacityConfig, type JobsCapacityPolicy } from './capacity-policy';
 
 export interface JobsPersistenceConfig {
+  capacity?: JobsCapacityConfig;
   rootDirectory?: string;
   actors?: Omit<SubprocessDatabaseExecutorFactoryOptions, 'actorFlag'>;
   maxActiveDatabases?: number;
@@ -14,12 +16,13 @@ export interface JobsPersistenceConfig {
   concurrency?: number | 'max';
 }
 export interface ResolvedJobsPersistenceConfig {
+  readonly capacity?: JobsCapacityPolicy;
   readonly rootDirectory: string; readonly createExecutor: SubprocessDatabaseExecutorFactory; readonly defaultActorEntrypoint: string | null;
   readonly maxActiveDatabases: number; readonly maxDatabaseFiles: number; readonly concurrency: number;
 }
 export function resolveJobsPersistenceConfig(input: JobsPersistenceConfig, projectRoot: string): ResolvedJobsPersistenceConfig {
   try {
-    const r = jobRecord(input, ['rootDirectory', 'actors', 'maxActiveDatabases', 'maxDatabaseFiles', 'concurrency']);
+    const r = jobRecord(input, ['rootDirectory', 'actors', 'maxActiveDatabases', 'maxDatabaseFiles', 'concurrency', 'capacity']);
     if (r.rootDirectory !== undefined && (typeof r.rootDirectory !== 'string' || !r.rootDirectory.trim() || r.rootDirectory.includes('\0'))) throw new JobsError('JOBS_CONFIG_INVALID');
     const adjacent = fileURLToPath(new URL('./actor-entry.ts', import.meta.url));
     let entry = adjacent;
@@ -27,7 +30,7 @@ export function resolveJobsPersistenceConfig(input: JobsPersistenceConfig, proje
     const actors = r.actors === undefined ? { launch: { kind: 'source' as const, entrypoint: entry }, env: {} }
       : jobRecord(r.actors, ['launch', 'env', 'executor']);
     const maxActiveDatabases = jobInteger(r.maxActiveDatabases ?? 4, 1, 64);
-    return Object.freeze({ rootDirectory: resolve(projectRoot, r.rootDirectory as string ?? 'data/zero.jobs'),
+    return Object.freeze({ capacity: normalizeJobsCapacityPolicy(r.capacity), rootDirectory: resolve(projectRoot, r.rootDirectory as string ?? 'data/zero.jobs'),
       createExecutor: createSubprocessDatabaseExecutorFactory({ ...actors, actorFlag: '--zero-jobs-actor' } as unknown as SubprocessDatabaseExecutorFactoryOptions),
       defaultActorEntrypoint: r.actors === undefined ? entry : null, maxActiveDatabases,
       maxDatabaseFiles: jobInteger(r.maxDatabaseFiles ?? 1000, maxActiveDatabases, 10_000),

@@ -27,8 +27,12 @@ export function sameCalendarVisit(left: CalendarVisitInput | undefined, right: C
 }
 /** Assignment intersection precedes every client-selected catalog lookup, even for global managers. */
 export function assertCalendarVisitPolicy(context: DatabaseWriteCommandContext, actor: CalendarActor, resourceIds: readonly string[], visit: CalendarVisitInput | undefined): void {
+  assertCalendarVisitPolicyForScope(context, actor.scopeId, resourceIds, visit);
+}
+/** Private policy core only. A scope is not authorization; callers admit every resource first. */
+export function assertCalendarVisitPolicyForScope(context: DatabaseWriteCommandContext, scopeId: string, resourceIds: readonly string[], visit: CalendarVisitInput | undefined): void {
   if (visit?.mode !== 'in-person') return;
-  for (const resourceId of resourceIds) if (!currentCalendarResourceLocations(context, actor.scopeId, resourceId).includes(visit.location.id)) throw new CalendarError('CALENDAR_VISIT_CONFLICT');
+  for (const resourceId of resourceIds) if (!currentCalendarResourceLocations(context, scopeId, resourceId).includes(visit.location.id)) throw new CalendarError('CALENDAR_VISIT_CONFLICT');
 }
 function snapshot(row: VisitRow, location?: LocationHistoryRow): CalendarVisitSnapshot | undefined {
   if (row.visit_mode === null) return undefined;
@@ -44,12 +48,16 @@ function commandSnapshot(context: DatabaseWriteCommandContext, scopeId: string, 
 }
 /** New admission only; receipt replays never consult current catalog state. */
 export function assertCalendarBookingVisit(context: DatabaseWriteCommandContext, actor: CalendarActor, resourceIds: readonly string[], visit: CalendarVisitInput | undefined): CalendarVisitSnapshot | undefined {
-  assertCalendarVisitPolicy(context, actor, resourceIds, visit);
+  return assertCalendarBookingVisitForScope(context, actor.scopeId, resourceIds, visit);
+}
+/** Private selected-generation admission. It neither impersonates a user nor authorizes a resource. */
+export function assertCalendarBookingVisitForScope(context: DatabaseWriteCommandContext, scopeId: string, resourceIds: readonly string[], visit: CalendarVisitInput | undefined): CalendarVisitSnapshot | undefined {
+  assertCalendarVisitPolicyForScope(context, scopeId, resourceIds, visit);
   if (visit?.mode !== 'in-person') return visit;
   const current = context.db.get('calendar_locations', visit.location.id);
-  if (!current || current.scope_id !== actor.scopeId) throw new CalendarError('CALENDAR_VISIT_CONFLICT');
+  if (!current || current.scope_id !== scopeId) throw new CalendarError('CALENDAR_VISIT_CONFLICT');
   if (current.revision !== visit.location.revision) throw new CalendarError('CALENDAR_VISIT_STALE');
-  const rows = context.db.find('_calendar_location_history', { filters: [eq('scope_id', actor.scopeId), eq('location_id', visit.location.id), eq('location_revision', visit.location.revision)], limit: 2 }) as LocationHistoryRow[];
+  const rows = context.db.find('_calendar_location_history', { filters: [eq('scope_id', scopeId), eq('location_id', visit.location.id), eq('location_revision', visit.location.revision)], limit: 2 }) as LocationHistoryRow[];
   if (rows.length !== 1) throw new CalendarError('CALENDAR_STATE_INVALID');
   if (rows[0]!.active !== 1) throw new CalendarError('CALENDAR_VISIT_STALE');
   return snapshot({ visit_mode: visit.mode, location_id: visit.location.id, location_revision: visit.location.revision }, rows[0]);

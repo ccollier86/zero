@@ -28,10 +28,16 @@ import type { JobsDueCursor, JobsRuntime } from '../runtime';
 import { JobsService } from '../service';
 import { createTrustedJobSource } from '../source-authority';
 import type { JobSourceIdentity } from '../source-model';
+import type { JobsCapacityConfig } from '../capacity-policy';
+import { memoryJobsWriterFixture } from './memory-writer-fixture';
+import { composeJobSourceCapacity } from '../capacity-projection';
+import type { JobSourceCapacityRows } from '../source-model';
 
 export interface MemoryJobsOperation { readonly scope: ServiceDataScope; readonly name: string; readonly input: unknown }
-interface MemoryPlane { readonly db: ReactiveDB; readonly scope: ServiceDataScope; wakeAt: number | null }
+interface MemoryPlane { readonly db: ReactiveDB; readonly scope: ServiceDataScope; wakeAt: number | null; native?: ReturnType<typeof memoryJobsWriterFixture> }
 interface Options {
+  readonly nativeWriter?: boolean;
+  readonly capacity?: JobsCapacityConfig;
   /** Explicit test-only native catalog substitution; normal source fixtures keep the original defaults. */
   readonly definition?: JobDefinition;
   readonly registerWorkflow?: (registry: WorkflowRegistry, activity: StepHandler) => void;
@@ -47,7 +53,7 @@ export async function memorySourceJobsFixture(options: Options = {}) {
     workflow: { name: 'synthetic.source.workflow', version: 1 }, parseInput: input => input });
   const requestDefinition = defineJob({ name: 'synthetic.request', version: '1', access: 'admin',
     workflow: { name: 'synthetic.source.workflow', version: 1 }, parseInput: input => input });
-  const config = resolveJobsConfig({ definitions: [definition, requestDefinition], concurrency: 4, maxActiveDatabases: 2 },
+  const config = resolveJobsConfig({ definitions: [definition, requestDefinition], concurrency: 4, maxActiveDatabases: 2, ...(options.capacity ? { capacity: options.capacity } : {}) },
     '/synthetic-memory-source-jobs-never-created', auth, true);
   if (!config) throw new Error('Synthetic source Jobs configuration missing.');
   const torrentDb = createReactiveDB({ mode: 'memory' });
@@ -88,18 +94,27 @@ export async function memorySourceJobsFixture(options: Options = {}) {
     };
     const query = <T>(plane: MemoryPlane, name: string, input: unknown): T => {
       const copy = Database.deserialize(plane.db.getRawDatabase().serialize(), { readonly: true, strict: true }); activeLeases++;
-      try { copy.run('PRAGMA temp_store=MEMORY'); return withDatabaseReadQuerySession(createDatabaseReadQuerySession(copy), context =>
-        unwrap<T>(runDatabaseRealmQuery(jobsRealm, context, name, input as DatabaseSerializableValue))); }
+      try { copy.run('PRAGMA temp_store=MEMORY'); const result = withDatabaseReadQuerySession(createDatabaseReadQuerySession(copy), context =>
+        unwrap<T>(runDatabaseRealmQuery(jobsRealm, context, name, input as DatabaseSerializableValue)));
+        return name === 'jobs.source.capacity' && plane.native ? composeJobSourceCapacity(result as JobSourceCapacityRows, plane.native.engine.inspectAdmission()) as T : result; }
       finally { copy.close(true); activeLeases--; }
     };
-    const command = <T>(plane: MemoryPlane, name: string, input: unknown): T => {
+    const command = <T>(plane: MemoryPlane, name: string, input: unknown, key?: string): T => {
       activeLeases++;
-      try { return unwrap<T>(runDatabaseRealmCommand(jobsRealm, plane.db, name, input as DatabaseSerializableValue)); }
+      try { return plane.native ? plane.native.command<T>(name, input, key) : unwrap<T>(runDatabaseRealmCommand(jobsRealm, plane.db, name, input as DatabaseSerializableValue)); }
       catch (error) { throw readJobRejection(error) ?? error; }
       finally { activeLeases--; }
     };
     const allocate = (scope: ServiceDataScope): MemoryPlane => {
       const key = serviceDataScopeKey(scope), existing = planes.get(key); if (existing) return existing;
+      if (options.nativeWriter) {
+        const native = memoryJobsWriterFixture(options.capacity);
+        try {
+          const plane: MemoryPlane = { db: native.db, native, scope, wakeAt: null };
+          command(plane, 'jobs.owner.bind', { scopeId: key, ownerId: 'synthetic-jobs-owner-' + key });
+          planes.set(key, plane); return plane;
+        } catch (error) { native.close(); throw error; }
+      }
       const db = createReactiveDB({ mode: 'memory' });
       try {
         const raw = db.getRawDatabase(); raw.run('PRAGMA temp_store=MEMORY'); raw.run('PRAGMA foreign_keys=ON');
@@ -115,10 +130,10 @@ export async function memorySourceJobsFixture(options: Options = {}) {
       const plane = existingOnly ? planes.get(serviceDataScopeKey(scope)) : allocate(scope); if (!plane) return null;
       const value = query<T>(plane, name, input); guard(); return value;
     };
-    const write = async <T>(scope: ServiceDataScope, name: string, input: unknown, _transportId: string, guard: () => void, signal?: AbortSignal, existingOnly = false): Promise<T> => {
+    const write = async <T>(scope: ServiceDataScope, name: string, input: unknown, transportId: string, guard: () => void, signal?: AbortSignal, existingOnly = false): Promise<T> => {
       guard(); signal?.throwIfAborted(); const operation = { scope, name, input }; await options.beforeWrite?.(operation); guard(); signal?.throwIfAborted();
       const plane = existingOnly ? planes.get(serviceDataScopeKey(scope)) : allocate(scope); if (!plane) throw new JobsError('JOBS_NOT_READY');
-      plane.wakeAt = 0; const value = command<T>(plane, name, input); commands.push(operation);
+      plane.wakeAt = 0; const value = command<T>(plane, name, input, transportId); commands.push(operation);
       // Fault injection occurs AFTER the actual realm transaction and its SQL lease close.
       try { await options.afterWrite?.(operation); guard(); signal?.throwIfAborted(); }
       catch { throw new JobsError('JOBS_OUTCOME_UNKNOWN'); }
@@ -140,7 +155,7 @@ export async function memorySourceJobsFixture(options: Options = {}) {
       async deferWake(scope: ServiceDataScope, at: number, guard: () => void) { guard(); const plane = planes.get(serviceDataScopeKey(scope)); if (plane) plane.wakeAt = at; },
       diagnostics: () => ({ syntheticMemoryOnly: true, activeLeases, planes: planes.size, closed }),
       subscribe() { return () => {}; },
-      async close() { closed = true; if (!retainOnClose) { for (const plane of planes.values()) plane.db.dispose(); planes.clear(); } },
+      async close() { closed = true; if (!retainOnClose) { for (const plane of planes.values()) { if (plane.native) plane.native.close(); else plane.db.dispose(); } planes.clear(); } },
     } as unknown as JobsRuntime;
     service = new JobsService({ runtime, bridge, config, now: () => now, onFailure: (stage, code) => failures.push(stage + ':' + code) });
     const source = (settings: { identity?: Partial<JobSourceIdentity>; scope?: ServiceDataScope; policyVersion?: string; semanticsVersion?: string;
@@ -174,16 +189,17 @@ export async function memorySourceJobsFixture(options: Options = {}) {
       },
       rows(scope: ServiceDataScope, table: string) { return planes.get(serviceDataScopeKey(scope))?.db.list(table) ?? []; },
       plane(scope: ServiceDataScope) { return planes.get(serviceDataScopeKey(scope))?.db; },
+      native(scope: ServiceDataScope) { return planes.get(serviceDataScopeKey(scope))?.native; },
       query: <T>(scope: ServiceDataScope, name: string, input: unknown) => read<T>(scope, name, input, () => {}, undefined, true),
       stats: () => ({ planes: planes.size, activeLeases, backendLeases, ownerChecks, eligibleChecks }),
       request() { const access = createRequestAuthorizationAccess({ kernel, authContext: context }); return service!.forAuthority({ access, scope: applicationServiceDataScope(),
         assertCurrentAuthoritySync() { if (closed) throw new JobsError('JOBS_NOT_READY'); }, async assertCurrentAuthority() { if (closed) throw new JobsError('JOBS_NOT_READY'); } }); },
       async close() { discovery = false; lifetime.abort(); for (const controller of sourceLifetimes) controller.abort();
-        try { await service!.close(); } finally { try { await workflows!.dispose(); } finally { for (const plane of planes.values()) plane.db.dispose(); planes.clear(); torrentDb.dispose(); } } },
+        try { await service!.close(); } finally { try { await workflows!.dispose(); } finally { for (const plane of planes.values()) { if (plane.native) plane.native.close(); else plane.db.dispose(); } planes.clear(); torrentDb.dispose(); } } },
     };
   } catch (error) { lifetime.abort(); for (const controller of sourceLifetimes) controller.abort();
     try { await service?.close(); }
-    finally { try { await workflows?.dispose(); } finally { for (const plane of planes.values()) plane.db.dispose(); planes.clear(); torrentDb.dispose(); } }
+    finally { try { await workflows?.dispose(); } finally { for (const plane of planes.values()) { if (plane.native) plane.native.close(); else plane.db.dispose(); } planes.clear(); torrentDb.dispose(); } }
     throw error;
   }
 }

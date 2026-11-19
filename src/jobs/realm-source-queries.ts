@@ -3,7 +3,7 @@ import type { DatabaseReadQueryContext } from '../databases/database-realm';
 import { JobsError } from './error';
 import { digest, jobAdmissionId, jobOccurrenceId, type JobAdmission, type JobAdmissionRow, type JobOccurrenceRow, type JobScheduleRow, type JobSeal } from './model';
 import { decodeJobAdmission, JOB_LIMITS, normalizeJobSeal } from './realm-model';
-import { jobSourceId, normalizeJobSourceIdentity, normalizeJobSourceOrigin, type JobRetainedCapacity, type JobSourceCapacity, type JobSourceIdentity } from './source-model';
+import { jobSourceId, normalizeJobSourceIdentity, normalizeJobSourceOrigin, type JobRetainedCapacity, type JobSourceCapacityRows, type JobSourceIdentity } from './source-model';
 import { assertSourceAdmission, assertSourceRow, assertSourceSchedule, decodeSourceIntent, decodeSourcePolicy,
   JOB_SOURCE_LIMITS, JOB_SOURCE_RECOVERY_INTENTS_LIMIT, sourceIntentId, sourcePolicyId, sourceRegistration, sourceScheduleReceipt, type JobSourceIntentRow, type JobSourcePolicyRow, type JobSourceRow } from './source-realm-model';
 import { jobHash, jobInteger, jobRecord, jobScope, jobText, jobTime } from './validation';
@@ -50,7 +50,7 @@ export function getJobSource(context: DatabaseReadQueryContext, input: unknown) 
 
 /** Fixed-size owner/source proof and usage primary-key reads; no history scans,
  * admissions, authority seals or source policy contracts are read or exposed. */
-export function readSourceJobCapacity(context: DatabaseReadQueryContext, input: unknown): JobSourceCapacity {
+export function readSourceJobCapacity(context: DatabaseReadQueryContext, input: unknown): JobSourceCapacityRows {
   const r = jobRecord(input, ['identity']), identity = normalizeJobSourceIdentity(r.identity), row = source(context, identity);
   const usage = context.database.query<{ count: number }>('SELECT count FROM _jobs_usage WHERE id=?');
   const capacity = (id: string, limit: number): JobRetainedCapacity => {

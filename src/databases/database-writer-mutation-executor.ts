@@ -17,6 +17,7 @@ import {
   type DatabaseMutation,
   type DatabaseOperationRow,
   type DatabaseWriteOperation,
+  type DatabaseSerializableValue,
 } from './database-operations';
 import { runDatabaseRealmCommand, type DatabaseRealm } from './database-realm';
 import type { DatabaseRuntime } from './database-runtime';
@@ -30,6 +31,7 @@ export function executeDatabaseWriterWriteValue(
   runtime: DatabaseRuntime,
   realm: DatabaseRealm,
   operation: DatabaseWriteOperation,
+  writerPolicy?: DatabaseSerializableValue,
 ): DatabaseWriterCommitValue {
   switch (operation.type) {
     case 'mutate':
@@ -48,6 +50,7 @@ export function executeDatabaseWriterWriteValue(
           runtime.db,
           operation.name,
           operation.input,
+          writerPolicy,
         ),
       };
   }

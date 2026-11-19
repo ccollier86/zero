@@ -18,6 +18,10 @@ import { jobHash, jobInteger, jobText, jobTime } from './validation';
 import { jobScope } from './realm-model';
 import { installJobsOwnerSchema } from './owner-schema';
 import { JobsError, JOBS_REJECTIONS, readJobRejection } from './error';
+import { jobCapacityPolicyData, normalizeJobsCapacityPolicy } from './capacity-policy';
+import { inspectJobSourceCapacity } from './capacity-projection';
+import { databaseWriterAdmissionFingerprint } from '../databases/database-writer-admission';
+import type { JobSourceCapacityRows } from './source-model';
 import { readJobCommitHint, type JobCommitHint } from './commit-hints';
 import type { JobsLoggingSource } from './logging';
 
@@ -50,6 +54,7 @@ export class JobsRuntime {
     if (!installJobsOwnerSchema(options.system, options.installAllowed)) throw new JobsError('JOBS_NOT_READY');
     const concurrency = options.config.concurrency;
     const owner = new DatabaseCoordinator({ rootDirectory: options.config.rootDirectory, realm: jobsRealm, createExecutor: options.config.createExecutor,
+      writerPolicy: jobCapacityPolicyData(normalizeJobsCapacityPolicy(options.config.capacity)),
       placement: { default: 'file', hot: null }, sqlite: { synchronous: 'FULL' }, readers: true,
       maxDatabases: options.config.maxActiveDatabases, maxDatabaseFiles: options.config.maxDatabaseFiles,
       maxQueuedPerDatabase: Math.max(64, concurrency * 3), maxQueuedTotal: Math.max(256, concurrency * 4),
@@ -249,6 +254,10 @@ export class JobsRuntime {
       const envelope = (kind === 'query' ? result.value : command.output) as { ok?: boolean; value?: unknown; code?: string; hint?: unknown } | null;
       if (envelope?.ok === false && JOBS_REJECTIONS.includes(envelope.code as typeof JOBS_REJECTIONS[number])) throw new JobsError(envelope.code as typeof JOBS_REJECTIONS[number]);
       if (envelope?.ok !== true || !Object.hasOwn(envelope, 'value')) throw new JobsError(kind === 'command' ? 'JOBS_OUTCOME_UNKNOWN' : 'JOBS_NOT_READY');
+      if (kind === 'query' && name === 'jobs.source.capacity') {
+        return await inspectJobSourceCapacity(lease, envelope.value as JobSourceCapacityRows,
+          databaseWriterAdmissionFingerprint(jobsRealm, jobCapacityPolicyData(normalizeJobsCapacityPolicy(this.options.config.capacity)))!, check, signal) as T;
+      }
       if (kind === 'command' && !('replayed' in result && result.replayed) && envelope.hint !== undefined) {
         // Malformed advisory metadata must not rewrite an acknowledged mutation's accepted outcome.
         try { this.queueHint(createDatabaseRef(id), readJobCommitHint(envelope.hint)); } catch { /* Retained reads still reauthorize; no guessed row events. */ }
