@@ -274,6 +274,29 @@ managed migration preparation; never rewrite old migration ledgers manually.
 
 ## Remaining calendar integration gates
 
+### Native idle attachment and physical shutdown
+
+The private `SourceJobs.hydration` surface now separates resident capability
+attachment from durable registration. `attach` requires the original accepted
+activation key, exact current active registration and compiled pin. It performs
+read-only evidence checks and publishes only that proven existing binding; a
+missing receipt never falls back to registration. `tryDetach` compares the exact
+capability and refuses while source callbacks or dispatch permits remain
+physically pinned. It changes neither durable source state nor historical
+evidence authority. The global 1,024 resident-source ceiling remains finite.
+
+Queued and running source bodies retain physical pins through their actual
+`finally` blocks, not merely until a caller times out. A prepared dispatch permit
+is single-use and remains pinned through the real native enqueue callback.
+Final Jobs close seals new source admission, abandons only never-invoked permits,
+and joins pre-gate owner confirmations/evidence reads before closing SQL. Earlier
+quiesce/drain deliberately keeps evidence available for dependent Torrent work.
+There is no timeout that fabricates physical settlement.
+
+These source-checked primitives do not by themselves implement a scalable
+Calendar owner registry or automatic on-demand hydration. Those remaining native
+SYSTEM wake/residency paths and physical deployment qualification stay open.
+
 The [private calendar protocol](../calendar/integrations.md) now implements
 bounded indexed dispatch beside immutable effect references, exact Jobs/Torrent
 proof and a source-local observation cutoff. It also has a closed workflow

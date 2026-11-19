@@ -110,7 +110,9 @@ test('current membership—not retained resource history—owns detail/range/rec
     f.resource('old'); f.resource('new', nextOwner.userId); f.appointment('appointment', { actor: owner });
     f.update({ resourceIds: ['new'] });
     expect(f.query('appointment', { actor: nextOwner, id: 'appointment' }).resourceIds).toEqual(['new']);
+    expect(f.query('appointmentTransitions', { actor: nextOwner, id: 'appointment' })).toMatchObject({ id: 'appointment', revision: 2, status: 'confirmed' });
     rejected(() => f.query('appointment', { actor: owner, id: 'appointment' }), 'CALENDAR_NOT_FOUND');
+    rejected(() => f.query('appointmentTransitions', { actor: owner, id: 'appointment' }), 'CALENDAR_NOT_FOUND');
     rejected(() => f.query('receipt', { actor: owner, requestId: 'create-appointment' }), 'CALENDAR_NOT_FOUND');
     expect(f.query('appointments', { actor: manager, resourceIds: ['old'], ...range }).items).toEqual([]);
     expect(f.query('busy', { actor: owner, resourceIds: ['old'], ...range }).items).toEqual([]);
@@ -147,6 +149,7 @@ test('more than sixteen historical resources never exceeds the sixteen-CURRENT-m
     for (let i = 0; i < 18; i++) { const id = 'r' + i; f.resource(id); f.update({ resourceIds: [id] }); }
     expect(f.db.list('_calendar_reservations')).toHaveLength(19); expect(f.db.list(CURRENT)).toHaveLength(1);
     expect(f.query('appointment', { actor: manager, id: 'appointment' }).resourceIds).toEqual(['r17']);
+    expect(f.query('appointmentTransitions', { actor: manager, id: 'appointment' })).toMatchObject({ id: 'appointment', revision: 19, status: 'confirmed' });
     f.update({ resourceIds: ['old'] }); expect(f.query('appointment', { actor: manager, id: 'appointment' }).resourceIds).toEqual(['old']);
   } finally { f.close(); }
 });

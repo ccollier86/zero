@@ -80,7 +80,13 @@ export class JobsService {
     this.sources.close();
     this.closeTask = (async () => {
       try { await drained; } finally {
-        try { await this.runner.close(); } finally { try { await this.gate.close(); } finally { await this.options.runtime.close(); } }
+        try { await this.runner.close(); } finally { try { await this.gate.close(); } finally {
+          // Source owner confirmations and evidence reads can be physically
+          // running before they enter the shared gate. Final closure seals new
+          // source admission; only their actual settlement permits SQL teardown.
+          await this.sources.drainPhysical();
+          await this.options.runtime.close();
+        } }
       }
     })();
     return this.closeTask;

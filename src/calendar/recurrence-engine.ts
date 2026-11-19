@@ -18,7 +18,8 @@ export type CalendarRecurrenceRule = { readonly interval: number; readonly end: 
   | { readonly frequency: 'monthly'; readonly pattern: { readonly kind: 'day'; readonly day: number }
     | { readonly kind: 'weekday'; readonly ordinal: number; readonly weekday: number } });
 export interface CalendarRecurrenceDateRange { readonly from: string; readonly until: string }
-export interface CalendarTimedRecurrenceInput {
+/** Authored recurrence only: query ranges and work/output budgets are never source facts. */
+export interface CalendarTimedRecurrenceSource {
   readonly kind: 'timed-local-v1';
   /** Exact ISO civil wall datetime, YYYY-MM-DDTHH:mm:ss.SSS, ISO calendar, years 0000–9999. */
   readonly localStart: string;
@@ -28,6 +29,8 @@ export interface CalendarTimedRecurrenceInput {
   /** Same exact elapsed duration for each occurrence (DTEND-style), not nominal civil DURATION. */
   readonly durationMilliseconds: number;
   readonly rule: CalendarRecurrenceRule;
+}
+export interface CalendarTimedRecurrenceInput extends CalendarTimedRecurrenceSource {
   /** Half-open NOMINAL local-start-date range. Not a UTC overlap/free-busy query. */
   readonly range: CalendarRecurrenceDateRange;
   readonly limit?: number;
@@ -43,6 +46,11 @@ export interface CalendarRecurrenceOccurrence {
   readonly startAt: string;
   /** Exclusive canonical Calendar UTC end; exact duration can cross midnight, a zone transition or local year 9999. */
   readonly endAt: string;
+}
+/** DTSTART qualification, not a persisted series, resource admission or reservation/coverage promise. */
+export interface CalendarTimedRecurrenceSourceAdmission {
+  readonly source: Readonly<CalendarTimedRecurrenceSource>;
+  readonly original: CalendarRecurrenceOccurrence;
 }
 export interface CalendarRecurrenceExpansion {
   readonly kind: 'timed-local-v1';
@@ -62,6 +70,7 @@ export const CALENDAR_RECURRENCE_MAX_RANGE_DAYS = 366;
 export const CALENDAR_RECURRENCE_MAX_OCCURRENCES = 1000;
 export const CALENDAR_RECURRENCE_MAX_CANDIDATES = 4096;
 const DAY_MS = 86_400_000;
+const SOURCE_FIELDS = ['kind', 'localStart', 'timeZone', 'fold', 'durationMilliseconds', 'rule'] as const;
 interface CivilDate { readonly year: number; readonly month: number; readonly day: number }
 interface PlainDate extends CivilDate {
   readonly dayOfWeek: number;
@@ -129,17 +138,28 @@ function normalizeRule(input: unknown, start: string): CalendarRecurrenceRule {
   return Object.freeze({ frequency: raw.frequency, interval, end });
 }
 
-/** Closed descriptor-safe admission. All-day, floating, offset-only, RRULE strings and unknown rule parts reject. */
-export function normalizeCalendarTimedRecurrence(input: unknown): Readonly<Normalized> {
-  const r = calendarRecord(calendarValue(input), ['kind', 'localStart', 'timeZone', 'fold', 'durationMilliseconds', 'rule', 'range', 'limit']);
+function sourceStart(r: Record<string, unknown>): Pick<CalendarTimedRecurrenceSource, 'kind' | 'localStart' | 'fold'> & { readonly date: string } {
   if (r.kind !== 'timed-local-v1' || typeof r.localStart !== 'string'
     || !/^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d\.\d{3}$/.test(r.localStart)
     || r.fold !== 'earlier' && r.fold !== 'later') return invalid();
-  const start = civilDate(r.localStart.slice(0, 10));
+  return { kind: r.kind, localStart: r.localStart, fold: r.fold, date: civilDate(r.localStart.slice(0, 10)) };
+}
+function sourceFields(r: Record<string, unknown>, start: ReturnType<typeof sourceStart>): Readonly<CalendarTimedRecurrenceSource> {
+  return Object.freeze({ kind: start.kind, localStart: start.localStart, timeZone: normalizeCalendarTimeZone(r.timeZone), fold: start.fold,
+    durationMilliseconds: calendarInteger(r.durationMilliseconds, 1, 31 * DAY_MS), rule: normalizeRule(r.rule, start.date) });
+}
+/** Closed source-only structural normalization, deliberately independent of native Temporal availability and query limits. */
+export function normalizeCalendarTimedRecurrenceSource(input: unknown): Readonly<CalendarTimedRecurrenceSource> {
+  const r = calendarRecord(calendarValue(input), SOURCE_FIELDS);
+  return sourceFields(r, sourceStart(r));
+}
+/** Legacy combined structural API: preserve DTSTART -> range -> zone/duration/rule -> limit validation ordering. */
+export function normalizeCalendarTimedRecurrence(input: unknown): Readonly<Normalized> {
+  const r = calendarRecord(calendarValue(input), [...SOURCE_FIELDS, 'range', 'limit']);
+  const start = sourceStart(r);
   const range = calendarRecord(r.range, ['from', 'until']), from = civilDate(range.from), until = civilDate(range.until);
   calendarInteger(ordinal(until) - ordinal(from), 1, CALENDAR_RECURRENCE_MAX_RANGE_DAYS);
-  return Object.freeze({ kind: r.kind, localStart: r.localStart, timeZone: normalizeCalendarTimeZone(r.timeZone), fold: r.fold,
-    durationMilliseconds: calendarInteger(r.durationMilliseconds, 1, 31 * DAY_MS), rule: normalizeRule(r.rule, start),
+  return Object.freeze({ ...sourceFields(r, start),
     range: Object.freeze({ from, until }), limit: r.limit === undefined ? 100 : calendarInteger(r.limit, 1, CALENDAR_RECURRENCE_MAX_OCCURRENCES) });
 }
 function temporal(): NativeTemporal {
@@ -149,7 +169,7 @@ function temporal(): NativeTemporal {
   } catch { /* An unsupported runtime must not expose its raw diagnostics. */ }
   throw new CalendarError('CALENDAR_TIME_RULES_UNAVAILABLE');
 }
-function resolveWallTime(t: NativeTemporal, date: PlainDate, source: Normalized): ZonedTime | null {
+function resolveWallTime(t: NativeTemporal, date: PlainDate, source: CalendarTimedRecurrenceSource): ZonedTime | null {
   const hour = Number(source.localStart.slice(11, 13)), minute = Number(source.localStart.slice(14, 16)),
     second = Number(source.localStart.slice(17, 19)), millisecond = Number(source.localStart.slice(20));
   const z = t.ZonedDateTime.from({ year: date.year, month: date.month, day: date.day, hour, minute, second, millisecond, timeZone: source.timeZone },
@@ -173,6 +193,30 @@ function matchesStart(t: NativeTemporal, start: PlainDate, rule: CalendarRecurre
   if (rule.frequency === 'weekly') return rule.weekdays.includes(start.dayOfWeek % 7);
   if (rule.frequency === 'monthly') return monthCandidate(t, start.year, start.month, rule).date?.toString() === start.toString();
   return true;
+}
+function admittedStart(t: NativeTemporal, source: CalendarTimedRecurrenceSource): { readonly start: PlainDate; readonly instant: ZonedTime } {
+  const start = t.PlainDate.from(source.localStart.slice(0, 10));
+  if (!matchesStart(t, start, source.rule)) return invalid();
+  const instant = resolveWallTime(t, start, source);
+  if (!instant) return invalid();
+  return { start, instant };
+}
+function occurrence(source: CalendarTimedRecurrenceSource, localStart: string, instant: ZonedTime): CalendarRecurrenceOccurrence {
+  const end = instant.epochMilliseconds + source.durationMilliseconds;
+  if (!Number.isSafeInteger(instant.epochMilliseconds) || !Number.isSafeInteger(end)) throw new CalendarError('CALENDAR_TIME_RULES_UNAVAILABLE');
+  return Object.freeze({ nominalKey: 'timed-v1:' + localStart, localStart, timeZone: source.timeZone, fold: source.fold,
+    offset: instant.offset, startAt: normalizeCalendarInstant(instant.epochMilliseconds), endAt: normalizeCalendarInstant(end) });
+}
+/** Qualify exactly the authored DTSTART without inventing a query range or expanding a prefix. No authority is conferred. */
+export function admitCalendarTimedRecurrenceSource(input: unknown): CalendarTimedRecurrenceSourceAdmission {
+  const source = normalizeCalendarTimedRecurrenceSource(input), t = temporal();
+  try {
+    const { instant } = admittedStart(t, source);
+    return Object.freeze({ source, original: occurrence(source, source.localStart, instant) });
+  } catch (error) {
+    if (error instanceof CalendarError) throw error;
+    throw new CalendarError('CALENDAR_TIME_RULES_UNAVAILABLE');
+  }
 }
 /** Direct seeking for uncounted rules never walks elapsed history. COUNT must
  * qualify valid earlier instances, so its scan starts at DTSTART but hard-stops.
@@ -216,8 +260,7 @@ function provenance(): CalendarRecurrenceExpansion['engine'] {
 export function materializeCalendarRecurrence(input: CalendarTimedRecurrenceInput): CalendarRecurrenceExpansion {
   const source = normalizeCalendarTimedRecurrence(input), t = temporal();
   try {
-    const start = t.PlainDate.from(source.localStart.slice(0, 10));
-    if (!matchesStart(t, start, source.rule) || !resolveWallTime(t, start, source)) return invalid();
+    const { start } = admittedStart(t, source);
     const occurrences: CalendarRecurrenceOccurrence[] = [];
     let evaluatedCandidates = 0, invalidDates = 0, nonexistentTimes = 0, counted = 0;
     let until = source.range.until, truncationReason: CalendarRecurrenceExpansion['truncationReason'] = null;
@@ -240,10 +283,7 @@ export function materializeCalendarRecurrence(input: CalendarTimedRecurrenceInpu
       counted++;
       if (date < source.range.from) continue;
       if (occurrences.length >= source.limit) { truncationReason = 'occurrence-limit'; until = date; break; }
-      const localStart = date + source.localStart.slice(10), end = instant.epochMilliseconds + source.durationMilliseconds;
-      if (!Number.isSafeInteger(instant.epochMilliseconds) || !Number.isSafeInteger(end)) throw new CalendarError('CALENDAR_TIME_RULES_UNAVAILABLE');
-      occurrences.push(Object.freeze({ nominalKey: 'timed-v1:' + localStart, localStart, timeZone: source.timeZone, fold: source.fold,
-        offset: instant.offset, startAt: normalizeCalendarInstant(instant.epochMilliseconds), endAt: normalizeCalendarInstant(end) }));
+      occurrences.push(occurrence(source, date + source.localStart.slice(10), instant));
     }
     return Object.freeze({ kind: 'timed-local-v1', requestedRange: source.range,
       coverage: Object.freeze({ from: source.range.from, until }), occurrences: Object.freeze(occurrences),

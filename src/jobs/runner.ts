@@ -12,7 +12,7 @@ import type { ResolvedJobsConfig } from './config';
 import type { JobsDueCursor, JobsRuntime } from './runtime';
 import { jobHash } from './validation';
 import { withoutLoggingAttribution } from '../logging/logging-attribution';
-import type { JobsSourceBroker } from './source-service';
+import type { JobsSourceBroker, SourceJobDispatchPin } from './source-service';
 
 export function jobGateKey(scope: ServiceDataScope, id: string): string { return jobHash([serviceDataScopeKey(scope), id]); }
 interface RunnerOptions {
@@ -215,7 +215,7 @@ export class JobsRunner {
       if (!context.dispatchAllowed) {
         await this.write(scope, 'jobs.block', { scopeId, id, nonce, leaseGeneration: claim.leaseGeneration, code: 'JOBS_NOT_DISPATCHED', now: this.now() }); return;
       }
-      let sourceGuard: (() => void) | undefined;
+      let sourcePin: SourceJobDispatchPin | undefined;
       const assertSourceCurrent = () => {
         this.guard(); this.abort.signal.throwIfAborted();
         const now = this.now();
@@ -224,13 +224,14 @@ export class JobsRunner {
           || now > context.occurrence.scheduled_at + admission.timing.maxLatenessMs) throw new JobsError('JOBS_AUTHORITY_RETIRED');
         const definition = this.options.config.catalog.resolve(admission.definition, admission.definitionVersion);
         assertJobDefinitionCurrent(definition, admission, authority, scope);
-        if (admission.source && !sourceGuard) throw new JobsError('JOBS_AUTHORITY_RETIRED');
-        sourceGuard?.();
+        if (admission.source && !sourcePin) throw new JobsError('JOBS_AUTHORITY_RETIRED');
+        sourcePin?.assertCurrent();
       };
       try {
-        if (admission.source) sourceGuard = await this.options.sources?.prepareDispatch(scope, admission);
+        if (admission.source) sourcePin = await this.options.sources?.prepareDispatch(scope, admission);
         assertSourceCurrent();
-        await this.options.bridge.enqueue(authority, admission.workflow, admission.input, jobDispatchKey(id), binding, assertSourceCurrent);
+        const enqueue = () => this.options.bridge.enqueue(authority, admission.workflow, admission.input, jobDispatchKey(id), binding, assertSourceCurrent);
+        if (sourcePin) await sourcePin.run(enqueue); else await enqueue();
         accepted = inspect(); if (!accepted) throw new JobsError('JOBS_OUTCOME_UNKNOWN');
       } catch (error) {
         // A timeout/throw is not proof no workflow exists. Reconcile the exact
@@ -250,7 +251,7 @@ export class JobsRunner {
           }
           await this.write(scope, 'jobs.block', { scopeId, id, nonce, leaseGeneration: claim.leaseGeneration, code: rejection, now: this.now() }); return;
         }
-      }
+      } finally { sourcePin?.abandon(); }
     }
     await this.write(scope, 'jobs.dispatch', { scopeId, id, nonce, leaseGeneration: claim.leaseGeneration, receipt: accepted.receipt, now: this.now() });
     await this.finish(scope, id, accepted);

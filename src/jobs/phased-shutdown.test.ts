@@ -1,7 +1,8 @@
 /** Native phased lifecycle, using actual Jobs/Torrent only in memory. No files, timers or providers survive teardown. */
-import { expect, test } from 'bun:test';
+import { expect, spyOn, test } from 'bun:test';
 import { SchedulerService } from '../scheduler/scheduler-service';
 import type { JobDefinition as SchedulerJobDefinition } from '../scheduler/types';
+import { createTrustedJobSource, requireJobSource } from './source-authority';
 import { memorySourceJobsFixture, untilMemoryJobs } from './test-support/memory-source-fixture';
 
 const activate = { expectedRevision: 0, idempotencyKey: 'shutdown-register', pinInput: { value: 1 } };
@@ -18,6 +19,59 @@ class CapturingScheduler extends SchedulerService {
     this.current = undefined; return true;
   }
 }
+
+for (const phase of ['owner-confirm', 'existing-read'] as const)
+  test(`final Jobs close joins a held pre-gate ${phase} before closing native persistence`, async () => {
+    const barrier = latch(); let holding = false;
+    const f = await memorySourceJobsFixture({ nativeWriter: true, async beforeRead(operation) {
+      if (holding && phase === 'existing-read' && operation.name === 'jobs.source.receipt') await barrier.wait();
+    } });
+    const providerClose = spyOn(f.runtime, 'close');
+    let pending: Promise<unknown> | undefined, closing: Promise<unknown> | undefined;
+    try {
+      const source = f.source(); await source.api.registration.activate(activate);
+      const original = requireJobSource(source.capability);
+      const capability = createTrustedJobSource({ ...original, async confirmOwnerCurrent() {
+        await original.confirmOwnerCurrent();
+        if (holding && phase === 'owner-confirm') await barrier.wait();
+      } });
+      const api = f.service.forSource(capability), before = f.commands.length;
+      const capacity = f.native(source.scope)!.engine.inspectAdmission(); holding = true;
+      // Registration starts owner confirmation before it buys a gate slot or
+      // writer command. Receipt lookup likewise has no shared gate callback.
+      pending = (phase === 'owner-confirm'
+        ? api.registration.activate({ ...activate, expectedRevision: 1, idempotencyKey: 'shutdown-pre-gate-never-write' })
+        : api.receipts.get(activate.idempotencyKey)).then(value => ({ value }), error => ({ error }));
+      await barrier.entered;
+      expect(f.service.diagnostics().gate).toMatchObject({ active: 0, queued: 0 });
+      expect(api.hydration!.inspect().preparing).toBe(1);
+      // The earlier drain is intentionally NOT a source-evidence retirement or
+      // join: Torrent may still need these reads during its own drainage.
+      await f.service.drain(); expect(providerClose).not.toHaveBeenCalled();
+      let closed = false; closing = f.service.close().then(() => { closed = true; });
+      await Bun.sleep(5);
+      expect(closed).toBe(false); expect(providerClose).not.toHaveBeenCalled();
+      expect(f.runtime.diagnostics()).toMatchObject({ closed: false });
+      expect(f.native(source.scope)!.engine.inspectAdmission()).toEqual(capacity);
+      expect(f.commands).toHaveLength(before);
+      // Once final closure starts, even a newly requested evidence pin must be
+      // refused before owner/provider callbacks, so an empty join cannot race it.
+      const checks = f.stats().ownerChecks;
+      await expect(api.receipts.get(activate.idempotencyKey)).rejects.toMatchObject({ code: 'JOBS_NOT_READY' });
+      expect(f.stats().ownerChecks).toBe(checks);
+      barrier.release();
+      expect(await pending).toMatchObject({ error: { code: 'JOBS_NOT_READY' } });
+      await closing;
+      expect(providerClose).toHaveBeenCalledTimes(1);
+      expect(f.runtime.diagnostics()).toMatchObject({ closed: true });
+      expect(f.commands).toHaveLength(before); expect(f.calls).toHaveLength(0);
+      expect(f.stats()).toMatchObject({ activeLeases: 0, backendLeases: 0 });
+    } finally {
+      barrier.release();
+      await Promise.allSettled([pending, closing].filter((value): value is Promise<unknown> => !!value));
+      try { await f.close(); } finally { providerClose.mockRestore(); }
+    }
+  });
 
 test('Jobs drain leaves original source execution/receipts usable by a still-running Torrent activity until final close', async () => {
   const activity = latch(), scheduler = new CapturingScheduler();

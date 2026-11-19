@@ -2,8 +2,9 @@
 import type { DatabaseReadQueryContext, DatabaseWriteCommandContext } from '../databases/database-realm';
 import type { CalendarLifecyclePolicy, CalendarAppointmentTransitions } from './contracts';
 import { CalendarError, calendarCommand } from './error';
-import { assertCalendarOwner, calendarActor, calendarAppointment, calendarBudget, calendarIntent, calendarRevision, grantId, hasCalendarRight,
-  nextCalendarRevision, reservationId, CALENDAR_LIMITS, type CalendarAppointmentRow, type CalendarResourceRow } from './realm-model';
+import { assertCalendarOwner, calendarActor, calendarAppointment, calendarBudget, calendarIntent, calendarRevision,
+  nextCalendarRevision, reservationId } from './realm-model';
+import { readCalendarAppointmentTarget } from './realm-queries';
 import { calendarAppointmentTransitionProjection, calendarLifecyclePolicyFields, currentCalendarLifecyclePolicy, requireCalendarLifecycleManager,
   readCalendarLifecyclePolicyValue, readCalendarAppointmentLifecycle, effectiveCalendarAppointmentStatus, calendarLifecycleStatus, calendarLifecycleReason,
   assertCalendarLifecycleReason, bindCalendarAppointmentLifecycle } from './lifecycle-model';
@@ -38,16 +39,9 @@ export function replaceCalendarLifecyclePolicy(context: DatabaseWriteCommandCont
 }
 export function readCalendarAppointmentTransitions(context: DatabaseReadQueryContext, input: unknown): CalendarAppointmentTransitions {
   const r = calendarRecord(input, ['actor', 'id']), actor = calendarActor(r.actor), id = calendarKey(r.id); readOwner(context, actor.scopeId);
-  const row = context.database.query<CalendarAppointmentRow>('SELECT * FROM calendar_appointments WHERE scope_id=? AND id=?').get(actor.scopeId, id);
-  if (!row) throw new CalendarError('CALENDAR_NOT_FOUND');
-  const resources = context.database.query<{ resource_id: string }>('SELECT resource_id FROM _calendar_reservations WHERE scope_id=? AND appointment_id=? ORDER BY resource_id LIMIT ?').all(actor.scopeId, id, CALENDAR_LIMITS.selection + 1);
-  if (!resources.length || resources.length > CALENDAR_LIMITS.selection) throw new CalendarError('CALENDAR_STATE_INVALID');
-  // Authorize every co-resource before revealing policy or effective lifecycle.
-  for (const { resource_id: resourceId } of resources) {
-    const resource = context.database.query<CalendarResourceRow>('SELECT * FROM calendar_resources WHERE scope_id=? AND id=?').get(actor.scopeId, resourceId);
-    const grant = context.database.query<Record<string, string | number | null>>('SELECT * FROM _calendar_grants WHERE scope_id=? AND id=?').get(actor.scopeId, grantId(actor.scopeId, resourceId, actor.userId));
-    if (!resource || !hasCalendarRight(actor, resource, grant, 'manage')) throw new CalendarError('CALENDAR_NOT_FOUND');
-  }
+  // The same current-membership target resolver owns every co-resource fence.
+  // Retained historical reservations are not current management requirements.
+  const { row } = readCalendarAppointmentTarget(context, actor, id, 'manage');
   return calendarAppointmentTransitionProjection(row, readCalendarAppointmentLifecycle(context, actor.scopeId, id)?.status ?? row.status, readCalendarLifecyclePolicyValue(context, actor.scopeId));
 }
 export function transitionCalendarAppointment(context: DatabaseWriteCommandContext, input: unknown) {

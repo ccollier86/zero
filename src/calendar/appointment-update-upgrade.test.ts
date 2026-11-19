@@ -103,8 +103,10 @@ test('warm reads cannot fall back to retained historical resources after ALL016 
     f.upgrade(); f.command('appointment.update', { id: 'appointment', requestId: 'rich', expectedRevision: 1, resourceIds: ['new'] });
     for (const table of [CURRENT, HISTORY, STATE]) f.raw.run('DROP TABLE ' + table);
     const before = f.raw.serialize();
-    try { f.query('appointment', { id: 'appointment' }); throw new Error('missing016 projection accepted'); }
-    catch (error) { expect(readCalendarRejection(error)?.code).toBe('CALENDAR_STATE_INVALID'); }
+    for (const name of ['appointment', 'appointmentTransitions']) {
+      try { f.query(name, { id: 'appointment' }); throw new Error('missing016 projection accepted'); }
+      catch (error) { expect(readCalendarRejection(error)?.code).toBe('CALENDAR_STATE_INVALID'); }
+    }
     expect(f.raw.serialize()).toEqual(before);
     expect(f.raw.query("SELECT name FROM sqlite_schema WHERE name IN (?,?,?)").all(CURRENT, HISTORY, STATE)).toEqual([]);
   } finally { f.close(); }

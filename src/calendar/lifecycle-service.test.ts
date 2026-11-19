@@ -64,3 +64,27 @@ test('memory lifecycle watches refresh transition policy and terminally withdraw
     expect(errors[1]).toMatchObject({ code: 'AUTH_STATE_CHANGED' });
   } finally { stops.forEach(stop => stop()); await f.close(); }
 });
+
+test('transferred appointment management watches authorize current resources only and still retire on current-resource denial', async () => {
+  const f = memoryCalendarServiceFixture(), manager = f.session('manager', { manager: true }), delegate = f.session('delegate');
+  const projections: CalendarAppointmentTransitions[] = [], errors: unknown[] = []; let stop = () => {};
+  try {
+    const old = await manager.api.resources.create({ label: 'Old private calendar', kind: 'room', timeZone: 'UTC' }, { idempotencyKey: 'old' });
+    const current = await manager.api.resources.create({ label: 'Current private calendar', kind: 'room', timeZone: 'UTC' }, { idempotencyKey: 'current' });
+    for (const resource of [old, current]) await manager.api.resources.setGrants(resource.id, delegate.userId, ['manage'],
+      { idempotencyKey: 'grant-' + resource.id, expectedRevision: 1 });
+    const booking = await manager.api.appointments.create({ resourceIds: [old.id], title: 'Synthetic transferred appointment', ...times }, { idempotencyKey: 'booking' });
+    stop = delegate.api.appointments.watchTransitions(booking.id, value => projections.push(value), { onError: error => errors.push(error) });
+    await eventuallyCalendar(() => projections.length === 1);
+    await manager.api.appointments.update(booking.id, { resourceIds: [current.id] }, { idempotencyKey: 'transfer', expectedRevision: 1 });
+    await eventuallyCalendar(() => projections.at(-1)?.revision === 2);
+    await manager.api.resources.setGrants(old.id, delegate.userId, [], { idempotencyKey: 'remove-old-access', expectedRevision: 2 });
+    expect(await delegate.api.appointments.transitions(booking.id)).toMatchObject({ id: booking.id, revision: 2, status: 'confirmed' });
+    expect(errors).toEqual([]);
+    await manager.api.resources.setGrants(current.id, delegate.userId, [], { idempotencyKey: 'remove-current-access', expectedRevision: 2 });
+    await eventuallyCalendar(() => errors.length === 1);
+    expect(errors[0]).toMatchObject({ code: 'CALENDAR_NOT_FOUND' });
+    await expect(delegate.api.appointments.transitions(booking.id)).rejects.toMatchObject({ code: 'CALENDAR_NOT_FOUND' });
+    expect(f.stats().activeLeases).toBe(0);
+  } finally { stop(); await f.close(); }
+});

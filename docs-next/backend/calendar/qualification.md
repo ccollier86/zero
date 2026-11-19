@@ -20,6 +20,47 @@ or data migration is authorized by these checks.
 
 ## November 18 finish-line review: cold admission and retained evidence
 
+### November 19 follow-up: physical source lifetime and canonical time foundations
+
+The idle source attachment/final shutdown set passed **159 tests, 3,365
+assertions, nine files** in 50.99 seconds with pinned Bun, disabled transpiler
+cache and synthetic MEMORY state. It covers read-only exact-key attachment,
+busy/stale detach, sequential residency reuse, cancellation and late physical
+callbacks, plus held pre-gate confirmations/reads and unused/running dispatch
+permits. Independent review confirmed final-close-only ordering: Jobs must join
+those bodies before SQL teardown without prematurely retiring Torrent evidence.
+
+A private timed-source/series-authoring and LocalDate calculation set passed
+**86 tests, 1,225 assertions, eight files**. The original 24 timed recurrence
+conformance tests also remain unchanged. The private LocalDate compiler handles
+exclusive dates, DST/midnight gaps and missing boundary dates without pretending
+that a day is 24 elapsed hours. Typed immutable timed series input is separate
+from query ranges. Neither foundation enables persisted all-day appointments,
+series, coverage or recurrence configuration; their canonical storage/API/UI
+integration remains required.
+
+Review also found a real transferred-appointment authorization defect: lifecycle
+projection read every historical reservation rather than the current resource
+membership. It now uses the canonical current-target resolver. Native transfer,
+large retained history, corrupted current metadata and live watch withdrawal
+checks passed **35 tests, 1,013 assertions, five files**; the adjacent
+live/corruption/workspace set passed **17 tests, 810 assertions, three files**.
+Removed historical resource grants no longer block a current status read, while
+revocation of a current resource still withdraws the view. These are overlapping
+focused sets, not a sum or an exact installed browser/deployment qualification.
+
+The combined no-emit graph then passed with **491 roots, 4,080 source files and
+zero diagnostics**. Initial checking found three new test-only typing mistakes
+(an error-code helper and a union-spread expected rule); those were corrected
+without weakening production types. Subsequent wake/catalog and date-storage
+implementation is not covered by this frozen checkpoint.
+
+No physical fixture, build/dependency tree, Docker resource or archive was
+created; all owned test processes and MEMORY handles closed. Source/docs remain
+on the feature branch. Durable owner wake metadata, bounded Calendar residency,
+the rest of F3–F8 and physical/release gates remain open. No main merge or normal
+updater selection is implied.
+
 ### November 19 source checkpoint: final-writer capacity and rich connected editing
 
 The next combined cache-off pinned-Bun MEMORY/ReactDOM/native-HTTP/SDK/Jobs/

@@ -221,7 +221,9 @@ and measured capacity gates; MEMORY evidence does not substitute for them.
 
 #### F2 remaining lane — bounded resident hydration and durable owner coverage
 
-This is the reviewed next implementation contract, not an implemented capability.
+The first Jobs attach/detach and physical-lifetime increment below is now source
+checked. The durable SYSTEM catalog, bounded Calendar residency and demand
+attachment in steps 2–4 remain implementation work, not an enabled capability.
 The current coordinator discovers every retained owner into `cells`/`refs` before
 starting work and rejects the 65th owner. Its `nextWakeAt`/revision are RAM-only;
 a hint for a nonresident owner is ignored. Jobs' separate process-wide
@@ -242,10 +244,10 @@ forever. Actual queued/running callbacks, gates and physical source leases pin
 hydration until their real bodies settle; caller cancellation, an expired lease,
 an empty receipt lookup or a successful bounded drain is not that proof.
 
-1. **First increment: native Jobs read-only attach/detach.** Extend the private
-   `SourceJobs` facade with a closed native hydration surface, provisionally
+1. **Source-checked increment: native Jobs read-only attach/detach.** The private
+   `SourceJobs` facade has a closed native hydration surface,
    `hydration.attach({originalActivateKey, expectedRegistration, pinInput})` and
-   `hydration.tryDetach()`. Names are implementation proposals, not public API.
+   `hydration.tryDetach()`. This is native-only, not public API.
    Attach uses the installing capability's physical owner/current eligibility,
    compiled native contract and fixed graph pin; it serializes on the source
    gate, reconciles the original accepted activation receipt and proves the
@@ -544,6 +546,115 @@ no-provider/readiness distinctions. Actual createApp/file/actor/WAL/restart/kill
 optional/compliance Logging and installed-bundle adoption remain F9/F10 gates.
 The storage-integrity hold currently prevents that physical qualification.
 
+### F4 remaining contract — LocalDate, exceptional override and effective eligibility
+
+Keep `001`–`016` maps/functions, timed payloads, normal receipt digests, half-open
+occupancy and historical interpretation intact. No F4/F5 migration number is
+reserved yet. The private pure `all-day-time.ts` compiler and tests are now
+source checked: this enables no schema, command, registry,
+public API or configuration capability and confers no booking authority.
+
+**LocalDate authority.** The private input is
+`{kind:'all-day-local-v1',startDate,endDate,timeZone}`, with exclusive `endDate`,
+strict Gregorian four-digit dates and at most 31 nominal days. Its frozen output
+preserves those facts and adds day count, canonical UTC boundary/occupied instants,
+zero minute buffers and runtime/ICU conversion provenance. This is not a timed
+input coercion or pinned-tzdb guarantee. Derive each boundary from Temporal's first
+valid instant of that date: a midnight gap can start at 01:00; a wholly missing
+boundary date fails the roundtrip instead of silently changing its date. Require
+a representable four-digit exclusive end; never clip the last supported day.
+UTC occupancy is positive and at most 33 elapsed days, not `dayCount * 24h`.
+This fits the current 33-day indexed lookback envelope without changing timed
+admission or scanning retained history. See
+[RFC 5545 event ends](https://www.rfc-editor.org/rfc/rfc5545.html#section-3.6.1)
+and [Temporal day boundaries](https://tc39.es/proposal-temporal/docs/plaindate.html#date-tozoneddatetimeitem-object-string-temporalzoneddatetime).
+
+The first persistence target is explicitly **all-day appointments only,
+untyped-only**. Required fixed-minute resource type policies still reject an
+untyped all-day candidate; do not coerce a minute type into a day type or silently
+clear a binding. Preserve existing availability semantics: an all-day reservation
+must fit actual admitted occupied coverage, not treat ordinary 9–5 windows as
+whole-day permission. A reviewed later day-duration type catalog may extend this.
+Future APIs need a distinct date-interval branch, reject mixed timed/date input,
+preserve omitted interval intent and require explicit conversion between kinds.
+Current timed objects and wire digests stay unchanged; new views/renderers branch
+on the explicit kind rather than showing an all-day event as timed midnight data.
+Store authoritative kind/dates plus immutable conversion history and sealed UTC
+occupancy; missing/malformed current metadata fails closed. Title/participant or
+status-only edits do not recompute accepted boundaries under a later timezone
+engine. Busy responses remain redacted occupied ranges.
+
+All-day blocks/holds remain explicitly unavailable in that first target.
+`calendar_blocks`, `_calendar_block_reservations` and `calendar_holds` have
+historical 31-elapsed-day CHECKs, so 31 LocalDates spanning fall-back cannot be
+made valid by appending metadata. Full support requires a separately reviewed,
+genuinely FK/trigger/seal-preserving current-schema migration, preserving rows,
+identities, references, counters, receipts and hold-confirmation equivalence.
+Do not edit old declarations, blindly relax checks, create fake timed records,
+split one logical block into hidden children, or hide a 30-day clamp. A latest
+kind-aware 33-day envelope must retain the original 31-day bound for timed rows.
+Public capability/readiness remains closed for each family until its complete
+writer/query/HTTP/SDK/UI and migration path is qualified. F5 schema starts only
+after the reviewed shared interval seam/migrations; its current pure timed source
+must continue to reject all-day rules until it has a distinct LocalDate dialect.
+
+**Independent override, later canonical package.** Preserve the four-right
+`CalendarGrant`/`setGrants` replacement contract. Add a separate explicit override
+capability, disabled by default, with an independently compiled current Guardian
+requirement and separate Calendar-owned object grants/history. Resource ownership,
+ordinary manage, platform labels and a prior accepted override do not imply the
+new capability. Existing `hasCalendarRight` owner/manage shortcuts cannot decide
+it. Require normal all-resource booking/management rights as well as the independent
+override check, a nonblank private reason and current policy/decision selection.
+Expose only a closed reviewed set of overridable conflict classes; never a generic
+`force` flag. Authorization, actor/owner integrity, type/visit/effective eligibility,
+unknown coverage, live hold expiry/subject checks and storage/quota safety remain
+non-overridable. Recompute the actual conflict decision inside the final short
+writer; stale conflict review cannot authorize a different later conflict set.
+Conflict discovery/witnesses must not reveal hidden titles, participants or IDs.
+
+One atomic create/update records the actual exception, private reason, policy and
+decision digest/history with its ordinary receipt/effect; semantic evidence reports
+safe categories and reason-presence, not free text. No-op or refused operations
+manufacture no override success. Original receipt replay precedes fresh exception
+admission but still requires current object/view authority and grants no new power.
+The UI obtains current allowed actions, requests a reason/review and uses the same
+async owner/receipt/unknown boundary; declining that interaction performs no write.
+
+**Remaining eligibility, not a new identity/provider system.** Current source
+already enforces active resources, all-resource grants, pinned active type duration/
+buffers, common active in-person location versions, bounded weekly-local hours/date
+overrides, blocks/live holds and synchronous SYSTEM checks for newly added native
+participants. Do not rewrite these as another permission engine or reinterpret
+resource owner/profile preferences as clinical credentials. The remaining native
+geographic increment is scope-owned versioned effective resource/location assignment
+coverage, admitted against the whole resulting occupied interval under the same
+resource revision and writer decision. Legacy static assignments retain their
+all-time meaning until an explicit policy replacement; legacy replacement APIs
+must not flatten a richer effective policy. Interval-aware authorized location
+discovery aids selection, while ordinary location/region facets remain directory
+filters rather than permission. No remote jurisdiction, licensure or patient-state
+guarantee is inferred from those fields. Asynchronous app-file eligibility remains
+unavailable without an independently reviewed synchronous final consistency fence.
+
+Restrictive policy changes preserve accepted history; fresh booking/hold confirmation
+and meaningful occupancy/resource/visit changes revalidate the resulting candidate.
+Unchanged history, cancellation, receipt reconciliation and unrelated title edits
+must not require fresh target eligibility. Keep newly added participant checks and
+their existing SYSTEM final fence separate from retained unavailable references.
+
+After the pure compiler, review the actual current-schema migration and canonical
+interval/override/assignment contracts before implementation. Qualify populated
+`016` upgrade preservation and atomic corrupt-upgrade refusal; 23/25-hour dates,
+half-hour changes, midnight/whole-date gaps, leap/year boundaries and 31-day DST
+spans; all-resource timed/date conflicts and adjacency; hold/block kind refusal;
+independent permission/owner/manage cases and revocation at final commit; reason,
+stale-decision, rollback, no-op/replay/unknown truth; effective assignment boundaries,
+grandfathered history and private discovery; and native editor/list/month/all-day
+lane lifecycle. MEMORY evidence cannot replace the still-blocked real file/actor,
+FK migration, browser/layout and performance gates. F2 hydration remains first for
+automatic integration activation.
+
 ### F5 implementation breakdown — canonical series and coverage
 
 This is the next **proposed** native vertical, not an enabled API or a passed
@@ -665,12 +776,13 @@ and `016` migration checksum
 `0553be4d7a34a76f3e0c9335f056c7abaefab7fac910c127d503060ee061a2d8`.
 Retain its exact table map, migration functions and explicit command/query name
 lists in genuine historical fixtures; filtering a later registry by version is
-not a historical definition. Pin native compatibility before appending `017`.
+not a historical definition. Pin native compatibility before appending the next
+reviewed interval/series migration; this series plan does not reserve `017`.
 
-First factor `appointment-type-bindings.ts` and `visit-bindings.ts` into private
+The first source increment has factored `appointment-type-bindings.ts` and `visit-bindings.ts` into private
 scope-only policy/catalog primitives, retaining their existing actor-taking
 wrappers. Their current policy implementations use only `actor.scopeId`; this
-does not justify creating a synthetic actor. A proposed `booking-admission.ts`
+does not justify creating a synthetic actor. The private `booking-admission.ts`
 owns one canonical `CalendarBookingCandidate` (normalized interval, complete
 resource set, type/visit references) and returns detached accepted snapshots.
 It performs **both** policy intersections before either selected catalog lookup,
@@ -722,7 +834,7 @@ while recurrence config is closed. Native keys use the fixed
 Extend one fixed-family human-key resolver across ordinary, block, hold, location,
 type, lifecycle, operator and series receipts in **both** directions. This remains
 a bounded number of indexed point probes; do not add an unbounded history union.
-Additive `017` insert guards prevent a series acceptance and any existing family
+The next reviewed series migration's additive insert guards must prevent a series acceptance and any existing family
 from occupying the same human tuple, including INSERT OR REPLACE. Existing
 001–016 SQL/source/checksums remain exact. The native receipt family is distinct
 and cannot be used to grant human replay access.
@@ -764,6 +876,39 @@ not permission to activate partial series creation or bypass sparse coverage.
   silently widen Guardian-user references or expose private provider handles.
 
 ### Execution and verification discipline
+
+From source checkpoint `22dcdad`, deliver the remaining work in this dependency
+order, reviewing coherent end-to-end packages rather than announcing isolated
+helpers as finished features:
+
+1. Finish **F2 hydration**: first read-only native attach/physical-pin-aware
+   detach, then durable SYSTEM wake/scan coverage, bounded resident owners and
+   schedule-gate-safe demand admission. Prove pressure, cancellation and recovery
+   before permitting idle eviction. Preserve the already-checked final-writer
+   capacity and cold-owner fences.
+2. Finish **F4/F5 canonical scheduling**: LocalDate/all-day and separately
+   authorized overrides; persisted series, exceptions, one/future/all edits,
+   staged atomic publication and on-demand UTC coverage. Shared booking
+   admission is already factored; no second authorization or conflict engine.
+3. Finish **F6 booking/invitations** using those canonical reservations: real
+   offers and scoped proofs, any-provider allocation, review/approval semantics,
+   capability expiry/revocation and no private busy-detail exposure.
+4. Finish **F7 actual effects and F3 managed activation** together: admitted
+   native notification/email/workflow adapters, due/lateness/recipient checks,
+   original evidence reconciliation, then normal startup, read-only adoption,
+   explicit preparation/retirement and scoped operator/Doctor APIs. Do not ship
+   the private observation example as reminder delivery.
+5. Complete **F8 connected UI** over those real capabilities: optional clinical
+   axes and reason actions, resource/location/catalog/hours/grant/block
+   management, all schedule/list/context entry points and public self-scheduling.
+   Preserve approved compact anatomy, tokens, native motion/icons/surfaces and
+   robust setup/empty/denied/unknown states. No editable control may pretend to
+   persist an unsupported field.
+6. Freeze the whole candidate for **F9/F10**: verified storage, real file/WAL/HOT
+   and worker failure/recovery, actual Chromium, measured file-mode performance,
+   full repository release checks, exact installed Linux/archive/updater
+   acceptance, final docs/adoption handoff, both remotes and normal release
+   selection. A passing source checkpoint is not an updater-ready artifact.
 
 Implement F1/F2 foundations before opening automatic integration; pure F4/F5
 domain/engine and F8 component work can proceed independently behind closed

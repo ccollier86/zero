@@ -27,8 +27,28 @@ interface SourceScheduleOptions extends SourceOptions {
 interface SourceRevisionOptions extends SourceOptions { readonly expectedRevision: number }
 interface SourceScheduleRevisionOptions extends SourceScheduleOptions { readonly expectedRevision: number }
 export interface SourceJobInput { readonly input: unknown; readonly at: string; readonly maxLatenessMs?: number; readonly initiatedBy?: string }
+export interface SourceHydrationOptions {
+  readonly originalActivateKey: string; readonly expectedRegistration: JobSourceRegistration; readonly pinInput: unknown; readonly signal?: AbortSignal;
+}
+export interface SourceHydrationStatus {
+  readonly attached: boolean; readonly residentSources: number; readonly residentLimit: 1024;
+  readonly preparing: number; readonly queued: number; readonly active: number; readonly preparedDispatch: number; readonly activeDispatch: number;
+}
+export interface SourceJobDispatchPin {
+  assertCurrent(): void;
+  /** Single invocation. The pin is retained until this actual callback settles. */
+  run<T>(callback: () => T | PromiseLike<T>): Promise<T>;
+  /** Releases an uninvoked permit only. Running callbacks cannot be abandoned. */
+  abandon(): boolean;
+}
 /** Private evidence/control surface; it is not a request API or an alternative general scheduler. */
 export interface SourceJobs {
+  /** Native residency only; absence on a legacy embedding is not scalable hydration readiness. */
+  readonly hydration?: {
+    attach(options: SourceHydrationOptions): Promise<JobSourceRegistration>;
+    tryDetach(): 'detached' | 'busy' | 'not-current';
+    inspect(): SourceHydrationStatus;
+  };
   /** Existing-only owner-authorized accounting; absence never provisions an empty scope. */
   readonly capacity: { get(): Promise<JobSourceCapacity | null> };
   readonly registration: {
@@ -62,8 +82,14 @@ interface LiveBinding {
 }
 interface RetirementFence { readonly signal: AbortSignal; active: boolean }
 interface ActivationToken { readonly expectedRevision: number; retired: boolean; readonly retirements: Set<RetirementFence> }
+type PinPhase = 'preparing' | 'queued' | 'active' | 'preparedDispatch' | 'activeDispatch';
+type PhysicalCounts = Record<PinPhase, number>;
+interface PhysicalPin { move(phase: PinPhase): void; release(): void }
 export class JobsSourceBroker {
   private readonly live = new Map<string, LiveBinding>();
+  private readonly physical = new Map<string, PhysicalCounts>();
+  private readonly physicalWaiters = new Set<() => void>();
+  private readonly uninvokedDispatch = new Set<() => boolean>();
   private readonly pendingActivations = new Map<string, Set<ActivationToken>>();
   private pendingActivationCount = 0;
   private pendingRetirementCount = 0;
@@ -73,19 +99,33 @@ export class JobsSourceBroker {
   /** Mutation retirement is independent of historical owner/evidence lifetime. */
   quiesce(): void { this.intake.abort(new JobsError('JOBS_NOT_READY')); }
   close(): void {
+    if (this.closed) return;
+    // Seal evidence as well as mutation admission before observing the final
+    // physical barrier. Earlier quiesce deliberately leaves evidence usable.
+    this.closed = true;
     this.quiesce();
-    this.closed = true; this.live.clear();
+    this.live.clear();
     for (const pending of this.pendingActivations.values()) for (const token of pending) token.retired = true;
+    // Only a never-invoked permit is safe to release here. Preparing owner/read
+    // callbacks and running dispatch bodies retain their own finally release.
+    for (const abandon of [...this.uninvokedDispatch]) abandon();
+  }
+  /** Final-close-only join. Neither caller cancellation nor a bounded pool
+   * shutdown proves that pre-gate owner/evidence callbacks have settled. */
+  async drainPhysical(): Promise<void> {
+    if (!this.closed) throw new JobsError('JOBS_NOT_READY');
+    while (this.physical.size) await new Promise<void>(resolve => { this.physicalWaiters.add(resolve); });
   }
   forSource(capability: TrustedJobSource): SourceJobs {
     const source = requireJobSource(capability), id = jobSourceId(source.identity);
+    const owned = <Args extends unknown[], T>(work: (...args: Args) => Promise<T>) => (...args: Args): Promise<T> => this.owned(id, () => work(...args));
     const signal = (supplied?: AbortSignal, mutation = false) => AbortSignal.any([this.options.signal, source.signal,
       ...(mutation ? [this.intake.signal] : []), ...(supplied ? [supplied] : [])]);
     const guard = () => { this.assertReady(); this.options.bridge.assertRuntimeCurrent(); assertJobSourceOwner(source); };
     const confirm = async (eligible = false) => { guard(); await confirmJobSource(source, eligible); guard(); };
-    const read = async <T>(name: string, input: unknown): Promise<T> => {
+    const read = async <T>(name: string, input: unknown): Promise<T> => this.owned(id, async () => {
       await confirm(); const value = await this.options.runtime.readExisting<T>(source.scope, name, input, guard, signal()); await confirm(); return value as T;
-    };
+    });
     const receipt = <T>(key: string, intent?: unknown) => read<T | null>('jobs.source.receipt', { identity: source.identity, requestId: jobKey(key),
       ...(intent === undefined ? {} : { intentDigest: jobHash(intent) }) });
     const reconcile = async (kind: 'registration' | 'create', suppliedKey: string, input?: SourceEvidenceOptions) => {
@@ -95,7 +135,7 @@ export class JobsSourceBroker {
       // Pre-abort must neither enqueue a barrier nor call owner/database code.
       operationSignal.throwIfAborted();
       const scheduleId = kind === 'create' ? jobSourceScheduleId(source.identity, key) : null;
-      return this.options.gate.run(async executionSignal => {
+      return this.pinnedRun(id, async executionSignal => {
         const check = () => { executionSignal.throwIfAborted(); guard(); };
         check(); await confirm(); check();
         // The SAME one-at-a-time mutation gate waits for physical callback
@@ -125,6 +165,16 @@ export class JobsSourceBroker {
       this.options.wake(); return value;
     };
     const current = () => this.requireLive(capability, id);
+    const compile = (pinInput: unknown): JobSourceContract => {
+      const definition = this.options.config.catalog.resolve(source.definition);
+      if (definition.origin === 'request') throw new JobsError('JOBS_FORBIDDEN');
+      const parsed = definition.parseInput(pinInput);
+      const authority = this.options.bridge.system({ principal: jobSourcePrincipal(id), reason: 'Source-owned scheduled Zero job', scope: source.scope });
+      return normalizeJobSourceContract({ identity: source.identity, realmFingerprint: source.realmFingerprint,
+        policyVersion: source.policyVersion, semanticsVersion: source.semanticsVersion,
+        definition: { name: definition.name, version: definition.version, fingerprint: definition.fingerprint },
+        workflow: this.options.bridge.pin(authority, definition.workflow.name, parsed, definition.workflow.version) });
+    };
     const normalizeOptions = (input: unknown, revision: boolean, pin = false, mapping = false) => {
       this.intake.signal.throwIfAborted();
       const r = jobRecord(input, ['idempotencyKey', 'signal', ...(revision ? ['expectedRevision'] : []), ...(pin ? ['pinInput'] : []), ...(mapping ? ['expectedRegistration'] : [])]);
@@ -142,9 +192,17 @@ export class JobsSourceBroker {
       const intentHash = jobHash(['once', id, source.policyVersion, source.semanticsVersion,
         { name: source.definition.name, version: source.definition.version, fingerprint: source.definition.fingerprint }, value, timing, initiatedBy ?? null]);
       const intent = action === 'create' ? ['create', intentHash] : ['change', scheduleId, opts.expectedRevision, 'readmit', intentHash];
-      return sourceGateMutation(this.options.gate, async operation => {
+      return this.pinnedMutation(id, async operation => {
         await confirm(); const prior = await receipt<JobSourceScheduleReceipt>(opts.key, intent); operation.signal.throwIfAborted(); if (prior) return prior;
-        await confirm(true); const live = current();
+        await confirm(true);
+        if (!this.live.has(id)) {
+          // Lack of hydration is recoverable. An explicit durable retirement
+          // remains a definitive fresh-admission cutoff, without a RAM tombstone.
+          const selected = await read<JobSourceRegistration | null>('jobs.source', { identity: source.identity });
+          operation.signal.throwIfAborted();
+          if (selected?.state === 'retired') throw new JobsError('JOBS_AUTHORITY_RETIRED');
+        }
+        const live = current();
         const assertMapped = () => {
           if (opts.expectedRegistration && !sameSourceRegistration(live.registration, opts.expectedRegistration)) throw new JobsError('JOBS_AUTHORITY_RETIRED');
         };
@@ -179,23 +237,66 @@ export class JobsSourceBroker {
       }, { key: jobGateKey(source.scope, scheduleId), signal: opts.signal });
     };
     return Object.freeze({
+      hydration: Object.freeze({
+        attach: owned(async (input: SourceHydrationOptions) => {
+          const r = jobRecord(input, ['originalActivateKey', 'expectedRegistration', 'pinInput', 'signal']);
+          if (r.signal !== undefined && !(r.signal instanceof AbortSignal)) throw new JobsError('JOBS_INPUT_INVALID');
+          const key = jobKey(r.originalActivateKey), expected = expectedSourceRegistration(r.expectedRegistration);
+          if (expected.id !== id || expected.state !== 'active') throw new JobsError('JOBS_INPUT_INVALID');
+          const operationSignal = signal(r.signal as AbortSignal | undefined, true); operationSignal.throwIfAborted();
+          const token = this.beginActivation(id, expected.revision);
+          try {
+            await confirm(true); operationSignal.throwIfAborted(); const contract = compile(r.pinInput);
+            return await this.pinnedRun(id, async executionSignal => {
+              const check = () => {
+                executionSignal.throwIfAborted(); guard(); assertJobSourceEligible(source); this.assertActivationCurrent(token);
+                if (jobHash(compile(r.pinInput)) !== jobHash(contract)) throw new JobsError('JOBS_AUTHORITY_RETIRED');
+              };
+              check(); await confirm(true); check();
+              // The source gate is already held. Do not call reconcile(), which
+              // would queue recursively, and never register on a receipt miss.
+              const prior = await read<JobSourceRegistration | null>('jobs.source.receipt', { identity: source.identity, requestId: key }); check();
+              if (!prior) throw new JobsError('JOBS_NOT_READY');
+              const original = expectedSourceRegistration(prior);
+              const selected = await read<JobSourceRegistration | null>('jobs.source', { identity: source.identity }); check();
+              if (!selected) throw new JobsError('JOBS_STATE_INVALID');
+              if (!sameSourceRegistration(original, expected) || !sameSourceRegistration(selected, expected)
+                || selected.policyHash !== jobHash(contract)) throw new JobsError('JOBS_AUTHORITY_RETIRED');
+              await confirm(true); check();
+              const old = this.live.get(id);
+              if (old?.quiescedBy) throw new JobsError('JOBS_NOT_READY');
+              if (!old && this.live.size >= 1024) throw new JobsError('JOBS_NOT_READY');
+              if (old?.source === capability && sameSourceRegistration(old.registration, selected) && jobHash(old.contract) === jobHash(contract)) return selected;
+              // Replacing a capability must not invalidate another prepared or
+              // physically running dispatch guard for this exact registration.
+              if (old && old.source !== capability && this.dispatchPins(id)) throw new JobsError('JOBS_NOT_READY');
+              this.live.set(id, { source: capability, contract, registration: selected });
+              return selected;
+            }, { key: sourceGateKey(id), signal: operationSignal });
+          } finally { this.endActivation(id, token); }
+        }),
+        tryDetach: () => {
+          guard();
+          // Retirement/replacement may already have removed the resident map
+          // entry. That is not proof that its old physical callbacks settled.
+          if (this.physical.has(id)) return 'busy' as const;
+          const old = this.live.get(id);
+          if (!old) return 'detached' as const;
+          if (old.source !== capability) return 'not-current' as const;
+          this.live.delete(id); return 'detached' as const;
+        },
+        inspect: () => { guard(); return this.hydrationStatus(id, capability); },
+      }),
       capacity: Object.freeze({ get: () => read<JobSourceCapacity | null>('jobs.source.capacity', { identity: source.identity }) }),
       registration: Object.freeze({
         get: () => read<JobSourceRegistration | null>('jobs.source', { identity: source.identity }),
         reconcile: (key: string, options?: SourceEvidenceOptions) => reconcile('registration', key, options) as Promise<JobSourceRegistration | null>,
-        activate: async (input: SourceRevisionOptions & { pinInput: unknown }) => {
+        activate: owned(async (input: SourceRevisionOptions & { pinInput: unknown }) => {
           const opts = normalizeOptions(input, true, true), token = this.beginActivation(id, opts.expectedRevision);
           try {
             await confirm(true);
-            const definition = this.options.config.catalog.resolve(source.definition);
-            if (definition.origin === 'request') throw new JobsError('JOBS_FORBIDDEN');
-            const parsed = definition.parseInput(opts.pinInput);
-            const authority = this.options.bridge.system({ principal: jobSourcePrincipal(id), reason: 'Source-owned scheduled Zero job', scope: source.scope });
-            const contract = normalizeJobSourceContract({ identity: source.identity, realmFingerprint: source.realmFingerprint,
-              policyVersion: source.policyVersion, semanticsVersion: source.semanticsVersion,
-              definition: { name: definition.name, version: definition.version, fingerprint: definition.fingerprint },
-              workflow: this.options.bridge.pin(authority, definition.workflow.name, parsed, definition.workflow.version) });
-            return await sourceGateMutation(this.options.gate, async operation => {
+            const contract = compile(opts.pinInput);
+            return await this.pinnedMutation(id, async operation => {
               await confirm(true);
               this.assertActivationCurrent(token);
               if (!this.live.has(id) && this.live.size >= 1024) throw new JobsError('JOBS_CAPACITY');
@@ -238,8 +339,8 @@ export class JobsSourceBroker {
               } catch (error) { if (!prior) throw new JobsError('JOBS_OUTCOME_UNKNOWN'); throw error; }
             }, { key: sourceGateKey(id), signal: opts.signal });
           } finally { this.endActivation(id, token); }
-        },
-        retire: async (input: SourceRevisionOptions) => {
+        }),
+        retire: owned(async (input: SourceRevisionOptions) => {
           const opts = normalizeOptions(input, true); jobInteger(opts.expectedRevision, 1); opts.signal.throwIfAborted(); guard();
           if (this.pendingRetirementCount >= 1024) throw new JobsError('JOBS_CAPACITY');
           this.pendingRetirementCount++;
@@ -269,7 +370,7 @@ export class JobsSourceBroker {
             if (!selected || selected.revision !== opts.expectedRevision) throw new JobsError('JOBS_REVISION_CONFLICT');
             const selectedLive = this.live.get(id);
             if (!selectedLive || selectedLive.registration.revision === opts.expectedRevision) markPending();
-            return await sourceGateMutation(this.options.gate, async operation => {
+            return await this.pinnedMutation(id, async operation => {
               let attempted = false;
               try {
                 await confirm();
@@ -286,10 +387,10 @@ export class JobsSourceBroker {
             retirement.active = false; for (const token of marked) token.retirements.delete(retirement);
             this.pendingRetirementCount--;
           }
-        },
+        }),
       }),
       receipts: Object.freeze({ get: (key: string) => receipt<JobSourceRegistration | JobSourceScheduleReceipt>(key) }),
-      executions: Object.freeze({ get: async (scheduleId: string, input: { generation: number; scheduledAt: number }): Promise<JobSourceExecutionEvidence | null> => {
+      executions: Object.freeze({ get: owned(async (scheduleId: string, input: { generation: number; scheduledAt: number }): Promise<JobSourceExecutionEvidence | null> => {
         const opts = jobRecord(input, ['generation', 'scheduledAt']);
         const context = await read<JobSourceExecutionContext | null>('jobs.source.execution', { identity: source.identity,
           id: jobText(scheduleId, 96), generation: jobInteger(opts.generation, 1), scheduledAt: jobTime(opts.scheduledAt) });
@@ -311,7 +412,7 @@ export class JobsSourceBroker {
           occurrenceId: context.occurrenceId, sourceId: origin.id, policyGeneration: origin.generation, policyHash: origin.policyHash,
           workflow: Object.freeze({ ...context.admission.workflow }), inputHash: jobHash(context.admission.input),
           instanceId: accepted.receipt.instanceId, status: accepted.status });
-      } }),
+      }) }),
       schedules: Object.freeze({ create: (input: SourceJobInput, opts: SourceOptions) => change('create', undefined, input, opts),
         reconcileCreate: (key: string, options?: SourceEvidenceOptions) => reconcile('create', key, options) as Promise<JobSourceScheduleReceipt | null>,
         replace: (scheduleId: string, input: SourceJobInput, opts: SourceRevisionOptions) => change('readmit', scheduleId, input, opts),
@@ -322,7 +423,7 @@ export class JobsSourceBroker {
         cancel: async (scheduleId: string, input: SourceRevisionOptions) => {
           const opts = normalizeOptions(input, true), selected = jobText(scheduleId, 96);
           jobInteger(opts.expectedRevision, 1);
-          return sourceGateMutation(this.options.gate, async operation => {
+          return this.pinnedMutation(id, async operation => {
             await confirm(); const intent = ['change', selected, opts.expectedRevision, 'cancel', null];
             const prior = await receipt<JobSourceScheduleReceipt>(opts.key, intent); operation.signal.throwIfAborted(); if (prior) return prior;
             return write<JobSourceScheduleReceipt>('jobs.source.schedule.change', { identity: source.identity, id: selected, action: 'cancel',
@@ -333,31 +434,100 @@ export class JobsSourceBroker {
     });
   }
   /** Called only AFTER exact Torrent receipt inspection, and after the schedule pool wait. */
-  async prepareDispatch(scope: ServiceDataScope, admission: JobAdmission): Promise<() => void> {
-    if (!admission.source) return () => {};
-    const runtimeGuard = () => { this.assertReady(); this.intake.signal.throwIfAborted(); this.options.bridge.assertRuntimeCurrent(); };
-    runtimeGuard();
-    // Retained epoch retirement is definitive. A native source which has not
-    // hydrated on this process yet is merely not ready, not permanently revoked.
-    const selected = await this.options.runtime.readExisting(scope, 'jobs.source.dispatch',
-      { scopeId: admission.scopeId, source: admission.source }, runtimeGuard, this.options.signal);
-    if (selected !== true) throw new JobsError('JOBS_STATE_INVALID');
-    const { id, generation, policyHash } = admission.source, live = this.live.get(id);
-    if (!live) throw new JobsError('JOBS_NOT_READY');
-    if (live.quiescedBy) throw new JobsError('JOBS_NOT_READY');
-    if (live.registration.generation !== generation || live.registration.policyHash !== policyHash) throw new JobsError('JOBS_AUTHORITY_RETIRED');
-    const source = requireJobSource(live.source);
-    const guard = () => {
-      this.assertReady(); this.intake.signal.throwIfAborted(); if (this.live.get(id) !== live || live.quiescedBy) throw new JobsError('JOBS_NOT_READY');
-      assertJobSourceEligible(source);
+  async prepareDispatch(scope: ServiceDataScope, admission: JobAdmission): Promise<SourceJobDispatchPin> {
+    if (!admission.source) throw new JobsError('JOBS_INPUT_INVALID');
+    const pin = this.pin(admission.source.id, 'preparing');
+    try {
+      const runtimeGuard = () => { this.assertReady(); this.intake.signal.throwIfAborted(); this.options.bridge.assertRuntimeCurrent(); };
+      runtimeGuard();
+      // Retained epoch retirement is definitive. A native source which has not
+      // hydrated on this process yet is merely not ready, not permanently revoked.
+      const selected = await this.options.runtime.readExisting(scope, 'jobs.source.dispatch',
+        { scopeId: admission.scopeId, source: admission.source }, runtimeGuard, this.options.signal);
+      if (selected !== true) throw new JobsError('JOBS_STATE_INVALID');
+      const { id, generation, policyHash } = admission.source, live = this.live.get(id);
+      if (!live) throw new JobsError('JOBS_NOT_READY');
+      if (live.quiescedBy) throw new JobsError('JOBS_NOT_READY');
+      if (live.registration.generation !== generation || live.registration.policyHash !== policyHash) throw new JobsError('JOBS_AUTHORITY_RETIRED');
+      const source = requireJobSource(live.source);
+      const guard = () => {
+        this.assertReady(); this.intake.signal.throwIfAborted(); if (this.live.get(id) !== live || live.quiescedBy) throw new JobsError('JOBS_NOT_READY');
+        assertJobSourceEligible(source);
+      };
+      guard(); await confirmJobSource(source, true); guard();
+      if (source.identity.scopeId !== admission.scopeId) throw new JobsError('JOBS_STATE_INVALID');
+      guard(); pin.move('preparedDispatch');
+      let state: 'prepared' | 'running' | 'settled' | 'abandoned' = 'prepared';
+      const current = () => { if (state !== 'prepared' && state !== 'running') throw new JobsError('JOBS_NOT_READY'); guard(); };
+      const uninvoked = this.uninvokedDispatch;
+      const abandon = () => {
+        if (state !== 'prepared') return false;
+        state = 'abandoned'; uninvoked.delete(abandon); pin.release(); return true;
+      };
+      uninvoked.add(abandon);
+      return Object.freeze({
+        assertCurrent: current,
+        async run<T>(callback: () => T | PromiseLike<T>): Promise<T> {
+          if (state !== 'prepared') throw new JobsError('JOBS_NOT_READY');
+          if (typeof callback !== 'function') { abandon(); throw new JobsError('JOBS_INPUT_INVALID'); }
+          state = 'running'; uninvoked.delete(abandon); pin.move('activeDispatch');
+          try { current(); return await callback(); }
+          finally { state = 'settled'; pin.release(); }
+        },
+        abandon,
+      });
+    } catch (error) { pin.release(); throw error; }
+  }
+  private pin(id: string, initial: PinPhase): PhysicalPin {
+    this.assertReady();
+    let counts = this.physical.get(id);
+    if (!counts) { counts = { preparing: 0, queued: 0, active: 0, preparedDispatch: 0, activeDispatch: 0 }; this.physical.set(id, counts); }
+    let phase = initial, released = false; counts[phase]++;
+    const retained = counts;
+    return {
+      move(next) { if (released || next === phase) return; retained[phase]--; retained[next]++; phase = next; },
+      release: () => {
+        if (released) return; released = true; retained[phase]--;
+        if (Object.values(retained).every(count => count === 0) && this.physical.get(id) === retained) this.physical.delete(id);
+        if (!this.physical.size) {
+          for (const finish of this.physicalWaiters) finish();
+          this.physicalWaiters.clear();
+        }
+      },
     };
-    guard(); await confirmJobSource(source, true); guard();
-    if (source.identity.scopeId !== admission.scopeId) throw new JobsError('JOBS_STATE_INVALID');
-    guard(); return guard;
+  }
+  private async owned<T>(id: string, callback: () => Promise<T>): Promise<T> {
+    const pin = this.pin(id, 'preparing');
+    try { return await callback(); } finally { pin.release(); }
+  }
+  private invocation<T, Context>(id: string, callback: (context: Context) => T | PromiseLike<T>,
+    invoke: (work: (context: Context) => Promise<T>) => Promise<T>): Promise<T> {
+    const pin = this.pin(id, 'queued'); let started = false;
+    const work = async (context: Context): Promise<T> => {
+      started = true; pin.move('active');
+      try { return await callback(context); } finally { pin.release(); }
+    };
+    try { return invoke(work).finally(() => { if (!started) pin.release(); }); }
+    catch (error) { if (!started) pin.release(); return Promise.reject(error); }
+  }
+  private pinnedRun<T>(id: string, work: (signal: AbortSignal) => T | PromiseLike<T>, options: { readonly key: string; readonly signal: AbortSignal }): Promise<T> {
+    return this.invocation(id, work, callback => this.options.gate.run(callback, options));
+  }
+  private pinnedMutation<T>(id: string, work: (context: { readonly signal: AbortSignal; markWriteAttempted(): void }) => T | PromiseLike<T>,
+    options: { readonly key: string; readonly signal: AbortSignal }): Promise<T> {
+    return this.invocation(id, work, callback => sourceGateMutation(this.options.gate, callback, options));
+  }
+  private dispatchPins(id: string): number {
+    const pins = this.physical.get(id); return pins ? pins.preparedDispatch + pins.activeDispatch : 0;
+  }
+  private hydrationStatus(id: string, capability: TrustedJobSource): SourceHydrationStatus {
+    return Object.freeze({ attached: this.live.get(id)?.source === capability, residentSources: this.live.size, residentLimit: 1024,
+      ...(this.physical.get(id) ?? { preparing: 0, queued: 0, active: 0, preparedDispatch: 0, activeDispatch: 0 }) });
   }
   private requireLive(source: TrustedJobSource, id: string): LiveBinding {
     this.assertReady(); const live = this.live.get(id);
-    if (!live || live.source !== source || live.quiescedBy) throw new JobsError('JOBS_AUTHORITY_RETIRED');
+    if (!live) throw new JobsError('JOBS_NOT_READY');
+    if (live.source !== source || live.quiescedBy) throw new JobsError('JOBS_AUTHORITY_RETIRED');
     assertJobSourceEligible(requireJobSource(source)); return live;
   }
   private assertActivationCurrent(token: ActivationToken): void {
