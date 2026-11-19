@@ -76,7 +76,8 @@ export async function prepareManagedCalendarCore(input: ManagedCalendarInput, na
     ...(native.integrationWake ? { integrationWake: true } : {}),
   });
   const lifetime = new AbortController();
-  let directory: ManagedCalendarParticipantDirectory | undefined, service: CalendarService | undefined;
+  let directory: ManagedCalendarParticipantDirectory | undefined, overrideTargets: ManagedCalendarParticipantDirectory | undefined,
+    service: CalendarService | undefined;
   let providerClose: Promise<void> | null = null, unregister: (() => void) | undefined;
   const quiesce = () => {
     lifetime.abort();
@@ -89,6 +90,7 @@ export async function prepareManagedCalendarCore(input: ManagedCalendarInput, na
       const failures: unknown[] = [];
       try { await drainFacade(); } catch (error) { failures.push(error); }
       try { directory?.close(); } catch (error) { failures.push(error); }
+      try { overrideTargets?.close(); } catch (error) { failures.push(error); }
       try { await persistence.close(); } catch (error) { failures.push(error); }
       if (failures.length) throw new AggregateError(failures, 'Managed Calendar provider shutdown failed.');
     })();
@@ -113,7 +115,16 @@ export async function prepareManagedCalendarCore(input: ManagedCalendarInput, na
       kernel: runtime.require(ZERO_AUTHORIZATION_KERNEL), roles: runtime.get(ZERO_AUTHORIZATION_ROLE_SERVICE) ?? null,
       config: config.calendar, assertCurrent: () => runtime.require(ZERO_AUTH_TOKEN_SERVICE).assertCurrentProfile(),
     }) : undefined;
-    service = new CalendarService(persistence, config.calendar, lifetime.signal, directory);
+    // Grant eligibility is independent from which accounts an app permits as
+    // appointment attendees. This private projection exposes no extra directory.
+    overrideTargets = config.calendar.overrides ? new ManagedCalendarParticipantDirectory({
+      db: runtime.require(ZERO_SYSTEM_DB), users: runtime.require(ZERO_AUTH_STORE),
+      tenancy: runtime.get(ZERO_AUTH_TENANCY_SERVICE) ?? null,
+      kernel: runtime.require(ZERO_AUTHORIZATION_KERNEL), roles: runtime.get(ZERO_AUTHORIZATION_ROLE_SERVICE) ?? null,
+      config: { ...config.calendar, participants: { userEligibility: 'user' } },
+      assertCurrent: () => runtime.require(ZERO_AUTH_TOKEN_SERVICE).assertCurrentProfile(),
+    }) : undefined;
+    service = new CalendarService(persistence, config.calendar, lifetime.signal, directory, overrideTargets);
     // For a native integration this subordinate registration delegates to the
     // same shared close; it can never close Calendar below Jobs/Torrent work.
     runtime.set(ZERO_CALENDAR_SERVICE, service);

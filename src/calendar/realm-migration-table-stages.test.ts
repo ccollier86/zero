@@ -1,4 +1,4 @@
-/** Genuine raw Calendar001–018 startup/reopen. No predeclared application tables or physical output. */
+/** Genuine raw Calendar001–019 startup/reopen. No predeclared application tables or physical output. */
 import { Database } from 'bun:sqlite';
 import { expect, test, spyOn } from 'bun:test';
 import { Migrator } from '../migrations/migrator';
@@ -14,6 +14,7 @@ import { CALENDAR_MIGRATION_TABLE_STAGES } from './realm-migration-table-stages'
 import { calendarRealm } from './realm';
 import { calendarRealm016, calendarRealmPreManifest016 as preManifest } from './test-support/calendar-realm-016';
 import { calendarRealm017 } from './test-support/calendar-realm-017';
+import { calendarRealm018 } from './test-support/calendar-realm-018';
 function insert(database: Database, table: string, row: Record<string, string | number | null>) {
   database.run(`INSERT INTO ${table}(${Object.keys(row).join(',')}) VALUES(${Object.keys(row).map(() => '?').join(',')})`, Object.values(row));
 }
@@ -28,16 +29,21 @@ function fixture() {
     return { db, migrate, close: () => db.close() };
   } catch (error) { db.close(); throw error; }
 }
-test('Calendar018 appends its own DDL boundary while preserving genuine016 and017 identities', () => {
-  expect(calendarRealm.migrationTableStages).toEqual(CALENDAR_MIGRATION_TABLE_STAGES); expect(calendarRealm.version).toBe('18');
-  expect(calendarRealm.fingerprint).toBe('sha256:de6ee805fc2afc7c49e8095c2c2dec4932ba2dac6770b5bfc4b6c8998a7811cf');
-  expect(calendarRealm.schemaChecksum).toBe('7c15ec94ad679f2dda2cb45304a63959d292befd56abfa1f7ffc94f199d09f45');
+test('Calendar019 appends its own DDL boundary while preserving genuine016–018 identities', () => {
+  expect(calendarRealm.migrationTableStages).toEqual(CALENDAR_MIGRATION_TABLE_STAGES); expect(calendarRealm.version).toBe('19');
+  expect(calendarRealm.fingerprint).toBe('sha256:9b8f49551bae978b0e97e6e9607d82abda6b0a5ad9e46d626bc9adf724930959');
+  expect(calendarRealm.schemaChecksum).toBe('6b8eada93b8803f11eed2345ae08fd8e4a18d0577b892d393e965e6ed499cf29');
+  expect(calendarRealm.migrationChecksums[18]).toEqual({ version: '019', checksum: '2df83ecf28f67762f16a20499be24704889996f644ea02f9e4c08ed069cbc17e' });
+  expect(calendarRealm018.fingerprint).toBe('sha256:de6ee805fc2afc7c49e8095c2c2dec4932ba2dac6770b5bfc4b6c8998a7811cf');
+  expect(calendarRealm018.schemaChecksum).toBe('7c15ec94ad679f2dda2cb45304a63959d292befd56abfa1f7ffc94f199d09f45');
+  expect(calendarRealm018.migrationChecksums).toEqual(calendarRealm.migrationChecksums.slice(0, 18));
+  expect(Object.keys(calendarRealm018.commands)).toHaveLength(38); expect(Object.keys(calendarRealm018.queries)).toHaveLength(37);
   expect(calendarRealm.migrationChecksums[17]).toEqual({ version: '018', checksum: '0519c6365efc103656480ce106bc1f593e76461b976f467b85f41823d78f0bf0' });
   expect(calendarRealm017.fingerprint).toBe('sha256:d31941943b5362c8437134cf2d319a527e3717f1d111fca40e495a7604244da0');
   expect(calendarRealm017.schemaChecksum).toBe('e864c6ca7e48e5f9df24b8094115b3f90b5c1e7982e4afae6392b22818901d63');
   expect(calendarRealm017.migrationChecksums).toEqual(calendarRealm.migrationChecksums.slice(0, 17));
   expect(calendarRealm.migrationChecksums[16]).toEqual({ version: '017', checksum: '4af3fc3652beaedc35df0398b60e006c04bf4451ba437cc52ad5584592a043e6' });
-  expect(Object.keys(calendarRealm.commands)).toHaveLength(38); expect(Object.keys(calendarRealm.queries)).toHaveLength(37);
+  expect(Object.keys(calendarRealm.commands)).toHaveLength(39); expect(Object.keys(calendarRealm.queries)).toHaveLength(40);
   expect(preManifest).not.toHaveProperty('migrationTableStages');
   expect(preManifest.fingerprint).toBe('sha256:2b0e98dabe59b6cf27edf49b3bb37b3f11dc6b1e6d0274c6a590db5a3ba601b5');
   expect(preManifest.schemaChecksum).toBe('a9de3c82718367f9dfb5db628706f7a2b2fda542d12fc27be8d2d589a8d1f2a4');
@@ -45,7 +51,7 @@ test('Calendar018 appends its own DDL boundary while preserving genuine016 and01
   expect(preManifest.migrations.map(hashMigration)).toEqual(calendarRealm.migrations.slice(0, 16).map(hashMigration));
   expect(calendarRealm016.fingerprint).toBe('sha256:fcfd500b5352a27f6bc43d9122c1af8cdafc85680994f4191ee75903485179f8');
   expect(preManifest.fingerprint).not.toBe(calendarRealm.fingerprint);
-  expect(CALENDAR_MIGRATION_TABLE_STAGES.map(stage => stage.prepare)).toEqual([...Array(15).fill('create-added-tables'), undefined, undefined, undefined]);
+  expect(CALENDAR_MIGRATION_TABLE_STAGES.map(stage => stage.prepare)).toEqual([...Array(15).fill('create-added-tables'), undefined, undefined, undefined, undefined]);
 });
 test('genuine populated pre-manifest016 retains original receipts/data/ledger through readonly current admission and explicit no-op preparation', () => {
   const raw = new Database(':memory:'), reference = createDatabaseRef('synthetic-premanifest-calendar'), instance = '00000000-0000-4000-8000-000000000001';
@@ -123,9 +129,9 @@ test('native boundary preparation preserves populated010 evidence through011/012
     insert(f.db, '_calendar_integration_dispatch', { id: 'intent', scope_id, rule_id: 'rule', policy_epoch: 1, appointment_id: 'appointment', appointment_revision: 1,
       eligibility: 'current', state: 'pending', claim_nonce: null, claim_generation: 0, claim_until_ms: null, claim_previous_attempted: 0, create_attempted: 0, next_attempt_ms: 0, blocked_code: null });
     insert(f.db, '_calendar_integration_effect_admissions', { id: 'intent', scope_id, intent_id: 'intent', execution_id: 'execution', nonce: 'nonce', admitted_ms: 1000, registration_json: registration });
-    const retained = () => JSON.stringify(Object.fromEntries(Object.entries(CALENDAR_MIGRATION_TABLE_STAGES[9]!.tables).map(([name, table]) => [name, f.db.query(`SELECT ${Object.keys(table).filter(key => !key.startsWith('_identity')).map(column => '"' + column + '"').join(',')} FROM ${name}${name === '_calendar_usage' ? " WHERE id<>'locationPolicyVersion'" : ''} ORDER BY id`).all()])));
+    const retained = () => JSON.stringify(Object.fromEntries(Object.entries(CALENDAR_MIGRATION_TABLE_STAGES[9]!.tables).map(([name, table]) => [name, f.db.query(`SELECT ${Object.keys(table).filter(key => !key.startsWith('_identity')).map(column => '"' + column + '"').join(',')} FROM ${name}${name === '_calendar_usage' ? " WHERE id NOT IN ('locationPolicyVersion','overrideVersion')" : ''} ORDER BY id`).all()])));
     const before = retained(), ledger = f.db.query('SELECT * FROM _migrations ORDER BY version').all();
-    expect(f.migrate()).toEqual(['011', '012', '013', '014', '015', '016', '017', '018']); expect(retained()).toBe(before);
+    expect(f.migrate()).toEqual(['011', '012', '013', '014', '015', '016', '017', '018', '019']); expect(retained()).toBe(before);
     expect(f.db.query("SELECT * FROM _calendar_usage WHERE id='locationPolicyVersion'").all()).toEqual([{ id: 'locationPolicyVersion', count: 18 }]);
     expect(f.db.query('SELECT * FROM _migrations ORDER BY version LIMIT 10').all()).toEqual(ledger);
     expect(f.db.query('SELECT * FROM _calendar_integration_rule_sources').all()).toEqual([{ id: 'rule', scope_id, rule_id: 'rule', source_id: sourceId }]);
@@ -135,20 +141,21 @@ test('native boundary preparation preserves populated010 evidence through011/012
     expect(f.db.query('PRAGMA foreign_key_check').all()).toEqual([]);
   } finally { f.close(); }
 });
-test('raw fresh source runs all eighteen migrations without latest-schema predefinition', () => {
+test('raw fresh source runs all nineteen migrations without latest-schema predefinition', () => {
   const f = fixture();
   try { expect(f.db.query("SELECT name FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%'").all()).toEqual([]);
     expect(f.migrate()).toEqual(calendarRealm.migrations.map(migration => migration.version));
-    expect(assertDatabaseRealmMigrationSource(f.db, calendarRealm.migrationTableStages!, calendarRealm.migrations)).toBe(18);
+    expect(assertDatabaseRealmMigrationSource(f.db, calendarRealm.migrationTableStages!, calendarRealm.migrations)).toBe(19);
     expect(f.db.query('SELECT * FROM _calendar_appointment_resource_state').all()).toEqual([{ id: 'application', version: 16 }]);
     expect(f.db.query('SELECT * FROM _calendar_appointment_update_history').all()).toEqual([]);
     expect(f.db.query('SELECT * FROM _calendar_appointment_time_state').all()).toEqual([{ id: 'application', version: 17 }]);
     expect(f.db.query('SELECT * FROM _calendar_resource_location_policy_state').all()).toEqual([{ id: 'application', version: 18 }]);
+    expect(f.db.query('SELECT id,version,length(review_key) AS key_length FROM _calendar_override_state').all()).toEqual([{ id: 'application', version: 19, key_length: 64 }]);
     const ledger = f.db.query('SELECT * FROM _zero_migrations ORDER BY id').all(); expect(f.migrate()).toEqual([]);
     expect(f.db.query('SELECT * FROM _zero_migrations ORDER BY id').all()).toEqual(ledger); expect(f.db.query('PRAGMA foreign_key_check').all()).toEqual([]);
   } finally { f.close(); }
 });
-for (let count = 1; count < 18; count++) test('genuine populated prefix reopens without future predefinition: ' + String(count).padStart(3, '0'), () => {
+for (let count = 1; count < 19; count++) test('genuine populated prefix reopens without future predefinition: ' + String(count).padStart(3, '0'), () => {
   const f = fixture();
   try {
     const stage = calendarRealm.migrationTableStages![count - 1]!;
@@ -157,7 +164,7 @@ for (let count = 1; count < 18; count++) test('genuine populated prefix reopens 
     const owner = f.db.query('SELECT * FROM _calendar_owner').all(), ledger = f.db.query('SELECT * FROM _migrations ORDER BY version').all();
     for (const name of Object.keys(calendarRealm.tables)) if (!Object.hasOwn(stage.tables, name)) expect(f.db.query('SELECT name FROM sqlite_schema WHERE name=?').get(name)).toBeNull();
     expect(assertDatabaseRealmMigrationSource(f.db, calendarRealm.migrationTableStages!, calendarRealm.migrations)).toBe(count);
-    expect(f.migrate()).toHaveLength(18 - count); expect(f.db.query('SELECT * FROM _calendar_owner').all()).toEqual(owner);
+    expect(f.migrate()).toHaveLength(19 - count); expect(f.db.query('SELECT * FROM _calendar_owner').all()).toEqual(owner);
     expect(f.db.query('SELECT * FROM _migrations ORDER BY version LIMIT ?').all(count)).toEqual(ledger);
     expect(f.db.query('PRAGMA foreign_key_check').all()).toEqual([]);
   } finally { f.close(); }

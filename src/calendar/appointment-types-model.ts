@@ -1,5 +1,5 @@
 /** Immutable appointment-type facts and current resource admission policy. */
-import type { DatabaseWriteCommandContext } from '../databases/database-realm';
+import type { CalendarReadContext } from './calendar-read-store';
 import type { Row } from '../sync/types';
 import type { CalendarActor, CalendarAppointmentTypeReplacement, CalendarAppointmentTypeView, CalendarResourceTypesInput } from './contracts';
 import { CalendarError } from './error';
@@ -35,13 +35,13 @@ export function calendarTypePolicy(input: unknown): CalendarTypePolicy {
   if (!['unrestricted', 'optional', 'required'].includes(r.mode as string) || r.mode === 'unrestricted' && typeIds.length) throw new CalendarError('CALENDAR_INPUT_INVALID');
   return { mode: r.mode as CalendarTypePolicy['mode'], typeIds };
 }
-export function calendarType(context: DatabaseWriteCommandContext, actor: CalendarActor, input: unknown): CalendarTypeRow {
+export function calendarType(context: CalendarReadContext, actor: CalendarActor, input: unknown): CalendarTypeRow {
   const id = calendarKey(input), pointer = context.db.get('calendar_types', id) as CalendarTypePointer | null;
   if (!pointer || pointer.scope_id !== actor.scopeId) throw new CalendarError('CALENDAR_NOT_FOUND');
   return calendarTypeRevision(context, actor.scopeId, id, pointer.revision);
 }
 /** Historical snapshots deliberately do not consult the current active flag. */
-export function calendarTypeRevision(context: DatabaseWriteCommandContext, scopeId: string, input: unknown, revisionInput: unknown): CalendarTypeRow {
+export function calendarTypeRevision(context: CalendarReadContext, scopeId: string, input: unknown, revisionInput: unknown): CalendarTypeRow {
   const id = calendarKey(input), revision = calendarInteger(revisionInput, 1);
   const history = context.db.find('_calendar_type_history', { filters: [eq('scope_id', scopeId), eq('type_id', id), eq('type_revision', revision)], limit: 2 });
   if (history.length !== 1) throw new CalendarError('CALENDAR_STATE_INVALID');
@@ -61,7 +61,7 @@ export function parseCalendarTypePolicy(mode: unknown, idsJson: unknown): Calend
     return policy;
   } catch { throw new CalendarError('CALENDAR_STATE_INVALID'); }
 }
-export function currentCalendarResourceTypes(context: DatabaseWriteCommandContext, scopeId: string, resourceId: string): CalendarTypePolicy {
+export function currentCalendarResourceTypes(context: CalendarReadContext, scopeId: string, resourceId: string): CalendarTypePolicy {
   const pointer = context.db.get('_calendar_resource_types', resourceId);
   if (!pointer) return { mode: 'unrestricted', typeIds: [] };
   if (pointer.scope_id !== scopeId || pointer.resource_id !== resourceId) throw new CalendarError('CALENDAR_STATE_INVALID');

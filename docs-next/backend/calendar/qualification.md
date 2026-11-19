@@ -20,6 +20,92 @@ or data migration is authorized by these checks.
 
 ## November 18 finish-line review: cold admission and retained evidence
 
+### November 19 canonical019: independently reviewed appointment overlaps
+
+The complete branch-source package now includes disabled-by-default independent
+Guardian requirements, separate per-resource/user grants/history, readonly native
+create/update review, exact final appointment-overlap admission, private atomic
+evidence, HTTP/SDK/live grant hooks and the connected rich-editor flow. It is not
+a generic force flag, completed Calendar product or updater-selected release.
+Blocks, live holds, coverage, types, visits, participants, effective locations,
+all ordinary authority and storage limits remain hard requirements.
+
+Exact frozen source pins:
+
+- Realm: `sha256:9b8f49551bae978b0e97e6e9607d82abda6b0a5ad9e46d626bc9adf724930959`.
+- Schema: `6b8eada93b8803f11eed2345ae08fd8e4a18d0577b892d393e965e6ed499cf29`.
+- 019 migration: `2df83ecf28f67762f16a20499be24704889996f644ea02f9e4c08ed069cbc17e`.
+- Registry: 39 commands, 40 queries. Original 001–018 checksums, both genuine 016
+  identities, genuine 017 and genuine 018 declarations/registries are checked.
+  Fresh raw setup and every populated prefix use staged boundaries rather than
+  latest-table predefinition. No historical receipt column family was changed.
+
+The broad compatibility checkpoint ran **557 tests across 47 files: 554 passed,
+3 failed**, with 7,898 assertions in 309.43 seconds. Two old provisioning fixtures
+omitted the canonical creation identity/payload and expected a missing-resource
+error rather than structural admission. They now submit a complete fictional
+appointment while still proving zero source allocation. The historical registry
+fixture stopped at 017 and inherited latest registry entries; it now includes
+genuine 018 and derives older names from that frozen historical registry. Runtime
+admission and old migration hashes were not weakened to make these tests pass.
+The original failed broad run remains recorded, not relabelled as a full pass.
+
+After final stored-corruption hardening and fixture corrections, the **final
+focused 19-file set passed 202 tests, 0 failures, 3,255 assertions in 131.66 seconds**.
+It covers config/Guardian authority, canonical admission/rollback, actual readonly
+SQL, native HTTP/SDK/SSE, grant target final fences, unknown original-only
+reconciliation, all migration boundaries/historical pins, core service/runtime,
+semantic source evidence and the native editor/review controller.
+
+Other overlapping checkpoints, not additive totals:
+
+- Canonical final 14 tests/172 assertions: independent grants, exact proof/set/
+  generation binding, no-op/grandfathering, scoped single-use allowances, private
+  evidence, SQL/native seals, quotas, audit rollback and corrupted source refusal.
+- Native readonly/HTTP final 17 tests/202 assertions across 3 files, 17.07 seconds:
+  zero-write review/cancel, authority-first private probes, 64/65 total witnesses
+  with maximum identities, all-day/buffers/hard conflicts, actual authenticated
+  SDK create/update/replay, default-disabled/forged input and grant SSE withdrawal.
+- Frontend final 166 tests/2,223 assertions across 12 files, 3.16 seconds: ordinary
+  wire compatibility, readonly provisional keys, explicit unchecked confirmation
+  and reason, one mutation owner, newer drafts, expiry and authority retirement.
+- Grant-target fence/service boundary 26 tests/265 assertions; later focused
+  runtime/historical fixture recheck 27 tests/288 assertions. Final 202-case set
+  includes these affected behaviors rather than summing overlapping totals.
+- The accepted-write/lost-publication scenario explicitly proves an unknown
+  result, then original-key reconciliation after grant removal and config
+  disablement, without another appointment, exception history or effect.
+
+Review found and closed a real missing target boundary: adding an exception grant
+now checks finalized active current-scope Guardian account eligibility in the
+managed parent and again synchronously at the native final commit fence, after
+ordinary resource/independent administration admission. Actual SYSTEM suspension
+tests preserve accepted replay and permit departed-target revocation. This rule
+is separate from attendee eligibility and exposes no new directory.
+
+Independent refusal uses `CALENDAR_OVERRIDE_NOT_ALLOWED` (HTTP 409) so it removes only
+the review action. Genuine `CALENDAR_FORBIDDEN`/authentication loss still retires
+the whole native owner. Malformed stored revisions/identities map to state
+corruption, not caller-input errors or automatic repair. Private reason/witness
+data never enters the single semantic event's ordinary metadata.
+
+The initial type passes found narrowed-row serialization, a missing watch union
+member, duplicate fixture fields and literal/serialized-output fixture typings.
+They were corrected through actual row validation, exact query registration and
+typed synthetic fixtures, not widened public authority or writable read casts.
+The final no-emit graph passed **549 roots, 4,139 source files, zero diagnostics**.
+Documentation validation passed **911 pages, 911 unique IDs, 911 reachable,
+zero problems**. Independent cross-lane source reviews found no remaining blocker
+in this package; they are not substitutes for real browser/deployment acceptance.
+
+All successful test evidence here is cache-off MEMORY/in-process. Read copies,
+migrators, streams, clients, UI roots, runtime handles and subscriptions close in
+teardown. One failed diagnostic output-filter invocation was terminated by its
+exact owned PID; it created no physical state and is not counted as test evidence.
+No generated dependency tree, file DB, preview, container, build or archive was
+created. The existing storage hold and all physical/browser/Linux/updater gates
+remain unchanged. See [the supported branch-source contract](./overrides.md).
+
 ### November 19 canonical018: effective resource/location policy
 
 Actual realm 18 adds complete scope-owned effective assignment policy through
@@ -31,7 +117,7 @@ accepted-history grandfathering remain distinct. Server/client policy APIs,
 private interval-aware live discovery and the connected editor are wired; this
 does not enable conflict override, recurring series or a management redesign.
 
-Current exact source pins:
+Exact source pins at that earlier checkpoint:
 
 - Realm: `sha256:de6ee805fc2afc7c49e8095c2c2dec4932ba2dac6770b5bfc4b6c8998a7811cf`.
 - Schema: `7c15ec94ad679f2dda2cb45304a63959d292befd56abfa1f7ffc94f199d09f45`.
@@ -1875,7 +1961,7 @@ repository's applicable suite, artifact hashing and updater selection. A compile
 executable with the default source actor remains deliberately unavailable.
 
 Automatic working-hours coverage extension, offer/slot generation, public booking proofs,
-domain-contact/guest participant adapters, type-catalog/resource-policy administration, effective-dated location eligibility,
+domain-contact/guest participant adapters, type-catalog/resource-policy administration,
 recurrence, clinical visit/lobby/attention transitions,
 managed source-bound Jobs/Torrent delivery, reminders,
 outbound channels, public self-booking and AI remain later stages of the approved

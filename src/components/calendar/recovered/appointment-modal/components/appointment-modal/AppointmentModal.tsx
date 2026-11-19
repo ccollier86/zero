@@ -360,6 +360,7 @@ export function AppointmentModalContent({ event, isAddMode, selectedStartTime, s
             </Group>
           )}
           {!block && form?.workflowControl && (form.sendReminderControl !== undefined ? form.sendReminderControl : <Switch size="xs" checked={form.value.sendReminder} onChange={checked => form.onChange({ sendReminder: checked })} styles={{ label: { fontSize: 'var(--calendar-size-10)' } }} label="Send reminder" />)}
+          {form?.conflictControl}
           {form?.warning && <Text size="xs" c="orange.8" mt="xs" role="status">{form.warning}</Text>}
           {form?.error && <Text size="xs" c="red" mt="xs" role="alert">{form.error}</Text>}
           {form?.notice && <Text size="xs" c="dimmed" mt="xs">{form.notice}</Text>}

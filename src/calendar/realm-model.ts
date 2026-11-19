@@ -13,6 +13,9 @@ import { recordCalendarIntegrationMutation } from './integration-model';
 import { calendarCurrentResourceMembership, CALENDAR_APPOINTMENT_RESOURCE_CURRENT } from './appointment-resource-bindings';
 import { calendarCurrentAppointmentTime, CALENDAR_APPOINTMENT_TIME_STATE } from './appointment-time-bindings';
 import { assertCalendarResourceLocationPolicyCurrent } from './location-policies';
+import type { CalendarReadContext } from './calendar-read-store';
+import { normalizeCalendarOverrideAuthority } from './override-model';
+import { assertCalendarOverrideReceiptEvidence, assertCalendarOverrideResourceReceiptEvidence } from './overrides';
 
 export const CALENDAR_LIMITS = Object.freeze({ resources: 10_000, appointments: 100_000, blocks: 100_000, holds: 100_000, locations: 10_000,
   locationHistory: 100_000, resourceLocationHistory: 100_000, types: 10_000, typeHistory: 100_000, resourceTypeHistory: 100_000,
@@ -24,9 +27,10 @@ export interface CalendarAppointmentRow extends Row { id: string; scope_id: stri
 export interface CalendarReceiptRow extends Row { id: string; scope_id: string; principal: string; request_id: string; digest: string; result_json: string; target_kind: 'resource' | 'appointment' | 'block' | 'hold' | 'location' | 'type' | 'lifecycle'; target_id: string; required_right: 'book' | 'manage' }
 export const eq = (field: string, value: string | number): DatabaseFindFilter => ({ type: 'field', field, operator: 'eq', value });
 export function calendarActor(input: unknown): CalendarActor {
-  const r = calendarRecord(input, ['scopeId', 'userId', 'principal', 'manageAll', 'createOwn']);
+  const r = calendarRecord(input, ['scopeId', 'userId', 'principal', 'manageAll', 'createOwn', 'overrides']);
   if (typeof r.manageAll !== 'boolean' || typeof r.createOwn !== 'boolean') throw new CalendarError('CALENDAR_INPUT_INVALID');
-  return { scopeId: calendarScope(r.scopeId), userId: calendarKey(r.userId), principal: calendarText(r.principal, 256), manageAll: r.manageAll, createOwn: r.createOwn };
+  return { scopeId: calendarScope(r.scopeId), userId: calendarKey(r.userId), principal: calendarText(r.principal, 256), manageAll: r.manageAll, createOwn: r.createOwn,
+    ...(Object.hasOwn(r, 'overrides') ? { overrides: normalizeCalendarOverrideAuthority(r.overrides) } : {}) };
 }
 export function calendarSelection(input: unknown): string[] {
   const value = calendarValue(input);
@@ -35,11 +39,11 @@ export function calendarSelection(input: unknown): string[] {
   if (new Set(ids).size !== ids.length) throw new CalendarError('CALENDAR_INPUT_INVALID');
   return ids.sort();
 }
-export function assertCalendarOwner(context: DatabaseWriteCommandContext, scopeId: string): void {
+export function assertCalendarOwner(context: CalendarReadContext, scopeId: string): void {
   const owner = context.db.get('_calendar_owner', 'application');
   if (!owner || owner.scope_id !== scopeId) throw new CalendarError('CALENDAR_STATE_INVALID');
 }
-export function calendarResource(context: DatabaseWriteCommandContext, actor: CalendarActor, input: unknown): CalendarResourceRow {
+export function calendarResource(context: CalendarReadContext, actor: CalendarActor, input: unknown): CalendarResourceRow {
   const row = context.db.get('calendar_resources', calendarKey(input)) as CalendarResourceRow | null;
   if (!row || row.scope_id !== actor.scopeId) throw new CalendarError('CALENDAR_NOT_FOUND');
   return row;
@@ -52,17 +56,17 @@ export function hasCalendarRight(actor: CalendarActor, row: CalendarResourceRow,
   return !!grant && grant.scope_id === actor.scopeId && grant.resource_id === row.id && grant.user_id === actor.userId
     && (grant.manage === 1 || grant[right] === 1 || right === 'busy' && grant.details === 1);
 }
-export function requireCalendarRight(context: DatabaseWriteCommandContext, actor: CalendarActor, row: CalendarResourceRow, right: CalendarGrant): void {
+export function requireCalendarRight(context: CalendarReadContext, actor: CalendarActor, row: CalendarResourceRow, right: CalendarGrant): void {
   const grant = context.db.get('_calendar_grants', grantId(actor.scopeId, row.id, actor.userId));
   if (!hasCalendarRight(actor, row, grant, right)) throw new CalendarError('CALENDAR_NOT_FOUND');
 }
-export function appointmentResources(context: DatabaseWriteCommandContext, actor: CalendarActor, id: string): string[] {
+export function appointmentResources(context: CalendarReadContext, actor: CalendarActor, id: string): string[] {
   const table = calendarCurrentResourceMembership(context) ? CALENDAR_APPOINTMENT_RESOURCE_CURRENT : '_calendar_reservations';
   const rows = context.db.find(table, { select: ['resource_id'], filters: [eq('scope_id', actor.scopeId), eq('appointment_id', id)], limit: CALENDAR_LIMITS.selection + 1 });
   if (!rows.length || rows.length > CALENDAR_LIMITS.selection) throw new CalendarError('CALENDAR_STATE_INVALID');
   return rows.map(row => String(row.resource_id)).sort();
 }
-export function calendarAppointment(context: DatabaseWriteCommandContext, actor: CalendarActor, input: unknown, right: CalendarGrant): { row: CalendarAppointmentRow; resourceIds: string[] } {
+export function calendarAppointment(context: CalendarReadContext, actor: CalendarActor, input: unknown, right: CalendarGrant): { row: CalendarAppointmentRow; resourceIds: string[] } {
   const row = context.db.get('calendar_appointments', calendarKey(input)) as CalendarAppointmentRow | null;
   if (!row || row.scope_id !== actor.scopeId) throw new CalendarError('CALENDAR_NOT_FOUND');
   const resourceIds = appointmentResources(context, actor, row.id);
@@ -117,7 +121,7 @@ export function authorizeCalendarReceipt(context: DatabaseWriteCommandContext, a
 export function parseCalendarReceipt(row: CalendarReceiptRow): CalendarCommandReceipt {
   try {
     const r = calendarRecord(JSON.parse(row.result_json), ['requestId', 'operation', 'id', 'revision', 'changed']);
-    const operations = { resource: ['resource.created', 'resource.grant-changed', 'resource.availability-changed', 'resource.locations-changed', 'resource.types-changed', 'resource.availability-policy-changed', 'resource.location-policy-changed'],
+    const operations = { resource: ['resource.created', 'resource.grant-changed', 'resource.availability-changed', 'resource.locations-changed', 'resource.types-changed', 'resource.availability-policy-changed', 'resource.location-policy-changed', 'resource.override-grant-changed'],
       appointment: ['appointment.created', 'appointment.rescheduled', 'appointment.updated', 'appointment.cancelled', 'appointment.transitioned', 'appointment.participants-changed'], block: ['block.created', 'block.rescheduled', 'block.cancelled'],
       hold: ['hold.acquired', 'hold.released'], location: ['location.created', 'location.updated'], type: ['type.created', 'type.updated'], lifecycle: ['lifecycle.policy-changed'] };
     if (r.requestId !== row.request_id || r.id !== row.target_id || typeof r.changed !== 'boolean'
@@ -154,12 +158,14 @@ export function calendarIntent(context: DatabaseWriteCommandContext, actor: Cale
   calendarBudget(context, 'receipts');
   const result = run(requestId);
   if (targetKind === 'resource' && result.changed) assertCalendarResourceLocationPolicyCurrent(context, actor.scopeId, result.id);
+  if (result.changed && result.operation === 'resource.override-grant-changed') assertCalendarOverrideResourceReceiptEvidence(context, actor, id, result.id, result.revision);
   // Participant/lifecycle/status edits seal the same retained time authority.
   // This fresh-state check never runs ahead of original receipt replay.
   if (targetKind === 'appointment' && result.changed) {
     const parent = context.db.get('calendar_appointments', result.id);
     if (!parent) throw new CalendarError('CALENDAR_STATE_INVALID');
     if (parent.time_kind !== undefined || context.db.hasTable(CALENDAR_APPOINTMENT_TIME_STATE)) calendarCurrentAppointmentTime(context, parent);
+    assertCalendarOverrideReceiptEvidence(context, actor, id, result.id, result.revision);
   }
   context.db.createStrict(targetKind === 'lifecycle' ? '_calendar_lifecycle_receipts' : targetKind === 'type' ? '_calendar_type_receipts' : targetKind === 'location' ? '_calendar_location_receipts' : targetKind === 'hold' ? '_calendar_hold_receipts' : targetKind === 'block' ? '_calendar_block_receipts' : '_calendar_receipts', { id, scope_id: actor.scopeId, principal: actor.principal, request_id: requestId, digest,
     result_json: calendarJson(result), target_kind: targetKind, target_id: result.id, required_right: requiredRight });

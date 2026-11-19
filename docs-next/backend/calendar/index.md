@@ -38,6 +38,8 @@ working on an application; do not assume this branch is available through update
   bindings, current assignment compatibility, hold transfer and selector privacy.
 - [Effective location policies](./location-policies.md): explicit all-time versus
   date-effective resource assignments, whole-occupancy checks and private live discovery.
+- [Reviewed appointment overlaps](./overrides.md): independent all-resource grants,
+  zero-write review, explicit reasons and exact atomic exception admission.
 - [Native account participants](./participants.md): explicit Guardian eligibility,
   private bindings, exact hold transfer, live names/tombstones and reusable picker.
 - [Weekly working hours](./working-hours.md): finite local-date coverage, explicit
@@ -128,9 +130,14 @@ Untyped all-day appointments now have explicit authored LocalDate intervals,
 atomic kind conversion, frozen accepted boundaries and indexed date queries/live
 views; see the all-day guide. Holds and blocks remain timed-only.
 
+Manual create/rich update can now explicitly review appointment overlaps when
+independently enabled and granted on every resource. All hard policies still
+apply; ordinary management is not exception authority. The connected editor uses
+the existing one mutation owner and private reason confirmation. See the override
+guide for replay, expiry, revocation and storage boundaries.
+
 Recurrence, floating timed dates, automatic working-hours coverage extension,
 public booking proofs/offers, participant invitations,
-effective-dated location eligibility,
 clinical visit/lobby/attention state, delivery channels, public self-booking and AI
 adapters remain future stages. Local UI fields/previews do not implement those
 features. In this core, `recurrence`, `reminders` and `selfBooking` must remain false; attempting to

@@ -4,6 +4,10 @@ export function calendarCapabilitiesStream(calendar: ScopedCalendar, signal: Abo
   return calendarSnapshotStream({ read: options => calendar.capabilities.get(options),
     watch: (listener, options) => calendar.capabilities.watch(listener, options) }, signal);
 }
+export function calendarOverrideGrantStream(calendar: ScopedCalendar, id: string, userId: string, signal: AbortSignal): ReadableStream<Uint8Array> {
+  return calendarSnapshotStream({ read: options => calendar.overrides.grants.get(id, userId, options),
+    watch: (listener, options) => calendar.overrides.grants.watch(id, userId, listener, options) }, signal);
+}
 export function calendarParticipantDirectoryStream(calendar: ScopedCalendar, query: CalendarParticipantDirectoryQuery, signal: AbortSignal): ReadableStream<Uint8Array> {
   return calendarSnapshotStream({ read: options => calendar.participants.directory(query, options),
     watch: (listener, options) => calendar.participants.watchDirectory(query, listener, options) }, signal);

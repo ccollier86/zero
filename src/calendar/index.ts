@@ -1,7 +1,9 @@
 /** Server-facing setup and facade types only. Private Fabric owners, raw actors and commands are not public APIs. */
-export type { CalendarConfig, ResolvedCalendarConfig } from './config';
+export type { CalendarConfig, ResolvedCalendarConfig, CalendarOverridesConfig, ResolvedCalendarOverridesConfig } from './config';
 export type { CalendarResourceKind, CalendarResourceView, CalendarResourceInput, CalendarGrant,
   CalendarCapabilities,
+  CalendarOverrideCategory, CalendarAppointmentOverride, CalendarOverrideReview, CalendarOverrideGrantInput, CalendarOverrideGrantView,
+  CalendarAppointmentRequestOptions, CalendarAppointmentControlOptions,
   CalendarAvailabilityPolicyInput, CalendarAvailabilityPolicyView, CalendarExplicitAvailabilityPolicyInput,
   CalendarWeeklyAvailabilityPolicyInput, CalendarWorkingHoursSnapshot,
   CalendarParticipantReference, CalendarParticipantView, CalendarParticipantDirectoryQuery, CalendarParticipantDirectoryPage, CalendarParticipantsView,

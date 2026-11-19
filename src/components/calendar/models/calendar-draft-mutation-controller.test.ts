@@ -28,6 +28,14 @@ test('one dispatch captures the request, records recovery before waiting and acc
   pending.resolve(receipt); await submitted;
   expect(f.accepted).toEqual([f.unknown[0]!]); expect(f.closes).toEqual([receipt]); expect(f.flags).toEqual([true, false]);
 });
+test('only a matching confirmed noncommit retains a sanitized conflict action code; unknown or wrong-key failures cannot offer review', async () => {
+  for (const [outcome, key, expected] of [['not-committed', request.key, 'CALENDAR_BOOKING_CONFLICT'], ['unknown', request.key, null], ['not-committed', 'other', null]] as const) {
+    const f = fixture(); await f.controller.submit(f.context, request, async () => { throw new CalendarMutationError(key, outcome, 'CALENDAR_BOOKING_CONFLICT', 409); });
+    expect(f.controller.snapshot().rejectionCode).toBe(expected);
+    expect(f.controller.snapshot().phase).toBe(expected ? 'editing' : 'unknown');
+    if (expected) { f.controller.edit(); expect(f.controller.snapshot().rejectionCode).toBeNull(); }
+  }
+});
 
 test('newer typing survives older accepted work and cannot be submitted under a replacement key', async () => {
   const f = fixture(), pending = deferred<CalendarCommandReceipt>();

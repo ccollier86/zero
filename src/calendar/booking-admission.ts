@@ -4,7 +4,8 @@ import type { CalendarAppointmentTypeReference, CalendarAppointmentTypeSnapshot,
 import { assertCalendarTypePolicyForScope, assertCalendarBookingTypeForScope } from './appointment-type-bindings';
 import { assertCalendarVisitPolicyForScope, assertCalendarBookingVisitForScope } from './visit-bindings';
 import { assertCalendarAvailability } from './availability-model';
-import { assertCalendarResourcesAvailable } from './occupancy';
+import { assertCalendarResourcesAvailable, type CalendarAppointmentOverlapAllowance } from './occupancy';
+import type { CalendarReadContext } from './calendar-read-store';
 import type { CalendarTimedInterval } from './time';
 import { assertCalendarResourceLocationCoverage } from './location-policies';
 
@@ -33,7 +34,14 @@ export interface CalendarBookingAdmission {
 /** Call after exact replay/CAS/terminal and all-resource authority admission, inside the same short writer.
  * Wrappers retain authority, participant fences, no-op rules, budgets, bindings, receipts, effects and audit.
  */
-export function admitCalendarBookingCandidate(context: DatabaseWriteCommandContext, scopeId: string,
+export function admitCalendarBookingCandidate(context: CalendarReadContext, scopeId: string,
+  candidate: CalendarBookingCandidate, checks: CalendarBookingRevalidation, allowance?: CalendarAppointmentOverlapAllowance): CalendarBookingAdmission {
+  const result = admitCalendarBookingHardCandidate(context, scopeId, candidate, checks);
+  if (checks.occupancy) assertCalendarResourcesAvailable(context, scopeId, candidate.resourceIds, candidate.interval, checks.occupancy.except, checks.occupancy.now, allowance);
+  return result;
+}
+/** Shared readonly hard checks. Exception review supplies the identical prepared revalidation mask. */
+export function admitCalendarBookingHardCandidate(context: CalendarReadContext, scopeId: string,
   candidate: CalendarBookingCandidate, checks: CalendarBookingRevalidation): CalendarBookingAdmission {
   const { resourceIds, interval, appointmentType, visit } = candidate;
   // Complete BOTH intersections before resolving either client-selected private catalog generation.
@@ -43,6 +51,5 @@ export function admitCalendarBookingCandidate(context: DatabaseWriteCommandConte
   const acceptedType = checks.type ? assertCalendarBookingTypeForScope(context, scopeId, resourceIds, interval, appointmentType) : undefined;
   const acceptedVisit = checks.visit ? assertCalendarBookingVisitForScope(context, scopeId, resourceIds, visit) : undefined;
   if (checks.availabilityResourceIds.length) assertCalendarAvailability(context, scopeId, checks.availabilityResourceIds, interval);
-  if (checks.occupancy) assertCalendarResourcesAvailable(context, scopeId, resourceIds, interval, checks.occupancy.except, checks.occupancy.now);
   return { appointmentType: acceptedType, visit: acceptedVisit };
 }

@@ -29,7 +29,7 @@ export interface CalendarRequestAuthority {
   confirm(): Promise<void>;
 }
 
-type CalendarPolicy = Pick<ResolvedCalendarConfig, 'createOwn' | 'manage'>;
+type CalendarPolicy = Pick<ResolvedCalendarConfig, 'createOwn' | 'manage'> & Partial<Pick<ResolvedCalendarConfig, 'overrides'>>;
 const SESSION_ACCESS = Object.freeze({ user: 'required' as const, credentials: Object.freeze(['session'] as const) });
 
 /** This is an actor-only browser boundary, not a source/service credential or a mounted runtime. */
@@ -41,6 +41,7 @@ export async function admitCalendarRequest(request: CalendarAuthority, config: C
   const scope = request.scope, scopeId = serviceDataScopeKey(scope);
   // Resolved config is detached/frozen by configuration admission. Capture its policies, not a mutable caller bag.
   const createOwnPolicy = config.createOwn, managePolicy = config.manage;
+  const overridePolicy = config.overrides;
   const project = () => {
     signal.throwIfAborted();
     invokeSynchronousAuthCallback(() => request.assertCurrentAuthoritySync(), {
@@ -68,6 +69,8 @@ export async function admitCalendarRequest(request: CalendarAuthority, config: C
         principal: calendarHash([context.userId, context.credentialKind ?? 'session', context.credentialId ?? null,
           context.sessionKind ?? 'web', context.clientId ?? null]),
         manageAll: allows(access, managePolicy), createOwn: allows(access, createOwnPolicy),
+        ...(overridePolicy ? { overrides: Object.freeze({ policyVersion: overridePolicy.kind, policyHash: overridePolicy.policyHash,
+          use: allows(access, overridePolicy.use), manageGrants: allows(access, overridePolicy.manageGrants) }) } : {}),
       }),
     };
   };
@@ -76,7 +79,10 @@ export async function admitCalendarRequest(request: CalendarAuthority, config: C
   const guard = () => {
     const current = project();
     if (current.identity !== captured.identity || current.revision !== captured.revision
-      || current.actor.manageAll !== captured.actor.manageAll || current.actor.createOwn !== captured.actor.createOwn) {
+      || current.actor.manageAll !== captured.actor.manageAll || current.actor.createOwn !== captured.actor.createOwn
+      || current.actor.overrides?.policyHash !== captured.actor.overrides?.policyHash
+      || current.actor.overrides?.use !== captured.actor.overrides?.use
+      || current.actor.overrides?.manageGrants !== captured.actor.overrides?.manageGrants) {
       throw new CalendarError('CALENDAR_FORBIDDEN');
     }
   };

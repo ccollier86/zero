@@ -12,6 +12,8 @@ import { CALENDAR_APPOINTMENT_UPDATE_TABLES } from './realm-appointment-update-m
 import { calendarAppointmentAllDayTables } from './realm-appointment-all-day-migration';
 import { CALENDAR_INTEGRATION_HISTORICAL_REALMS, isCalendarIntegrationHistoricalRealmFingerprint } from './integration-historical-realms';
 import { calendarInspectionHistoricalRealm } from './test-support/integration-inspection-fixture';
+import { calendarRealm018 } from './test-support/calendar-realm-018';
+import { calendarResourceLocationPolicyTables } from './realm-location-policy-migration';
 
 // Original registry names read from the committed realm.ts at 11e9bbc/c32d307,
 // 6b3bf16 and fdc8262 respectively. 010/011 had neither the 012 controls nor
@@ -38,14 +40,16 @@ const generations = [
     schema: 'a9de3c82718367f9dfb5db628706f7a2b2fda542d12fc27be8d2d589a8d1f2a4' },
   { version: '017', count: 17, tables: calendarAppointmentAllDayTables(), commands: 37, queries: 36, manifest: true,
     schema: 'e864c6ca7e48e5f9df24b8094115b3f90b5c1e7982e4afae6392b22818901d63' },
+  { version: '018', count: 18, tables: calendarResourceLocationPolicyTables(), commands: 38, queries: 37, manifest: true,
+    schema: '7c15ec94ad679f2dda2cb45304a63959d292befd56abfa1f7ffc94f199d09f45' },
 ] as const;
 
-test('retained source compatibility pins are genuine complete010–017 realms, including pre-manifest016', () => {
+test('retained source compatibility pins are genuine complete010–018 realms, including pre-manifest016', () => {
   expect(CALENDAR_INTEGRATION_HISTORICAL_REALMS.map(realm => realm.version)).toEqual(generations.map(realm => realm.version));
   for (const [index, generation] of generations.entries()) {
-    const commands = Object.fromEntries(Object.entries(calendarRealm.commands).filter(([name]) => name !== 'calendar.resource.location-policy' && (generation.count >= 16 || name !== 'calendar.appointment.update')
+    const commands = Object.fromEntries(Object.entries(calendarRealm018.commands).filter(([name]) => (generation.count >= 18 || name !== 'calendar.resource.location-policy') && (generation.count >= 16 || name !== 'calendar.appointment.update')
       && (generation.count >= 15 || !name.startsWith('calendar.integration.operator.')) && (generation.count >= 12 || !CONTROL_COMMANDS.has(name))));
-    const queries = Object.fromEntries(Object.entries(calendarRealm.queries).filter(([name]) => name !== 'calendar.resourceLocationPolicy' && (generation.count >= 17 || name !== 'calendar.appointmentsByDate') && (generation.count >= 15 || !name.startsWith('calendar.integration.operator.')) && (generation.count >= 14 || name !== 'calendar.integration.inspection')
+    const queries = Object.fromEntries(Object.entries(calendarRealm018.queries).filter(([name]) => (generation.count >= 18 || name !== 'calendar.resourceLocationPolicy') && (generation.count >= 17 || name !== 'calendar.appointmentsByDate') && (generation.count >= 15 || !name.startsWith('calendar.integration.operator.')) && (generation.count >= 14 || name !== 'calendar.integration.inspection')
       && (generation.count >= 13 || name !== 'calendar.integration.nextWake') && (generation.count >= 12 || !CONTROL_QUERIES.has(name))));
     const historical = defineDatabaseRealm({ name: calendarRealm.name, version: String(generation.count), tables: generation.tables,
       migrations: calendarRealm.migrations.slice(0, generation.count), commands, queries,

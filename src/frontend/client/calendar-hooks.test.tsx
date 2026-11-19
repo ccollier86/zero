@@ -6,6 +6,8 @@ import type { CalendarAppointmentPage, CalendarAppointmentView, CalendarAppointm
   CalendarLifecyclePolicy, CalendarAppointmentTransitions, CalendarParticipantDirectoryQuery, CalendarParticipantDirectoryPage, CalendarParticipantsView, CalendarAvailabilityPolicyView,
   CalendarResourceTypesView, CalendarLocationPage, CalendarLocationPageQuery, CalendarVisitLocationQuery, CalendarRangeQuery, CalendarReadOptions, CalendarResourcePage, CalendarResourcePageQuery, CalendarWatchOptions, CalendarWatchUpdate } from '../../calendar/contracts';
 import type { CalendarResourceLocationPolicyView } from '../../calendar/contracts';
+import type { CalendarOverrideGrantView } from '../../calendar/contracts';
+import { useCalendarOverrideGrant } from './calendar-hooks';
 import { ClientProvider } from './client-context';
 import type { Client } from './sdk';
 import { CalendarReadError } from './calendar-mutation';
@@ -363,6 +365,22 @@ test('visit hook interval identity retires old occupied coverage before another 
   await act(async () => f.visits[1]!.resolve(page)); expect(current.value).toBe(page);
 });
 
+test('independent override grant hook binds resource/user/revision and retires denied and replaced scope callbacks', async () => {
+  const f = fixture(), { createRoot } = await import('react-dom/client'), root = createRoot(createHookContainer()); roots.add(root);
+  let user: string | null = 'user-a', current!: CalendarReadResult<CalendarOverrideGrantView>;
+  function Capture() { current = useCalendarOverrideGrant('resource', user, 1); return null; }
+  function render() { root.render(createElement(ClientProvider, { client: f.client, children: createElement(Capture) })); }
+  await act(async () => render());
+  const value: CalendarOverrideGrantView = { resourceId: 'resource', userId: 'user-a', resourceRevision: 3, categories: ['appointment-overlap'] };
+  await act(async () => f.overrideGrants[0]!.resolve(value)); expect(current.value).toBe(value);
+  user = 'user-b'; await act(async () => render()); expect(current.value).toBeNull(); expect(f.overrideGrants[0]!.options.signal!.aborted).toBe(true);
+  await act(async () => f.overrideGrants[0]!.resolve(value)); expect(current.value).toBeNull();
+  await act(async () => f.overrideGrants[1]!.options.onError?.(new CalendarReadError('CALENDAR_NOT_FOUND', 404, true)));
+  expect(current.status).toBe('error'); await act(async () => f.overrideGrants[1]!.resolve(value)); expect(current.value).toBeNull();
+  f.auth.authorizationScopeKey = 'new-grant-scope'; await act(async () => f.notify()); expect(current.value).toBeNull();
+  user = null; await act(async () => render()); expect(current.status).toBe('idle'); expect(f.overrideGrants.at(-1)!.options.signal!.aborted).toBe(true);
+});
+
 function fixture() {
   const observers = new Set<() => void>(), subscribe = (observer: () => void) => { observers.add(observer); return () => { observers.delete(observer); }; };
   const auth = { authorizationScopeKey: 'original-scope', user: { userId: 'synthetic-user' }, activeTenant: { tenantId: 'synthetic-tenant' }, isLoading: false,
@@ -382,7 +400,10 @@ function fixture() {
   const holdParticipants: { id: string; options: CalendarWatchOptions; resolve(value: CalendarParticipantsView): void; removals: number }[] = [];
   const availabilityPolicies: { id: string; options: CalendarWatchOptions; resolve(value: CalendarAvailabilityPolicyView): void; removals: number }[] = [];
   const locationPolicies: { id: string; options: CalendarWatchOptions; resolve(value: CalendarResourceLocationPolicyView): void; removals: number }[] = [];
-  const client = { auth, calendar: { availability: { policy: { watch(id: string, listener: (value: CalendarAvailabilityPolicyView) => void, options: CalendarWatchOptions) {
+  const overrideGrants: { resourceId: string; userId: string; options: CalendarWatchOptions; resolve(value: CalendarOverrideGrantView): void }[] = [];
+  const client = { auth, calendar: { overrides: { grants: { watch(resourceId: string, userId: string, listener: (value: CalendarOverrideGrantView) => void, options: CalendarWatchOptions) {
+    overrideGrants.push({ resourceId, userId, options, resolve: listener }); return () => {};
+  } } }, availability: { policy: { watch(id: string, listener: (value: CalendarAvailabilityPolicyView) => void, options: CalendarWatchOptions) {
     const item = { id, options, resolve: listener, removals: 0 }; availabilityPolicies.push(item); return () => { item.removals++; };
   } } }, participants: { watchDirectory(query: CalendarParticipantDirectoryQuery, listener: (value: CalendarParticipantDirectoryPage) => void, options: CalendarWatchOptions) {
     const item = { query, options, resolve: listener, removals: 0 }; participantDirectories.push(item); return () => { item.removals++; };
@@ -412,7 +433,7 @@ function fixture() {
     subscriptions.push({ query, listener, options }); return () => {};
   } } } } as unknown as Client;
   return { client, auth, subscriptions, resources, locations, visits, types, typeDetails, typePolicies, details, lifecycle, transitions,
-    participantDirectories, appointmentParticipants, holdParticipants, availabilityPolicies, locationPolicies, notify() { for (const observer of observers) observer(); } };
+    participantDirectories, appointmentParticipants, holdParticipants, availabilityPolicies, locationPolicies, overrideGrants, notify() { for (const observer of observers) observer(); } };
 }
 async function renderReads(client: Client) {
   const { createRoot } = await import('react-dom/client'), root = createRoot(createHookContainer()); roots.add(root);

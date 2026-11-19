@@ -3,6 +3,7 @@ export { useCalendarResources, useCalendarAppointment, useCalendarAppointments, 
 export { useCalendarAppointmentTypes, useCalendarAppointmentType, useCalendarResourceTypes } from '../../client/calendar-hooks';
 export { useCalendarLifecycle, useCalendarAppointmentTransitions } from '../../client/calendar-hooks';
 export { useCalendarCapabilities } from '../../client/calendar-hooks';
+export { useCalendarOverrideGrant } from '../../client/calendar-hooks';
 export { useCalendarAvailabilityPolicy } from '../../client/calendar-hooks';
 export { useCalendarParticipantDirectory, useCalendarAppointmentParticipants, useCalendarHoldParticipants } from '../../client/calendar-hooks';
 export type { CalendarReadResult, UseCalendarAppointmentsResult } from '../../client/calendar-hooks';
@@ -11,6 +12,8 @@ export { CalendarMutationError, CalendarReadError } from '../../client/calendar-
 export type { CalendarOperationOutcome } from '../../client/calendar-mutation';
 export type { CalendarResourceKind, CalendarResourceView, CalendarResourceInput, CalendarGrant,
   CalendarCapabilities,
+  CalendarAppointmentOverride, CalendarOverrideReview, CalendarOverrideGrantInput, CalendarOverrideGrantView,
+  CalendarAppointmentRequestOptions, CalendarAppointmentControlOptions,
   CalendarAvailabilityPolicyInput, CalendarAvailabilityPolicyView, CalendarExplicitAvailabilityPolicyInput,
   CalendarWeeklyAvailabilityPolicyInput, CalendarWorkingHoursSnapshot,
   CalendarParticipantReference, CalendarParticipantView, CalendarParticipantDirectoryQuery, CalendarParticipantDirectoryPage, CalendarParticipantsView,

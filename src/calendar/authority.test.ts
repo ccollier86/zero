@@ -174,3 +174,32 @@ test('owner/request/caller cancellation remains live and receipt principals surv
   const current = await f.admit(); f.closing.abort(); expect(() => current.guard()).toThrow();
   await expect(f.admit()).rejects.toBeInstanceOf(Error);
 });
+
+test('override capabilities are independent from base management and false remains valid for receipt reconciliation', async () => {
+  const f = fixture('single', 'advanced', { manage: { permission: 'calendar:manage' },
+    overrides: { kind: 'appointment-overlap-v1', use: { properties: { department: 'exceptions' } }, manageGrants: false } });
+  const original = await f.admit();
+  expect(original.actor).toMatchObject({ manageAll: true, overrides: { use: false, manageGrants: false, policyVersion: 'appointment-overlap-v1' } });
+  original.guard(); await original.confirm();
+  f.state.properties.department = 'exceptions';
+  expect(() => original.guard()).toThrow();
+  const allowed = await f.admit();
+  expect(allowed.actor.overrides?.use).toBe(true);
+  expect(allowed.actor.overrides?.policyHash).toMatch(/^[a-f0-9]{64}$/);
+  expect(allowed.actor.principal).toBe(original.actor.principal);
+  f.state.properties.department = 'scheduling';
+  expect(() => allowed.guard()).toThrow();
+  const revoked = await f.admit();
+  expect(revoked.actor.overrides?.use).toBe(false);
+  revoked.guard(); await revoked.confirm();
+  expect((await fixture().admit()).actor).not.toHaveProperty('overrides');
+});
+
+test('ordinary administrator status does not invent independent override powers', async () => {
+  const f = fixture('single', 'advanced', { overrides: { kind: 'appointment-overlap-v1', use: false,
+    manageGrants: { properties: { department: 'exception-managers' } } } });
+  f.state.context!.role = 'admin';
+  expect((await f.admit()).actor).toMatchObject({ manageAll: true, overrides: { use: false, manageGrants: false } });
+  f.state.properties.department = 'exception-managers';
+  expect((await f.admit()).actor.overrides).toMatchObject({ use: false, manageGrants: true });
+});

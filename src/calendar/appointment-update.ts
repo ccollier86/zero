@@ -1,151 +1,80 @@
-/** Private atomic rich-edit admission. Pure normalization confers no authority and reads no catalog/defaults. */
+/** One atomic rich edit. Shared readonly preparation never confers mutation authority. */
 import type { DatabaseWriteCommandContext } from '../databases/database-realm';
-import type { CalendarAppointmentTypeReference, CalendarAppointmentUpdateInput, CalendarVisitInput } from './contracts';
+import type { CalendarAppointmentTypeReference, CalendarVisitInput } from './contracts';
 import { CalendarError, calendarCommand } from './error';
-import { calendarParticipantReferences } from './participants-validation';
-import { normalizeCalendarTimedInterval, type CalendarTimedInterval } from './time';
-import { calendarInteger, calendarJson, calendarKey, calendarRecord, calendarText, calendarValue } from './validation';
-import { assertCalendarOwner, calendarActor, calendarAppointment, calendarBudget, calendarIntent, calendarResource, calendarRevision,
-  nextCalendarRevision, requireCalendarRight, reservationId } from './realm-model';
-import { appendCalendarAppointmentUpdateHistory, calendarCurrentResourceMembership, replaceCalendarAppointmentResourceCurrent } from './appointment-resource-bindings';
-import { calendarCurrentAppointmentType, bindCalendarAppointmentType, sameCalendarAppointmentType } from './appointment-type-bindings';
-import { calendarCurrentAppointmentVisit, bindCalendarAppointmentVisit, sameCalendarVisit } from './visit-bindings';
-import { bindCalendarAppointmentParticipants, calendarCurrentAppointmentParticipants, requireCalendarParticipantManager } from './participant-bindings';
-import { effectiveCalendarAppointmentStatus, isCalendarLifecycleTerminal } from './lifecycle-model';
+import { calendarInteger, calendarRecord } from './validation';
+import { assertCalendarOwner, calendarActor, calendarAppointment, calendarBudget, calendarIntent, calendarResource, requireCalendarRight, nextCalendarRevision, reservationId } from './realm-model';
+import { appendCalendarAppointmentUpdateHistory, replaceCalendarAppointmentResourceCurrent } from './appointment-resource-bindings';
+import { bindCalendarAppointmentType } from './appointment-type-bindings';
+import { bindCalendarAppointmentVisit } from './visit-bindings';
+import { bindCalendarAppointmentParticipants, requireCalendarParticipantManager } from './participant-bindings';
 import { admitCalendarBookingCandidate } from './booking-admission';
 import { appendCalendarSemanticAudit } from './semantic-audit';
-import { normalizeCalendarAppointmentTimeIntent, type CalendarAppointmentTimeIntent } from './appointment-time-input';
-import { bindCalendarAppointmentTime, calendarCurrentAppointmentTime, calendarAppointmentTimeFields,
-  calendarAppointmentTimeHistoryFields, requireCalendarAppointmentTimeStorage, resolveCalendarAppointmentTimeIntent,
-  type CalendarAppointmentTimeFact } from './appointment-time-bindings';
-
-export const CALENDAR_APPOINTMENT_UPDATE_FIELDS = Object.freeze([
-  'title', 'resourceIds', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'appointmentType', 'visit', 'participants', 'interval',
-] as const);
-const INTERVAL_FIELDS = ['startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes'] as const;
-function typeReference(value: unknown): CalendarAppointmentTypeReference {
-  const r = calendarRecord(value, ['id', 'revision']);
-  return Object.freeze({ id: calendarKey(r.id), revision: calendarInteger(r.revision, 1) });
-}
-function visitReference(value: unknown): CalendarVisitInput {
-  const r = calendarRecord(value, ['mode', 'location']);
-  if (r.mode === 'in-person') return Object.freeze({ mode: r.mode, location: typeReference(r.location) });
-  if ((r.mode === 'video' || r.mode === 'phone') && !Object.hasOwn(r, 'location')) return Object.freeze({ mode: r.mode });
-  throw new CalendarError('CALENDAR_INPUT_INVALID');
-}
-
-/** Server-only closed wire normalization. A complete explicit interval or no interval; omission never means clear/default. */
-export function normalizeCalendarAppointmentUpdate(input: unknown): Readonly<CalendarAppointmentUpdateInput & { readonly interval?: CalendarAppointmentTimeIntent }> {
-  const r = calendarRecord(calendarValue(input), CALENDAR_APPOINTMENT_UPDATE_FIELDS);
-  if (!Object.keys(r).length) throw new CalendarError('CALENDAR_INPUT_INVALID');
-  const normalized: Record<string, unknown> = {};
-  if (Object.hasOwn(r, 'title')) normalized.title = calendarText(r.title, 512);
-  if (Object.hasOwn(r, 'resourceIds')) {
-    if (!Array.isArray(r.resourceIds) || !r.resourceIds.length || r.resourceIds.length > 16) throw new CalendarError('CALENDAR_INPUT_INVALID');
-    const ids = r.resourceIds.map(value => calendarKey(value));
-    if (new Set(ids).size !== ids.length) throw new CalendarError('CALENDAR_INPUT_INVALID');
-    normalized.resourceIds = Object.freeze(ids.sort());
-  }
-  if (Object.hasOwn(r, 'interval')) {
-    if (INTERVAL_FIELDS.some(field => Object.hasOwn(r, field))) throw new CalendarError('CALENDAR_INPUT_INVALID');
-    normalized.interval = normalizeCalendarAppointmentTimeIntent(r.interval);
-  } else if (INTERVAL_FIELDS.some(field => Object.hasOwn(r, field))) {
-    if (!INTERVAL_FIELDS.every(field => Object.hasOwn(r, field))) throw new CalendarError('CALENDAR_INPUT_INVALID');
-    calendarInteger(r.bufferBeforeMinutes, 0, 1440); calendarInteger(r.bufferAfterMinutes, 0, 1440);
-    const interval = normalizeCalendarTimedInterval(Object.fromEntries(INTERVAL_FIELDS.map(field => [field, r[field]])));
-    for (const field of INTERVAL_FIELDS) normalized[field] = interval[field];
-  }
-  if (Object.hasOwn(r, 'appointmentType')) normalized.appointmentType = r.appointmentType === null ? null : typeReference(r.appointmentType);
-  if (Object.hasOwn(r, 'visit')) normalized.visit = r.visit === null ? null : visitReference(r.visit);
-  if (Object.hasOwn(r, 'participants')) normalized.participants = Object.freeze(calendarParticipantReferences(r.participants).map(ref => Object.freeze(ref)));
-  return Object.freeze(normalized) as Readonly<CalendarAppointmentUpdateInput & { readonly interval?: CalendarAppointmentTimeIntent }>;
-}
-
-function intervalFields(interval: CalendarTimedInterval) {
+import { bindCalendarAppointmentTime, calendarAppointmentTimeFields, calendarAppointmentTimeHistoryFields, type CalendarAppointmentTimeFact } from './appointment-time-bindings';
+import { CALENDAR_APPOINTMENT_UPDATE_FIELDS, normalizeCalendarAppointmentUpdate, prepareCalendarAppointmentUpdate } from './appointment-preparation';
+import { normalizeCalendarAppointmentOverride } from './override-model';
+import { admitCalendarAppointmentOverride, finishCalendarAppointmentOverride, assertCalendarOverrideReviewAuthority } from './overrides';
+export { CALENDAR_APPOINTMENT_UPDATE_FIELDS, normalizeCalendarAppointmentUpdate } from './appointment-preparation';
+function intervalFields(interval: CalendarAppointmentTimeFact['interval']) {
   return { start_at: interval.startAt, end_at: interval.endAt, start_ms: interval.startMs, end_ms: interval.endMs, time_zone: interval.timeZone,
     buffer_before: interval.bufferBeforeMinutes, buffer_after: interval.bufferAfterMinutes, occupied_start_ms: interval.occupiedStartMs, occupied_end_ms: interval.occupiedEndMs };
 }
-function snapshot(title: string, resourceIds: readonly string[], interval: CalendarTimedInterval,
-  appointmentType: CalendarAppointmentTypeReference | undefined, visit: CalendarVisitInput | undefined,
-  participants: ReturnType<typeof calendarCurrentAppointmentParticipants>, fact?: CalendarAppointmentTimeFact) {
-  return { title, resourceIds, startAt: interval.startAt, endAt: interval.endAt, timeZone: interval.timeZone,
-    bufferBeforeMinutes: interval.bufferBeforeMinutes, bufferAfterMinutes: interval.bufferAfterMinutes,
-    appointmentType: appointmentType ? { id: appointmentType.id, revision: appointmentType.revision } : null,
+function snapshot(title: string, resourceIds: readonly string[], fact: CalendarAppointmentTimeFact,
+  type: CalendarAppointmentTypeReference | undefined, visit: CalendarVisitInput | undefined, participants: unknown) {
+  return { title, resourceIds, startAt: fact.interval.startAt, endAt: fact.interval.endAt, timeZone: fact.interval.timeZone,
+    bufferBeforeMinutes: fact.interval.bufferBeforeMinutes, bufferAfterMinutes: fact.interval.bufferAfterMinutes,
+    appointmentType: type ? { id: type.id, revision: type.revision } : null,
     visit: visit?.mode === 'in-person' ? { mode: visit.mode, location: { id: visit.location.id, revision: visit.location.revision } } : visit ?? null,
-    participants, ...(fact ? calendarAppointmentTimeHistoryFields(fact) : {}) };
+    participants, ...calendarAppointmentTimeHistoryFields(fact) };
 }
-
-/** One canonical source decision. The trusted parent supplies fresh SYSTEM participant admission at the real commit fence. */
 export function updateCalendarAppointment(context: DatabaseWriteCommandContext, input: unknown) {
   return calendarCommand(() => {
-    const r = calendarRecord(input, ['actor', 'requestId', 'id', 'expectedRevision', ...CALENDAR_APPOINTMENT_UPDATE_FIELDS]), actor = calendarActor(r.actor);
+    const r = calendarRecord(input, ['actor', 'requestId', 'id', 'expectedRevision', 'override', ...CALENDAR_APPOINTMENT_UPDATE_FIELDS]), actor = calendarActor(r.actor);
     assertCalendarOwner(context, actor.scopeId);
-    const { row, resourceIds: oldResources } = calendarAppointment(context, actor, r.id, 'manage');
-    const expectedRevision = calendarInteger(r.expectedRevision, 1);
+    const { row, resourceIds: oldResources } = calendarAppointment(context, actor, r.id, 'manage'), expectedRevision = calendarInteger(r.expectedRevision, 1);
     const patch = normalizeCalendarAppointmentUpdate(Object.fromEntries(CALENDAR_APPOINTMENT_UPDATE_FIELDS.filter(field => Object.hasOwn(r, field)).map(field => [field, r[field]])));
     if (Object.hasOwn(patch, 'participants')) requireCalendarParticipantManager(actor);
-    // No base/catalog/default lookup participates in the new operation digest. Exact replay precedes fresh CAS/policy admission.
-    return calendarIntent(context, actor, r.requestId, [Object.hasOwn(patch, 'interval') ? 'appointment.update.interval.v1' : 'appointment.update.v1', row.id, expectedRevision, patch], 'appointment', 'manage', requestId => {
-      if (!calendarCurrentResourceMembership(context)) throw new CalendarError('CALENDAR_NOT_READY');
-      calendarRevision(row, expectedRevision);
-      if (isCalendarLifecycleTerminal(effectiveCalendarAppointmentStatus(context, row))) throw new CalendarError('CALENDAR_TRANSITION_INVALID');
-      const currentType = calendarCurrentAppointmentType(context, actor.scopeId, row.id), currentVisit = calendarCurrentAppointmentVisit(context, actor.scopeId, row.id);
-      const currentParticipants = calendarCurrentAppointmentParticipants(context, actor.scopeId, row.id);
-      const priorFact = calendarCurrentAppointmentTime(context, row), priorInterval = priorFact.interval;
-      if (Object.hasOwn(patch, 'interval')) requireCalendarAppointmentTimeStorage(context);
-      if (priorFact.kind === 'all-day-local-v1' && Object.hasOwn(patch, 'startAt')) throw new CalendarError('CALENDAR_INPUT_INVALID');
-      const fact: CalendarAppointmentTimeFact = Object.hasOwn(patch, 'interval') ? resolveCalendarAppointmentTimeIntent(patch.interval, priorFact)
-        : Object.hasOwn(patch, 'startAt') ? { kind: 'timed-v1', interval: normalizeCalendarTimedInterval({ startAt: patch.startAt, endAt: patch.endAt, timeZone: patch.timeZone,
-          bufferBeforeMinutes: patch.bufferBeforeMinutes, bufferAfterMinutes: patch.bufferAfterMinutes }) } : priorFact;
-      const interval = fact.interval;
-      const resourceIds = patch.resourceIds ? [...patch.resourceIds] : oldResources, added = resourceIds.filter(id => !oldResources.includes(id));
-      const title = patch.title ?? row.title, type = Object.hasOwn(patch, 'appointmentType') ? patch.appointmentType ?? undefined : currentType;
-      if (fact.kind === 'all-day-local-v1' && (type || currentType && priorFact.kind !== fact.kind && patch.appointmentType !== null)) throw new CalendarError('CALENDAR_TYPE_CONFLICT');
-      const visit = Object.hasOwn(patch, 'visit') ? patch.visit ?? undefined : currentVisit;
-      const participants = Object.hasOwn(patch, 'participants') ? [...patch.participants!] : currentParticipants;
-      const titleChanged = title !== row.title, resourcesChanged = calendarJson(resourceIds) !== calendarJson(oldResources);
-      const occupancyChanged = interval.startMs !== row.start_ms || interval.endMs !== row.end_ms || interval.bufferBeforeMinutes !== row.buffer_before || interval.bufferAfterMinutes !== row.buffer_after;
-      const timeZoneChanged = interval.timeZone !== row.time_zone, typeChanged = !sameCalendarAppointmentType(currentType, type), visitChanged = !sameCalendarVisit(currentVisit, visit);
-      const kindChanged = priorFact.kind !== fact.kind, authoredChanged = kindChanged || fact.kind === 'all-day-local-v1' && calendarJson(priorFact.intent) !== calendarJson(fact.intent);
-      const participantsChanged = calendarJson(currentParticipants) !== calendarJson(participants);
-      if (!titleChanged && !resourcesChanged && !occupancyChanged && !timeZoneChanged && !typeChanged && !visitChanged && !participantsChanged && !authoredChanged) {
-        return { requestId, operation: 'appointment.updated' as const, id: row.id, revision: row.revision, changed: false };
+    const override = Object.hasOwn(r, 'override') ? normalizeCalendarAppointmentOverride(r.override) : undefined;
+    const ordinary = [Object.hasOwn(patch, 'interval') ? 'appointment.update.interval.v1' : 'appointment.update.v1', row.id, expectedRevision, patch];
+    return calendarIntent(context, actor, r.requestId, override ? ['appointment.update.override.v1', ordinary, override] : ordinary, 'appointment', 'manage', requestId => {
+      if (override) {
+        const resulting = patch.resourceIds ?? oldResources;
+        for (const id of resulting) requireCalendarRight(context, actor, calendarResource(context, actor, id), 'book');
+        assertCalendarOverrideReviewAuthority(context, actor, resulting);
       }
-      // Complete old-manage / resulting-book admission precedes every selected catalog lookup.
-      for (const id of resourceIds) {
-        const resource = calendarResource(context, actor, id); requireCalendarRight(context, actor, resource, 'book');
-        if ((occupancyChanged || kindChanged || typeChanged || visitChanged || added.includes(id)) && !resource.active) throw new CalendarError('CALENDAR_FORBIDDEN');
-      }
-      const admitType = occupancyChanged || kindChanged || typeChanged || added.length > 0, admitVisit = occupancyChanged || kindChanged || visitChanged || added.length > 0;
-      admitCalendarBookingCandidate(context, actor.scopeId, { resourceIds, interval, appointmentType: type, visit },
-        { type: admitType, visit: admitVisit, availabilityResourceIds: occupancyChanged || kindChanged ? resourceIds : added,
-          occupancy: occupancyChanged || kindChanged || added.length ? { except: { kind: 'appointment', id: row.id } } : false });
-      const before = snapshot(row.title, oldResources, priorInterval, currentType, currentVisit, currentParticipants, priorFact);
-      const revision = nextCalendarRevision(row.revision);
-      calendarBudget(context, 'appointmentUpdateHistory');
-      const change = context.db.update('calendar_appointments', row.id, { title,
-        ...(row.time_kind === undefined ? intervalFields(interval) : calendarAppointmentTimeFields(fact)), revision });
-      for (const id of oldResources.filter(id => !resourceIds.includes(id))) {
+      const p = prepareCalendarAppointmentUpdate(context, actor, row.id, expectedRevision, patch);
+      if (override && (!p.changed || !p.checks.occupancy)) throw new CalendarError('CALENDAR_OVERRIDE_STALE');
+      if (!p.changed) return { requestId, operation: 'appointment.updated' as const, id: row.id, revision: row.revision, changed: false };
+      const allowance = override ? admitCalendarAppointmentOverride(context, actor, requestId, p, override) : undefined;
+      admitCalendarBookingCandidate(context, actor.scopeId, p, p.checks, allowance);
+      const before = snapshot(row.title, p.oldResources, p.priorFact, p.currentType, p.currentVisit, p.currentParticipants);
+      const revision = nextCalendarRevision(row.revision); calendarBudget(context, 'appointmentUpdateHistory');
+      const change = context.db.update('calendar_appointments', row.id, { title: p.title,
+        ...(row.time_kind === undefined ? intervalFields(p.interval) : calendarAppointmentTimeFields(p.fact)), revision });
+      for (const id of p.oldResources.filter(id => !p.resourceIds.includes(id))) {
         if (!context.db.get('_calendar_reservations', reservationId(actor.scopeId, row.id, id))) throw new CalendarError('CALENDAR_STATE_INVALID');
         context.db.update('_calendar_reservations', reservationId(actor.scopeId, row.id, id), { active: 0 });
       }
-      for (const id of resourceIds) {
+      for (const id of p.resourceIds) {
         const identity = reservationId(actor.scopeId, row.id, id), reservation = context.db.get('_calendar_reservations', identity);
-        const values = { occupied_start_ms: interval.occupiedStartMs, occupied_end_ms: interval.occupiedEndMs, active: 1 };
+        const values = { occupied_start_ms: p.interval.occupiedStartMs, occupied_end_ms: p.interval.occupiedEndMs, active: 1 };
         if (reservation) {
           if (reservation.scope_id !== actor.scopeId || reservation.appointment_id !== row.id || reservation.resource_id !== id) throw new CalendarError('CALENDAR_STATE_INVALID');
           context.db.update('_calendar_reservations', identity, values);
         } else context.db.createStrict('_calendar_reservations', { id: identity, scope_id: actor.scopeId, appointment_id: row.id, resource_id: id, ...values });
       }
-      replaceCalendarAppointmentResourceCurrent(context, actor.scopeId, row.id, revision, resourceIds);
-      if (typeChanged) bindCalendarAppointmentType(context, actor.scopeId, row.id, revision, type);
-      if (visitChanged) bindCalendarAppointmentVisit(context, actor.scopeId, row.id, revision, visit);
-      if (participantsChanged) bindCalendarAppointmentParticipants(context, actor.scopeId, row.id, revision, participants);
-      if (row.time_kind !== undefined) bindCalendarAppointmentTime(context, actor.scopeId, row.id, revision, fact);
-      appendCalendarAppointmentUpdateHistory(context, actor.scopeId, row.id, revision, before, snapshot(title, resourceIds, interval, type, visit, participants, fact));
-      appendCalendarSemanticAudit(context, 'appointment.updated', change, { revision, resourceCount: resourceIds.length,
-        titleChanged, resourcesChanged, occupancyChanged, timeZoneChanged, typeChanged, visitChanged, participantsChanged,
-        ...(Object.hasOwn(patch, 'participants') ? { participantCount: participants.length } : {}) });
+      replaceCalendarAppointmentResourceCurrent(context, actor.scopeId, row.id, revision, p.resourceIds);
+      if (p.typeChanged) bindCalendarAppointmentType(context, actor.scopeId, row.id, revision, p.appointmentType);
+      if (p.visitChanged) bindCalendarAppointmentVisit(context, actor.scopeId, row.id, revision, p.visit);
+      if (p.participantsChanged) bindCalendarAppointmentParticipants(context, actor.scopeId, row.id, revision, p.participants ?? []);
+      if (row.time_kind !== undefined) bindCalendarAppointmentTime(context, actor.scopeId, row.id, revision, p.fact);
+      appendCalendarAppointmentUpdateHistory(context, actor.scopeId, row.id, revision, before, snapshot(p.title, p.resourceIds, p.fact, p.appointmentType, p.visit, p.participants));
+      if (override) finishCalendarAppointmentOverride(context, actor, requestId, row.id, revision);
+      appendCalendarSemanticAudit(context, 'appointment.updated', change, { revision, resourceCount: p.resourceIds.length,
+        titleChanged: p.titleChanged, resourcesChanged: p.resourcesChanged, occupancyChanged: p.occupancyChanged, timeZoneChanged: p.timeZoneChanged,
+        typeChanged: p.typeChanged, visitChanged: p.visitChanged, participantsChanged: p.participantsChanged,
+        ...(Object.hasOwn(patch, 'participants') ? { participantCount: p.participants!.length } : {}),
+        ...(override ? { overrideCategory: 'appointment-overlap' as const, overridePolicy: 'appointment-overlap-v1' as const, reasonPresent: true } : {}) });
       return { requestId, operation: 'appointment.updated' as const, id: row.id, revision, changed: true };
     });
   });

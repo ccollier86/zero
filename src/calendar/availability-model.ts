@@ -1,5 +1,5 @@
 /** Explicit, bounded policy normalization. Recurring working-hours expansion is deliberately separate. */
-import type { DatabaseWriteCommandContext } from '../databases/database-realm';
+import type { CalendarReadContext } from './calendar-read-store';
 import type { CalendarAvailabilityInput, CalendarAvailabilityWindow } from './contracts';
 import { CalendarError } from './error';
 import { normalizeCalendarInstant, type CalendarTimedInterval } from './time';
@@ -45,13 +45,13 @@ export function readCalendarAvailabilityPolicy(row: { mode: unknown; windows_jso
   } catch { throw new CalendarError('CALENDAR_STATE_INVALID'); }
 }
 
-export function currentCalendarAvailability(context: DatabaseWriteCommandContext, scopeId: string, resourceId: string): CalendarAvailabilityInput {
+export function currentCalendarAvailability(context: CalendarReadContext, scopeId: string, resourceId: string): CalendarAvailabilityInput {
   const policy = currentCalendarAvailabilityPolicy(context, scopeId, resourceId);
   if (policy?.kind === 'weekly-local-v1') throw new CalendarError('CALENDAR_AVAILABILITY_FORMAT_UNSUPPORTED');
   return policy ? { mode: policy.mode, windows: policy.windows } : currentLegacyCalendarAvailability(context, scopeId, resourceId);
 }
 /** Retained pre-009 policy only. Callers must explicitly select it rather than override a current local policy. */
-export function currentLegacyCalendarAvailability(context: DatabaseWriteCommandContext, scopeId: string, resourceId: string): CalendarAvailabilityInput {
+export function currentLegacyCalendarAvailability(context: CalendarReadContext, scopeId: string, resourceId: string): CalendarAvailabilityInput {
   const pointer = context.db.get('_calendar_availability', resourceId);
   if (!pointer) return { mode: 'unrestricted', windows: [] };
   if (pointer.scope_id !== scopeId || pointer.resource_id !== resourceId) throw new CalendarError('CALENDAR_STATE_INVALID');
@@ -64,7 +64,7 @@ export function currentLegacyCalendarAvailability(context: DatabaseWriteCommandC
   return readCalendarAvailabilityPolicy({ mode: history[0]!.mode, windows_json: history[0]!.windows_json });
 }
 
-export function assertCalendarAvailability(context: DatabaseWriteCommandContext, scopeId: string,
+export function assertCalendarAvailability(context: CalendarReadContext, scopeId: string,
   resourceIds: readonly string[], interval: CalendarTimedInterval): void {
   for (const resourceId of resourceIds) {
     if (assertCalendarAvailabilityPolicy(context, scopeId, resourceId, interval)) continue;

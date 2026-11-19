@@ -1,4 +1,5 @@
 /** Canonical018 effective assignments; directory visibility and booking coverage are separate facts. */
+import type { CalendarReadContext } from './calendar-read-store';
 import type { DatabaseReadQueryContext, DatabaseWriteCommandContext } from '../databases/database-realm';
 import type { Row } from '../sync/types';
 import type { CalendarVisitInput } from './contracts';
@@ -44,7 +45,7 @@ function checked(resource: Row | null, pointer: Row | null, history: Row | null,
     return { resource, pointer, policy, rows };
   } catch { return invalid(); }
 }
-function writerState(context: DatabaseWriteCommandContext, scopeId: string, resourceId: string): PolicyState {
+function writerState(context: CalendarReadContext, scopeId: string, resourceId: string): PolicyState {
   try {
     const present = TABLES.map(table => context.db.hasTable(table)), marker = context.db.get('_calendar_usage', MARKER);
     if (present.every(value => !value) && !marker) return { resource: context.db.get('calendar_resources', resourceId)!, pointer: null,
@@ -109,7 +110,7 @@ export function readCalendarResourceLocationCoverage(context: DatabaseReadQueryC
       .get(scopeId, resourceId, calendarInteger(state.pointer!.resource_revision, 1), locationId, startMs, endMs);
   } });
 }
-export function assertCalendarResourceLocationCoverage(context: DatabaseWriteCommandContext, scopeId: string, resourceIds: readonly string[], visit: CalendarVisitInput | undefined,
+export function assertCalendarResourceLocationCoverage(context: CalendarReadContext, scopeId: string, resourceIds: readonly string[], visit: CalendarVisitInput | undefined,
   interval: { readonly occupiedStartMs: number; readonly occupiedEndMs: number }): void {
   if (visit?.mode !== 'in-person') return;
   for (const id of resourceIds) {
@@ -126,10 +127,10 @@ export function initializeCalendarResourceLocationPolicy(context: DatabaseWriteC
   if (context.db.get(STATE, 'application')?.version !== 18 || context.db.get(CURRENT, resourceId)) return invalid();
   context.db.createStrict(CURRENT, { id: resourceId, scope_id: scopeId, resource_id: resourceId, resource_revision: 1, source_kind: 'legacy', history_id: null });
 }
-export function assertCalendarResourceLocationPolicyCurrent(context: DatabaseWriteCommandContext, scopeId: string, resourceId: string): void {
+export function assertCalendarResourceLocationPolicyCurrent(context: CalendarReadContext, scopeId: string, resourceId: string): void {
   writerState(context, scopeId, resourceId);
 }
-export function assertLegacyCalendarResourceLocationsWritable(context: DatabaseWriteCommandContext, scopeId: string, resourceId: string): void {
+export function assertLegacyCalendarResourceLocationsWritable(context: CalendarReadContext, scopeId: string, resourceId: string): void {
   if (writerState(context, scopeId, resourceId).policy.kind === 'effective-utc-v1') throw new CalendarError('CALENDAR_LOCATION_FORMAT_UNSUPPORTED');
 }
 function budget(context: DatabaseWriteCommandContext, key: 'locationPolicyHistory' | 'locationPolicyWindows', amount: number): void {

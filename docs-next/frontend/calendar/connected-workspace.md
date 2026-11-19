@@ -58,6 +58,7 @@ Input, with year0000–9999 handling independent of host-local Date normalizatio
 {
   timeZone,
   createOwn, manage, participants, allDayAppointments, locationPolicies,
+  appointmentOverrides, overrideGrants,
   limits: { maxRangeDays, maxPageSize, maxResources, maxParticipants }
 }
 ```
@@ -81,6 +82,31 @@ complete partial schedule or dozens of streams. Direct facade callers may compos
 additional separately bounded reads.
 
 ## Booking and type selection
+
+### Explicit overlap review
+
+The optional [overlap exception](../../backend/calendar/overrides.md) is discovered
+through `appointmentOverrides`, not inferred from resource ownership or `manage`.
+A matching known-not-committed booking conflict can offer explicit readonly review
+with a new proposed key. A reviewable result shows an unchecked confirmation and
+required private reason using the native form/modal composition. It creates no
+pending-mutation recovery entry until the final save is dispatched.
+
+Candidate/resource/target revision, opening, scope/client or capability changes
+retire a review. An independently denied or coarse non-reviewable review removes
+that action without retiring otherwise-authorized ordinary editing; a genuine
+ordinary authority denial still withdraws the whole owner. Expiry or a changed
+conflict requires explicit fresh review. Closing review writes nothing.
+
+There is still exactly one async mutation owner. Once a final save is uncertain,
+only its original request can be reconciled; the UI cannot silently create a new
+key, re-review or resend. New typing and reason drafts survive an earlier save's
+acknowledgment. Standalone local-state editor defaults do not acquire persistence
+or exception powers. `overrideGrants` discovers independent grant administration,
+not an implicit grant on any calendar. `useCalendarOverrideGrant` exposes the
+same private live native contract for app-specific management composition.
+
+### Current type and visit selections
 
 On supporting servers, the location picker submits explicit occupied UTC bounds
 for representable timed drafts, including type buffers, and frozen boundaries for

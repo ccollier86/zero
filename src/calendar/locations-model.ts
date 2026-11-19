@@ -1,5 +1,6 @@
 /** Location metadata is directory information, not geographic or booking authority. */
-import type { DatabaseReadQueryContext, DatabaseWriteCommandContext } from '../databases/database-realm';
+import type { CalendarReadContext } from './calendar-read-store';
+import type { DatabaseReadQueryContext } from '../databases/database-realm';
 import type { Row } from '../sync/types';
 import type { CalendarActor, CalendarLocationView } from './contracts';
 import { CalendarError } from './error';
@@ -33,7 +34,7 @@ export function calendarRegionSelection(input: unknown): string[] {
 export function requireCalendarLocationManager(actor: CalendarActor): void {
   if (!actor.manageAll) throw new CalendarError('CALENDAR_FORBIDDEN');
 }
-export function calendarLocation(context: DatabaseWriteCommandContext, actor: CalendarActor, input: unknown): CalendarLocationRow {
+export function calendarLocation(context: CalendarReadContext, actor: CalendarActor, input: unknown): CalendarLocationRow {
   const id = calendarKey(input), pointer = context.db.get('calendar_locations', id) as CalendarLocationPointer | null;
   if (!pointer || pointer.scope_id !== actor.scopeId) throw new CalendarError('CALENDAR_NOT_FOUND');
   const history = context.db.find('_calendar_location_history', { filters: [eq('scope_id', actor.scopeId), eq('location_id', id), eq('location_revision', pointer.revision)], limit: 2 });
@@ -67,7 +68,7 @@ export function parseCalendarLocationIds(input: unknown): string[] {
     return ids;
   } catch { throw new CalendarError('CALENDAR_STATE_INVALID'); }
 }
-export function currentCalendarResourceLocations(context: DatabaseWriteCommandContext, scopeId: string, resourceId: string): string[] {
+export function currentCalendarResourceLocations(context: CalendarReadContext, scopeId: string, resourceId: string): string[] {
   const pointer = context.db.get('_calendar_resource_locations', resourceId);
   if (!pointer) return [];
   if (pointer.scope_id !== scopeId || pointer.resource_id !== resourceId) throw new CalendarError('CALENDAR_STATE_INVALID');

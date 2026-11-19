@@ -1,4 +1,5 @@
 /** Fixed effective lifecycle and private immutable reasons, separate from occupancy. */
+import type { CalendarReadContext } from './calendar-read-store';
 import type { DatabaseReadQueryContext, DatabaseWriteCommandContext } from '../databases/database-realm';
 import type { Row } from '../sync/types';
 import type { CalendarActor, CalendarAppointmentLifecycle, CalendarAppointmentStatus, CalendarAppointmentTransitions, CalendarLifecyclePolicy, CalendarLifecyclePolicyInput } from './contracts';
@@ -17,7 +18,7 @@ export function calendarLifecyclePolicyFields(input: unknown): CalendarLifecycle
   return { extended: r.extended, cancellationReason: r.cancellationReason as 'optional' | 'required', noShowReason: r.noShowReason as 'optional' | 'required' };
 }
 function policyView(row: PolicyHistoryRow): CalendarLifecyclePolicy { return { revision: row.policy_revision, extended: row.extended === 1, cancellationReason: row.cancellation_reason, noShowReason: row.no_show_reason }; }
-export function currentCalendarLifecyclePolicy(context: DatabaseWriteCommandContext, scopeId: string): CalendarLifecyclePolicy {
+export function currentCalendarLifecyclePolicy(context: CalendarReadContext, scopeId: string): CalendarLifecyclePolicy {
   const pointer = context.db.get('_calendar_lifecycle_policy', 'policy');
   if (!pointer) return CALENDAR_DEFAULT_LIFECYCLE_POLICY;
   const row = context.db.get('_calendar_lifecycle_policy_history', calendarHash([scopeId, pointer.policy_revision])) as PolicyHistoryRow | null;
@@ -31,7 +32,7 @@ export function readCalendarLifecyclePolicyValue(context: DatabaseReadQueryConte
   return CALENDAR_DEFAULT_LIFECYCLE_POLICY;
 }
 function lifecycleView(row: LifecycleHistoryRow): CalendarAppointmentLifecycle { return { revision: row.appointment_revision, policyRevision: row.policy_revision, status: row.status, reason: row.reason }; }
-export function currentCalendarAppointmentLifecycle(context: DatabaseWriteCommandContext, scopeId: string, appointmentId: string): CalendarAppointmentLifecycle | undefined {
+export function currentCalendarAppointmentLifecycle(context: CalendarReadContext, scopeId: string, appointmentId: string): CalendarAppointmentLifecycle | undefined {
   const pointer = context.db.get('_calendar_appointment_lifecycle_current', appointmentId);
   if (!pointer) return undefined;
   const row = context.db.get('_calendar_appointment_lifecycle_history', String(pointer.lifecycle_id)) as LifecycleHistoryRow | null;
@@ -43,7 +44,7 @@ export function readCalendarAppointmentLifecycle(context: DatabaseReadQueryConte
   if (!row && context.database.query<{ id: string }>('SELECT id FROM _calendar_appointment_lifecycle_current WHERE id=?').get(appointmentId)) throw new CalendarError('CALENDAR_STATE_INVALID');
   return row ? lifecycleView(row) : undefined;
 }
-export function effectiveCalendarAppointmentStatus(context: DatabaseWriteCommandContext, row: CalendarAppointmentRow): CalendarAppointmentStatus { return currentCalendarAppointmentLifecycle(context, row.scope_id, row.id)?.status ?? row.status; }
+export function effectiveCalendarAppointmentStatus(context: CalendarReadContext, row: CalendarAppointmentRow): CalendarAppointmentStatus { return currentCalendarAppointmentLifecycle(context, row.scope_id, row.id)?.status ?? row.status; }
 export function isCalendarLifecycleTerminal(status: CalendarAppointmentStatus): boolean { return status === 'completed' || status === 'no-show' || status === 'cancelled'; }
 export function calendarLifecycleStatus(input: unknown): CalendarAppointmentStatus {
   if (!CALENDAR_LIFECYCLE_STATUSES.includes(input as CalendarAppointmentStatus)) throw new CalendarError('CALENDAR_INPUT_INVALID');

@@ -1,4 +1,5 @@
 /** Calendar-owned references only. Trusted SYSTEM target admission belongs to the parent's final commit guard. */
+import type { CalendarReadContext } from './calendar-read-store';
 import type { DatabaseReadQueryContext, DatabaseWriteCommandContext } from '../databases/database-realm';
 import type { Row } from '../sync/types';
 import type { CalendarActor, CalendarParticipantReference } from './contracts';
@@ -29,7 +30,7 @@ function decodeReferences(row: { references_json: string }): CalendarParticipant
 function pointerId(scopeId: string, id: string) { return calendarHash(['appointment.participants', scopeId, id]); }
 function holdId(scopeId: string, id: string) { return calendarHash(['hold.participants', scopeId, id]); }
 
-export function calendarCurrentAppointmentParticipants(context: DatabaseWriteCommandContext, scopeId: string, id: string): CalendarParticipantReference[] {
+export function calendarCurrentAppointmentParticipants(context: CalendarReadContext, scopeId: string, id: string): CalendarParticipantReference[] {
   const pointer = context.db.get('_calendar_appointment_participant_current', pointerId(scopeId, id));
   if (!pointer) return [];
   if (pointer.scope_id !== scopeId || pointer.appointment_id !== id) throw new CalendarError('CALENDAR_STATE_INVALID');
@@ -51,7 +52,7 @@ export function bindCalendarHoldParticipants(context: DatabaseWriteCommandContex
   context.db.createStrict('_calendar_hold_participant_bindings', { id: holdId(scopeId, id), scope_id: scopeId, hold_id: id, references_json: calendarJson(references) });
 }
 /** The usage marker also keeps omitted-participant legacy writes independent of the additive 008 schema. */
-export function calendarHoldParticipants(context: DatabaseWriteCommandContext, scopeId: string, id: string): CalendarParticipantReference[] | undefined {
+export function calendarHoldParticipants(context: CalendarReadContext, scopeId: string, id: string): CalendarParticipantReference[] | undefined {
   if (!context.db.get('_calendar_usage', 'holdParticipantBindings')) return undefined;
   const binding = context.db.get('_calendar_hold_participant_bindings', holdId(scopeId, id)) as HoldBindingRow | null;
   if (!binding) return undefined;

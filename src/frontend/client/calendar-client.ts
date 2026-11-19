@@ -17,6 +17,8 @@ import { calendarFailureDetails, calendarMutationFailure, CalendarReadError } fr
 import { watchCalendarRange } from './calendar-client-watch';
 import { calendarAvailabilityPolicyInput, calendarAvailabilityPolicyView } from './calendar-client-availability-policy';
 import { calendarLocationPolicyInput, calendarLocationPolicyView } from './calendar-client-location-policy';
+import { calendarOverrideInput, calendarOverrideReview, calendarOverrideGrantsInput, calendarOverrideGrantsView } from './calendar-client-overrides';
+import type { CalendarAppointmentRequestOptions, CalendarAppointmentControlOptions, CalendarOverrideGrantInput, CalendarOverrideGrantView } from '../../calendar/contracts';
 export interface CalendarClient extends ScopedCalendar { clear(): void }
 export function createCalendarClient(fetch: <T = unknown>(path: string, init?: FetchInit) => Promise<T>,
   open?: (path: string, init: RequestInit) => Promise<Response>): CalendarClient {
@@ -65,6 +67,21 @@ export function createCalendarClient(fetch: <T = unknown>(path: string, init?: F
         return watch('/capabilities/live', capabilityView, listener, supplied);
       },
     }),
+    overrides: Object.freeze({ grants: Object.freeze({
+      get(resourceId: string, userId: string, supplied?: CalendarReadOptions) {
+        const resource = requestKey(resourceId), user = requestKey(userId);
+        return read('/resources/' + encodeURIComponent(resource) + '/override-grants/' + encodeURIComponent(user), value => calendarOverrideGrantsView(value, resource, user), 'GET', undefined, readSignal(supplied));
+      },
+      replace(resourceId: string, userId: string, input: CalendarOverrideGrantInput, supplied: CalendarControlOptions) {
+        const resource = requestKey(resourceId), user = requestKey(userId), grants = calendarOverrideGrantsInput(input), control = options(supplied, true);
+        return mutation('/resources/' + encodeURIComponent(resource) + '/override-grants/' + encodeURIComponent(user), { grants, options: control }, supplied,
+          'resource.override-grant-changed', resource, undefined, 'PUT', control.expectedRevision as number);
+      },
+      watch(resourceId: string, userId: string, listener: (value: CalendarOverrideGrantView, update?: CalendarWatchUpdate) => void, supplied: CalendarWatchOptions = {}) {
+        const resource = requestKey(resourceId), user = requestKey(userId);
+        return watch('/resources/' + encodeURIComponent(resource) + '/override-grants/' + encodeURIComponent(user) + '/live', value => calendarOverrideGrantsView(value, resource, user), listener, supplied);
+      },
+    }) }),
     participants: Object.freeze({
       directory(query: CalendarParticipantDirectoryQuery = {}, supplied?: CalendarReadOptions) {
         const page = participantRequest(query);
@@ -329,6 +346,14 @@ export function createCalendarClient(fetch: <T = unknown>(path: string, init?: F
       },
     }),
     appointments: Object.freeze({
+      reviewCreate(input: CalendarAppointmentCreateInput, supplied: CalendarRequestOptions) {
+        const appointment = appointmentInput(input, true), control = options(supplied);
+        return read('/appointments/review-create', calendarOverrideReview, 'POST', { appointment, options: control }, supplied.signal);
+      },
+      reviewUpdate(id: string, input: CalendarAppointmentUpdateInput, supplied: CalendarControlOptions) {
+        const target = requestKey(id), patch = appointmentUpdateInput(input), control = options(supplied, true);
+        return read('/appointments/' + encodeURIComponent(target) + '/review', calendarOverrideReview, 'POST', { patch, options: control }, supplied.signal);
+      },
       query(supplied: CalendarRangeQuery, readOptions?: CalendarReadOptions) { return read('/appointments/query', appointmentPage, 'POST', { query: range(supplied) }, readSignal(readOptions)); },
       queryDates(supplied: CalendarDateRangeQuery, readOptions?: CalendarReadOptions) {
         const query = dateRange(supplied);
@@ -340,11 +365,11 @@ export function createCalendarClient(fetch: <T = unknown>(path: string, init?: F
           const accepted = appointmentView(value); if (accepted.id !== targetId) throw invalid(); return accepted;
         }, 'GET', undefined, readSignal(readOptions));
       },
-      create(input: CalendarAppointmentCreateInput, supplied: CalendarRequestOptions) {
-        const r = appointmentInput(input, true); return mutation('/appointments', { appointment: r, options: options(supplied) }, supplied, 'appointment.created');
+      create(input: CalendarAppointmentCreateInput, supplied: CalendarAppointmentRequestOptions) {
+        const r = appointmentInput(input, true); return mutation('/appointments', { appointment: r, options: options(supplied, false, true) }, supplied, 'appointment.created');
       },
-      update(id: string, input: CalendarAppointmentUpdateInput, supplied: CalendarControlOptions) {
-        const target = requestKey(id), appointment = appointmentUpdateInput(input), control = options(supplied, true);
+      update(id: string, input: CalendarAppointmentUpdateInput, supplied: CalendarAppointmentControlOptions) {
+        const target = requestKey(id), appointment = appointmentUpdateInput(input), control = options(supplied, true, true);
         return mutation('/appointments/' + encodeURIComponent(target), { appointment, options: control }, supplied,
           'appointment.updated', target, undefined, 'PUT', control.expectedRevision as number);
       },
@@ -392,10 +417,12 @@ export function createCalendarClient(fetch: <T = unknown>(path: string, init?: F
     clear() { generation++; boundary.abort(); boundary = new AbortController(); },
   });
 }
-function options(value: unknown, control = false): Record<string, unknown> {
-  const { signal, ...r } = record(value, ['idempotencyKey', 'signal', ...(control ? ['expectedRevision'] : [])]);
+function options(value: unknown, control = false, allowOverride = false): Record<string, unknown> {
+  const { signal, ...r } = record(value, ['idempotencyKey', 'signal', ...(control ? ['expectedRevision'] : []), ...(allowOverride ? ['override'] : [])]);
   requestKey(r.idempotencyKey); if (signal !== undefined && !(signal instanceof AbortSignal)) throw invalid();
-  if (control) integer(r.expectedRevision, 1); return r;
+  if (control) integer(r.expectedRevision, 1);
+  if (Object.hasOwn(r, 'override')) r.override = calendarOverrideInput(r.override);
+  return r;
 }
 function readSignal(value: unknown): AbortSignal | undefined {
   const r = record(value ?? {}, ['signal']); if (r.signal !== undefined && !(r.signal instanceof AbortSignal)) throw invalid(); return r.signal as AbortSignal | undefined;
@@ -587,15 +614,19 @@ function resourceLocationsView(value: unknown): CalendarResourceLocationsView {
   return Object.freeze({ resourceId: r.resourceId as string, resourceRevision: r.resourceRevision as number, locationIds: Object.freeze(locationIds) });
 }
 function capabilityView(value: unknown): CalendarCapabilities {
-  const r = record(value, ['timeZone', 'createOwn', 'manage', 'participants', 'limits', 'allDayAppointments', 'locationPolicies']), limits = record(r.limits, ['maxRangeDays', 'maxPageSize', 'maxResources', 'maxParticipants']);
-  if (Object.keys(r).length !== 5 + (Object.hasOwn(r, 'allDayAppointments') ? 1 : 0) + (Object.hasOwn(r, 'locationPolicies') ? 1 : 0) || Object.keys(limits).length !== 4 || typeof r.createOwn !== 'boolean'
+  const r = record(value, ['timeZone', 'createOwn', 'manage', 'participants', 'limits', 'allDayAppointments', 'locationPolicies', 'appointmentOverrides', 'overrideGrants']), limits = record(r.limits, ['maxRangeDays', 'maxPageSize', 'maxResources', 'maxParticipants']);
+  if (Object.keys(r).length !== 5 + ['allDayAppointments', 'locationPolicies', 'appointmentOverrides', 'overrideGrants'].filter(field => Object.hasOwn(r, field)).length || Object.keys(limits).length !== 4 || typeof r.createOwn !== 'boolean'
     || Object.hasOwn(r, 'allDayAppointments') && typeof r.allDayAppointments !== 'boolean'
     || Object.hasOwn(r, 'locationPolicies') && typeof r.locationPolicies !== 'boolean'
+    || Object.hasOwn(r, 'appointmentOverrides') && typeof r.appointmentOverrides !== 'boolean'
+    || Object.hasOwn(r, 'overrideGrants') && typeof r.overrideGrants !== 'boolean'
     || typeof r.manage !== 'boolean' || typeof r.participants !== 'boolean' || r.participants && !r.manage) throw invalid();
   zone(r.timeZone);
   return Object.freeze({ timeZone: r.timeZone as string, createOwn: r.createOwn, manage: r.manage, participants: r.participants,
     ...(Object.hasOwn(r, 'allDayAppointments') ? { allDayAppointments: r.allDayAppointments as boolean } : {}),
     ...(Object.hasOwn(r, 'locationPolicies') ? { locationPolicies: r.locationPolicies as boolean } : {}),
+    ...(Object.hasOwn(r, 'appointmentOverrides') ? { appointmentOverrides: r.appointmentOverrides as boolean } : {}),
+    ...(Object.hasOwn(r, 'overrideGrants') ? { overrideGrants: r.overrideGrants as boolean } : {}),
     limits: Object.freeze({ maxRangeDays: integer(limits.maxRangeDays, 1, 31), maxPageSize: integer(limits.maxPageSize, 1, 100),
       maxResources: integer(limits.maxResources, 1, 16), maxParticipants: integer(limits.maxParticipants, 1, 100) }) });
 }
@@ -889,7 +920,7 @@ function busyPage(value: unknown): CalendarBusyPage {
 function calendarReceipt(value: unknown): CalendarCommandReceipt {
   const r = record(value, ['requestId', 'operation', 'id', 'revision', 'changed']);
   if (Object.keys(r).length !== 5 || typeof r.operation !== 'string' || !['resource.created', 'resource.grant-changed', 'resource.availability-changed', 'resource.availability-policy-changed', 'resource.locations-changed', 'resource.location-policy-changed',
-    'location.created', 'location.updated',
+    'location.created', 'location.updated', 'resource.override-grant-changed',
     'type.created', 'type.updated', 'resource.types-changed',
     'block.created', 'block.rescheduled', 'block.cancelled', 'hold.acquired', 'hold.released',
     'appointment.created', 'appointment.rescheduled', 'appointment.updated', 'appointment.cancelled', 'appointment.transitioned', 'appointment.participants-changed', 'lifecycle.policy-changed'].includes(r.operation)

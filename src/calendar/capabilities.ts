@@ -14,6 +14,8 @@ export function calendarCapabilitiesBroker(broker: CalendarServiceBroker, config
     if (!config.timezone || config.readiness !== 'configured' || config.participants && !participantDirectoryReady) throw new CalendarError('CALENDAR_NOT_READY');
     const result = Object.freeze({ timeZone: config.timezone, createOwn: actor.createOwn, manage: actor.manageAll,
       participants: !!config.participants && actor.manageAll, allDayAppointments: true, locationPolicies: true,
+      appointmentOverrides: !!config.overrides && actor.overrides?.use === true,
+      overrideGrants: !!config.overrides && actor.overrides?.manageGrants === true,
       limits: Object.freeze({ maxRangeDays: config.maxRangeDays, maxPageSize: config.maxPageSize,
         maxResources: config.maxResources, maxParticipants: config.maxParticipants }) });
     guard(); return result;

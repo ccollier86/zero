@@ -6,6 +6,7 @@ import type { CalendarAppointmentTransitions, CalendarAppointmentTypePage, Calen
   CalendarControlOptions, CalendarLocationPage, CalendarParticipantDirectoryPage, CalendarParticipantReference, CalendarParticipantsView,
   CalendarRequestOptions, CalendarResourceView, CalendarWatchOptions } from '../../../calendar/contracts';
 import type { CalendarVisitLocationQuery } from '../../../calendar/contracts';
+import type { CalendarOverrideReview } from '../../../calendar/contracts';
 import { ClientProvider } from '../../../frontend/client/client-context';
 import { useAuthorizationScopeBoundary } from '../../../frontend/client/authorization-scope-hooks';
 import { CalendarMutationError, CalendarReadError } from '../../../frontend/client/calendar-mutation';
@@ -281,6 +282,67 @@ test('location-policy capability retirement withdraws the native owner instead o
 });
 
 interface Subscription<T> { resolve(value: T): void; options: CalendarWatchOptions }
+const reviewResult: CalendarOverrideReview = { status: 'reviewable', categories: ['appointment-overlap'], policyVersion: 'appointment-overlap-v1',
+  decisionToken: 'co1.1.9999999999999.' + 'a'.repeat(32) + '.' + 'b'.repeat(64), expiresAt: '2099-01-01T00:00:00.000Z' };
+test('known ordinary conflict offers read-only availability review, then one explicit reasoned update with a NEW shared attempt key', async () => {
+  const f = fixture(); await mountEditor(f, false, true, false, false, true); await conflict(f);
+  const original = f.writes[0]!.control.idempotencyKey, recoveries = f.unknown.length;
+  await click('Review exception availability'); expect(f.reviews).toHaveLength(1); expect(f.writes).toHaveLength(1); expect(f.unknown).toHaveLength(recoveries);
+  expect(f.reviews[0]!.control.idempotencyKey).not.toBe(original);
+  expect(field('Allow this reviewed appointment overlap').props.checked).toBe(false); expect(submitButton().props.disabled).toBe(true);
+  await act(async () => { field('Allow this reviewed appointment overlap').props.onChange(true); field('Private override reason').props.onChange({ currentTarget: { value: '  PRIVATE_REASON  ' } }); });
+  await submit(); expect(f.writes).toHaveLength(2); expect(f.unknown).toHaveLength(recoveries + 1);
+  expect(f.writes[1]!.control).toMatchObject({ idempotencyKey: f.reviews[0]!.control.idempotencyKey, expectedRevision: 4,
+    override: { policyVersion: 'appointment-overlap-v1', decisionToken: reviewResult.status === 'reviewable' ? reviewResult.decisionToken : '', reason: 'PRIVATE_REASON' } });
+  await accept(f); expect(f.closed).toBe(1);
+});
+test('review cancel/read refusal/non-reviewable create no mutation and never retire otherwise current ordinary editing', async () => {
+  const f = fixture(); await mountEditor(f, false, true, false, false, true); await conflict(f); f.autoReview = null;
+  await click('Review exception availability'); const pending = f.reviews[0]!; await click('Cancel exception review');
+  pending.pending.resolve(reviewResult); await act(async () => {}); expect(f.writes).toHaveLength(1); expect(f.unknown).toHaveLength(1);
+  await click('Review exception availability'); await act(async () => f.reviews[1]!.pending.reject(new CalendarReadError('CALENDAR_NOT_FOUND', 404)));
+  expect(f.lost).toBe(0); expect(opening()).toBeDefined(); expect(f.writes).toHaveLength(1);
+  await click('Review exception availability'); await act(async () => f.reviews[2]!.pending.resolve({ status: 'non-reviewable' }));
+  expect(elements(body()).some(value => value.props.label === 'Allow this reviewed appointment overlap')).toBe(false); expect(submitButton().props.disabled).toBe(true);
+});
+test('changed candidate and lost capability fence late review handlers without discarding ordinary drafts or silently saving', async () => {
+  const f = fixture(), root = await mountEditor(f, false, true, false, false, true); await conflict(f); await click('Review exception availability');
+  const retainedChoice = field('Allow this reviewed appointment overlap').props.onChange;
+  await act(async () => field('Private override reason').props.onChange({ currentTarget: { value: 'Unsent private draft' } }));
+  await title('Newer candidate'); await act(async () => retainedChoice(true));
+  expect(submitButton().props.disabled).toBe(true); expect(field('Private override reason').props.value).toBe('Unsent private draft');
+  expect(f.writes).toHaveLength(1); await click('Review exception availability');
+  await act(async () => root.updateProps({ appointmentOverrides: false }));
+  expect(f.lost).toBe(0); expect(field('Private override reason').props.value).toBe('Unsent private draft');
+  await click('Cancel exception review'); expect(submitButton().props.disabled).toBe(false); expect(f.writes).toHaveLength(1);
+});
+test('newer private reason survives older acceptance; unknown exception cannot request another review or write', async () => {
+  const f = fixture(); await mountEditor(f, false, true, false, false, true); await conflict(f); await click('Review exception availability');
+  await act(async () => { field('Allow this reviewed appointment overlap').props.onChange(true); field('Private override reason').props.onChange({ currentTarget: { value: 'Submitted reason' } }); });
+  const retainedReview = find(value => value.props.children === 'Review exception availability').props.onClick;
+  await submit(); await act(async () => field('Private override reason').props.onChange({ currentTarget: { value: 'Newer unsent reason' } }));
+  const write = f.writes[1]!; await act(async () => write.pending.reject(new CalendarMutationError(write.control.idempotencyKey, 'unknown', 'CALENDAR_OUTCOME_UNKNOWN', 503)));
+  await act(async () => retainedReview()); await submit(); expect(f.reviews).toHaveLength(1); expect(f.writes).toHaveLength(2);
+  f.receipt = receiptFor(write); await click('Reconcile original request'); expect(f.closed).toBe(0); expect(field('Private override reason').props.value).toBe('Newer unsent reason');
+  expect(f.receiptKeys).toEqual([write.control.idempotencyKey]); expect(f.writes).toHaveLength(2);
+});
+async function conflict(f: Fixture) {
+  await title('Requested overlap'); await act(async () => { field('Start time').props.onChange(608); field('End time').props.onChange(668); });
+  await submit(); const write = f.writes.at(-1)!;
+  await act(async () => write.pending.reject(new CalendarMutationError(write.control.idempotencyKey, 'not-committed', 'CALENDAR_BOOKING_CONFLICT', 409)));
+}
+test('all-day create reviews authored intent and saves one explicit exception; absent capability never offers owner/manage shortcuts', async () => {
+  const f = fixture(); await mountEditor(f, false, false, true, false, true); await title('Authored overlap');
+  await act(async () => field('All-day appointment').props.onChange(true)); await submit();
+  const first = f.writes[0]!; await act(async () => first.pending.reject(new CalendarMutationError(first.control.idempotencyKey, 'not-committed', 'CALENDAR_BOOKING_CONFLICT', 409)));
+  await click('Review exception availability'); expect(f.reviews[0]!.input).toHaveProperty('interval', { kind: 'all-day-local-v1', startDate: '2026-11-18', endDate: '2026-11-19', timeZone: 'UTC' });
+  await act(async () => { field('Allow this reviewed appointment overlap').props.onChange(true); field('Private override reason').props.onChange({ currentTarget: { value: 'Private whole-day reason' } }); });
+  await submit(); expect(f.writes[1]!.operation).toBe('appointment.created'); expect(f.writes[1]!.control.idempotencyKey).toBe(f.reviews[0]!.control.idempotencyKey);
+  expect(f.writes[1]!.input).not.toHaveProperty('startAt'); expect(f.writes).toHaveLength(2);
+  await act(async () => { for (const root of roots) root.unmount(); }); roots.clear();
+  const old = fixture(); await mountEditor(old, false); await conflict(old);
+  expect(elements(body()).some(value => value.props.children === 'Review exception availability')).toBe(false); expect(old.reviews).toEqual([]);
+});
 interface Write { operation: CalendarCommandReceipt['operation']; input: any; control: CalendarControlOptions | CalendarRequestOptions; pending: ReturnType<typeof deferred<CalendarCommandReceipt>> }
 function deferred<T>() { let resolve!: (value: T) => void, reject!: (error: unknown) => void; const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
 function fixture(acceptedRecord = record) {
@@ -288,12 +350,16 @@ function fixture(acceptedRecord = record) {
   const auth = { authorizationScopeKey: 'synthetic', user: { userId: 'synthetic-user' }, activeTenant: { tenantId: 'synthetic-tenant' }, isLoading: false,
     isRestoring: false, isAuthenticated: true, authorizationState: { status: 'ready' }, sessionTransition: { phase: 'idle', revision: 0 }, subscribe, subscribeAuthorization: subscribe };
   const f = { auth, writes: [] as Write[], unknown: [] as CalendarPendingRequest[], accepted: [] as CalendarPendingRequest[], rejected: [] as CalendarPendingRequest[],
+    reviews: [] as { input: unknown; control: CalendarControlOptions | CalendarRequestOptions; pending: ReturnType<typeof deferred<CalendarOverrideReview>> }[], autoReview: reviewResult as CalendarOverrideReview | null,
     directories: [] as Subscription<CalendarParticipantDirectoryPage>[], bindings: [] as Subscription<CalendarParticipantsView>[], types: [] as Subscription<CalendarAppointmentTypePage>[],
     visits: [] as (Subscription<CalendarLocationPage> & { query: CalendarVisitLocationQuery })[], visitPage: { items: [], truncated: false, nextAfter: null } as CalendarLocationPage,
     receiptKeys: [] as string[], receipt: null as CalendarCommandReceipt | null, closed: 0, lost: 0, notify() { for (const listener of observers) listener(); } };
   function watch<T>(list: Subscription<T>[], resolve: (value: T) => void, options: CalendarWatchOptions, initial: T) { list.push({ resolve, options }); resolve(initial); return () => {}; }
   function write(operation: Write['operation'], input: unknown, control: Write['control']) { const pending = deferred<CalendarCommandReceipt>(); f.writes.push({ operation, input, control, pending }); return pending.promise; }
+  function review(input: unknown, control: CalendarControlOptions | CalendarRequestOptions) { const pending = deferred<CalendarOverrideReview>(); f.reviews.push({ input, control, pending }); if (f.autoReview) pending.resolve(f.autoReview); return pending.promise; }
   const client = { auth, calendar: { appointments: { get: async () => acceptedRecord,
+    reviewCreate(input: unknown, control: CalendarRequestOptions) { return review(input, control); },
+    reviewUpdate(_id: string, input: unknown, control: CalendarControlOptions) { return review(input, control); },
     watchTransitions(_id: string, resolve: (value: CalendarAppointmentTransitions) => void, options: CalendarWatchOptions) {
       return watch([], resolve, options, { id: acceptedRecord.id, revision: acceptedRecord.revision, policyRevision: 1, status: 'confirmed', allowed: [] }); },
     update(_id: string, input: unknown, control: CalendarControlOptions) { return write('appointment.updated', input, control); },
@@ -307,9 +373,9 @@ function fixture(acceptedRecord = record) {
   return Object.assign(f, { client, acceptedRecord });
 }
 type Fixture = ReturnType<typeof fixture>;
-async function mountEditor(f: Fixture, participants = true, existing = true, allDayAppointments = false, locationPolicies = false) {
+async function mountEditor(f: Fixture, participants = true, existing = true, allDayAppointments = false, locationPolicies = false, appointmentOverrides = false) {
   const record = f.acceptedRecord;
-  let props: Omit<CalendarAppointmentEditorProps, 'scopeKey'> = { client: f.client, resources, participants, allDayAppointments, locationPolicies,
+  let props: Omit<CalendarAppointmentEditorProps, 'scopeKey'> = { client: f.client, resources, participants, allDayAppointments, locationPolicies, appointmentOverrides,
     session: { key: 1, ...(existing ? { record } : {}), timeZone: 'UTC', initial: { resourceIds: ['a', 'b'], title: existing ? record.title : '', date: existing && record.interval ? record.interval.startDate : '2026-11-18', start: 607, end: 667,
       ...(existing && record.interval ? { intervalKind: 'all-day-local-v1', endDate: record.interval.endDate } : {}),
       ...(existing ? calendarVisitDraft(record.visit) : { visitMode: 'unspecified' }), bufferBeforeMinutes: existing ? record.bufferBeforeMinutes : 3, bufferAfterMinutes: existing ? record.bufferAfterMinutes : 7 } },

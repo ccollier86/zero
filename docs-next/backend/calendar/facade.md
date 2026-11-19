@@ -56,6 +56,8 @@ identity are rejected, not normalized away.
 | `resources.watch(query, listener, options?)` | Authorized live resource pages, including current assignments and grant changes |
 | `resources.create(input, {idempotencyKey, signal?})` | Safe accepted receipt; own-person or delegated manager |
 | `resources.setGrants(id, userId, grants, control)` | Full explicit grant set, `[]` revokes; current manage right |
+| `overrides.grants.get(resourceId, userId, options?)` / `watch(resourceId, userId, listener, options?)` | Separate exception grants; ordinary resource manage and independent grant administration |
+| `overrides.grants.replace(resourceId, userId, {categories}, control)` | Exact resource revision; independent administrator and finalized current-scope target; `[]` revokes |
 | `resources.setLocations(id, locationIds, control)` | Replace location set; current resource manage and expected resource revision |
 | `locations.list({limit?, after?}?, options?)` | Authorized current location catalog; no hidden assignments or counts |
 | `locations.get(id, options?)` | Current authorized location revision, including retained inactive metadata |
@@ -89,6 +91,7 @@ identity are rejected, not normalized away.
 | `appointments.create(input, options)` | Atomic capacity-one reservation on every selected resource |
 | `appointments.reschedule(id, input, control)` | Exact revision, instants, zone and both buffers required |
 | `appointments.update(id, patch, control)` | One atomic revision-controlled title/resource/time/type/visit/participant edit; omitted fields preserve accepted facts |
+| `appointments.reviewCreate(input, options)` / `reviewUpdate(id, patch, control)` | Readonly independently permitted review of a proposed key; no reservation, receipt or pending mutation |
 | `appointments.cancel(id, {...control, reason?})` | Explicit cancellation enforcing current lifecycle/reason rules; releases all reservations |
 | `appointments.transitions(id, options?)` | Current effective status, policy/appointment revisions and allowed changes; manage on all co-resources |
 | `appointments.transition(id, {status, policyRevision, reason?}, control)` | Canonical status transition, exact current policy and appointment revisions |
@@ -112,6 +115,10 @@ identity are rejected, not normalized away.
 | `busy.query(range, {signal?}?)` | Appointment-buffer, block and live-hold occupancy in one bounded order; no target IDs, titles or attendees |
 | `receipts.get(originalKey, {signal?}?)` | Original safe outcome or null; current target rights still required |
 | `appointments.watch(range, listener, {signal?, onError?}?)` | Initial/fresh authorized pages and commit invalidation flag; returns unsubscribe |
+
+[Appointment-specific override options](./overrides.md) preserve the normal receipt
+and single-write contract. They never bypass hard policies or make ordinary
+resource management sufficient for an exception.
 
 `control` is `{expectedRevision, idempotencyKey, signal?}`. Every command requires
 an explicit stable idempotency key. Receipts include only `requestId`, operation,

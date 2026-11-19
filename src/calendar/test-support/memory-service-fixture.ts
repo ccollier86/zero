@@ -9,6 +9,7 @@ import { createRequestAuthorizationAccess } from '../../auth/authorization-acces
 import { createAuthorizationKernel } from '../../auth/authorization-kernel';
 import { requireRequestServiceDataScope, serviceDataScopeKey, type ServiceDataScope } from '../../auth/service-data-scope';
 import { AuthError, type AuthContext } from '../../auth/types';
+import { authTokenEligibleUserSql } from '../../auth/auth-user-eligibility';
 import { AuthorityCommitCoordinator } from '../../databases/authority-commit-coordinator';
 import { assertDatabaseCommitAuthorityCurrent, type DatabaseCommitAuthority } from '../../databases/database-commit-authority';
 import type { DatabaseCoordinator } from '../../databases/database-coordinator';
@@ -30,6 +31,8 @@ import { calendarDatabaseId, CalendarRuntime, type CalendarRuntimeOptions } from
 import { CalendarService } from '../service';
 import { calendarHash } from '../validation';
 import type { CalendarParticipantDirectory } from '../participants-directory';
+import type { CalendarOverrideGrantTargets } from '../override-grant-targets';
+import { CalendarError } from '../error';
 
 interface MemoryPlane {
   readonly db: ReactiveDB;
@@ -46,7 +49,7 @@ export interface MemoryCalendarSession {
 
 export function memoryCalendarServiceFixture(options: { tenancy?: 'single' | 'multi'; config?: CalendarConfig;
   participantDirectory?: CalendarParticipantDirectory; beforeDispatch?: (operation: DatabaseOperation) => void;
-  afterCommand?: (operation: DatabaseOperation) => void } = {}) {
+  afterCommand?: (operation: DatabaseOperation) => void; overrideTargets?: CalendarOverrideGrantTargets } = {}) {
   const tenancy = options.tenancy ?? 'multi', project = '/synthetic-memory-calendar-service-never-created';
   const auth = resolveAuthBehaviorConfig({ tenancy }), kernel = createAuthorizationKernel(auth);
   const config = resolveCalendarConfig({ timezone: 'UTC', ...options.config }, project, auth);
@@ -54,6 +57,7 @@ export function memoryCalendarServiceFixture(options: { tenancy?: 'single' | 'mu
   const system = createReactiveDB({ mode: 'memory' }), authorityCoordinator = new AuthorityCommitCoordinator();
   const lifetime = new AbortController(), planes = new Map<string, MemoryPlane>();
   const queryCounts = new Map<string, number>();
+  const syntheticAccounts = new Set<string>();
   let acquisitions = 0, releases = 0, activeLeases = 0, closed = false;
   let runtime: CalendarRuntime | undefined, service: CalendarService | undefined, removeCommit: (() => void) | undefined;
   const disposePlanes = () => { for (const { db } of planes.values()) db.dispose(); planes.clear(); };
@@ -128,7 +132,19 @@ export function memoryCalendarServiceFixture(options: { tenancy?: 'single' | 'mu
     const internal = runtime as unknown as { filePresent(id: string): boolean; queueHint(ref: string): void; listeners: Map<string, Set<() => void>> };
     internal.filePresent = id => planes.has(id);
     removeCommit = observeDatabaseCoordinatorCommits(owner, ref => internal.queueHint(ref));
-    service = new CalendarService(runtime, config, lifetime.signal, options.participantDirectory);
+    const targets: CalendarOverrideGrantTargets = options.overrideTargets ?? { assertBindable(scope, refs) {
+      for (const ref of refs) {
+        // Authenticated HTTP fixtures have real synthetic Guardian rows. Pure
+        // service fixtures instead register their explicitly synthetic sessions.
+        if (system.hasTable('users')) {
+          const membership = scope.tenantId === null ? '' : " AND EXISTS(SELECT 1 FROM _auth_tenant_memberships m JOIN _auth_tenants t ON t.tenant_id=m.tenant_id WHERE m.user_id=u.user_id AND m.tenant_id=? AND m.status='active' AND t.status='active')";
+          const statement = system.prepare(`SELECT u.user_id FROM users u WHERE u.user_id=? AND ${authTokenEligibleUserSql('u')}${membership}`);
+          try { if (!statement.get(...(scope.tenantId === null ? [ref.userId] : [ref.userId, scope.tenantId]))) throw new CalendarError('CALENDAR_NOT_FOUND'); }
+          finally { statement.finalize(); }
+        } else if (!syntheticAccounts.has(serviceDataScopeKey(scope) + ':' + ref.userId)) throw new CalendarError('CALENDAR_NOT_FOUND');
+      }
+    } };
+    service = new CalendarService(runtime, config, lifetime.signal, options.participantDirectory, targets);
     const session = (userId: string, sessionOptions: { tenantId?: string; manager?: boolean; context?: Partial<AuthContext> } = {}): MemoryCalendarSession => {
       const tenantId = sessionOptions.tenantId ?? 'tenant-a';
       let live: AuthContext | null = { userId, email: userId + '@synthetic.example.test', role: sessionOptions.manager ? 'admin' : 'user',
@@ -144,6 +160,7 @@ export function memoryCalendarServiceFixture(options: { tenancy?: 'single' | 'mu
       };
       const access = () => createRequestAuthorizationAccess({ kernel, authContext: live, assertCurrentProfile: assertCurrentAuthoritySync });
       const scope = requireRequestServiceDataScope(access(), () => kernel);
+      syntheticAccounts.add(serviceDataScopeKey(scope) + ':' + userId);
       const request: CalendarAuthority = { get access() { return access(); }, scope, assertCurrentAuthoritySync,
         async assertCurrentAuthority() { assertCurrentAuthoritySync(); } };
       return { api: service!.forAuthority(request), authority: request, scope, userId,

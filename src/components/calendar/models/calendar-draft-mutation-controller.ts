@@ -14,6 +14,8 @@ export interface CalendarDraftMutationSnapshot {
   readonly busy: boolean;
   readonly error: string | null;
   readonly request: CalendarPendingRequest | null;
+  /** Confirmed noncommit only; never a private body or permission to bypass a conflict. */
+  readonly rejectionCode: 'CALENDAR_BOOKING_CONFLICT' | 'CALENDAR_OVERRIDE_STALE' | 'CALENDAR_OVERRIDE_NOT_ALLOWED' | 'CALENDAR_POLICY_STALE' | 'CALENDAR_REASON_REQUIRED' | null;
 }
 export interface CalendarDraftMutationOptions {
   isCurrent(context: CalendarDraftMutationContext): boolean;
@@ -30,11 +32,11 @@ export class CalendarDraftMutationController {
   private readonly listeners = new Set<() => void>();
   private pending = false;
   private retired = false;
-  private state: CalendarDraftMutationSnapshot = { phase: 'editing', busy: false, error: null, request: null };
+  private state: CalendarDraftMutationSnapshot = { phase: 'editing', busy: false, error: null, request: null, rejectionCode: null };
   constructor(private readonly options: CalendarDraftMutationOptions) {}
   readonly snapshot = (): CalendarDraftMutationSnapshot => this.state;
   readonly subscribe = (listener: () => void): (() => void) => { this.listeners.add(listener); return () => this.listeners.delete(listener); };
-  edit(): void { this.fence.edit(); if (this.state.phase === 'editing') this.publish({ error: null }); }
+  edit(): void { this.fence.edit(); if (this.state.phase === 'editing') this.publish({ error: null, rejectionCode: null }); }
   retire(): void { this.retired = true; }
   private current(context: CalendarDraftMutationContext): boolean { return !this.retired && !context.signal.aborted && this.options.isCurrent(context); }
   /** Settlement observers cannot change source evidence. The boolean additionally
@@ -58,7 +60,7 @@ export class CalendarDraftMutationController {
       || !/^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(receipt.id) || !calendarPendingReceiptMatches(request, receipt)) {
       this.publish({ phase: 'unknown', error: 'The acknowledgment did not match the original request and revision. Reconcile that identity.' }); return;
     }
-    this.publish({ phase: 'accepted', error: admitted.canClose ? null
+    this.publish({ phase: 'accepted', rejectionCode: null, error: admitted.canClose ? null
       : 'The submitted revision was accepted. Your newer edits are preserved and have not been submitted. Close to review current data before another operation.' });
     if (!this.current(context)) return;
     this.notify(() => this.options.onAccepted(request));
@@ -72,7 +74,7 @@ export class CalendarDraftMutationController {
     if (this.pending || this.state.phase !== 'editing' || !this.current(context)) return;
     const captured = Object.freeze({ ...request });
     this.fence.submit(captured.key, captured.operation, captured.id);
-    this.pending = true; this.publish({ phase: 'submitting', busy: true, error: null, request: captured });
+    this.pending = true; this.publish({ phase: 'submitting', busy: true, error: null, request: captured, rejectionCode: null });
     let dispatched = false;
     try {
       if (!this.current(context)) return;
@@ -100,12 +102,17 @@ export class CalendarDraftMutationController {
       if (cause instanceof CalendarMutationError && calendarTransitionAuthorityDenied(cause)) {
         this.notify(() => this.options.onAuthorityLost()); this.retire(); return;
       }
-      if (!known) this.publish({ phase: 'unknown', error: 'The appointment change may have been accepted. Reconcile this original request; do not submit it again.' });
+      if (!known) this.publish({ phase: 'unknown', rejectionCode: null, error: 'The appointment change may have been accepted. Reconcile this original request; do not submit it again.' });
       else {
         const conflict = cause.code === 'CALENDAR_REVISION_CONFLICT' || cause.code === 'CALENDAR_TRANSITION_INVALID';
-        this.publish({ phase: conflict ? 'conflict' : 'editing', request: null,
+        const rejectionCode = ['CALENDAR_BOOKING_CONFLICT', 'CALENDAR_OVERRIDE_STALE', 'CALENDAR_OVERRIDE_NOT_ALLOWED', 'CALENDAR_POLICY_STALE', 'CALENDAR_REASON_REQUIRED'].includes(cause.code ?? '')
+          ? cause.code as CalendarDraftMutationSnapshot['rejectionCode'] : null;
+        this.publish({ phase: conflict ? 'conflict' : 'editing', request: null, rejectionCode,
           error: conflict ? 'The appointment changed. Your draft is preserved without rebasing. Close and review current details.'
-            : 'The appointment change was not accepted. Your draft is preserved; review current resources, catalogs and participants before retrying.' });
+            : rejectionCode === 'CALENDAR_BOOKING_CONFLICT' ? 'The submitted appointment conflicts with the schedule. Your draft is preserved; this does not mean an exception is available.'
+              : rejectionCode === 'CALENDAR_OVERRIDE_STALE' || rejectionCode === 'CALENDAR_OVERRIDE_NOT_ALLOWED'
+                ? 'The reviewed exception could not be admitted. Your draft is preserved; review current availability explicitly before another request.'
+                : 'The appointment change was not accepted. Your draft is preserved; review current resources, catalogs and participants before retrying.' });
       }
     } finally { this.pending = false; if (this.current(context)) { this.publish({ busy: false }); this.notify(() => context.setBusy(false)); } }
   }

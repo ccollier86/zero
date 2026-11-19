@@ -7,13 +7,13 @@ import type { CalendarAppointmentCreateInput, CalendarAppointmentUpdateInput, Ca
   CalendarLifecyclePolicyInput, CalendarAppointmentTransitionInput, CalendarCancellationOptions,
   CalendarControlOptions, CalendarGrant, CalendarHoldInput, CalendarHoldConfirmationInput, CalendarLocationInput, CalendarLocationPageQuery, CalendarLocationReplacement,
   CalendarRangeQuery, CalendarRequestOptions, CalendarRescheduleInput, CalendarResourcePageQuery, CalendarVisitLocationQuery, CalendarParticipantReference, CalendarAvailabilityPolicyInput,
-  CalendarResourceLocationPolicyInput } from './contracts';
+  CalendarResourceLocationPolicyInput, CalendarOverrideGrantInput, CalendarAppointmentRequestOptions, CalendarAppointmentControlOptions } from './contracts';
 import { CalendarError } from './error';
 import { calendarRecord } from './validation';
 import { calendarAppointmentStream, calendarAvailabilityStream, calendarBlockStream, calendarHoldStream, calendarLocationStream, calendarResourceStream,
   calendarLocationDetailStream, calendarResourceLocationsStream, calendarTypeStream, calendarTypeDetailStream, calendarResourceTypesStream,
   calendarLifecycleStream, calendarAppointmentTransitionsStream, calendarVisitLocationStream, calendarParticipantDirectoryStream, calendarParticipantsStream, calendarCapabilitiesStream, calendarAvailabilityPolicyStream,
-  calendarAppointmentDateStream, calendarResourceLocationPolicyStream } from './stream';
+  calendarAppointmentDateStream, calendarResourceLocationPolicyStream, calendarOverrideGrantStream } from './stream';
 
 const key = t.String({ minLength: 1, maxLength: 128 });
 // Query strings stay wire strings through composed native validators; convert
@@ -235,6 +235,23 @@ export async function createCalendarHttp(runtime: ZeroAppRuntime) {
         if (!zero.calendar) throw new CalendarError('CALENDAR_NOT_READY'); const r = calendarRecord(body, ['userId', 'grants', 'options']);
         return zero.calendar.resources.setGrants(params.id, r.userId as string, r.grants as CalendarGrant[], r.options as CalendarControlOptions);
       } }),
+      ...([false, true] as const).map(live => defineEndpoint({ method: 'GET',
+        path: '/resources/:id/override-grants/:userId' + (live ? '/live' : ''), params: t.Object({ id: key, userId: key }),
+        async handler({ zero, params, request }) {
+          if (!zero.calendar) throw new CalendarError('CALENDAR_NOT_READY'); admitQueryKeys(request, []);
+          const value = await zero.calendar.overrides.grants.get(params.id, params.userId);
+          return live ? new Response(calendarOverrideGrantStream(zero.calendar, params.id, params.userId, request.signal), {
+            headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'private, no-store', 'X-Accel-Buffering': 'no' },
+          }) : value;
+        },
+      })),
+      defineEndpoint({ method: 'PUT', path: '/resources/:id/override-grants/:userId', params: t.Object({ id: key, userId: key }), body: t.Unknown(),
+        async handler({ zero, params, body, request }) {
+          if (!zero.calendar) throw new CalendarError('CALENDAR_NOT_READY'); admitQueryKeys(request, []);
+          const value = calendarRecord(body, ['grants', 'options']);
+          return zero.calendar.overrides.grants.replace(params.id, params.userId, value.grants as CalendarOverrideGrantInput, value.options as CalendarControlOptions);
+        },
+      }),
       ...([false, true] as const).map(live => defineEndpoint({ method: 'GET', path: '/availability/:id/policy' + (live ? '/live' : ''), params: t.Object({ id: key }), async handler({ zero, params, request }) {
         if (!zero.calendar) throw new CalendarError('CALENDAR_NOT_READY'); admitQueryKeys(request, []);
         const value = await zero.calendar.availability.policy.get(params.id);
@@ -315,7 +332,17 @@ export async function createCalendarHttp(runtime: ZeroAppRuntime) {
       defineEndpoint({ method: 'PUT', path: '/appointments/:id', params: t.Object({ id: key }), body: t.Unknown(), async handler({ zero, params, body, request }) {
         if (!zero.calendar) throw new CalendarError('CALENDAR_NOT_READY'); admitQueryKeys(request, []);
         const value = calendarRecord(body, ['appointment', 'options']);
-        return zero.calendar.appointments.update(params.id, value.appointment as CalendarAppointmentUpdateInput, value.options as CalendarControlOptions);
+        return zero.calendar.appointments.update(params.id, value.appointment as CalendarAppointmentUpdateInput, value.options as CalendarAppointmentControlOptions);
+      } }),
+      defineEndpoint({ method: 'POST', path: '/appointments/review-create', body: t.Unknown(), async handler({ zero, body, request }) {
+        if (!zero.calendar) throw new CalendarError('CALENDAR_NOT_READY'); admitQueryKeys(request, []);
+        const value = calendarRecord(body, ['appointment', 'options']);
+        return zero.calendar.appointments.reviewCreate(value.appointment as CalendarAppointmentCreateInput, value.options as CalendarRequestOptions);
+      } }),
+      defineEndpoint({ method: 'POST', path: '/appointments/:id/review', params: t.Object({ id: key }), body: t.Unknown(), async handler({ zero, params, body, request }) {
+        if (!zero.calendar) throw new CalendarError('CALENDAR_NOT_READY'); admitQueryKeys(request, []);
+        const value = calendarRecord(body, ['patch', 'options']);
+        return zero.calendar.appointments.reviewUpdate(params.id, value.patch as CalendarAppointmentUpdateInput, value.options as CalendarControlOptions);
       } }),
       defineEndpoint({ method: 'GET', path: '/appointments/:id/transitions', params: t.Object({ id: key }), async handler({ zero, params, request }) {
         if (!zero.calendar) throw new CalendarError('CALENDAR_NOT_READY'); admitQueryKeys(request, []);
@@ -334,7 +361,7 @@ export async function createCalendarHttp(runtime: ZeroAppRuntime) {
       } }),
       defineEndpoint({ method: 'POST', path: '/appointments', body: t.Unknown(), async handler({ zero, body, request }) {
         if (!zero.calendar) throw new CalendarError('CALENDAR_NOT_READY'); admitQueryKeys(request, []); const r = calendarRecord(body, ['appointment', 'options']);
-        return zero.calendar.appointments.create(r.appointment as CalendarAppointmentCreateInput, r.options as CalendarRequestOptions);
+        return zero.calendar.appointments.create(r.appointment as CalendarAppointmentCreateInput, r.options as CalendarAppointmentRequestOptions);
       } }),
       defineEndpoint({ method: 'POST', path: '/appointments/:id/reschedule', params: t.Object({ id: key }), body: t.Unknown(), async handler({ zero, params, body }) {
         if (!zero.calendar) throw new CalendarError('CALENDAR_NOT_READY'); const r = calendarRecord(body, ['appointment', 'options']);

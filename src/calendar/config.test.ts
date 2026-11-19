@@ -36,7 +36,7 @@ test('enabled shorthand has private bounded defaults but does not claim runtime 
   expect(config).toEqual({
     rootDirectory: PROJECT + '/data/zero.calendar', timezone: null, readiness: 'setup-required',
     createOwn: 'user', manage: 'admin', maxRangeDays: 31, maxPageSize: 100, maxResources: 16,
-    maxParticipants: 100, participants: false, maxActiveDatabases: 4, maxDatabaseFiles: 1000,
+    maxParticipants: 100, participants: false, overrides: false, maxActiveDatabases: 4, maxDatabaseFiles: 1000,
     recurrence: false, reminders: false, selfBooking: false,
   });
   expect(enabled({})).toEqual(config);
@@ -211,4 +211,37 @@ test('nested policy accessors, arrays, proxies, symbols, cycles and excessive da
   const capability = Object.defineProperty({}, 'enabled', { enumerable: true, get() { invoked++; return true; } });
   rejects({ recurrence: capability });
   expect(invoked).toBe(0);
+});
+
+test('overlap overrides are disabled by default and require two explicit independent Guardian policies', () => {
+  const valid = { kind: 'appointment-overlap-v1', use: 'user', manageGrants: 'admin' };
+  expect(enabled().overrides).toBe(false);
+  expect(enabled({ overrides: false }).overrides).toBe(false);
+  expect(enabled({ overrides: valid }).overrides).toMatchObject(valid);
+  expect(enabled({ overrides: { ...valid, use: false, manageGrants: false } }).overrides)
+    .toMatchObject({ use: false, manageGrants: false });
+  for (const overrides of [null, true, {}, { ...valid, kind: 'force' }, { kind: valid.kind, use: 'user' },
+    { kind: valid.kind, manageGrants: 'admin' }, { ...valid, unknown: true }, { ...valid, manageGrants: 'user' },
+    { ...valid, manageGrants: true }, { ...valid, use: 'optional' }, { ...valid, use: {} },
+    { ...valid, use: { credentials: ['api-key'] } }]) rejects({ overrides });
+});
+
+test('override policy identity is deterministic, detached and scope-valid, with no implicit management grant', () => {
+  const input = { kind: 'appointment-overlap-v1', use: { properties: { department: { in: ['scheduling'] } } }, manageGrants: 'admin' };
+  const guardian = resolveAuthBehaviorConfig({ userProperties: { department: { editableBy: 'admin', useInPolicies: true } } });
+  const config = enabled({ overrides: input }, guardian), policy = config.overrides;
+  if (!policy) throw new Error('Missing synthetic override config');
+  expect(policy.policyHash).toMatch(/^[a-f0-9]{64}$/);
+  expect(enabled({ overrides: input }, guardian).overrides).toEqual(policy);
+  expect(Object.isFrozen(policy)).toBe(true);
+  expect(Object.isFrozen((policy.use as typeof input.use).properties.department.in)).toBe(true);
+  input.use.properties.department.in.push('changed');
+  expect((policy.use as typeof input.use).properties.department.in).toEqual(['scheduling']);
+  for (const tenancy of ['single', 'multi'] as const) {
+    const scoped = resolveAuthBehaviorConfig({ tenancy, authorization: {
+      mode: 'advanced', permissions: { 'calendar:override': { label: 'Override' }, 'calendar:override-grants': { label: 'Manage override grants' } },
+    } });
+    expect(enabled({ overrides: { kind: input.kind, use: { permission: 'calendar:override' },
+      manageGrants: { permission: 'calendar:override-grants' } } }, scoped).overrides).toBeTruthy();
+  }
 });

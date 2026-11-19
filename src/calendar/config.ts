@@ -4,7 +4,16 @@ import { createAuthorizationKernel, type AccessRequirement, type AuthorizationKe
 import type { NormalizedAuthBehaviorConfig } from '../auth/types';
 import { CalendarError } from './error';
 import { normalizeCalendarTimeZone } from './time';
-import { calendarInteger, calendarRecord, calendarText, calendarValue } from './validation';
+import { calendarHash, calendarInteger, calendarRecord, calendarText, calendarValue } from './validation';
+
+export interface CalendarOverridesConfig {
+  readonly kind: 'appointment-overlap-v1';
+  /** Explicit independent requirement. Object grants are additionally mandatory. */
+  readonly use: AccessRequirement;
+  /** Independent administration plus normal resource management; no owner shortcut. */
+  readonly manageGrants: AccessRequirement;
+}
+export interface ResolvedCalendarOverridesConfig extends CalendarOverridesConfig { readonly policyHash: string }
 
 export interface CalendarConfig {
   readonly rootDirectory?: string;
@@ -20,6 +29,7 @@ export interface CalendarConfig {
   readonly maxParticipants?: number;
   /** Native canonical participants are closed unless an offline-provable subject policy is explicit. */
   readonly participants?: false | { readonly userEligibility: AccessRequirement };
+  readonly overrides?: false | CalendarOverridesConfig;
   readonly maxActiveDatabases?: number;
   readonly maxDatabaseFiles?: number;
   /** These capabilities are not implemented. Explicit enablement fails closed, never reports readiness. */
@@ -41,6 +51,7 @@ export interface ResolvedCalendarConfig {
   readonly maxResources: number;
   readonly maxParticipants: number;
   readonly participants: false | { readonly userEligibility: AccessRequirement };
+  readonly overrides: false | ResolvedCalendarOverridesConfig;
   readonly maxActiveDatabases: number;
   readonly maxDatabaseFiles: number;
   readonly recurrence: false;
@@ -51,7 +62,7 @@ export interface ResolvedCalendarConfig {
 const CONFIG_FIELDS = [
   'rootDirectory', 'timezone', 'createOwn', 'manage', 'maxRangeDays', 'maxPageSize',
   'maxResources', 'maxParticipants', 'participants', 'maxActiveDatabases', 'maxDatabaseFiles',
-  'recurrence', 'reminders', 'selfBooking',
+  'recurrence', 'reminders', 'selfBooking', 'overrides',
 ] as const;
 const ACCESS_FIELDS = [
   'user', 'credentials', 'platformRole', 'tenant', 'scopeRole', 'permission',
@@ -93,6 +104,7 @@ export function resolveCalendarConfig(
       maxResources: calendarInteger(record.maxResources === undefined ? 16 : record.maxResources, 1, 16),
       maxParticipants: calendarInteger(record.maxParticipants === undefined ? 100 : record.maxParticipants, 1, 100),
       participants: admitParticipants(record.participants, kernel),
+      overrides: admitOverrides(record.overrides, kernel),
       maxActiveDatabases, maxDatabaseFiles: calendarInteger(record.maxDatabaseFiles === undefined ? 1000 : record.maxDatabaseFiles, maxActiveDatabases, 10_000),
       recurrence: false, reminders: false, selfBooking: false,
     };
@@ -102,6 +114,19 @@ export function resolveCalendarConfig(
     if (error instanceof CalendarError && error.code === 'CALENDAR_NOT_READY') throw error;
     throw new CalendarError('CALENDAR_CONFIG_INVALID');
   }
+}
+
+function admitOverrides(input: unknown, kernel: AuthorizationKernel): ResolvedCalendarConfig['overrides'] {
+  if (input === undefined || input === false) return false;
+  const row = calendarRecord(input, ['kind', 'use', 'manageGrants']);
+  if (row.kind !== 'appointment-overlap-v1' || !Object.hasOwn(row, 'use') || !Object.hasOwn(row, 'manageGrants')) {
+    throw new CalendarError('CALENDAR_CONFIG_INVALID');
+  }
+  // Calendar false is a deny sentinel, never Guardian's public declaration.
+  const use = row.use === false ? false : admitAccess(row.use, kernel, false);
+  const manageGrants = row.manageGrants === false ? false : admitAccess(row.manageGrants, kernel, true);
+  return Object.freeze({ kind: 'appointment-overlap-v1', use, manageGrants,
+    policyHash: calendarHash(['calendar.overrides.config.v1', 'appointment-overlap-v1', use, manageGrants]) });
 }
 
 function admitParticipants(input: unknown, kernel: AuthorizationKernel): ResolvedCalendarConfig['participants'] {

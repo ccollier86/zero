@@ -38,6 +38,8 @@ export interface AppointmentFormControls {
   titleHelper?: ReactNode;
   appearanceControl?: ReactNode;
   workflowControl?: ReactNode;
+  /** Connected exception review only; undefined leaves the reference anatomy unchanged. */
+  conflictControl?: ReactNode;
   /** Undefined retains the reference control; null deliberately omits it. */
   resourceControl?: ReactNode;
   locationControl?: ReactNode;

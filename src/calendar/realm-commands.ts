@@ -21,6 +21,10 @@ import { initializeCalendarResourceLocationPolicy } from './location-policies';
 import { normalizeCalendarAppointmentTimeIntent } from './appointment-time-input';
 import { bindCalendarAppointmentTime, calendarCurrentAppointmentTime, calendarAppointmentTimeFields,
   requireCalendarAppointmentTimeStorage, resolveCalendarAppointmentTimeIntent, type CalendarAppointmentTimeFact } from './appointment-time-bindings';
+import { CALENDAR_APPOINTMENT_CREATE_FIELDS, normalizeCalendarAppointmentCreate, prepareNormalizedCalendarAppointmentCreate, type CalendarPreparedAppointment } from './appointment-preparation';
+import { normalizeCalendarAppointmentOverride } from './override-model';
+import { admitCalendarAppointmentOverride, finishCalendarAppointmentOverride, assertCalendarOverrideReviewAuthority } from './overrides';
+import type { CalendarAppointmentOverlapAllowance } from './occupancy';
 
 function owner(context: DatabaseWriteCommandContext, scopeId: string): void {
   if (context.db.get('_calendar_owner', 'application')?.scope_id !== scopeId) throw new CalendarError('CALENDAR_STATE_INVALID');
@@ -85,54 +89,25 @@ export function changeCalendarGrant(context: DatabaseWriteCommandContext, input:
 }
 export function createCalendarAppointment(context: DatabaseWriteCommandContext, input: unknown) {
   return calendarCommand(() => {
-    const r = calendarRecord(input, ['actor', 'requestId', 'id', 'resourceIds', 'title', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'appointmentType', 'visit', 'participants', 'interval']), actor = calendarActor(r.actor);
-    owner(context, actor.scopeId);
-    const explicit = Object.hasOwn(r, 'interval');
-    if (explicit && ['startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes'].some(field => Object.hasOwn(r, field))) throw new CalendarError('CALENDAR_INPUT_INVALID');
-    const id = calendarKey(r.id), title = calendarText(r.title, 512), resourceIds = calendarSelection(r.resourceIds).sort();
-    if (!resourceIds.length || new Set(resourceIds).size !== resourceIds.length) throw new CalendarError('CALENDAR_INPUT_INVALID');
-    for (const resourceId of resourceIds) {
-      const resource = calendarResource(context, actor, resourceId); requireCalendarRight(context, actor, resource, 'book');
-      if (!explicit && !resource.active) throw new CalendarError('CALENDAR_FORBIDDEN');
-    }
-    // Catalog admission follows complete co-resource authorization, including on an invalid type reference.
-    const typeRef = calendarAppointmentTypeReference(r.appointmentType), visitRef = calendarVisitInput(r.visit);
-    const participants = Object.hasOwn(r, 'participants') ? calendarParticipantReferences(r.participants) : undefined;
-    if (participants !== undefined) requireCalendarParticipantManager(actor);
-    const source = explicit ? normalizeCalendarAppointmentTimeIntent(r.interval) : undefined;
-    const interval = explicit || typeRef ? undefined : normalizeCalendarTimedInterval({ startAt: r.startAt, endAt: r.endAt, timeZone: r.timeZone,
-      bufferBeforeMinutes: r.bufferBeforeMinutes, bufferAfterMinutes: r.bufferAfterMinutes });
-    const intent: unknown[] = explicit
-      ? ['appointment.create.interval.v1', id, resourceIds, title, source, typeRef ?? null, visitRef ?? null, ...(participants === undefined ? [] : [participants])]
-      : participants !== undefined
-      ? ['appointment.create.participants.v1', id, resourceIds, title, normalizeCalendarTypedIntentInterval(r), typeRef ?? null, visitRef ?? null, participants]
-      : visitRef
-      ? ['appointment.create.visit.v1', id, resourceIds, title, normalizeCalendarTypedIntentInterval(r), typeRef ?? null, visitRef]
-      : typeRef
-      ? ['appointment.create.typed.v1', id, resourceIds, title, normalizeCalendarTypedIntentInterval(r), typeRef]
-      : ['appointment.create', id, resourceIds, title, interval]; // Preserve every pre-types untyped digest exactly.
-    return calendarIntent(context, actor, r.requestId, intent, 'appointment', 'book', requestId => {
-      if (source) {
-        requireCalendarAppointmentTimeStorage(context);
-        if (source.kind === 'all-day-local-v1' && typeRef) throw new CalendarError('CALENDAR_TYPE_CONFLICT');
-        assertCalendarTypePolicy(context, actor, resourceIds, typeRef); assertCalendarVisitPolicy(context, actor, resourceIds, visitRef);
-        const fact = resolveCalendarAppointmentTimeIntent(source);
-        const appointmentType = typeRef ? normalizeCalendarTypedBooking(context, actor, resourceIds,
-          { ...fact.interval }, typeRef).appointmentType : undefined;
-        commitCalendarAppointment(context, actor, id, title, resourceIds, fact.interval, { appointmentType, visit: visitRef, participants, timeFact: fact });
-        return receipt(requestId, 'appointment.created', id, 1);
-      }
-      // Finish both policy intersections before resolving either selected catalog generation/defaults.
-      assertCalendarTypePolicy(context, actor, resourceIds, typeRef); assertCalendarVisitPolicy(context, actor, resourceIds, visitRef);
-      const booking = typeRef ? normalizeCalendarTypedBooking(context, actor, resourceIds, r, typeRef) : { interval: interval!, appointmentType: undefined };
-      commitCalendarAppointment(context, actor, id, title, resourceIds, booking.interval, { appointmentType: booking.appointmentType, visit: visitRef, participants });
-      return receipt(requestId, 'appointment.created', id, 1);
+    const r = calendarRecord(input, ['actor', 'requestId', 'id', 'override', ...CALENDAR_APPOINTMENT_CREATE_FIELDS]), actor = calendarActor(r.actor);
+    const value = normalizeCalendarAppointmentCreate(context, actor, r.id,
+      Object.fromEntries(CALENDAR_APPOINTMENT_CREATE_FIELDS.filter(field => Object.hasOwn(r, field)).map(field => [field, r[field]])));
+    const override = Object.hasOwn(r, 'override') ? normalizeCalendarAppointmentOverride(r.override) : undefined;
+    return calendarIntent(context, actor, r.requestId, override ? ['appointment.create.override.v1', value.intent, override] : value.intent, 'appointment', 'book', requestId => {
+      if (override) assertCalendarOverrideReviewAuthority(context, actor, value.resourceIds);
+      const p = prepareNormalizedCalendarAppointmentCreate(context, actor, value);
+      const allowance = override ? admitCalendarAppointmentOverride(context, actor, requestId, p, override) : undefined;
+      commitCalendarAppointment(context, actor, p.id, p.title, p.resourceIds, p.interval, { appointmentType: p.appointmentType,
+        visit: p.visit, participants: p.participants, ...(value.source ? { timeFact: p.fact } : {}),
+        ...(allowance ? { overrideAllowance: allowance, overrideRequestId: requestId } : {}) });
+      return receipt(requestId, 'appointment.created', p.id, 1);
     });
   });
 }
 /** Internal canonical writer shared with hold confirmation, always inside the caller's realm transaction. */
 export function commitCalendarAppointment(context: DatabaseWriteCommandContext, actor: CalendarActor, id: string, title: string,
-  resourceIds: readonly string[], interval: CalendarTimedInterval, options?: { readonly now?: number; readonly exceptHoldId?: string; readonly appointmentType?: CalendarAppointmentTypeSnapshot; readonly visit?: CalendarVisitInput; readonly participants?: readonly CalendarParticipantReference[]; readonly timeFact?: CalendarAppointmentTimeFact }): void {
+  resourceIds: readonly string[], interval: CalendarTimedInterval, options?: { readonly now?: number; readonly exceptHoldId?: string; readonly appointmentType?: CalendarAppointmentTypeSnapshot; readonly visit?: CalendarVisitInput; readonly participants?: readonly CalendarParticipantReference[]; readonly timeFact?: CalendarAppointmentTimeFact;
+    readonly overrideAllowance?: CalendarAppointmentOverlapAllowance; readonly overrideRequestId?: string }): void {
   if (options?.participants !== undefined) requireCalendarParticipantManager(actor);
   if (options?.timeFact) requireCalendarAppointmentTimeStorage(context);
   if (options?.timeFact?.kind === 'all-day-local-v1' && (options.appointmentType || options.exceptHoldId !== undefined)) throw new CalendarError('CALENDAR_TYPE_CONFLICT');
@@ -147,7 +122,7 @@ export function commitCalendarAppointment(context: DatabaseWriteCommandContext, 
   const { visit } = admitCalendarBookingCandidate(context, actor.scopeId,
     { resourceIds, interval, appointmentType: options?.appointmentType, visit: options?.visit },
     { type: true, visit: true, availabilityResourceIds: resourceIds,
-      occupancy: { except: options?.exceptHoldId === undefined ? undefined : { kind: 'hold', id: options.exceptHoldId }, now: options?.now } });
+      occupancy: { except: options?.exceptHoldId === undefined ? undefined : { kind: 'hold', id: options.exceptHoldId }, now: options?.now } }, options?.overrideAllowance);
   calendarBudget(context, 'appointments');
   const change = context.db.createStrict('calendar_appointments', { id, scope_id: actor.scopeId, title,
     ...(options?.timeFact ? calendarAppointmentTimeFields(options.timeFact) : intervalFields(interval)), status: 'confirmed', revision: 1, created_by: actor.userId });
@@ -158,8 +133,13 @@ export function commitCalendarAppointment(context: DatabaseWriteCommandContext, 
     appointment_id: id, resource_id: resourceId, occupied_start_ms: interval.occupiedStartMs, occupied_end_ms: interval.occupiedEndMs, active: 1 });
   replaceCalendarAppointmentResourceCurrent(context, actor.scopeId, id, 1, resourceIds);
   if (options?.timeFact) bindCalendarAppointmentTime(context, actor.scopeId, id, 1, options.timeFact);
+  if (options?.overrideAllowance) {
+    if (!options.overrideRequestId || options.exceptHoldId !== undefined) throw new CalendarError('CALENDAR_STATE_INVALID');
+    finishCalendarAppointmentOverride(context, actor, options.overrideRequestId, id, 1);
+  }
   appendCalendarSemanticAudit(context, 'appointment.created', change, { revision: 1, resourceCount: resourceIds.length, status: 'confirmed', ...(visit ? { visitMode: visit.mode } : {}),
-    ...(options?.participants !== undefined ? { participantCount: options.participants.length } : {}) });
+    ...(options?.participants !== undefined ? { participantCount: options.participants.length } : {}),
+    ...(options?.overrideAllowance ? { overrideCategory: 'appointment-overlap' as const, overridePolicy: 'appointment-overlap-v1' as const, reasonPresent: true } : {}) });
 }
 export function rescheduleCalendarAppointment(context: DatabaseWriteCommandContext, input: unknown) {
   return calendarCommand(() => {

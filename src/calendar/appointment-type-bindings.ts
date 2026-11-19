@@ -1,4 +1,5 @@
 /** Type identity is captured once; all displayed facts come from retained catalog history. */
+import type { CalendarReadContext } from './calendar-read-store';
 import type { DatabaseReadQueryContext, DatabaseWriteCommandContext } from '../databases/database-realm';
 import type { Row } from '../sync/types';
 import type { CalendarActor, CalendarAppointmentTypeReference, CalendarAppointmentTypeSnapshot } from './contracts';
@@ -28,7 +29,7 @@ function snapshot(row: TypeHistoryRow): CalendarAppointmentTypeSnapshot {
   return { id: row.type_id, revision: row.type_revision, label: row.label, durationMinutes: row.duration_minutes,
     bufferBeforeMinutes: row.buffer_before, bufferAfterMinutes: row.buffer_after, colorKey: row.color_key };
 }
-function history(context: DatabaseWriteCommandContext, scopeId: string, reference: CalendarAppointmentTypeReference): CalendarAppointmentTypeSnapshot {
+function history(context: CalendarReadContext, scopeId: string, reference: CalendarAppointmentTypeReference): CalendarAppointmentTypeSnapshot {
   const rows = context.db.find('_calendar_type_history', { filters: [eq('scope_id', scopeId), eq('type_id', reference.id), eq('type_revision', reference.revision)], limit: 2 }) as TypeHistoryRow[];
   if (rows.length !== 1) throw new CalendarError('CALENDAR_STATE_INVALID');
   return snapshot(rows[0]!);
@@ -42,19 +43,19 @@ export function normalizeCalendarTypedIntentInterval(r: Record<string, unknown>)
     bufferAfterMinutes: r.bufferAfterMinutes === undefined ? null : interval.bufferAfterMinutes };
 }
 /** Complete policy intersection is checked before any client-selected catalog lookup, never before accepted replay. */
-export function assertCalendarTypePolicy(context: DatabaseWriteCommandContext, actor: CalendarActor, resourceIds: readonly string[],
+export function assertCalendarTypePolicy(context: CalendarReadContext, actor: CalendarActor, resourceIds: readonly string[],
   reference: CalendarAppointmentTypeReference | undefined): void {
   assertCalendarTypePolicyForScope(context, actor.scopeId, resourceIds, reference);
 }
 /** Private policy core only. A scope is not authorization; callers admit every resource first. */
-export function assertCalendarTypePolicyForScope(context: DatabaseWriteCommandContext, scopeId: string, resourceIds: readonly string[],
+export function assertCalendarTypePolicyForScope(context: CalendarReadContext, scopeId: string, resourceIds: readonly string[],
   reference: CalendarAppointmentTypeReference | undefined): void {
   for (const resourceId of resourceIds) {
     const policy = currentCalendarResourceTypes(context, scopeId, resourceId);
     if (!reference ? policy.mode === 'required' : policy.mode !== 'unrestricted' && !policy.typeIds.includes(reference.id)) throw new CalendarError('CALENDAR_TYPE_CONFLICT');
   }
 }
-function currentBookingType(context: DatabaseWriteCommandContext, scopeId: string, reference: CalendarAppointmentTypeReference): CalendarAppointmentTypeSnapshot {
+function currentBookingType(context: CalendarReadContext, scopeId: string, reference: CalendarAppointmentTypeReference): CalendarAppointmentTypeSnapshot {
   const current = context.db.get('calendar_types', reference.id);
   if (!current || current.scope_id !== scopeId || current.revision !== reference.revision) throw new CalendarError('CALENDAR_TYPE_STALE');
   const rows = context.db.find('_calendar_type_history', { filters: [eq('scope_id', scopeId), eq('type_id', reference.id), eq('type_revision', reference.revision)], limit: 2 }) as TypeHistoryRow[];
@@ -63,7 +64,7 @@ function currentBookingType(context: DatabaseWriteCommandContext, scopeId: strin
   return snapshot(rows[0]!);
 }
 /** Called only inside a new typed command callback, after receipt lookup and all resource rights. */
-export function normalizeCalendarTypedBooking(context: DatabaseWriteCommandContext, actor: CalendarActor, resourceIds: readonly string[], r: Record<string, unknown>, reference: CalendarAppointmentTypeReference) {
+export function normalizeCalendarTypedBooking(context: CalendarReadContext, actor: CalendarActor, resourceIds: readonly string[], r: Record<string, unknown>, reference: CalendarAppointmentTypeReference) {
   assertCalendarTypePolicy(context, actor, resourceIds, reference);
   const appointmentType = currentBookingType(context, actor.scopeId, reference);
   const interval = normalizeCalendarTimedInterval({ startAt: r.startAt, endAt: r.endAt, timeZone: r.timeZone,
@@ -72,12 +73,12 @@ export function normalizeCalendarTypedBooking(context: DatabaseWriteCommandConte
   return { interval, appointmentType };
 }
 /** Call only after the receipt lookup: an accepted replay is not rejected by a later catalog/policy change. */
-export function assertCalendarBookingType(context: DatabaseWriteCommandContext, actor: CalendarActor, resourceIds: readonly string[], interval: CalendarTimedInterval,
+export function assertCalendarBookingType(context: CalendarReadContext, actor: CalendarActor, resourceIds: readonly string[], interval: CalendarTimedInterval,
   reference: CalendarAppointmentTypeReference | undefined): CalendarAppointmentTypeSnapshot | undefined {
   return assertCalendarBookingTypeForScope(context, actor.scopeId, resourceIds, interval, reference);
 }
 /** Private catalog/interval admission, not a resource or source-authority grant. */
-export function assertCalendarBookingTypeForScope(context: DatabaseWriteCommandContext, scopeId: string, resourceIds: readonly string[], interval: CalendarTimedInterval,
+export function assertCalendarBookingTypeForScope(context: CalendarReadContext, scopeId: string, resourceIds: readonly string[], interval: CalendarTimedInterval,
   reference: CalendarAppointmentTypeReference | undefined): CalendarAppointmentTypeSnapshot | undefined {
   assertCalendarTypePolicyForScope(context, scopeId, resourceIds, reference);
   const appointmentType = reference ? currentBookingType(context, scopeId, reference) : undefined;
@@ -91,13 +92,13 @@ function appointmentPointerId(scopeId: string, id: string): string { return cale
 function holdBindingId(scopeId: string, id: string): string { return calendarHash(['hold.type', scopeId, id]); }
 
 /** Prior generations are used when normalizing an old reschedule replay, not the later current type. */
-export function calendarAppointmentTypeAtRevision(context: DatabaseWriteCommandContext, scopeId: string, id: string, revision: number): CalendarAppointmentTypeSnapshot | undefined {
+export function calendarAppointmentTypeAtRevision(context: CalendarReadContext, scopeId: string, id: string, revision: number): CalendarAppointmentTypeSnapshot | undefined {
   const rows = context.db.find('_calendar_appointment_type_bindings', { filters: [eq('scope_id', scopeId), eq('appointment_id', id),
     { type: 'field', field: 'appointment_revision', operator: 'lte', value: revision }], order: [{ field: 'appointment_revision', direction: 'desc' }], limit: 1 }) as AppointmentBindingRow[];
   const binding = rows[0];
   return binding?.type_id ? history(context, scopeId, { id: binding.type_id, revision: calendarInteger(binding.type_revision, 1) }) : undefined;
 }
-export function calendarCurrentAppointmentType(context: DatabaseWriteCommandContext, scopeId: string, id: string): CalendarAppointmentTypeSnapshot | undefined {
+export function calendarCurrentAppointmentType(context: CalendarReadContext, scopeId: string, id: string): CalendarAppointmentTypeSnapshot | undefined {
   const pointer = context.db.get('_calendar_appointment_type_current', appointmentPointerId(scopeId, id));
   if (!pointer) return undefined;
   if (pointer.scope_id !== scopeId || pointer.appointment_id !== id) throw new CalendarError('CALENDAR_STATE_INVALID');
@@ -118,7 +119,7 @@ export function bindCalendarHoldType(context: DatabaseWriteCommandContext, scope
   context.db.createStrict('_calendar_hold_type_bindings', { id: holdBindingId(scopeId, id), scope_id: scopeId, hold_id: id,
     type_id: appointmentType.id, type_revision: appointmentType.revision });
 }
-export function calendarHoldAppointmentType(context: DatabaseWriteCommandContext, scopeId: string, id: string): CalendarAppointmentTypeSnapshot | undefined {
+export function calendarHoldAppointmentType(context: CalendarReadContext, scopeId: string, id: string): CalendarAppointmentTypeSnapshot | undefined {
   const binding = context.db.get('_calendar_hold_type_bindings', holdBindingId(scopeId, id)) as HoldBindingRow | null;
   if (!binding) return undefined;
   if (binding.scope_id !== scopeId || binding.hold_id !== id) throw new CalendarError('CALENDAR_STATE_INVALID');

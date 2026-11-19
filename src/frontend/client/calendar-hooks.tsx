@@ -11,6 +11,11 @@ import type { CalendarAppointmentPage, CalendarAppointmentView, CalendarAppointm
   CalendarLocationPage, CalendarLocationPageQuery, CalendarLocationView, CalendarResourceLocationsView, CalendarResourceLocationPolicyView, CalendarVisitLocationQuery,
   CalendarRangeQuery, CalendarDateRangeQuery, CalendarResourcePage, CalendarResourcePageQuery, CalendarWatchOptions, CalendarWatchUpdate } from '../../calendar/contracts';
 import { CalendarReadError } from './calendar-mutation';
+import type { CalendarOverrideGrantView } from '../../calendar/contracts';
+export function useCalendarOverrideGrant(resourceId: string | null, userId: string | null, readRevision?: string | number): CalendarReadResult<CalendarOverrideGrantView> {
+  return useCalendarLive<CalendarOverrideGrantView>(resourceId === null || userId === null ? null : JSON.stringify(['override-grant', resourceId, userId, readRevision ?? null]),
+    (client, listener, options) => client.calendar.overrides.grants.watch(resourceId!, userId!, listener, options));
+}
 export interface CalendarReadResult<T> {
   readonly status: 'idle' | 'loading' | 'ready' | 'error';
   readonly value: T | null;

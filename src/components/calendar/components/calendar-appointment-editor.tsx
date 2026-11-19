@@ -20,13 +20,15 @@ import { isEnded } from '../models/appointment-presentation';
 import { calendarAddDates, calendarLocalDate } from '../models/calendar-local-date';
 import { CalendarCivilDateField } from './calendar-civil-date-field';
 import { calendarVisitIntervalProjection } from '../models/calendar-visit-interval-model';
+import { useCalendarAppointmentReview } from './use-calendar-appointment-review';
+import type { CalendarAppointmentReviewController } from '../models/calendar-appointment-review-controller';
 import { CalendarAppointmentResourceFields } from './calendar-appointment-resource-fields';
 import { CalendarCoreTypeFields } from './calendar-core-type-fields';
 import { CalendarVisitFields } from './calendar-visit-fields';
 import { useCalendarParticipantSelection } from './calendar-connected-participant-fields';
 import { useCalendarDraftMutation } from './use-calendar-draft-mutation';
 import { TimePicker } from './time-picker';
-import { Button, Group, Stack, Switch, Text, TextInput, Textarea } from './calendar-ui';
+import { Button, Checkbox, Group, Stack, Switch, Text, TextInput, Textarea } from './calendar-ui';
 
 export interface CalendarAppointmentEditorProps {
   readonly session: CalendarAppointmentEditorSession;
@@ -39,6 +41,8 @@ export interface CalendarAppointmentEditorProps {
   readonly allDayAppointments?: boolean;
   /** Native discovery capability; absent older servers retain the legacy location query shape. */
   readonly locationPolicies?: boolean;
+  /** Discovery only; current independent object grants are decided by native review. */
+  readonly appointmentOverrides?: boolean;
   readonly maxResources?: number;
   readonly maxParticipants?: number;
   onAuthorityLost(): void;
@@ -119,13 +123,14 @@ function CurrentCalendarAppointmentEditor(props: CalendarAppointmentEditorProps 
   const locationSelectable = calendarVisitSelectionCurrent(draft, locations.value, acceptedLocation);
   const [retired, setRetired] = useState(false);
   const currentAdmission = useRef({ authorityLost: true });
+  const reviewOwner = useRef<CalendarAppointmentReviewController | null>(null);
   const current = (context: CalendarDraftMutationContext) => alive.current && !context.signal.aborted && isOwnerCurrent()
     && owner.current.client === client && owner.current.contextClient === client && owner.current.scopeKey === scopeKey
     && !currentAdmission.current.authorityLost && calendarScopeReadable(client, scopeKey);
   const { controller, state } = useCalendarDraftMutation({ isCurrent: current,
     readReceipt: (key, signal) => client.calendar.receipts.get(key, { signal }),
-    onUnknown: props.onUnknown, onRejected: props.onRejected, onAccepted: props.onAccepted,
-    onAuthorityLost: () => { setRetired(true); props.onAuthorityLost(); } });
+    onUnknown: props.onUnknown, onRejected: request => { reviewOwner.current?.invalidate(); return props.onRejected(request); }, onAccepted: props.onAccepted,
+    onAuthorityLost: () => { setRetired(true); return props.onAuthorityLost(); } });
   const phaseRef = useRef(state.phase); phaseRef.current = state.phase;
   const editable = state.phase === 'editing' || state.phase === 'submitting';
   const readDenied = [authority, management, types, ...(draft.visitMode === 'in-person' ? [locations] : []),
@@ -212,26 +217,56 @@ function CurrentCalendarAppointmentEditor(props: CalendarAppointmentEditorProps 
       record, participantsEnabled: participantMode.enabled, initialParticipants: participantBase,
       maxResources: props.maxResources, maxParticipants: props.maxParticipants });
     if ('error' in shaped) { setValidationError(shaped.error); return; }
-    const request: CalendarPendingRequest = { key: 'calendar-ui:' + crypto.randomUUID(),
+    const selectedReview = review.submission(context, reviewBasis ?? 'invalid');
+    if (!selectedReview) { setValidationError('Review the current draft explicitly or cancel exception review before saving.'); return; }
+    const request: CalendarPendingRequest = { key: selectedReview.key ?? 'calendar-ui:' + crypto.randomUUID(),
       operation: shaped.kind === 'update' ? 'appointment.updated' : 'appointment.created',
       ...(record ? { id: record.id, expectedRevision: record.revision } : {}) };
     setValidationError(null);
     void controller.submit(context, request, () => shaped.kind === 'update'
-      ? client.calendar.appointments.update(record!.id, shaped.input, { idempotencyKey: request.key, expectedRevision: record!.revision, signal: context.signal })
-      : client.calendar.appointments.create(shaped.input, { idempotencyKey: request.key, signal: context.signal }));
+      ? client.calendar.appointments.update(record!.id, shaped.input, { idempotencyKey: request.key, expectedRevision: record!.revision, signal: context.signal,
+        ...(selectedReview.override ? { override: selectedReview.override } : {}) })
+      : client.calendar.appointments.create(shaped.input, { idempotencyKey: request.key, signal: context.signal,
+        ...(selectedReview.override ? { override: selectedReview.override } : {}) }));
   }
   const [validationError, setValidationError] = useState<string | null>(null);
   const shaped = calendarAppointmentDraftInput({ draft, timeZone, types: types.value, record,
     participantsEnabled: participantMode.enabled, initialParticipants: participantBase, maxResources: props.maxResources, maxParticipants: props.maxParticipants });
-  const disabled = state.phase !== 'editing' || detailPending || stale || ended || !catalogCurrent || !newResourcesCurrent
+  const baseDisabled = detailPending || stale || ended || !catalogCurrent || !newResourcesCurrent
     || !participantReady || !exactInterval || 'error' in shaped || !!record && !changed;
+  const reviewBasis = props.appointmentOverrides === true && !baseDisabled && 'input' in shaped ? JSON.stringify([scopeKey, session.key,
+    record?.id ?? null, record?.revision ?? null, shaped.kind, shaped.input, readRevision ?? null,
+    resources.filter(resource => draft.resourceIds.includes(resource.id)).map(resource => [resource.id, resource.revision, resource.active])]) : null;
+  const currentReviewBasis = useRef(reviewBasis); currentReviewBasis.current = reviewBasis;
+  const { review, state: reviewState } = useCalendarAppointmentReview({
+    isCurrent: (context, basis) => alive.current && !context.signal.aborted && isOwnerCurrent() && owner.current.contextClient === client
+      && !latest.current.authorityLost && ['editing', 'submitting'].includes(phaseRef.current) && props.appointmentOverrides === true && calendarScopeReadable(client, scopeKey) && currentReviewBasis.current === basis,
+    createKey: () => 'calendar-ui:' + crypto.randomUUID(), onEdit: () => controller.edit(),
+    onAuthorityLost: () => { setRetired(true); return props.onAuthorityLost(); },
+  }, reviewBasis);
+  reviewOwner.current = review;
+  function beginReview(context: ModalContext<CalendarCommandReceipt>) {
+    if (phaseRef.current !== 'editing' || !reviewBasis || baseDisabled || !current(context) || !('input' in shaped)) return;
+    // This is a proposed attempt only: no mutation recovery identity is registered here.
+    const captured = structuredClone(shaped), id = record?.id, revision = record?.revision;
+    void review.review(context, reviewBasis, (key, signal) => captured.kind === 'update'
+      ? client.calendar.appointments.reviewUpdate(id!, captured.input, { idempotencyKey: key, expectedRevision: revision!, signal })
+      : client.calendar.appointments.reviewCreate(captured.input, { idempotencyKey: key, signal }));
+  }
+  const reviewEngaged = reviewState.phase !== 'idle';
+  const reviewReady = reviewState.phase === 'ready' && reviewState.basis === reviewBasis;
+  const validReason = !!reviewState.reason.trim() && reviewState.reason.length <= 1024 && !/[\u0000-\u001f\u007f]/.test(reviewState.reason);
+  const expiredReview = reviewState.result?.status === 'reviewable' && Date.parse(reviewState.result.expiresAt) <= Date.now();
+  const reviewedSaveReady = !reviewEngaged || reviewReady && (reviewState.result?.status === 'clear'
+    || reviewState.result?.status === 'reviewable' && reviewState.selected && validReason && !expiredReview);
+  const disabled = state.phase !== 'editing' || baseDisabled || !reviewedSaveReady;
   const buffers = { before: draft.bufferBeforeMinutes ?? record?.bufferBeforeMinutes ?? typeSelection.snapshot?.bufferBeforeMinutes ?? 0,
     after: draft.bufferAfterMinutes ?? record?.bufferAfterMinutes ?? typeSelection.snapshot?.bufferAfterMinutes ?? 0 };
   const times = Array.from({ length: 96 }, (_, index) => index * 15);
   const error = state.error ?? validationError;
   if (authorityLost) return null;
   return <ControlledModal<CalendarCommandReceipt> open identityKey={session.key} busy={state.busy}
-    dirty={changed || state.phase === 'unknown' || state.phase === 'accepted'} error={error}
+    dirty={changed || reviewState.selected || !!reviewState.reason || state.phase === 'unknown' || state.phase === 'accepted'} error={error}
     onOpenChange={open => { if (!open) props.onClose(); }} descriptor={{ title: record ? 'Edit appointment' : 'New appointment', trigger: session.trigger,
       allowEditingWhilePending: true,
       size: 'sm', customSize: { width: 'var(--calendar-size-420)' }, className: 'calendar-managed-dialog calendar-managed-radius-md',
@@ -274,6 +309,24 @@ function CurrentCalendarAppointmentEditor(props: CalendarAppointmentEditorProps 
                     : 'Choose a valid interval and type to filter locations by occupied coverage. Final eligibility is checked when saved.'}
                 disabled={!editable} canGoBack={locationHistory.length > 0} onChange={change} onRetry={locations.refresh}
                 onPrevious={() => locationPage(false)} onNext={() => locationPage(true)} />,
+              conflictControl: (props.appointmentOverrides === true && state.rejectionCode === 'CALENDAR_BOOKING_CONFLICT' || reviewEngaged) ? <Stack gap="xs" aria-label="Appointment overlap review">
+                <Text size="xs">A scheduling conflict does not grant an exception. Only current native review can offer an appointment-overlap choice.</Text>
+                {reviewState.phase === 'loading' && <Text size="xs" role="status">Reviewing this exact draft… No mutation has been submitted.</Text>}
+                {reviewReady && reviewState.result?.status === 'clear' && <Text size="xs" role="status">No reviewed overlap requires an exception. A normal save still rechecks every requirement.</Text>}
+                {reviewReady && reviewState.result?.status === 'non-reviewable' && <Text size="xs" role="status">This request cannot receive an overlap exception. Change the appointment or choose another time.</Text>}
+                {reviewReady && reviewState.result?.status === 'reviewable' && <>
+                  <Checkbox label="Allow this reviewed appointment overlap" checked={reviewState.selected} disabled={state.phase !== 'editing' || expiredReview}
+                    onChange={selected => review.choose(context, reviewBasis!, selected)} />
+                  <Text size="xs" c="dimmed">The reason is private. This choice does not waive any other booking requirement.</Text>
+                </>}
+                {(reviewState.result?.status === 'reviewable' || !!reviewState.reason) && <TextInput label="Private override reason" aria-label="Private override reason" maxLength={1024}
+                  value={reviewState.reason} disabled={!editable || !reviewBasis} onChange={event => review.reason(context, reviewBasis!, event.currentTarget.value)} />}
+                {!!reviewState.reason && reviewState.result?.status !== 'reviewable' && <Text size="xs" c="dimmed">Your private reason draft is retained but is not submitted by an ordinary save. A fresh reviewed choice is required.</Text>}
+                {reviewState.error && <Text size="xs" role="status">{reviewState.error}</Text>}
+                {expiredReview && <Text size="xs" role="status">The review expired. Review this draft again.</Text>}
+                <Group gap="xs"><Button size="xs" variant="default" disabled={state.phase !== 'editing' || baseDisabled || props.appointmentOverrides !== true || reviewState.phase === 'loading'} onClick={() => beginReview(context)}>Review exception availability</Button>
+                  {reviewEngaged && <Button size="xs" variant="subtle" disabled={state.phase !== 'editing'} onClick={() => { if (phaseRef.current === 'editing' && current(context)) review.cancel(); }}>Cancel exception review</Button>}</Group>
+              </Stack> : undefined,
               repeatControl: <Text size="xs" c="dimmed">One-off appointment · recurrence unavailable</Text>,
               appearanceControl: <Text size="xs" c="dimmed">Per-appointment appearance and attention unavailable</Text>,
               notesControl: <Textarea aria-label="Notes unavailable" disabled value="" placeholder="Notes unavailable · not saved" size="xs" variant="unstyled" />,
@@ -287,7 +340,8 @@ function CurrentCalendarAppointmentEditor(props: CalendarAppointmentEditorProps 
             }} footer={<><Button variant="default" size="xs" onClick={() => { void context.requestClose('cancel'); }}>Close</Button>
               <Group gap="xs">{state.phase === 'unknown' && state.request && <Text size="xs">Original request · {state.request.key}</Text>}
                 {state.phase === 'unknown' ? <Button size="xs" disabled={state.busy} onClick={() => { void controller.reconcile(context); }}>Reconcile original request</Button>
-                  : <Button size="xs" type="submit" disabled={disabled}>{state.phase === 'submitting' ? 'Submitting…' : state.phase === 'accepted' ? 'Submitted revision accepted' : record ? 'Save appointment' : 'Create appointment'}</Button>}</Group></>} />
+                  : <Button size="xs" type="submit" disabled={disabled}>{state.phase === 'submitting' ? 'Submitting…' : state.phase === 'accepted' ? 'Submitted revision accepted'
+                    : reviewReady && reviewState.result?.status === 'reviewable' && reviewState.selected ? 'Save with reviewed overlap' : record ? 'Save appointment' : 'Create appointment'}</Button>}</Group></>} />
         </form>,
     }} />;
 }

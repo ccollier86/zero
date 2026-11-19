@@ -18,6 +18,7 @@ export const CALENDAR_INTEGRATION_HISTORICAL_REALMS = Object.freeze([
   Object.freeze({ version: '016', fingerprint: 'sha256:2b0e98dabe59b6cf27edf49b3bb37b3f11dc6b1e6d0274c6a590db5a3ba601b5' }),
   Object.freeze({ version: '016', fingerprint: 'sha256:fcfd500b5352a27f6bc43d9122c1af8cdafc85680994f4191ee75903485179f8' }),
   Object.freeze({ version: '017', fingerprint: 'sha256:d31941943b5362c8437134cf2d319a527e3717f1d111fca40e495a7604244da0' }),
+  Object.freeze({ version: '018', fingerprint: 'sha256:de6ee805fc2afc7c49e8095c2c2dec4932ba2dac6770b5bfc4b6c8998a7811cf' }),
 ]);
 
 /** Historical contract compatibility only; current physical owner proof stays separate. */

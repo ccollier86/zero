@@ -1,4 +1,5 @@
 /** Private visit identity; labels and regions always resolve retained location history. */
+import type { CalendarReadContext } from './calendar-read-store';
 import type { DatabaseReadQueryContext, DatabaseWriteCommandContext } from '../databases/database-realm';
 import type { Row } from '../sync/types';
 import type { CalendarActor, CalendarVisitInput, CalendarVisitSnapshot } from './contracts';
@@ -26,11 +27,11 @@ export function sameCalendarVisit(left: CalendarVisitInput | undefined, right: C
     && left.location.id === right.location.id && left.location.revision === right.location.revision);
 }
 /** Assignment intersection precedes every client-selected catalog lookup, even for global managers. */
-export function assertCalendarVisitPolicy(context: DatabaseWriteCommandContext, actor: CalendarActor, resourceIds: readonly string[], visit: CalendarVisitInput | undefined): void {
+export function assertCalendarVisitPolicy(context: CalendarReadContext, actor: CalendarActor, resourceIds: readonly string[], visit: CalendarVisitInput | undefined): void {
   assertCalendarVisitPolicyForScope(context, actor.scopeId, resourceIds, visit);
 }
 /** Private policy core only. A scope is not authorization; callers admit every resource first. */
-export function assertCalendarVisitPolicyForScope(context: DatabaseWriteCommandContext, scopeId: string, resourceIds: readonly string[], visit: CalendarVisitInput | undefined): void {
+export function assertCalendarVisitPolicyForScope(context: CalendarReadContext, scopeId: string, resourceIds: readonly string[], visit: CalendarVisitInput | undefined): void {
   if (visit?.mode !== 'in-person') return;
   for (const resourceId of resourceIds) if (!currentCalendarResourceLocations(context, scopeId, resourceId).includes(visit.location.id)) throw new CalendarError('CALENDAR_VISIT_CONFLICT');
 }
@@ -40,18 +41,18 @@ function snapshot(row: VisitRow, location?: LocationHistoryRow): CalendarVisitSn
   if (row.visit_mode !== 'in-person' || !location) throw new CalendarError('CALENDAR_STATE_INVALID');
   return { mode: 'in-person', location: { id: location.location_id, revision: location.location_revision, label: location.label, region: location.region } };
 }
-function commandSnapshot(context: DatabaseWriteCommandContext, scopeId: string, row: VisitRow): CalendarVisitSnapshot | undefined {
+function commandSnapshot(context: CalendarReadContext, scopeId: string, row: VisitRow): CalendarVisitSnapshot | undefined {
   if (row.visit_mode !== 'in-person') return snapshot(row);
   const history = context.db.find('_calendar_location_history', { filters: [eq('scope_id', scopeId), eq('location_id', String(row.location_id)), eq('location_revision', calendarInteger(row.location_revision, 1))], limit: 2 }) as LocationHistoryRow[];
   if (history.length !== 1) throw new CalendarError('CALENDAR_STATE_INVALID');
   return snapshot(row, history[0]);
 }
 /** New admission only; receipt replays never consult current catalog state. */
-export function assertCalendarBookingVisit(context: DatabaseWriteCommandContext, actor: CalendarActor, resourceIds: readonly string[], visit: CalendarVisitInput | undefined): CalendarVisitSnapshot | undefined {
+export function assertCalendarBookingVisit(context: CalendarReadContext, actor: CalendarActor, resourceIds: readonly string[], visit: CalendarVisitInput | undefined): CalendarVisitSnapshot | undefined {
   return assertCalendarBookingVisitForScope(context, actor.scopeId, resourceIds, visit);
 }
 /** Private selected-generation admission. It neither impersonates a user nor authorizes a resource. */
-export function assertCalendarBookingVisitForScope(context: DatabaseWriteCommandContext, scopeId: string, resourceIds: readonly string[], visit: CalendarVisitInput | undefined): CalendarVisitSnapshot | undefined {
+export function assertCalendarBookingVisitForScope(context: CalendarReadContext, scopeId: string, resourceIds: readonly string[], visit: CalendarVisitInput | undefined): CalendarVisitSnapshot | undefined {
   assertCalendarVisitPolicyForScope(context, scopeId, resourceIds, visit);
   if (visit?.mode !== 'in-person') return visit;
   const current = context.db.get('calendar_locations', visit.location.id);
@@ -68,12 +69,12 @@ function fields(visit: CalendarVisitInput | undefined) {
 }
 function pointerId(scopeId: string, id: string) { return calendarHash(['appointment.visit', scopeId, id]); }
 function holdId(scopeId: string, id: string) { return calendarHash(['hold.visit', scopeId, id]); }
-export function calendarAppointmentVisitAtRevision(context: DatabaseWriteCommandContext, scopeId: string, id: string, revision: number): CalendarVisitSnapshot | undefined {
+export function calendarAppointmentVisitAtRevision(context: CalendarReadContext, scopeId: string, id: string, revision: number): CalendarVisitSnapshot | undefined {
   const rows = context.db.find('_calendar_appointment_visit_bindings', { filters: [eq('scope_id', scopeId), eq('appointment_id', id),
     { type: 'field', field: 'appointment_revision', operator: 'lte', value: revision }], order: [{ field: 'appointment_revision', direction: 'desc' }], limit: 1 }) as AppointmentVisitRow[];
   return rows[0] ? commandSnapshot(context, scopeId, rows[0]) : undefined;
 }
-export function calendarCurrentAppointmentVisit(context: DatabaseWriteCommandContext, scopeId: string, id: string): CalendarVisitSnapshot | undefined {
+export function calendarCurrentAppointmentVisit(context: CalendarReadContext, scopeId: string, id: string): CalendarVisitSnapshot | undefined {
   const pointer = context.db.get('_calendar_appointment_visit_current', pointerId(scopeId, id));
   if (!pointer) return undefined;
   if (pointer.scope_id !== scopeId || pointer.appointment_id !== id) throw new CalendarError('CALENDAR_STATE_INVALID');
@@ -91,7 +92,7 @@ export function bindCalendarAppointmentVisit(context: DatabaseWriteCommandContex
 export function bindCalendarHoldVisit(context: DatabaseWriteCommandContext, scopeId: string, id: string, visit: CalendarVisitInput): void {
   context.db.createStrict('_calendar_hold_visit_bindings', { id: holdId(scopeId, id), scope_id: scopeId, hold_id: id, ...fields(visit) });
 }
-export function calendarHoldVisit(context: DatabaseWriteCommandContext, scopeId: string, id: string): CalendarVisitSnapshot | undefined {
+export function calendarHoldVisit(context: CalendarReadContext, scopeId: string, id: string): CalendarVisitSnapshot | undefined {
   const row = context.db.get('_calendar_hold_visit_bindings', holdId(scopeId, id));
   if (!row) return undefined;
   if (row.scope_id !== scopeId || row.hold_id !== id) throw new CalendarError('CALENDAR_STATE_INVALID');

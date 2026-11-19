@@ -17,11 +17,12 @@ import { CALENDAR_INTEGRATION_OPERATOR_TABLES } from './realm-integration-operat
 import { CALENDAR_APPOINTMENT_UPDATE_TABLES } from './realm-appointment-update-migration';
 import { calendarAppointmentAllDayTables } from './realm-appointment-all-day-migration';
 import { calendarResourceLocationPolicyTables } from './realm-location-policy-migration';
+import { calendarOverrideTables } from './realm-overrides-migration';
 const checkpoints = [CALENDAR_TABLES, CALENDAR_SCHEDULING_TABLES, CALENDAR_HOLD_TABLES, CALENDAR_LOCATION_TABLES, CALENDAR_TYPE_TABLES,
   CALENDAR_LIFECYCLE_TABLES, CALENDAR_VISIT_TABLES, CALENDAR_PARTICIPANT_TABLES, CALENDAR_AVAILABILITY_POLICY_TABLES, CALENDAR_INTEGRATION_TABLES,
   CALENDAR_INTEGRATION_OWNERSHIP_TABLES, CALENDAR_INTEGRATION_CONTROL_TABLES, CALENDAR_INTEGRATION_QUEUE_TABLES,
   CALENDAR_INTEGRATION_INSPECTION_TABLES, CALENDAR_INTEGRATION_OPERATOR_TABLES, CALENDAR_APPOINTMENT_UPDATE_TABLES, calendarAppointmentAllDayTables(),
-  calendarResourceLocationPolicyTables()];
+  calendarResourceLocationPolicyTables(), calendarOverrideTables()];
 export const CALENDAR_MIGRATION_TABLE_STAGES: readonly DatabaseRealmMigrationTableStage[] = Object.freeze(checkpoints.map((tables, index) => Object.freeze({
   version: String(index + 1).padStart(3, '0'),
   tables: Object.freeze(Object.fromEntries(Object.entries(tables).map(([name, definition]) => [name, Object.freeze({ ...definition,

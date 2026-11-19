@@ -1,6 +1,9 @@
 /** Private, scope-admitted calendar contracts shared by native server and browser facades. */
 import type { CalendarAvailabilityPolicyInput, CalendarAvailabilityPolicyView } from './working-hours-contracts';
 import type { CalendarResourceLocationPolicyInput, CalendarResourceLocationPolicyView } from './location-policy-contracts';
+import type { CalendarAppointmentOverride, CalendarOverrideReview, CalendarOverrideAuthority, CalendarOverrideGrantInput, CalendarOverrideGrantView } from './override-contracts';
+export type { CalendarAppointmentOverride, CalendarOverrideReview, CalendarOverrideAuthority, CalendarOverrideCategory,
+  CalendarOverrideGrantInput, CalendarOverrideGrantView } from './override-contracts';
 export type { CalendarResourceLocationPolicyInput, CalendarResourceLocationPolicyView,
   CalendarResourceLocationPolicyWindow, CalendarResourceLocationPolicyAssignment } from './location-policy-contracts';
 export type { CalendarAvailabilityPolicyInput, CalendarAvailabilityPolicyView, CalendarExplicitAvailabilityPolicyInput,
@@ -12,6 +15,8 @@ export interface CalendarActor {
   /** Trusted service-admitted capability, never selected by HTTP input. */
   readonly manageAll: boolean;
   readonly createOwn: boolean;
+  /** Trusted current capability projection; absent means disabled. Never accepted from browser input. */
+  readonly overrides?: CalendarOverrideAuthority;
 }
 export type CalendarResourceKind = 'person' | 'room' | 'equipment';
 /** Current scoped UI discovery only; individual resource/command admission remains authoritative. */
@@ -25,6 +30,9 @@ export interface CalendarCapabilities {
   readonly allDayAppointments?: boolean;
   /** Absent on older servers. Authoritative effective assignment policy/discovery is available. */
   readonly locationPolicies?: boolean;
+  /** Discovery only: independent per-resource grants and final admission remain mandatory. */
+  readonly appointmentOverrides?: boolean;
+  readonly overrideGrants?: boolean;
   readonly limits: { readonly maxRangeDays: number; readonly maxPageSize: number; readonly maxResources: number; readonly maxParticipants: number };
 }
 /** Native account identity only. Calendar files never duplicate Guardian profiles or credentials. */
@@ -249,6 +257,7 @@ export interface CalendarCommandReceipt {
   readonly requestId: string;
   readonly operation: 'resource.created' | 'resource.grant-changed' | 'resource.availability-changed' | 'resource.locations-changed'
     | 'resource.location-policy-changed'
+    | 'resource.override-grant-changed'
     | 'resource.availability-policy-changed'
     | 'location.created' | 'location.updated'
     | 'type.created' | 'type.updated' | 'resource.types-changed'
@@ -358,6 +367,8 @@ export interface CalendarRequestOptions {
 export interface CalendarControlOptions extends CalendarRequestOptions {
   readonly expectedRevision: number;
 }
+export interface CalendarAppointmentRequestOptions extends CalendarRequestOptions { readonly override?: CalendarAppointmentOverride }
+export interface CalendarAppointmentControlOptions extends CalendarControlOptions { readonly override?: CalendarAppointmentOverride }
 export interface CalendarCancellationOptions extends CalendarControlOptions { readonly reason?: string }
 export interface CalendarReadOptions { readonly signal?: AbortSignal }
 export interface CalendarResourcePageQuery extends CalendarLocationPageQuery {
@@ -389,6 +400,14 @@ export interface CalendarWatchOptions extends CalendarReadOptions {
   readonly onError?: (error: unknown) => void;
 }
 export interface ScopedCalendar {
+  readonly overrides: {
+    readonly grants: {
+      get(resourceId: string, userId: string, options?: CalendarReadOptions): Promise<CalendarOverrideGrantView>;
+      replace(resourceId: string, userId: string, grants: CalendarOverrideGrantInput, options: CalendarControlOptions): Promise<CalendarCommandReceipt>;
+      watch(resourceId: string, userId: string, listener: (grant: CalendarOverrideGrantView, update?: CalendarWatchUpdate) => void,
+        options?: CalendarWatchOptions): () => void;
+    };
+  };
   readonly capabilities: {
     get(options?: CalendarReadOptions): Promise<CalendarCapabilities>;
     watch(listener: (capabilities: CalendarCapabilities, update?: CalendarWatchUpdate) => void, options?: CalendarWatchOptions): () => void;
@@ -491,9 +510,11 @@ export interface ScopedCalendar {
     /** Only all-day appointments, matched on their authoritative date labels. */
     queryDates(query: CalendarDateRangeQuery, options?: CalendarReadOptions): Promise<CalendarAppointmentPage>;
     get(id: string, options?: CalendarReadOptions): Promise<CalendarAppointmentView>;
-    create(input: CalendarAppointmentCreateInput, options: CalendarRequestOptions): Promise<CalendarCommandReceipt>;
+    create(input: CalendarAppointmentCreateInput, options: CalendarAppointmentRequestOptions): Promise<CalendarCommandReceipt>;
+    reviewCreate(input: CalendarAppointmentCreateInput, options: CalendarRequestOptions): Promise<CalendarOverrideReview>;
+    reviewUpdate(id: string, patch: CalendarAppointmentUpdateInput, options: CalendarControlOptions): Promise<CalendarOverrideReview>;
     reschedule(id: string, input: CalendarRescheduleInput, options: CalendarControlOptions): Promise<CalendarCommandReceipt>;
-    update(id: string, input: CalendarAppointmentUpdateInput, options: CalendarControlOptions): Promise<CalendarCommandReceipt>;
+    update(id: string, input: CalendarAppointmentUpdateInput, options: CalendarAppointmentControlOptions): Promise<CalendarCommandReceipt>;
     cancel(id: string, options: CalendarCancellationOptions): Promise<CalendarCommandReceipt>;
     transitions(id: string, options?: CalendarReadOptions): Promise<CalendarAppointmentTransitions>;
     transition(id: string, input: CalendarAppointmentTransitionInput, options: CalendarControlOptions): Promise<CalendarCommandReceipt>;

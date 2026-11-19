@@ -2,6 +2,7 @@
  * Call resolve only AFTER original receipt/CAS admission. Omitted intervals use
  * the retained fact directly; identical authored all-day tuples reuse it too.
  */
+import type { CalendarReadContext } from './calendar-read-store';
 import type { DatabaseReadQueryContext, DatabaseWriteCommandContext } from '../databases/database-realm';
 import type { Row } from '../sync/types';
 import { normalizeCalendarAllDayInterval, type CalendarAllDayInterval } from './all-day-time';
@@ -75,7 +76,7 @@ function stored(parent: Row, pointer: Row | null, history: Row | null, latest: R
   } catch { return invalid(); }
 }
 /** Current017 only: absence is corruption, never a fallback to an old timed schema. */
-export function calendarAppointmentTime(context: DatabaseWriteCommandContext, parent: Row): CalendarAppointmentTimeFact {
+export function calendarAppointmentTime(context: CalendarReadContext, parent: Row): CalendarAppointmentTimeFact {
   try {
     if (context.db.get(CALENDAR_APPOINTMENT_TIME_STATE, 'application')?.version !== 17) invalid();
     const pointer = context.db.get(CALENDAR_APPOINTMENT_TIME_CURRENT, pointerId(String(parent.scope_id), String(parent.id)));
@@ -87,12 +88,12 @@ export function calendarAppointmentTime(context: DatabaseWriteCommandContext, pa
 }
 /** Precise pre017 compatibility for original timed command paths. A retained
  * kind or any017 table makes missing metadata corruption, never timed fallback. */
-export function calendarCurrentAppointmentTime(context: DatabaseWriteCommandContext, parent: Row): CalendarAppointmentTimeFact {
+export function calendarCurrentAppointmentTime(context: CalendarReadContext, parent: Row): CalendarAppointmentTimeFact {
   if (parent.time_kind !== undefined || context.db.hasTable(CALENDAR_APPOINTMENT_TIME_STATE)
     || context.db.hasTable(CALENDAR_APPOINTMENT_TIME_CURRENT) || context.db.hasTable(CALENDAR_APPOINTMENT_TIME_HISTORY)) return calendarAppointmentTime(context, parent);
   try { return Object.freeze({ kind: 'timed-v1', interval: projection(parent, 'timed-v1') }); } catch { return invalid(); }
 }
-export function requireCalendarAppointmentTimeStorage(context: DatabaseWriteCommandContext): void {
+export function requireCalendarAppointmentTimeStorage(context: CalendarReadContext): void {
   if (!context.db.hasTable(CALENDAR_APPOINTMENT_TIME_STATE)) throw new CalendarError('CALENDAR_NOT_READY');
   if (context.db.get(CALENDAR_APPOINTMENT_TIME_STATE, 'application')?.version !== 17) invalid();
 }

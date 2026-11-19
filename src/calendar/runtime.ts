@@ -23,7 +23,7 @@ import { calendarRealm } from './realm';
 import { calendarActor, calendarSelection, CALENDAR_LIMITS } from './realm-model';
 import { CALENDAR_DEFAULT_LIFECYCLE_POLICY, calendarLifecyclePolicyFields, requireCalendarLifecycleManager } from './lifecycle-model';
 import type { CalendarServiceBroker } from './service';
-import { calendarAppointmentTypeInput, calendarAppointmentTypePageQuery, calendarAppointmentUpdateInput, calendarLocationInput, calendarPageQuery, calendarRange, calendarDateRange, calendarResourcePageQuery, calendarVisitLocationQuery } from './service-validation';
+import { calendarAppointmentTypeInput, calendarAppointmentTypePageQuery, calendarAppointmentTransportInput, calendarLocationInput, calendarPageQuery, calendarRange, calendarDateRange, calendarResourcePageQuery, calendarVisitLocationQuery } from './service-validation';
 import { normalizeCalendarInstant, normalizeCalendarTimeZone } from './time';
 import { calendarHash, calendarInteger, calendarKey, calendarRecord, calendarScope, calendarText, calendarValue } from './validation';
 import { calendarParticipantReferences, requireCalendarParticipantManager } from './participant-bindings';
@@ -33,6 +33,7 @@ import type { CalendarIntegrationOperatorRequestReceipt } from './integration-op
 import type { DatabaseOpenAdmission } from '../databases/database-open-admission';
 import { CalendarIntegrationWakeCatalog, installCalendarIntegrationWakeCatalog, type CalendarIntegrationWakeCoverage } from './integration-wake-catalog';
 import { normalizeCalendarResourceLocationPolicy } from './location-policy-model';
+import { normalizeCalendarAppointmentOverride, normalizeCalendarOverrideGrant } from './override-model';
 
 export interface CalendarRuntimeSource {
   prepare(owner: CalendarOwnerRecord): void;
@@ -53,11 +54,13 @@ export interface CalendarRuntimeOptions {
   readonly integrationWake?: true;
 }
 const QUERIES = new Set(['calendar.resources', 'calendar.busy', 'calendar.appointments', 'calendar.appointmentsByDate', 'calendar.appointment',
+  'calendar.overrideGrant', 'calendar.appointmentReviewCreate', 'calendar.appointmentReviewUpdate',
   'calendar.locations', 'calendar.location', 'calendar.resourceLocations', 'calendar.resourceLocationPolicy', 'calendar.locationAssignmentWitnesses', 'calendar.visitLocations',
   'calendar.types', 'calendar.type', 'calendar.resourceTypes', 'calendar.lifecycle', 'calendar.appointmentTransitions',
   'calendar.availability', 'calendar.availabilityPolicy', 'calendar.blocks', 'calendar.block', 'calendar.holds', 'calendar.hold', 'calendar.receipt',
   'calendar.appointmentParticipants', 'calendar.holdParticipants', 'calendar.holdParticipantAdmission']);
 const COMMANDS = new Set(['calendar.resource.create', 'calendar.resource.grant', 'calendar.resource.availability', 'calendar.resource.availability-policy',
+  'calendar.resource.override-grant',
   'calendar.location.create', 'calendar.location.replace', 'calendar.resource.locations', 'calendar.resource.location-policy',
   'calendar.type.create', 'calendar.type.replace', 'calendar.resource.types', 'calendar.lifecycle.replace', 'calendar.appointment.transition',
   'calendar.block.create', 'calendar.block.reschedule', 'calendar.block.cancel',
@@ -523,9 +526,33 @@ export class CalendarRuntime implements CalendarServiceBroker {
     if (actor.scopeId !== scopeId) throw new CalendarError('CALENDAR_FORBIDDEN');
     const { actor: _actor, ...query } = body;
     if (name === 'calendar.appointment.update') {
-      const { requestId, id, expectedRevision, ...patch } = query;
+      const { requestId, id, expectedRevision, override, ...patch } = query;
       calendarKey(requestId); calendarKey(id); calendarInteger(expectedRevision, 1);
-      Object.assign(body, calendarAppointmentUpdateInput(patch, this.options.config));
+      Object.assign(body, calendarAppointmentTransportInput(patch, this.options.config, true));
+      if (Object.hasOwn(query, 'override')) body.override = normalizeCalendarAppointmentOverride(override);
+    }
+    if (name === 'calendar.appointment.create') {
+      const { requestId, id, override, ...intent } = query;
+      calendarKey(requestId); calendarKey(id);
+      Object.assign(body, calendarAppointmentTransportInput(intent, this.options.config));
+      if (Object.hasOwn(query, 'override')) body.override = normalizeCalendarAppointmentOverride(override);
+    }
+    if (name === 'calendar.appointmentReviewCreate' || name === 'calendar.appointmentReviewUpdate') {
+      const update = name === 'calendar.appointmentReviewUpdate';
+      const { requestId, id } = query;
+      calendarKey(requestId); calendarKey(id);
+      const intent = { ...query }; delete intent.requestId; delete intent.id;
+      if (update) { calendarInteger(intent.expectedRevision, 1); delete intent.expectedRevision; }
+      Object.assign(body, calendarAppointmentTransportInput(intent, this.options.config, update));
+    }
+    if (name === 'calendar.resource.override-grant') {
+      const { requestId, id, userId, expectedRevision, ...grant } = query;
+      calendarKey(requestId); calendarKey(id); calendarKey(userId); calendarInteger(expectedRevision, 1);
+      Object.assign(body, normalizeCalendarOverrideGrant(grant));
+    }
+    if (name === 'calendar.overrideGrant') {
+      const selected = calendarRecord(query, ['id', 'userId']);
+      return { actor, id: calendarKey(selected.id), userId: calendarKey(selected.userId) };
     }
     if (name === 'calendar.resource.location-policy') {
       const { requestId, id, expectedRevision, locationWitnesses: _witnesses, ...policy } = query;
@@ -544,7 +571,8 @@ export class CalendarRuntime implements CalendarServiceBroker {
     if (name === 'calendar.busy' || name === 'calendar.appointments' || name === 'calendar.blocks' || name === 'calendar.holds') return { ...calendarRange(query, this.options.config), actor };
     if ((name === 'calendar.appointment.create' || name === 'calendar.block.create' || name === 'calendar.hold.acquire')
       && (!Array.isArray(body.resourceIds) || body.resourceIds.length > this.options.config.maxResources)) throw new CalendarError('CALENDAR_INPUT_INVALID');
-    if (name === 'calendar.appointment.participants' || (name === 'calendar.appointment.create' || name === 'calendar.appointment.update' || name === 'calendar.hold.acquire') && Object.hasOwn(body, 'participants')) {
+    if (name === 'calendar.appointment.participants' || (name === 'calendar.appointment.create' || name === 'calendar.appointment.update'
+      || name === 'calendar.appointmentReviewCreate' || name === 'calendar.appointmentReviewUpdate' || name === 'calendar.hold.acquire') && Object.hasOwn(body, 'participants')) {
       requireCalendarParticipantManager(actor);
       const references = calendarParticipantReferences(name === 'calendar.appointment.participants' ? body.references : body.participants);
       if (references.length > this.options.config.maxParticipants) throw new CalendarError('CALENDAR_INPUT_INVALID');
@@ -711,7 +739,14 @@ export function assertCalendarOwnerRecord(record: CalendarOwnerRecord, rootHash:
 }
 /** Never-owned scopes need no SQLite file. Mirror canonical query admission, not an error-to-empty fallback. */
 export function emptyCalendarRead(name: string, input: unknown): unknown {
+  if (name === 'calendar.appointmentReviewCreate' || name === 'calendar.appointmentReviewUpdate') {
+    const r = calendarRecord(input); calendarActor(r.actor); calendarKey(r.requestId); calendarKey(r.id);
+    if (name === 'calendar.appointmentReviewCreate' && calendarSelection(r.resourceIds).length === 0) throw new CalendarError('CALENDAR_INPUT_INVALID');
+    // Review must never provision a source or issue a proof for nonexistent resources.
+    throw new CalendarError('CALENDAR_NOT_FOUND');
+  }
   const fields = name === 'calendar.resources' ? ['actor', 'limit', 'after', 'locationIds', 'regions']
+    : name === 'calendar.overrideGrant' ? ['actor', 'id', 'userId']
     : name === 'calendar.locations' ? ['actor', 'limit', 'after']
     : name === 'calendar.types' ? ['actor', 'limit', 'after', 'resourceIds']
     : name === 'calendar.visitLocations' ? ['actor', 'resourceIds', 'limit', 'after', 'interval']
@@ -722,6 +757,7 @@ export function emptyCalendarRead(name: string, input: unknown): unknown {
     : name === 'calendar.busy' || name === 'calendar.appointments' || name === 'calendar.blocks' || name === 'calendar.holds' ? ['actor', 'resourceIds', 'startAt', 'endAt', 'limit'] : null;
   if (!fields) throw new CalendarError('CALENDAR_INPUT_INVALID');
   const r = calendarRecord(input, fields); calendarActor(r.actor);
+  if (name === 'calendar.overrideGrant') { calendarKey(r.id); calendarKey(r.userId); throw new CalendarError('CALENDAR_NOT_FOUND'); }
   if (name === 'calendar.appointmentParticipants' || name === 'calendar.holdParticipants') {
     calendarKey(r.id); requireCalendarParticipantManager(calendarActor(r.actor)); throw new CalendarError('CALENDAR_NOT_FOUND');
   }

@@ -1,4 +1,5 @@
 /** Source policy writes freeze bounded UTC windows. Booking reads only the indexed current generation. */
+import type { CalendarReadContext } from './calendar-read-store';
 import type { DatabaseReadQueryContext, DatabaseWriteCommandContext } from '../databases/database-realm';
 import type { Row } from '../sync/types';
 import type { CalendarAvailabilityInput } from './contracts';
@@ -47,7 +48,7 @@ function source(row: PolicyHistory): CalendarAvailabilityPolicyInput {
     return policy;
   } catch { throw new CalendarError('CALENDAR_STATE_INVALID'); }
 }
-function writerPointer(context: DatabaseWriteCommandContext, scopeId: string, resourceId: string): PolicyPointer | null {
+function writerPointer(context: CalendarReadContext, scopeId: string, resourceId: string): PolicyPointer | null {
   if (!context.db.hasTable('_calendar_availability_policy_current')) return null;
   const pointer = checkedPointer(context.db.get('_calendar_availability_policy_current', resourceId) as PolicyPointer | null, scopeId, resourceId);
   if (pointer) {
@@ -60,7 +61,7 @@ function writerPointer(context: DatabaseWriteCommandContext, scopeId: string, re
   }
   return pointer;
 }
-function writerHistory(context: DatabaseWriteCommandContext, pointer: PolicyPointer): PolicyHistory {
+function writerHistory(context: CalendarReadContext, pointer: PolicyPointer): PolicyHistory {
   return checkedHistory(context.db.get('_calendar_availability_policy_history', pointer.history_id!) as PolicyHistory | null, pointer);
 }
 function queryPointer(context: DatabaseReadQueryContext, scopeId: string, resourceId: string): PolicyPointer | null {
@@ -78,7 +79,7 @@ function queryPointer(context: DatabaseReadQueryContext, scopeId: string, resour
 function queryHistory(context: DatabaseReadQueryContext, pointer: PolicyPointer): PolicyHistory {
   return checkedHistory(context.database.query<PolicyHistory>('SELECT * FROM _calendar_availability_policy_history WHERE id=? AND scope_id=?').get(pointer.history_id, pointer.scope_id), pointer);
 }
-export function currentCalendarAvailabilityPolicy(context: DatabaseWriteCommandContext, scopeId: string, resourceId: string): CalendarAvailabilityPolicyInput | null {
+export function currentCalendarAvailabilityPolicy(context: CalendarReadContext, scopeId: string, resourceId: string): CalendarAvailabilityPolicyInput | null {
   const pointer = writerPointer(context, scopeId, resourceId);
   return pointer?.source_kind === 'policy' ? source(writerHistory(context, pointer)) : null;
 }
@@ -86,7 +87,7 @@ export function readCurrentCalendarAvailabilityPolicy(context: DatabaseReadQuery
   const pointer = queryPointer(context, scopeId, resourceId);
   return pointer?.source_kind === 'policy' ? source(queryHistory(context, pointer)) : null;
 }
-export function assertLegacyCalendarAvailabilityWritable(context: DatabaseWriteCommandContext, scopeId: string, resourceId: string): void {
+export function assertLegacyCalendarAvailabilityWritable(context: CalendarReadContext, scopeId: string, resourceId: string): void {
   if (currentCalendarAvailabilityPolicy(context, scopeId, resourceId)?.kind === 'weekly-local-v1') throw new CalendarError('CALENDAR_AVAILABILITY_FORMAT_UNSUPPORTED');
 }
 export function activateLegacyCalendarAvailability(context: DatabaseWriteCommandContext, scopeId: string, resourceId: string, revision: number): void {
@@ -170,7 +171,7 @@ export function replaceCalendarAvailabilityPolicy(context: DatabaseWriteCommandC
   });
 }
 /** True means the new selector handled admission. False delegates to unchanged pre-009 legacy policy. */
-export function assertCalendarAvailabilityPolicy(context: DatabaseWriteCommandContext, scopeId: string, resourceId: string, interval: CalendarTimedInterval): boolean {
+export function assertCalendarAvailabilityPolicy(context: CalendarReadContext, scopeId: string, resourceId: string, interval: CalendarTimedInterval): boolean {
   const pointer = writerPointer(context, scopeId, resourceId);
   if (pointer?.source_kind !== 'policy') return false;
   const row = writerHistory(context, pointer);

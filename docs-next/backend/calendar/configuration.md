@@ -45,6 +45,7 @@ Torrent, workers, email, messaging, Storage, AI or providers.
 | `maxResources` | 16 selected resources per query/booking; configurable 1–16 |
 | `maxParticipants` | 100 references; configurable 1–100 for new bindings |
 | `participants` | false; opt-in `{ userEligibility: AccessRequirement }` offline-provable native Guardian rule |
+| `overrides` | false; opt-in `appointment-overlap-v1` with explicit independent `use` and `manageGrants` Guardian requirements plus per-resource grants |
 | `maxActiveDatabases` | 4; configurable 1–64 active private domains |
 | `maxDatabaseFiles` | 1,000; configurable up to 10,000 and not below active-domain limit |
 | `recurrence`, `reminders`, `selfBooking` | false only; enabled declarations reject as unavailable |
@@ -56,6 +57,12 @@ is a calendar deny sentinel, not Guardian's public-access scalar. A resource's
 separate current per-user grants control busy/detail/book/manage rights. A
 resource owner has those rights; booking alone grants no private details or
 cancellation authority. Calendar filtering and hidden controls confer no access.
+
+The separately configured [appointment-overlap exception](./overrides.md) does
+not inherit owner/admin/manage privileges. Grant additions use an independent
+finalized current-scope Guardian account projection, not the attendee rule.
+Disabled exceptions leave ordinary booking and original receipt reconciliation
+unchanged; blocks, live holds and every other hard booking rule remain enforced.
 
 Doctor reports incomplete timezone setup and declared core capabilities without
 opening a calendar file or starting an actor. Its configuration finding is not

@@ -68,7 +68,7 @@ demo change is implied by framework completion.
 | F1 | **Existing-owner and lifecycle admission.** Reject stale physical schema/ledger or wrong/missing/substituted owner before write-capable open/preparation. Explicit setup can migrate only after proving established ownership. Retired rules do not block unrelated bookings; removed active rules require review without orphaning accepted/unknown evidence. Zero-rule evidence-only recovery remains possible. | Source-atomic operator requests, ordered physical drain, read-only native cold admission and readiness/evidence split implemented/source checked. Physical rejection proof unexecuted. |
 | F2 | **Working versus durable-history capacity.** Completed history must not exhaust a live-work quota. Preserve original schedule/receipt/Torrent identities and factual historical counters. Bound active/unknown/review occupancy, expose pressure, keep retirement/reconciliation headroom and use an explicit configurable storage/history budget. More than 1,000 completed reminders on one unchanged source must remain readable and permit new work. Scale resident owner/capability hydration separately from retained files. | Additive Jobs003/004, finite policy/writer conservation, native read-only attachment, physical pins, SYSTEM wake coverage, bounded resident eviction and demand hydration are source/MEMORY checked. Source-control and schedule pools have independent finite capacity. Historical evidence/identities survive idle release. Actual file/actor/performance qualification remains open. |
 | F3 | **Managed activation, adoption and controls.** Wire the existing dormant Calendar/Jobs/Torrent owner into normal startup, typed opt-in config, authorized operator API/SDK and clear readiness. Add read-only adoption planning, explicit prepare/retire/reactivate/disable procedure and Doctor checks. Unknown/nonterminal work prevents a false safe-disable result. | Private owner/inspection/audited acceptance and fresh/populated staged-migration repair are source implemented. Calendar now admits the original 001–016 boundaries with unchanged hashes and a retained pre-manifest016 pin. Public feature configuration/mount, adoption/disable procedure and Doctor remain gated on the actual F5/F7 capabilities, not the private observation exemplar. |
-| F4 | **Complete canonical scheduling commands.** Support the rich editor's persisted fields through one atomic update contract, current resource/type/visit/participant policy, receipts and semantic evidence. Independent override permission/reason; retain history. Add local-date all-day handling and reviewed effective eligibility where supported. No sequential saves presented as atomic or raw CRUD bypass. | Atomic016 rich edits, canonical017 untyped all-day appointments and canonical018 effective resource/location policy are source implemented through final writers, bounded queries, HTTP/SDK/live hooks and connected rich editor behavior. Final checking is recorded in qualification. Independent override and physical/browser qualification remain required; holds/blocks are still timed-only. |
+| F4 | **Complete canonical scheduling commands.** Support the rich editor's persisted fields through one atomic update contract, current resource/type/visit/participant policy, receipts and semantic evidence. Independent override permission/reason; retain history. Add local-date all-day handling and reviewed effective eligibility where supported. No sequential saves presented as atomic or raw CRUD bypass. | Atomic016 rich edits, canonical017 untyped all-day appointments, canonical018 effective resource/location policy and canonical019 independently granted manual appointment-overlap review/save are source implemented through final writers, bounded queries, HTTP/SDK/live hooks and connected rich editor behavior. Final checking is recorded in qualification. Physical/browser qualification remains required; holds/blocks are still timed-only and later day-type/series contracts remain separate. |
 | F5 | **Series and coverage.** Standards-tested daily/weekly/monthly/yearly engine, nominal occurrence identity, exceptions, one/future/all edits and split lineage. Bounded all-resource materialization commits conflicts consistently; expose durable coverage, not unbounded free-time promises. Existing Jobs/Torrent extends horizons without a second Calendar timer system. | Private bounded timed engine/conformance source checked. Reviewed implementation design below specifies immutable versions, staged atomic publication, explicit one/future/all semantics and sparse UTC coverage. No series persistence, automatic coverage or facade/UI activation yet. |
 | F6 | **Authoritative self-booking and invitations.** Real bounded offers, member/invitation/approved-guest proof, notice/horizon/type/recipient policy, abuse limits, actual any-provider allocation, expiry and atomic confirmation. Explicit pending-review capacity semantics and approve/reject. Hash/revoke capabilities; no private busy/detail leak or staff-audit requirement for public artwork. | Authenticated subject-bound holds/confirm source checked. Offers/proofs/review/RSVP/public routes and native booking UI queued. |
 | F7 | **Actual effects and optional service adapters.** Versioned source-owned reminder/transition rules, immutable due/lateness, fresh recipient/domain checks after waits, native notification/email adapters and exact supersede/cancel/reconciliation. Partial acceptance and unknown SMTP remain distinct; manual review never invents provider evidence. Storage/presence/contact/AI adapters are optional and admitted explicitly. | Observation-only cutoff/recovery source checked. No actual reminder/channel, invitation or AI adapter is enabled. |
@@ -629,7 +629,7 @@ Keep `001`–`016` maps/functions, timed payloads, normal receipt digests, half-
 occupancy and historical interpretation intact. Canonical `017` is now registered
 with the complete untyped appointment writer, read/transport and connected UI
 path. Its pure compiler remains a conversion helper, not booking authority.
-The series family must follow the latest reviewed F4 migration (currently018);
+The series family must follow the latest reviewed F4 migration (currently019);
 no series schema or capability is enabled by the all-day/effective-location packages.
 Both genuine pre-manifest and staged016 policy identities
 remain retained. Source/MEMORY integration is not physical/browser/package release.
@@ -711,12 +711,13 @@ The rich editor still uses one async atomic save/receipt owner, preserving newer
 drafts and explicit unknown reconciliation. Standalone approved preview defaults
 remain unchanged.
 
-**Independent override, later canonical package.**
+**Independent override, canonical019 source package.**
 
-The [reviewed next-package design](./calendar-overrides-design.md) fixes initial
+The [reviewed implementation design](./calendar-overrides-design.md) fixes initial
 scope to manual one-off appointment overlaps and details the complete authority,
 readonly review, keyed witness, final writer, private history and UI contracts.
-It is not implemented or an enabled capability. Preserve the four-right
+It is implemented as unreleased branch source, with physical/package gates still
+open. See the [native facade guide](../backend/calendar/overrides.md). Preserve the four-right
 `CalendarGrant`/`setGrants` replacement contract. Add a separate explicit override
 capability, disabled by default, with an independently compiled current Guardian
 requirement and separate Calendar-owned object grants/history. Resource ownership,
@@ -778,8 +779,9 @@ with buffers and unchanged all-day frozen facts; new/changed LocalDates disclose
 save-time eligibility rather than guessing UTC in the browser. All native final
 writers still enforce the exact policy. See the
 [effective-location contract](../backend/calendar/location-policies.md) and
-[qualification record](../backend/calendar/qualification.md). Management UI and
-independently permitted conflict override remain separate unfinished work.
+[qualification record](../backend/calendar/qualification.md). Management UI remains
+separate unfinished work; canonical019 adds only the documented one-off overlap
+review/save and composable grant APIs, not a complete management screen.
 
 After the pure compiler, review the actual current-schema migration and canonical
 interval/override/assignment contracts before implementation. Qualify populated

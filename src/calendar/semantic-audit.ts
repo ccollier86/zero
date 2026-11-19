@@ -29,6 +29,8 @@ interface CalendarAuditMetadata {
   readonly occupancyChanged?: boolean;
   readonly timeZoneChanged?: boolean;
   readonly typeChanged?: boolean;
+  readonly overrideCategory?: 'appointment-overlap';
+  readonly overridePolicy?: 'appointment-overlap-v1';
 }
 
 /** Call only inside an accepted mutation's callback; receipt replay and domain no-ops never reach this seam. */
@@ -51,6 +53,8 @@ export function appendCalendarSemanticAudit(context: DatabaseWriteCommandContext
   if (metadata.availabilityKind !== undefined) values.availabilityKind = metadata.availabilityKind;
   if (metadata.locationPolicyKind !== undefined) values.locationPolicyKind = metadata.locationPolicyKind;
   if (metadata.windowCount !== undefined) values.windowCount = metadata.windowCount;
+  if (metadata.overrideCategory !== undefined) values.overrideCategory = metadata.overrideCategory;
+  if (metadata.overridePolicy !== undefined) values.overridePolicy = metadata.overridePolicy;
   for (const key of ['titleChanged', 'resourcesChanged', 'occupancyChanged', 'timeZoneChanged', 'typeChanged'] as const) {
     if (metadata[key] !== undefined) values[key] = metadata[key];
   }

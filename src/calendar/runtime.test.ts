@@ -31,6 +31,8 @@ const actor: CalendarActor = { scopeId: 'application', userId: 'owner', principa
 const config = resolveCalendarConfig({ timezone: 'UTC' }, project, resolveAuthBehaviorConfig()) as ResolvedCalendarConfig;
 const range = { startAt: '2026-11-16T00:00:00.000Z', endAt: '2026-11-17T00:00:00.000Z' };
 const resource = { actor, requestId: 'create-resource', id: 'resource', label: 'Synthetic', kind: 'person', ownerId: actor.userId, timeZone: 'UTC' };
+const missingAppointment = { actor, requestId: 'missing', id: 'missing-appointment', title: 'Synthetic',
+  resourceIds: ['missing'], ...range, timeZone: 'UTC' };
 const noop = () => {};
 
 function fixture(configOverrides: Partial<ResolvedCalendarConfig> = {}) {
@@ -217,7 +219,7 @@ test('only a fully admitted own/manager resource creation may provision a never-
     for (const input of [{ ...resource, actor: { ...actor, manageAll: false, createOwn: false } }, { ...resource, actor: { ...actor, manageAll: false }, ownerId: 'other' }]) {
       await expect(f.runtime.write(scope, 'calendar.resource.create', input, input.requestId, noop)).rejects.toMatchObject({ code: 'CALENDAR_FORBIDDEN' });
     }
-    await expect(f.runtime.write(scope, 'calendar.appointment.create', { actor, requestId: 'missing', resourceIds: ['missing'] }, 'missing', noop)).rejects.toMatchObject({ code: 'CALENDAR_NOT_FOUND' });
+    await expect(f.runtime.write(scope, 'calendar.appointment.create', missingAppointment, 'missing', noop)).rejects.toMatchObject({ code: 'CALENDAR_NOT_FOUND' });
     await expect(f.runtime.write(scope, 'calendar.resource.create', { ...resource, timeZone: 'invalid' }, resource.requestId, noop)).rejects.toMatchObject({ code: 'CALENDAR_INPUT_INVALID' });
     const type = { actor, requestId: 'type', id: 'type', label: 'Synthetic type', durationMinutes: 30 };
     await expect(f.runtime.write(scope, 'calendar.type.create', { ...type, actor: { ...actor, manageAll: false } }, type.requestId, noop)).rejects.toMatchObject({ code: 'CALENDAR_FORBIDDEN' });
@@ -248,7 +250,7 @@ test('interrupted pending ownership is not empty and only an admitted creator ma
     f.system.prepare('INSERT INTO _calendar_owners VALUES(?,?,?,?,?,0)').run(calendarDatabaseId(actor.scopeId), actor.scopeId,
       ownerId, calendarHash(canonicalDatabaseRootIdentity(config.rootDirectory)), calendarRealm.fingerprint);
     await expect(f.runtime.read(scope, 'calendar.resources', { actor }, noop)).rejects.toMatchObject({ code: 'CALENDAR_NOT_READY' });
-    await expect(f.runtime.write(scope, 'calendar.appointment.create', { actor, requestId: 'missing', resourceIds: ['missing'] }, 'missing', noop)).rejects.toMatchObject({ code: 'CALENDAR_NOT_FOUND' });
+    await expect(f.runtime.write(scope, 'calendar.appointment.create', missingAppointment, 'missing', noop)).rejects.toMatchObject({ code: 'CALENDAR_NOT_FOUND' });
     await expect(f.runtime.write(scope, 'calendar.resource.create', { ...resource, actor: { ...actor, manageAll: false, createOwn: false } }, resource.requestId, noop)).rejects.toMatchObject({ code: 'CALENDAR_FORBIDDEN' });
     expect(f.stats().acquisitions).toBe(0);
     await f.runtime.write(scope, 'calendar.resource.create', resource, resource.requestId, noop);

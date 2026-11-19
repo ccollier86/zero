@@ -1,6 +1,6 @@
 /** One facade for HTTP and server callers. Authority, routing and IDs never come from authored input. */
 import type { ServiceDataScope } from '../auth/service-data-scope';
-import type { CalendarCommandReceipt, CalendarControlOptions, CalendarReadOptions,
+import type { CalendarCommandReceipt, CalendarControlOptions, CalendarReadOptions, CalendarOverrideReview,
   CalendarRequestOptions, CalendarWatchOptions, ScopedCalendar } from './contracts';
 import { CalendarError } from './error';
 import { calendarHash, calendarInteger, calendarKey, calendarRecord, calendarValue } from './validation';
@@ -9,7 +9,8 @@ import type { ResolvedCalendarConfig } from './config';
 import { calendarLocationIds, calendarLocationInput, calendarPageQuery, calendarResourcePageQuery, calendarRange, calendarReceipt,
   calendarAppointmentTypePageQuery, calendarAppointmentTypeInput, calendarTypeReference, calendarResourceTypesInput,
   calendarLifecyclePolicyInput, calendarAppointmentTransitionInput, calendarLifecycleReason, calendarVisitInput, calendarVisitLocationQuery,
-  calendarAppointmentUpdateInput, calendarDateRange, calendarExplicitAppointmentInterval } from './service-validation';
+  calendarDateRange,
+  calendarAppointmentTransportInput, calendarOverrideReviewResult } from './service-validation';
 import { watchCalendarPage } from './watch';
 import type { CalendarParticipantDirectory } from './participants-directory';
 import { calendarParticipantBroker, calendarParticipantCommitGuard, calendarParticipantQuery } from './participants-service';
@@ -17,6 +18,8 @@ import { calendarParticipantReferences } from './participants-validation';
 import { calendarCapabilitiesBroker } from './capabilities';
 import { normalizeCalendarAvailabilityPolicy } from './working-hours-model';
 import { normalizeCalendarResourceLocationPolicy, calendarLocationPolicyIds } from './location-policy-model';
+import { normalizeCalendarAppointmentOverride, normalizeCalendarOverrideGrant } from './override-model';
+import { calendarOverrideGrantCommitGuard, type CalendarOverrideGrantTargets } from './override-grant-targets';
 
 export interface CalendarServiceBroker {
   read<T>(scope: ServiceDataScope, name: string, input: unknown, guard: () => void, signal?: AbortSignal): Promise<T>;
@@ -34,7 +37,8 @@ export class CalendarService {
   private readonly active = new Set<Promise<unknown>>();
   private readonly signal: AbortSignal;
   constructor(private readonly broker: CalendarServiceBroker, private readonly config: ResolvedCalendarConfig,
-    closing: AbortSignal, private readonly participantDirectory?: CalendarParticipantDirectory) {
+    closing: AbortSignal, private readonly participantDirectory?: CalendarParticipantDirectory,
+    private readonly overrideTargets?: CalendarOverrideGrantTargets) {
     this.signal = AbortSignal.any([closing, this.stop.signal]);
     this.broker = calendarCapabilitiesBroker(calendarParticipantBroker(broker, participantDirectory, config), config, participantDirectory !== undefined);
   }
@@ -47,6 +51,16 @@ export class CalendarService {
     const createResource = (input: unknown, options: CalendarRequestOptions) => this.write(request, 'resource.create', input, options);
     const createAppointment = (input: unknown, options: CalendarRequestOptions) => this.write(request, 'appointment.create', input, options);
     return Object.freeze({
+      overrides: Object.freeze({ grants: Object.freeze<ScopedCalendar['overrides']['grants']>({
+        get: (id, userId, options) => this.read(request, 'overrideGrant', () => ({ id: calendarKey(id), userId: calendarKey(userId) }), options),
+        replace: (id, userId, input, options) => this.write(request, 'resource.override-grant',
+          { ...normalizeCalendarOverrideGrant(input), userId: calendarKey(userId) }, options, id),
+        watch: (id, userId, listener, options: CalendarWatchOptions = {}) => {
+          const query = Object.freeze({ id: calendarKey(id), userId: calendarKey(userId) }); this.ready();
+          return watchCalendarPage({ request, broker: this.broker, config: this.config, closing: this.signal,
+            queryName: 'calendar.overrideGrant', query, listener, options, track: task => this.track(task) });
+        },
+      }) }),
       capabilities: Object.freeze({
         get: options => this.read(request, 'capabilities', () => ({}), options),
         watch: (listener, options: CalendarWatchOptions = {}) => {
@@ -205,6 +219,8 @@ export class CalendarService {
         get: (id, options) => this.read(request, 'appointment', () => ({ id: calendarKey(id) }), options),
         create: createAppointment,
         update: (id, input, options) => this.write(request, 'appointment.update', input, options, id),
+        reviewCreate: (input, options) => this.review(request, 'appointment.create', input, options),
+        reviewUpdate: (id, input, options) => this.review(request, 'appointment.update', input, options, id),
         reschedule: (id, input, options) => this.write(request, 'appointment.reschedule', input, options, id),
         cancel: (id, options) => this.write(request, 'appointment.cancel', {}, options, id),
         transitions: (id, options) => this.read(request, 'appointmentTransitions', () => ({ id: calendarKey(id) }), options),
@@ -270,6 +286,41 @@ export class CalendarService {
     })());
   }
 
+  /** A proposed key is read-only here. Only an explicit later write can spend it. */
+  private review(request: CalendarAuthority, operation: 'appointment.create' | 'appointment.update', input: unknown,
+    options: CalendarRequestOptions, target?: string): Promise<CalendarOverrideReview> {
+    return this.track((async () => {
+      this.ready();
+      const body = calendarAppointmentTransportInput(input, this.config, operation === 'appointment.update');
+      const opts = calendarRecord(options, ['idempotencyKey', 'signal', ...(target === undefined ? [] : ['expectedRevision'])]);
+      const key = calendarKey(opts.idempotencyKey), id = target === undefined ? null : calendarKey(target);
+      const expectedRevision = id === null ? undefined : calendarInteger(opts.expectedRevision, 1);
+      const authority = await admitCalendarRequest(request, this.config, this.signal, opts.signal as AbortSignal | undefined);
+      authority.guard();
+      const participantGuard = await calendarParticipantCommitGuard({ broker: this.broker, directory: this.participantDirectory,
+        config: this.config, authority, operation, body, key, id, expectedRevision });
+      const guard = () => { authority.guard(); participantGuard(); authority.guard(); };
+      const name = operation === 'appointment.create' ? 'calendar.appointmentReviewCreate' : 'calendar.appointmentReviewUpdate';
+      const query = { ...body, actor: authority.actor, requestId: key,
+        id: id ?? calendarHash([authority.actor.scopeId, authority.actor.principal, key]),
+        ...(expectedRevision === undefined ? {} : { expectedRevision }) };
+      let dirty = false;
+      const remove = this.broker.subscribe?.(authority.scope, () => { dirty = true; }, name);
+      try {
+        for (let attempt = 0; attempt < 4; attempt++) {
+          guard(); dirty = false;
+          const result = await this.broker.read<unknown>(authority.scope, name, query, guard, authority.signal);
+          await authority.confirm(); guard();
+          if (!dirty) {
+            const admitted = calendarOverrideReviewResult(result);
+            return this.broker.publish?.(authority.scope, name, query, admitted, guard) ?? admitted;
+          }
+        }
+        throw new CalendarError('CALENDAR_NOT_READY');
+      } finally { remove?.(); }
+    })());
+  }
+
   private write(request: CalendarAuthority, operation: string, input: unknown, options: CalendarRequestOptions, target?: string): Promise<CalendarCommandReceipt> {
     return this.track((async () => {
       this.ready();
@@ -284,6 +335,7 @@ export class CalendarService {
         : operation === 'resource.locations' ? ['locationIds']
         : operation === 'resource.location-policy' ? ['kind', 'locationIds', 'assignments']
         : operation === 'resource.grant' ? ['userId', 'grants']
+        : operation === 'resource.override-grant' ? ['userId', 'categories']
         : operation === 'resource.availability' ? ['mode', 'windows']
         : operation === 'block.cancel' || operation === 'appointment.cancel' || operation === 'hold.release' ? []
         : operation === 'hold.confirm' ? ['title']
@@ -293,9 +345,9 @@ export class CalendarService {
         : operation === 'appointment.reschedule' ? ['startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'appointmentType', 'visit']
         : ['resourceIds', 'title', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'appointmentType', 'visit', 'participants', 'interval'];
       // Detach before the first await; authored mutation cannot alter an admitted command.
-      const body = calendarValue(calendarRecord(input, fields)) as Record<string, unknown>;
-      if (operation === 'appointment.update') Object.assign(body, calendarAppointmentUpdateInput(body, this.config));
-      if (operation === 'appointment.create') calendarExplicitAppointmentInterval(body);
+      const appointmentIntent = operation === 'appointment.create' || operation === 'appointment.update';
+      const body = appointmentIntent ? calendarAppointmentTransportInput(input, this.config, operation === 'appointment.update')
+        : calendarValue(calendarRecord(input, fields)) as Record<string, unknown>;
       for (const field of ['participants', 'references'] as const) if (Object.hasOwn(body, field)) {
         body[field] = calendarParticipantReferences(body[field]);
         if ((body[field] as unknown[]).length > this.config.maxParticipants) throw new CalendarError('CALENDAR_INPUT_INVALID');
@@ -303,6 +355,10 @@ export class CalendarService {
       if (operation === 'location.create' || operation === 'location.replace') calendarLocationInput(body, operation === 'location.replace');
       if (operation === 'resource.locations') body.locationIds = calendarLocationIds(body.locationIds);
       if (operation === 'resource.location-policy') Object.assign(body, normalizeCalendarResourceLocationPolicy(body));
+      if (operation === 'resource.override-grant') {
+        const { userId, ...grant } = body;
+        Object.assign(body, normalizeCalendarOverrideGrant(grant), { userId: calendarKey(userId) });
+      }
       if (operation === 'type.create' || operation === 'type.replace') calendarAppointmentTypeInput(body, operation === 'type.replace');
       if (operation === 'resource.types') Object.assign(body, calendarResourceTypesInput(body));
       if (operation === 'lifecycle.replace') Object.assign(body, calendarLifecyclePolicyInput(body));
@@ -316,8 +372,10 @@ export class CalendarService {
         if (body.visit === null) { if (operation !== 'appointment.reschedule' && operation !== 'appointment.update') throw new CalendarError('CALENDAR_INPUT_INVALID'); }
         else body.visit = calendarVisitInput(body.visit);
       }
-      const opts = calendarRecord(options, target === undefined ? ['idempotencyKey', 'signal']
-        : ['idempotencyKey', 'signal', 'expectedRevision', ...(operation === 'appointment.cancel' ? ['reason'] : [])]);
+      const opts = calendarRecord(options, [...(target === undefined ? ['idempotencyKey', 'signal']
+        : ['idempotencyKey', 'signal', 'expectedRevision', ...(operation === 'appointment.cancel' ? ['reason'] : [])]),
+        ...(appointmentIntent ? ['override'] : [])]);
+      if (Object.hasOwn(opts, 'override')) body.override = normalizeCalendarAppointmentOverride(opts.override);
       if (operation === 'appointment.cancel' && Object.hasOwn(opts, 'reason')) body.reason = calendarLifecycleReason(opts.reason);
       const key = calendarKey(opts.idempotencyKey), id = target === undefined ? null : calendarKey(target);
       const expectedRevision = id === null ? undefined : calendarInteger(opts.expectedRevision, 1);
@@ -326,8 +384,12 @@ export class CalendarService {
       if (operation === 'hold.acquire' && body.ttlSeconds !== undefined) calendarInteger(body.ttlSeconds, 1, 900);
       const authority = await admitCalendarRequest(request, this.config, this.signal, opts.signal as AbortSignal | undefined);
       authority.guard();
-      const commitGuard = await calendarParticipantCommitGuard({ broker: this.broker, directory: this.participantDirectory,
+      const participantGuard = await calendarParticipantCommitGuard({ broker: this.broker, directory: this.participantDirectory,
         config: this.config, authority, operation, body, key, id, expectedRevision });
+      authority.guard();
+      const targetGuard = await calendarOverrideGrantCommitGuard({ broker: this.broker, targets: this.overrideTargets,
+        authority, operation, body, key, id, expectedRevision });
+      const commitGuard = () => { participantGuard(); targetGuard(); };
       authority.guard();
       if ((operation === 'resource.locations' || operation === 'resource.location-policy') && !authority.actor.manageAll) {
         // A location ID is metadata, not a visibility grant. Capture a currently

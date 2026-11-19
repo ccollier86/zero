@@ -8,6 +8,8 @@ import { normalizeCalendarAppointmentUpdate } from './appointment-update';
 import { normalizeCalendarAppointmentTimeIntent } from './appointment-time-input';
 import { calendarAppointmentDateWindow } from './appointment-date-query';
 import { calendarWorkingHoursDateOrdinal } from './working-hours-model';
+import { calendarParticipantReferences } from './participants-validation';
+import type { CalendarOverrideReview } from './override-contracts';
 
 /** Structural intent admission only. Zone conversion belongs to fresh writer admission. */
 export function calendarExplicitAppointmentInterval(body: Record<string, unknown>): void {
@@ -27,6 +29,41 @@ export function calendarAppointmentUpdateInput(input: unknown,
     throw new CalendarError('CALENDAR_INPUT_INVALID');
   }
   return { ...patch };
+}
+
+/** The same detached structural seam for readonly review and the eventual write.
+ * It does not resolve catalogs, compile new dates, authorize or check a token.
+ */
+export function calendarAppointmentTransportInput(input: unknown,
+  config: Pick<ResolvedCalendarConfig, 'maxResources' | 'maxParticipants'>, update = false): Record<string, unknown> {
+  if (update) return calendarAppointmentUpdateInput(input, config);
+  const body = calendarValue(calendarRecord(input, ['resourceIds', 'title', 'startAt', 'endAt', 'timeZone',
+    'bufferBeforeMinutes', 'bufferAfterMinutes', 'appointmentType', 'visit', 'participants', 'interval'])) as Record<string, unknown>;
+  calendarExplicitAppointmentInterval(body);
+  if (!Array.isArray(body.resourceIds) || body.resourceIds.length > config.maxResources) throw new CalendarError('CALENDAR_INPUT_INVALID');
+  if (Object.hasOwn(body, 'participants')) {
+    body.participants = calendarParticipantReferences(body.participants);
+    if ((body.participants as unknown[]).length > config.maxParticipants) throw new CalendarError('CALENDAR_INPUT_INVALID');
+  }
+  if (Object.hasOwn(body, 'appointmentType')) body.appointmentType = calendarTypeReference(body.appointmentType);
+  if (Object.hasOwn(body, 'visit')) body.visit = calendarVisitInput(body.visit);
+  return body;
+}
+
+/** A malformed native review is a static state failure, never a repaired or widened permission. */
+export function calendarOverrideReviewResult(input: unknown): CalendarOverrideReview {
+  try {
+    const r = calendarRecord(input, ['status', 'categories', 'policyVersion', 'decisionToken', 'expiresAt']);
+    if ((r.status === 'clear' || r.status === 'non-reviewable') && Object.keys(r).length === 1) return Object.freeze({ status: r.status });
+    if (r.status !== 'reviewable' || Object.keys(r).length !== 5 || !Array.isArray(r.categories) || r.categories.length !== 1
+      || r.categories[0] !== 'appointment-overlap' || r.policyVersion !== 'appointment-overlap-v1'
+      || typeof r.decisionToken !== 'string' || r.decisionToken.length > 256
+      || !/^co1\.[0-9]{1,16}\.[0-9]{1,16}\.[a-f0-9]{32}\.[a-f0-9]{64}$/.test(r.decisionToken)
+      || typeof r.expiresAt !== 'string' || normalizeCalendarInstant(r.expiresAt) !== r.expiresAt
+      || new Date(Number(r.decisionToken.split('.')[2])).toISOString() !== r.expiresAt) throw new Error();
+    return Object.freeze({ status: 'reviewable', categories: Object.freeze(['appointment-overlap'] as const),
+      policyVersion: 'appointment-overlap-v1', decisionToken: r.decisionToken, expiresAt: r.expiresAt });
+  } catch { throw new CalendarError('CALENDAR_STATE_INVALID'); }
 }
 
 export function calendarPageQuery(input: unknown, config: Pick<ResolvedCalendarConfig, 'maxPageSize'>): CalendarLocationPageQuery {
@@ -170,6 +207,7 @@ export function calendarReceipt(input: unknown, requestId: string, operation: st
     'resource.availability': 'resource.availability-changed',
     'resource.availability-policy': 'resource.availability-policy-changed',
     'resource.locations': 'resource.locations-changed', 'resource.location-policy': 'resource.location-policy-changed',
+    'resource.override-grant': 'resource.override-grant-changed',
     'location.create': 'location.created', 'location.replace': 'location.updated',
     'type.create': 'type.created', 'type.replace': 'type.updated', 'resource.types': 'resource.types-changed',
     'block.create': 'block.created', 'block.reschedule': 'block.rescheduled', 'block.cancel': 'block.cancelled',
@@ -178,7 +216,7 @@ export function calendarReceipt(input: unknown, requestId: string, operation: st
     'appointment.transition': 'appointment.transitioned', 'appointment.participants': 'appointment.participants-changed', 'lifecycle.replace': 'lifecycle.policy-changed' }[operation];
   if (!expected || r.requestId !== requestId || r.operation !== expected || r.id !== id || typeof r.changed !== 'boolean') throw new CalendarError('CALENDAR_STATE_INVALID');
   calendarInteger(r.revision, 1);
-  if (expectedRevision !== undefined && (operation === 'lifecycle.replace' || operation === 'appointment.transition' || operation === 'appointment.participants' || operation === 'appointment.update' || operation === 'resource.location-policy')
+  if (expectedRevision !== undefined && (operation === 'lifecycle.replace' || operation === 'appointment.transition' || operation === 'appointment.participants' || operation === 'appointment.update' || operation === 'resource.location-policy' || operation === 'resource.override-grant')
     && (r.revision !== expectedRevision + (r.changed ? 1 : 0) || operation === 'appointment.transition' && !r.changed)) throw new CalendarError('CALENDAR_STATE_INVALID');
   return Object.freeze({ requestId, operation: expected as CalendarCommandReceipt['operation'], id, revision: r.revision as number, changed: r.changed });
 }

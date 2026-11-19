@@ -1,4 +1,5 @@
 /** Current membership is a derived bounded projection, never all retained reservation rows. */
+import type { CalendarReadContext } from './calendar-read-store';
 import type { DatabaseReadQueryContext, DatabaseWriteCommandContext } from '../databases/database-realm';
 import { CalendarError } from './error';
 import { calendarHash, calendarInteger, calendarJson, calendarKey } from './validation';
@@ -9,7 +10,7 @@ export const CALENDAR_APPOINTMENT_RESOURCE_STATE = '_calendar_appointment_resour
 const tables = [CALENDAR_APPOINTMENT_RESOURCE_CURRENT, CALENDAR_APPOINTMENT_UPDATE_HISTORY, CALENDAR_APPOINTMENT_RESOURCE_STATE];
 
 /** Exact pre-016 compatibility only. A partially installed/corrupt 016 never falls back to retained old resources. */
-export function calendarCurrentResourceMembership(context: DatabaseWriteCommandContext): boolean {
+export function calendarCurrentResourceMembership(context: CalendarReadContext): boolean {
   const present = tables.map(table => context.db.hasTable(table));
   if (present.every(value => !value)) return false;
   if (!present.every(Boolean) || context.db.get(CALENDAR_APPOINTMENT_RESOURCE_STATE, 'application')?.version !== 16) throw new CalendarError('CALENDAR_STATE_INVALID');

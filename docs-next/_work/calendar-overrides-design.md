@@ -4,11 +4,11 @@ type: architecture
 audience: [developer, agent, maintainer]
 owner: calendar
 status: draft
-implementation_state: not-implemented
+implementation_state: source-implemented
 visibility: internal
 system: calendar
 feature: independent-appointment-overrides
-maturity: planned
+maturity: experimental
 ---
 
 # Calendar F4: independently permitted appointment overlap
@@ -16,11 +16,14 @@ maturity: planned
 [Working index](./index.md) · [Full finish-line plan](./calendar-integration-plan.md) ·
 [Current source qualification](../backend/calendar/qualification.md)
 
-Reviewed November 19 against `1445f67`. **This is the next implementation design,
-not an existing API, registered migration or enabled capability.** The complete
-vertical below must be wired and checked together. A private proof helper, schema
-or modal alone does not complete it. This package follows canonical018; no later
-migration number is reserved by this design.
+Reviewed November 19 against `1445f67`, then implemented as canonical019 on
+`feature/calendar-backend-foundation`. **This is unreleased branch source, not an
+updater-selected capability.** The complete vertical includes configuration,
+independent grants, readonly review, canonical writer/evidence, HTTP/SDK/live hooks
+and native rich-editor integration. See the [usage contract](../backend/calendar/overrides.md)
+and [qualification ledger](../backend/calendar/qualification.md); physical/browser/
+installed-archive acceptance remains unexecuted. A private helper or unit pass
+alone would not complete this package or the full Calendar system.
 
 ## Initial boundary
 
@@ -39,7 +42,7 @@ contracts exactly.
 
 ## Independent permission and configuration
 
-Proposed disabled-by-default configuration:
+Implemented disabled-by-default configuration:
 
 ```ts
 overrides?: false | {
@@ -72,7 +75,7 @@ revocation, disablement or proof expiry under current ordinary object authority.
 
 ## Read-only review and ordinary atomic save
 
-Proposed methods, not available syntax:
+Implemented branch-source facade:
 
 ```ts
 appointments.reviewCreate(input, { idempotencyKey, signal? });

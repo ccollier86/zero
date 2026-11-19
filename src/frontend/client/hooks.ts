@@ -18,6 +18,7 @@ export { useCalendarResources, useCalendarAppointment, useCalendarAppointments, 
 export { useCalendarAppointmentTypes, useCalendarAppointmentType, useCalendarResourceTypes } from './calendar-hooks';
 export { useCalendarLifecycle, useCalendarAppointmentTransitions } from './calendar-hooks';
 export { useCalendarCapabilities } from './calendar-hooks';
+export { useCalendarOverrideGrant } from './calendar-hooks';
 export { useCalendarAvailabilityPolicy } from './calendar-hooks';
 export { useCalendarParticipantDirectory, useCalendarAppointmentParticipants, useCalendarHoldParticipants } from './calendar-hooks';
 export type { CalendarReadResult, UseCalendarAppointmentsResult } from './calendar-hooks';
