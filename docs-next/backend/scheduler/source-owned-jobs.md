@@ -79,9 +79,9 @@ The private `JobsService.forSource` surface supports:
   Cron/source recurrence is deliberately rejected by this first integration.
 - Current schedule inspection and original command-receipt reconciliation, even
   after retirement or cancellation. Evidence reads do not run current parsers.
-- Private `capacity.get()` returns per-source schedules and shared-file retained
-  budget usage/limits/remaining. It verifies the existing owner and uses seven
-  usage primary-key lookups, not history scans. Missing existing Jobs storage
+- Private `capacity.get()` returns explicit **version 2** working occupancy and
+  retained-history accounting. It verifies the existing owner and uses a fixed
+  number of usage primary-key lookups, not history scans. Missing existing Jobs storage
   returns `null`, not an invented empty/provisioned database. Registration
   presence is not proof that a source is currently eligible or active. No seal,
   executable contract, scheduling input or other source identity is exposed.
@@ -184,13 +184,51 @@ the original key. Do not automatically replay unknown work with a new key.
 
 ## Capacity, evidence and upgrade
 
-Source work shares existing Jobs budgets: 10,000 schedules, 100,000 command
-receipts and 100,000 occurrences per private file. A source additionally has a
-1,000-schedule retained envelope. Each file admits at most 1,024 source identities
+Source work shares retained Jobs budgets: 10,000 schedules, 100,000 ordinary
+command receipts and 100,000 occurrences per private file. A source's former
+1,000-schedule ceiling now bounds **working** schedules, not lifetime history.
+Each file admits at most 1,024 source identities
 and 10,000 policy generations. Live sources, concurrent native activation
 preparation and concurrent retirement preparation are each bounded to 1,024 per
 broker. Exhaustion fails visibly; no
 evidence is silently pruned and scopes are not rotated to evade limits.
+
+The additive `003` working projection preserves every original schedule,
+admission, occurrence, receipt and historical usage counter. A schedule releases
+its working slot only when its cursor has no further due work **and** every
+generation's unresolved occurrence count is zero. Pending, claimed, dispatched
+and blocked/review work remain occupied. Cancellation, source retirement or a
+missing receipt alone does not prove closure. Readmitting a closed schedule
+reacquires quota atomically; duplicate terminal observation cannot release twice.
+Working file ceilings are 10,000 schedules and 100,000 occurrences, including
+actor and source schedules together. Actor-specific retained owner quotas are
+unchanged in this increment. These are logical work facts, not physical handler
+drain or provider-delivery certificates.
+
+The native capacity projection is deliberately versioned rather than silently
+changing the old fields' meaning:
+
+```ts
+{
+  version: 2,
+  source: { id, registered },
+  working: { sourceSchedules, fileSchedules, fileOccurrences },
+  retained: {
+    sourceSchedules: { used }, // factual lifetime count, no fictitious limit
+    file: { schedules, intents, sourceRecoveryIntents, occurrences,
+            sources, sourcePolicies }
+  }
+}
+```
+
+Budget entries have `{used, limit, remaining}`. The unbounded-in-principle source
+history measurement has only `used`; the existing file history budgets remain
+finite and enforced. Working closure does not decrement those history counters.
+This permits more than 1,000 sequential closed one-shots on the same source,
+not unlimited retained disk usage. Explicit configurable history budgets, the
+separate generic writer transport-key budget/recovery reserve and larger bounded
+owner hydration remain Calendar production gates. Do not call transport result
+compaction evidence deletion or a solution to permanent key exhaustion.
 
 Canonical schedule changes use the existing native logging source/outbox. Events
 distinguish source/policy generation and factual initiation without impersonating

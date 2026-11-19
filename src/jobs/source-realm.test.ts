@@ -6,7 +6,7 @@ import type { DatabaseSerializableValue } from '../databases/database-operations
 import { LoggingActorSource, normalizeLoggingActorSourceBinding } from '../logging/logging-actor-source';
 import { createReactiveDB } from '../sync/reactive-db';
 import { jobsRealm } from './realm';
-import { CURRENT_JOB_TABLES } from './realm-source-schema';
+import { JOB_CAPACITY_CURRENT_TABLES as CURRENT_JOB_TABLES } from './realm-capacity-schema';
 import { JOB_SOURCE_MIGRATION } from './realm-source-migration';
 import { readJobRejection } from './error';
 import { changeSourceJobSchedule, createSourceJobSchedule, registerJobSource, retireJobSource } from './realm-source-control';
@@ -186,12 +186,14 @@ test('shared and source-specific budgets roll back schedules, admissions, intent
   try {
     const registration = f.register(), perSource = 'source:' + jobHash(identity);
     f.db.createStrict('_jobs_usage', { id: perSource, count: 1000 });
+    f.db.update('_jobs_work_usage', 'source:' + registration.id, { count: 1000 });
     expect(() => f.create(registration, 'source-quota')).toThrow(expect.objectContaining({ code: 'JOBS_CAPACITY' }));
     expect(f.db.get('_jobs_usage', 'schedules')).toBeNull();
     expect(f.db.get('_jobs_usage', 'intents')!.count).toBe(1);
     expect(f.db.get('_jobs_source_intents', sourceIntentId(identity, 'create-source-quota'))).toBeNull();
     expect(f.db.get('_jobs_admissions', 'source-quota:1')).toBeNull(); expect(f.db.get('_jobs_cursors', 'source-quota')).toBeNull();
     f.db.update('_jobs_usage', perSource, { count: 0 });
+    f.db.update('_jobs_work_usage', 'source:' + registration.id, { count: 0 });
     f.db.createStrict('_jobs_usage', { id: 'schedules', count: 10_000 });
     expect(() => f.create(registration, 'shared-schedules-quota')).toThrow(expect.objectContaining({ code: 'JOBS_CAPACITY' }));
     expect(f.db.get('_jobs_usage', perSource)!.count).toBe(0);

@@ -6,7 +6,7 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { act, createElement, isValidElement, type ReactElement, type ReactNode } from 'react';
 import type { Root } from 'react-dom/client';
-import type { CalendarAppointmentInput, CalendarRescheduleInput, CalendarAppointmentTransitions, CalendarAppointmentTypePage,
+import type { CalendarAppointmentInput, CalendarAppointmentUpdateInput, CalendarRescheduleInput, CalendarAppointmentTransitions, CalendarAppointmentTypePage,
   CalendarAppointmentTypeView, CalendarAppointmentView, CalendarControlOptions, CalendarRequestOptions, CalendarCommandReceipt,
   CalendarParticipantDirectoryPage, CalendarParticipantDirectoryQuery, CalendarParticipantReference, CalendarParticipantsView, CalendarResourceView, CalendarWatchOptions } from '../../../calendar/contracts';
 import { ClientProvider } from '../../../frontend/client/client-context';
@@ -42,7 +42,7 @@ const type: CalendarAppointmentTypeView = { id: 'type-a', revision: 2, label: 'P
   bufferBeforeMinutes: 4, bufferAfterMinutes: 6, colorKey: null, active: true };
 const person = { ref: { kind: 'guardian-user' as const, userId: 'PRIVATE_ACCOUNT_ID' }, availability: 'available' as const, name: 'PRIVATE_CURRENT_NAME' };
 
-test('a pristine editor is clean; a current unchanged reschedule neither dispatches nor creates an unsettled request', async () => {
+test('a pristine editor is clean; a current unchanged edit neither dispatches nor creates an unsettled request', async () => {
   const f = fixture();
   await mountEditor(f, true);
   expect(opening().systemState?.dirty).toBe(false);
@@ -56,6 +56,66 @@ test('a pristine editor is clean; a current unchanged reschedule neither dispatc
   expect(submitButton().props.disabled).toBe(true);
   await act(async () => { expect(await modals.requestClose(opening().id, { reason: 'close-button' })).toBe(true); });
   expect(f.closed).toBe(1);
+});
+
+test('an existing title and interval are saved once through the atomic update, not chained reschedules', async () => {
+  const f = fixture(); await mountEditor(f, true);
+  expect(field('Appointment title').props.readOnly).not.toBe(true);
+  await changeTitle('Changed synthetic title'); await changeField('Start time', 608);
+  await submitForm(); await submitForm();
+  expect(f.writes).toHaveLength(1);
+  expect(f.writes[0]).toMatchObject({ operation: 'appointment.updated', control: { expectedRevision: record.revision },
+    input: { title: 'Changed synthetic title', startAt: '2026-11-16T10:08:00.000Z', endAt: record.endAt,
+      bufferBeforeMinutes: 3, bufferAfterMinutes: 7 } });
+  expect(f.writes[0]!.input).not.toHaveProperty('resourceIds');
+  expect(f.writes[0]!.input).not.toHaveProperty('participants');
+  await acceptWrite(f); expect(f.accepted).toHaveLength(1); expect(f.closed).toBe(1);
+});
+
+test('title-only edits revert to clean and never dispatch when restored to accepted text', async () => {
+  const f = fixture(); await mountEditor(f, true);
+  await changeTitle('Different'); expect(opening().systemState?.dirty).toBe(true);
+  await changeTitle(record.title); expect(opening().systemState?.dirty).toBe(false);
+  expect(submitButton().props.disabled).toBe(true); await submitForm(); expect(f.writes).toEqual([]);
+});
+
+test('single-calendar transfer and newer typing use one update and preserve the unsent newer title', async () => {
+  const f = fixture(), root = await mountEditor(f, true);
+  await act(async () => { root.updateProps({ resources: [resource, { ...resource, id: 'resource-b', label: 'Second synthetic calendar' }] }); });
+  expect(field('Appointment calendar').props.disabled).toBe(false);
+  await act(async () => { field('Appointment calendar').props.onChange('resource-b'); });
+  await changeTitle('Submitted transfer'); await submitForm();
+  expect(f.writes).toHaveLength(1);
+  expect(f.writes[0]).toMatchObject({ operation: 'appointment.updated', input: { resourceIds: ['resource-b'], title: 'Submitted transfer' } });
+  await changeTitle('Newer unsent edit'); await acceptWrite(f);
+  expect(f.accepted).toHaveLength(1); expect(f.closed).toBe(0);
+  expect(field('Appointment title').props.value).toBe('Newer unsent edit');
+});
+
+test('a retained selector cannot submit an unavailable replacement calendar', async () => {
+  const f = fixture(); await mountEditor(f, true);
+  await act(async () => { field('Appointment calendar').props.onChange('not-currently-listed'); });
+  expect(submitButton().props.disabled).toBe(true);
+  await submitForm(); expect(f.writes).toEqual([]); expect(f.unknown).toEqual([]);
+});
+
+test('transfer keeps the old type visible but requires the new calendar page to admit it before one explicit update', async () => {
+  const f = fixture(), root = await mountEditor(f, true);
+  const acceptedType = { ...type, id: 'accepted-type', durationMinutes: 60, bufferBeforeMinutes: 3, bufferAfterMinutes: 7 };
+  const typed = { ...record, appointmentType: acceptedType };
+  f.currentRecord = typed;
+  await act(async () => { root.updateProps({ session: { ...root.getProps().session, record: typed },
+    resources: [resource, { ...resource, id: 'resource-b', label: 'Second calendar' }] }); });
+  await act(async () => { field('Appointment calendar').props.onChange('resource-b'); });
+  const selection = findElement(value => value.type === CalendarCoreTypeFields);
+  expect(selection.props.value.appointmentType).toMatchObject({ id: acceptedType.id, revision: acceptedType.revision });
+  expect(selection.props.acceptedType).toBeUndefined();
+  expect(submitButton().props.disabled).toBe(true); await submitForm(); expect(f.writes).toEqual([]);
+  await act(async () => { f.types.at(-1)!.resolve({ items: [acceptedType], nextAfter: null, truncated: false }); });
+  expect(submitButton().props.disabled).toBe(false); await submitForm();
+  expect(f.writes).toHaveLength(1);
+  expect(f.writes[0]).toMatchObject({ operation: 'appointment.updated', input: { resourceIds: ['resource-b'],
+    appointmentType: { id: acceptedType.id, revision: acceptedType.revision } } });
 });
 
 test('selected type defaults keep an arbitrary exact minute and dispatch exact duration, buffers and version once', async () => {
@@ -369,6 +429,7 @@ function fixture() {
       get: async () => f.currentRecord,
       watchTransitions(_id: string, resolve: (value: CalendarAppointmentTransitions) => void, options: CalendarWatchOptions) { return watch(transitions, resolve, options, f.transition); },
       create(input: CalendarAppointmentInput, control: CalendarRequestOptions) { return write('appointment.created', input, control); },
+      update(_id: string, input: CalendarAppointmentUpdateInput, control: CalendarControlOptions) { return write('appointment.updated', input, control); },
       reschedule(_id: string, input: CalendarRescheduleInput, control: CalendarControlOptions) { return write('appointment.rescheduled', input, control); },
     },
     types: {

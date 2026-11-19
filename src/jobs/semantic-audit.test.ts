@@ -5,7 +5,6 @@ import type { DatabaseSerializableValue } from '../databases/database-operations
 import { LoggingActorSource, normalizeLoggingActorSourceBinding } from '../logging/logging-actor-source';
 import { loggingContext } from '../logging/test-support/logging-fixture';
 import { createReactiveDB } from '../sync/reactive-db';
-import { JOB_TABLES } from './realm-schema';
 import { jobsRealm } from './realm';
 import { jobOccurrenceId } from './model';
 
@@ -20,7 +19,9 @@ function create(id: string) {
 }
 function fixture(logging: 'enabled' | 'disabled' | 'workflow-disabled' = 'enabled', maxEvents = 10000) {
   const db = createReactiveDB({ mode: 'memory' });
-  for (const [table, schema] of Object.entries(JOB_TABLES)) db.defineTable(table, schema);
+  db.getRawDatabase().run('PRAGMA temp_store=MEMORY');
+  for (const migration of jobsRealm.migrations) db.getRawDatabase().transaction(() => migration.up(db.getRawDatabase()))();
+  for (const [table, schema] of Object.entries(jobsRealm.tables)) db.defineTable(table, schema);
   const source = logging === 'disabled' ? null : new LoggingActorSource(db, normalizeLoggingActorSourceBinding({ records: false,
     workflow: logging !== 'workflow-disabled', policyVersion: 'jobs-semantic-policy', scope: { kind: 'tenant', tenantId: 'tenant-a' }, sourceQueue: { maxEvents } }));
   const command = (name: string, input: unknown) => {

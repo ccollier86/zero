@@ -247,7 +247,7 @@ function CoreDetails({ id, trigger, scopeKey, client, displayTimeZone, revision,
         <Text size="xs" c="dimmed">Clinical progress, lobby, recurrence and automatic notifications are not enabled by these controls. Participant selection does not send invitations or grant access.</Text>
         {available && !isEnded(record.lifecycle?.status ?? record.status) && <Button variant="default" onClick={() => {
           if (current() && live.current.available === available && !context.signal.aborted) context.accept({ kind: 'reschedule', record });
-        }}>Reschedule</Button>}
+        }}>Edit appointment</Button>}
         {available && available.allowed.length > 0 && <Stack gap="xs"><CalendarSelect aria-label="Change appointment status" placeholder="Choose a status change" value={nextStatus}
           data={available.allowed.map(item => ({ value: item.status, label: `${statusLabel(item.status)}${item.requiresReason ? ' · reason required' : ''}` }))} onChange={setNextStatus} />
           <Button variant="default" disabled={!proposal} onClick={() => {

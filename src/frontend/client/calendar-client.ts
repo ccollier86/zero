@@ -1,5 +1,5 @@
 /** Browser-safe scoped calendar commands. The SDK retires this entire transport on every authority replacement. */
-import type { CalendarAppointmentInput, CalendarAppointmentPage, CalendarAppointmentView, CalendarBusyPage, CalendarCommandReceipt, CalendarCapabilities,
+import type { CalendarAppointmentInput, CalendarAppointmentUpdateInput, CalendarAppointmentPage, CalendarAppointmentView, CalendarBusyPage, CalendarCommandReceipt, CalendarCapabilities,
   CalendarAppointmentStatus, CalendarAppointmentLifecycle, CalendarAppointmentTransitionInput, CalendarAppointmentTransitions,
   CalendarLifecyclePolicyInput, CalendarLifecyclePolicy, CalendarCancellationOptions,
   CalendarAvailabilityInput, CalendarAvailabilityView, CalendarAvailabilityWindow, CalendarAvailabilityPolicyInput, CalendarAvailabilityPolicyView, CalendarBlockInput, CalendarBlockPage, CalendarBlockRescheduleInput, CalendarBlockView,
@@ -322,6 +322,11 @@ export function createCalendarClient(fetch: <T = unknown>(path: string, init?: F
       create(input: CalendarAppointmentInput, supplied: CalendarRequestOptions) {
         const r = appointmentInput(input, true); return mutation('/appointments', { appointment: r, options: options(supplied) }, supplied, 'appointment.created');
       },
+      update(id: string, input: CalendarAppointmentUpdateInput, supplied: CalendarControlOptions) {
+        const target = requestKey(id), appointment = appointmentUpdateInput(input), control = options(supplied, true);
+        return mutation('/appointments/' + encodeURIComponent(target), { appointment, options: control }, supplied,
+          'appointment.updated', target, undefined, 'PUT', control.expectedRevision as number);
+      },
       reschedule(id: string, input: CalendarRescheduleInput, supplied: CalendarControlOptions) {
         return mutation('/appointments/' + encodeURIComponent(requestKey(id)) + '/reschedule',
           { appointment: appointmentInput(input, false), options: options(supplied, true) }, supplied, 'appointment.rescheduled', id);
@@ -614,6 +619,29 @@ function appointmentInput(value: unknown, create: boolean): Record<string, unkno
   const visit = Object.hasOwn(r, 'visit') ? r.visit === null && !create ? null : visitInput(r.visit) : undefined;
   return { ...r, ...(participants === undefined ? {} : { participants }), ...(resourceIds === undefined ? {} : { resourceIds }), ...(appointmentType === undefined ? {} : { appointmentType }), ...(visit === undefined ? {} : { visit }) };
 }
+/** Browser-side mirror of the server's closed atomic patch, without server imports. */
+function appointmentUpdateInput(value: unknown): Record<string, unknown> {
+  const group = ['startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes'];
+  const r = { ...record(value, ['title', 'resourceIds', ...group, 'appointmentType', 'visit', 'participants']) };
+  if (Object.keys(r).length === 0 || Object.values(r).some(field => field === undefined)) throw invalid();
+  if (Object.hasOwn(r, 'title')) r.title = identifier(r.title, 512);
+  if (Object.hasOwn(r, 'resourceIds')) r.resourceIds = Object.freeze(ids(r.resourceIds).sort());
+  if (group.some(field => Object.hasOwn(r, field))) {
+    if (group.some(field => !Object.hasOwn(r, field))) throw invalid();
+    interval(r.startAt, r.endAt); zone(r.timeZone);
+    for (const field of ['bufferBeforeMinutes', 'bufferAfterMinutes']) integer(r[field], 0, 1440);
+    // Match native overflow admission when explicit buffers reach Date limits.
+    const limit = 8_640_000_000_000_000;
+    const start = Date.parse(String(r.startAt)) - Number(r.bufferBeforeMinutes) * 60_000;
+    const end = Date.parse(String(r.endAt)) + Number(r.bufferAfterMinutes) * 60_000;
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < -limit || end > limit) throw invalid();
+    r.timeZone = new Intl.DateTimeFormat('en', { timeZone: String(r.timeZone) }).resolvedOptions().timeZone;
+  }
+  if (Object.hasOwn(r, 'appointmentType')) r.appointmentType = r.appointmentType === null ? null : typeReference(r.appointmentType);
+  if (Object.hasOwn(r, 'visit')) r.visit = r.visit === null ? null : visitInput(r.visit);
+  if (Object.hasOwn(r, 'participants')) r.participants = participantReferences(r.participants);
+  return Object.freeze(r);
+}
 function blockInput(value: unknown, create: boolean): Record<string, unknown> {
   const r = record(value, ['startAt', 'endAt', 'timeZone', ...(create ? ['resourceIds', 'title'] : [])]);
   const resourceIds = create ? ids(r.resourceIds) : undefined;
@@ -762,7 +790,7 @@ function calendarReceipt(value: unknown): CalendarCommandReceipt {
     'location.created', 'location.updated',
     'type.created', 'type.updated', 'resource.types-changed',
     'block.created', 'block.rescheduled', 'block.cancelled', 'hold.acquired', 'hold.released',
-    'appointment.created', 'appointment.rescheduled', 'appointment.cancelled', 'appointment.transitioned', 'appointment.participants-changed', 'lifecycle.policy-changed'].includes(r.operation)
+    'appointment.created', 'appointment.rescheduled', 'appointment.updated', 'appointment.cancelled', 'appointment.transitioned', 'appointment.participants-changed', 'lifecycle.policy-changed'].includes(r.operation)
     || r.operation === 'lifecycle.policy-changed' && r.id !== 'policy' || typeof r.changed !== 'boolean') throw invalid();
   if (r.operation === 'appointment.transitioned' && !r.changed) throw invalid();
   requestKey(r.requestId); requestKey(r.id); integer(r.revision, 1); return Object.freeze(r) as unknown as CalendarCommandReceipt;

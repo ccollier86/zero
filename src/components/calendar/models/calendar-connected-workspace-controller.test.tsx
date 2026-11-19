@@ -106,9 +106,9 @@ test('a retained details participant action cannot reopen private management aft
 
 test('a retained details reschedule action cannot open an editor after current management is denied', async () => {
   const f = fixture(), view = await mountWorkspace(f); await chooseCalendar(view); await openDetails(view);
-  const retained = bodyFind(value => textContent(value.props.children) === 'Reschedule').props.onClick;
+  const retained = bodyFind(value => textContent(value.props.children) === 'Edit appointment').props.onClick;
   await act(async () => { f.transitions[0]!.options.onError?.(new CalendarReadError('CALENDAR_FORBIDDEN', 403, true)); });
-  expect(textContent(body())).not.toContain('Reschedule');
+  expect(textContent(body())).not.toContain('Edit appointment');
   await act(async () => { retained(); });
   expect(view.all().some(value => value.type === CalendarCoreEditor)).toBe(false);
 });

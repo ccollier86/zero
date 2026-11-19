@@ -68,7 +68,7 @@ function fixture() {
 }
 
 test('all three historical functions and the complete 003 schema retain original pinned identities', () => {
-  expect(calendarRealm.migrations.map(migration => migration.version)).toEqual(['001', '002', '003', '004', '005', '006', '007', '008', '009', '010', '011', '012', '013', '014', '015']);
+  expect(calendarRealm.migrations.map(migration => migration.version)).toEqual(['001', '002', '003', '004', '005', '006', '007', '008', '009', '010', '011', '012', '013', '014', '015', '016']);
   expect(calendarRealm.migrations.slice(0, 3).map(hashMigration)).toEqual(HISTORICAL_CHECKSUMS);
   expect(hashSchemaSnapshot(snapshotDeclaredTables(CALENDAR_HOLD_TABLES))).toBe(ORIGINAL_003_TABLES);
   for (const [table, schema] of Object.entries(CALENDAR_HOLD_TABLES)) expect(CALENDAR_LOCATION_TABLES[table]).toEqual(schema);
@@ -80,7 +80,7 @@ test('real 003 upgrade preserves every row, old trigger and receipt, and leaves 
   try {
     const before = f.legacy(), seq = f.db.currentSeq, ledger = f.raw.query('SELECT * FROM _migrations ORDER BY version').all();
     const triggers = f.raw.query<{ name: string; sql: string }, []>("SELECT name,sql FROM sqlite_master WHERE type='trigger' ORDER BY name").all();
-    expect(f.upgrade()).toEqual(['004', '005', '006', '007', '008', '009', '010', '011', '012', '013', '014', '015']); expect(f.legacy()).toEqual(before); expect(f.db.currentSeq).toBe(seq);
+    expect(f.upgrade()).toEqual(['004', '005', '006', '007', '008', '009', '010', '011', '012', '013', '014', '015', '016']); expect(f.legacy()).toEqual(before); expect(f.db.currentSeq).toBe(seq);
     expect(f.raw.query("SELECT * FROM _migrations WHERE version IN ('001','002','003') ORDER BY version").all()).toEqual(ledger);
     for (const trigger of triggers) expect(f.raw.query("SELECT name,sql FROM sqlite_master WHERE type='trigger' AND name=?").get(trigger.name)).toEqual(trigger);
     for (const [requestId, receipt] of f.saved) expect(f.query('receipt', { actor, requestId })).toEqual(receipt);

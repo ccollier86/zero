@@ -9,6 +9,7 @@ import { CALENDAR_INTEGRATION_CONTROL_TABLES } from './realm-integration-control
 import { CALENDAR_INTEGRATION_QUEUE_ADDITIONS, CALENDAR_INTEGRATION_QUEUE_TABLES } from './realm-integration-queue-migration';
 import { CALENDAR_INTEGRATION_OPERATOR_TABLES } from './realm-integration-operator-migration';
 import { calendarRealm } from './realm';
+import { CALENDAR_APPOINTMENT_UPDATE_TABLES } from './realm-appointment-update-migration';
 import { calendarHash } from './validation';
 
 // Recorded from the committed 012 source before adding 013, not recomputed from a replacement.
@@ -48,8 +49,8 @@ test('013 preserves the actual 012 closure/checksum and complete frozen historic
   expect(hashMigration(calendarRealm.migrations[11]!)).toBe(ORIGINAL_012_CHECKSUM);
   expect(calendarRealm.migrationChecksums[11]).toEqual({ version: '012', checksum: ORIGINAL_012_CHECKSUM });
   expect(hashSchemaSnapshot(snapshotDeclaredTables(CALENDAR_INTEGRATION_CONTROL_TABLES))).toBe(ORIGINAL_012_TABLES);
-  expect(calendarRealm.version).toBe('15'); expect(calendarRealm.migrations[12]?.version).toBe('013');
-  expect(calendarRealm.tables).toEqual(CALENDAR_INTEGRATION_OPERATOR_TABLES);
+  expect(calendarRealm.version).toBe('16'); expect(calendarRealm.migrations[12]?.version).toBe('013');
+  expect(calendarRealm.tables).toEqual(CALENDAR_APPOINTMENT_UPDATE_TABLES);
   for (const [name, schema] of Object.entries(CALENDAR_INTEGRATION_CONTROL_TABLES)) expect(calendarRealm.tables[name]).toEqual(schema);
   expect(Object.isFrozen(CALENDAR_INTEGRATION_QUEUE_ADDITIONS)).toBe(true); expect(Object.isFrozen(CALENDAR_INTEGRATION_QUEUE_TABLES)).toBe(true);
 });

@@ -6,6 +6,7 @@ import { assertJobOwner, decodeJobAdmission, eq, jobBudget, JOB_LIMITS, jobRevis
 import { selectDueOccurrences } from './schedule-time';
 import { jobInteger, jobJson, jobKey, jobRecord, jobText, jobTime } from './validation';
 import { appendJobSemanticAudit } from './semantic-audit';
+import { changeJobOccurrenceWork, recordJobOccurrenceWork, refreshJobScheduleWork } from './realm-capacity';
 
 export function materializeJobOccurrences(context: DatabaseWriteCommandContext, input: unknown) {
   return jobCommand(() => {
@@ -22,7 +23,10 @@ export function materializeJobOccurrences(context: DatabaseWriteCommandContext, 
     if (due.scheduledAt.length && admission.overlap === 'queue-one') {
       const previous = context.db.find('_jobs_occurrences', { filters: [eq('scope_id', scope), eq('schedule_id', row.id), eq('generation', row.generation), eq('state', 'pending')], limit: 101 });
       if (previous.length > 100) throw new JobsError('JOBS_STATE_INVALID');
-      for (const pending of previous) context.db.update('_jobs_occurrences', String(pending.id), { state: 'terminal', terminal_status: 'superseded', updated_at: now });
+      for (const pending of previous) {
+        context.db.update('_jobs_occurrences', String(pending.id), { state: 'terminal', terminal_status: 'superseded', updated_at: now });
+        changeJobOccurrenceWork(context, pending as JobOccurrenceRow, 'terminal');
+      }
     }
     for (const at of due.scheduledAt) {
       const superseded = admission.overlap === 'queue-one' && at !== due.scheduledAt[due.scheduledAt.length - 1];
@@ -31,9 +35,11 @@ export function materializeJobOccurrences(context: DatabaseWriteCommandContext, 
         state: superseded ? 'terminal' : 'pending', lease_nonce: null, lease_until: null, lease_generation: 0, workflow_id: null, receipt_json: null,
         terminal_status: superseded ? 'superseded' : null, error_code: null, created_at: now, updated_at: now };
       context.db.createStrict('_jobs_occurrences', occurrence);
+      recordJobOccurrenceWork(context, occurrence);
     }
     if (cursor.next_due_at !== due.nextDueAt || due.skipped) context.db.update('_jobs_cursors', row.id,
       { next_due_at: due.nextDueAt, skipped: due.skipped || cursor.skipped === 1 ? 1 : 0 });
+    refreshJobScheduleWork(context, row.id);
     return { created: due.scheduledAt.length, skipped: due.skipped };
   });
 }
@@ -62,6 +68,7 @@ export function claimJobOccurrence(context: DatabaseWriteCommandContext, input: 
     if (row.state === 'pending' && !allowed) {
       const reason = current ? 'expired' : 'cancelled';
       context.db.update('_jobs_occurrences', row.id, { state: current ? 'terminal' : 'cancelled', terminal_status: current ? 'expired' : 'not-dispatched', updated_at: now });
+      changeJobOccurrenceWork(context, row, current ? 'terminal' : 'cancelled');
       return { claimed: false, reason };
     }
     if (row.state === 'pending') {
@@ -69,6 +76,7 @@ export function claimJobOccurrence(context: DatabaseWriteCommandContext, input: 
       const active = context.db.find('_jobs_occurrences', { filters: [eq('scope_id', scope), eq('schedule_id', parent.id), oneOf('state', ['claimed', 'dispatched'])], limit: 1 });
       if (active.length && admission.overlap === 'skip') {
         context.db.update('_jobs_occurrences', row.id, { state: 'terminal', terminal_status: 'overlap-skipped', updated_at: now });
+        changeJobOccurrenceWork(context, row, 'terminal');
         return { claimed: false, reason: 'overlap-skipped' };
       }
       if (admission.overlap === 'queue-one') {
@@ -76,6 +84,7 @@ export function claimJobOccurrence(context: DatabaseWriteCommandContext, input: 
           order: [{ field: 'scheduled_at', direction: 'desc' }, { field: 'id', direction: 'desc' }], limit: 1 })[0];
         if (latest && latest.id !== row.id) {
           context.db.update('_jobs_occurrences', row.id, { state: 'terminal', terminal_status: 'superseded', updated_at: now });
+          changeJobOccurrenceWork(context, row, 'terminal');
           return { claimed: false, reason: 'superseded' };
         }
         if (active.length) return { claimed: false, reason: 'overlap-wait' };
@@ -84,6 +93,7 @@ export function claimJobOccurrence(context: DatabaseWriteCommandContext, input: 
     const generation = nextJobInteger(row.lease_generation);
     context.db.update('_jobs_occurrences', row.id, { state: 'claimed', lease_nonce: nonce, lease_until: leaseUntil,
       lease_generation: generation, updated_at: now });
+    changeJobOccurrenceWork(context, row, 'claimed');
     return { claimed: true, id: row.id, nonce, leaseGeneration: generation, dispatchAllowed: allowed };
   });
 }
@@ -119,6 +129,7 @@ export function receiveJobDispatch(context: DatabaseWriteCommandContext, input: 
     assertClaim(row, r.nonce, r.leaseGeneration, now);
     const change = context.db.update('_jobs_occurrences', row.id, { state: 'dispatched', workflow_id: normalized.instanceId, receipt_json: json,
       lease_nonce: null, lease_until: null, error_code: null, updated_at: now });
+    changeJobOccurrenceWork(context, row, 'dispatched');
     appendJobSemanticAudit(context, 'jobs.occurrence.handed-off', change, { scheduleId: row.schedule_id, generation: row.generation, workflowId: normalized.instanceId });
     return { dispatched: true, instanceId: normalized.instanceId };
   });
@@ -133,6 +144,7 @@ export function blockJobOccurrence(context: DatabaseWriteCommandContext, input: 
     const code = jobText(r.code, 64);
     if (code !== 'JOBS_AUTHORITY_RETIRED' && code !== 'JOBS_DEFINITION_UNAVAILABLE' && code !== 'JOBS_CAPACITY' && code !== 'JOBS_NOT_DISPATCHED') throw new JobsError('JOBS_INPUT_INVALID');
     const change = context.db.update('_jobs_occurrences', row.id, { state: 'blocked', error_code: code, lease_nonce: null, lease_until: null, updated_at: now });
+    changeJobOccurrenceWork(context, row, 'blocked');
     const parent = schedule(context, scope, row.schedule_id);
     if (parent.generation === row.generation && code !== 'JOBS_NOT_DISPATCHED') context.db.update('_jobs_cursors', parent.id, { blocked_code: code });
     appendJobSemanticAudit(context, 'jobs.occurrence.blocked', change,
@@ -150,6 +162,7 @@ export function completeJobOccurrence(context: DatabaseWriteCommandContext, inpu
     if (row.state === 'terminal' && row.terminal_status !== r.status) throw new JobsError('JOBS_INTENT_CONFLICT');
     if (row.state !== 'terminal') {
       const change = context.db.update('_jobs_occurrences', row.id, { state: 'terminal', terminal_status: r.status, updated_at: now });
+      changeJobOccurrenceWork(context, row, 'terminal');
       appendJobSemanticAudit(context, 'jobs.occurrence.terminal-observed', change,
         { scheduleId: row.schedule_id, generation: row.generation, workflowId: id, workflowStatus: r.status }, r.status === 'failed' ? 'failed' : 'succeeded');
     }

@@ -292,6 +292,10 @@ external delivery has been undone. Inspect/control that actual run separately.
   1,000 schedules per owner, 100,000 permanent logical receipts, or 100,000
   occurrences. Capacity exhaustion is visible and does not recycle identities
   or delete receipts. This is not an indefinite high-frequency retention plan.
+  The unreleased source-owned extension separately counts live work across all
+  generations: a source's 1,000-schedule limit is working occupancy, not a
+  lifetime cap. Common file working accounting includes actor and source jobs;
+  see [working versus retained capacity](./source-owned-jobs.md#capacity-evidence-and-upgrade).
 - Missing established files, changed roots and inconsistent retained ownership
   require explicit recovery, never empty replacement.
 

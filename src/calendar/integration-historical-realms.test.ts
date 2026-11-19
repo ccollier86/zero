@@ -7,6 +7,7 @@ import { CALENDAR_INTEGRATION_OWNERSHIP_TABLES } from './realm-integration-owner
 import { CALENDAR_INTEGRATION_CONTROL_TABLES } from './realm-integration-controls-migration';
 import { CALENDAR_INTEGRATION_QUEUE_TABLES } from './realm-integration-queue-migration';
 import { CALENDAR_INTEGRATION_INSPECTION_TABLES } from './realm-integration-inspection-migration';
+import { CALENDAR_INTEGRATION_OPERATOR_TABLES } from './realm-integration-operator-migration';
 import { CALENDAR_INTEGRATION_HISTORICAL_REALMS, isCalendarIntegrationHistoricalRealmFingerprint } from './integration-historical-realms';
 import { calendarInspectionHistoricalRealm } from './test-support/integration-inspection-fixture';
 
@@ -26,13 +27,16 @@ const generations = [
     schema: 'e18f7613d8eeee600bae966a25e3597ed6ba5c75686d49520d697c66357f9d6a' },
   { version: '014', count: 14, tables: CALENDAR_INTEGRATION_INSPECTION_TABLES, commands: 35, queries: 34,
     schema: 'a2f91077414b0a49d44a69e5c8e8f96fbccaf03e224542c5290bdc447f7dcb83' },
+  { version: '015', count: 15, tables: CALENDAR_INTEGRATION_OPERATOR_TABLES, commands: 36, queries: 35,
+    schema: '67d756b28b2671d19eeb37afda6f65c75540d83bf55ebf6514db99e5c06a8df0' },
 ] as const;
 
-test('retained source compatibility pins are genuine complete 010–013 realms, not current-registry approximations', () => {
+test('retained source compatibility pins are genuine complete 010–015 realms, not current-registry approximations', () => {
   expect(CALENDAR_INTEGRATION_HISTORICAL_REALMS.map(realm => realm.version)).toEqual(generations.map(realm => realm.version));
   for (const generation of generations) {
-    const commands = Object.fromEntries(Object.entries(calendarRealm.commands).filter(([name]) => !name.startsWith('calendar.integration.operator.') && (generation.count >= 12 || !CONTROL_COMMANDS.has(name))));
-    const queries = Object.fromEntries(Object.entries(calendarRealm.queries).filter(([name]) => !name.startsWith('calendar.integration.operator.') && (generation.count >= 14 || name !== 'calendar.integration.inspection')
+    const commands = Object.fromEntries(Object.entries(calendarRealm.commands).filter(([name]) => name !== 'calendar.appointment.update'
+      && (generation.count >= 15 || !name.startsWith('calendar.integration.operator.')) && (generation.count >= 12 || !CONTROL_COMMANDS.has(name))));
+    const queries = Object.fromEntries(Object.entries(calendarRealm.queries).filter(([name]) => (generation.count >= 15 || !name.startsWith('calendar.integration.operator.')) && (generation.count >= 14 || name !== 'calendar.integration.inspection')
       && (generation.count >= 13 || name !== 'calendar.integration.nextWake') && (generation.count >= 12 || !CONTROL_QUERIES.has(name))));
     const historical = defineDatabaseRealm({ name: calendarRealm.name, version: String(generation.count), tables: generation.tables,
       migrations: calendarRealm.migrations.slice(0, generation.count), commands, queries });

@@ -3,6 +3,7 @@ import { expect, test } from 'bun:test';
 import { Migrator } from '../migrations/migrator';
 import { hashMigration, hashSchemaSnapshot, snapshotDeclaredTables } from '../migrations/schema-snapshot';
 import { calendarRealm } from './realm';
+import { CALENDAR_APPOINTMENT_UPDATE_TABLES } from './realm-appointment-update-migration';
 import { CALENDAR_INTEGRATION_INSPECTION_TABLES } from './realm-integration-inspection-migration';
 import { CALENDAR_INTEGRATION_OPERATOR_ADDITIONS, CALENDAR_INTEGRATION_OPERATOR_TABLES } from './realm-integration-operator-migration';
 import { calendarOperatorHistoricalRealm } from './test-support/integration-inspection-fixture';
@@ -27,12 +28,12 @@ function fixture() {
 }
 
 test('015 preserves the actual014 closure/checksum, complete frozen map and original command/query registry fingerprint', () => {
-  expect(calendarRealm.version).toBe('15'); expect(calendarRealm.migrations[14]?.version).toBe('015');
+  expect(calendarRealm.version).toBe('16'); expect(calendarRealm.migrations[14]?.version).toBe('015');
   expect(hashMigration(calendarRealm.migrations[13]!)).toBe(ORIGINAL_014_CHECKSUM);
   expect(calendarRealm.migrationChecksums[13]).toEqual({ version: '014', checksum: ORIGINAL_014_CHECKSUM });
   expect(hashSchemaSnapshot(snapshotDeclaredTables(CALENDAR_INTEGRATION_INSPECTION_TABLES))).toBe(ORIGINAL_014_TABLES);
   expect(calendarOperatorHistoricalRealm.fingerprint).toBe(ORIGINAL_014_REALM); expect(Object.keys(calendarOperatorHistoricalRealm.commands)).toHaveLength(35); expect(Object.keys(calendarOperatorHistoricalRealm.queries)).toHaveLength(34);
-  expect(calendarRealm.tables).toEqual(CALENDAR_INTEGRATION_OPERATOR_TABLES);
+  expect(calendarRealm.tables).toEqual(CALENDAR_APPOINTMENT_UPDATE_TABLES);
   for (const [name, schema] of Object.entries(CALENDAR_INTEGRATION_INSPECTION_TABLES)) expect(calendarRealm.tables[name]).toEqual(schema);
   expect(Object.isFrozen(CALENDAR_INTEGRATION_OPERATOR_ADDITIONS)).toBe(true); expect(Object.isFrozen(CALENDAR_INTEGRATION_OPERATOR_TABLES)).toBe(true);
   for (const schema of Object.values(CALENDAR_INTEGRATION_OPERATOR_ADDITIONS)) expect(Object.isFrozen(schema)).toBe(true);
@@ -41,7 +42,7 @@ test('015 preserves the actual014 closure/checksum, complete frozen map and orig
 test('populated014 upgrade preserves all source/admission/pending/control evidence, guards, ledger and sequence without human receipt backfill', () => {
   const f = fixture(); try {
     const before = f.retainedRows(), definitions = f.definitions(), ledger = f.raw.query('SELECT * FROM _migrations ORDER BY version').all(), sequence = f.db.currentSeq;
-    expect(f.upgrade()).toEqual(['015']); expect(f.retainedRows()).toEqual(before); expect(f.db.currentSeq).toBe(sequence);
+    expect(f.upgrade()).toEqual(['015', '016']); expect(f.retainedRows()).toEqual(before); expect(f.db.currentSeq).toBe(sequence);
     expect(f.raw.query("SELECT * FROM _migrations WHERE version<='014' ORDER BY version").all()).toEqual(ledger);
     for (const definition of definitions as { type: string; name: string; sql: string }[]) expect(f.raw.query('SELECT type,name,sql FROM sqlite_master WHERE type=? AND name=?').get(definition.type, definition.name)).toEqual(definition);
     expect(f.rows('operator_requests')).toEqual([]); expect(f.db.get('_calendar_usage', 'integrationOperatorRetirements')).toBeNull();
@@ -59,6 +60,6 @@ test('late015 failure rolls back every new cross-store guard/index and ledger wh
     ] });
     try { expect(() => failing.run()).toThrow('synthetic late operator migration failure'); } finally { failing.dispose(); }
     expect(f.retainedRows()).toEqual(before); expect(f.definitions()).toEqual(definitions); expect(f.db.currentSeq).toBe(sequence);
-    expect(f.raw.query('SELECT * FROM _migrations ORDER BY version').all()).toEqual(ledger); expect(f.rows('operator_requests')).toEqual([]); expect(f.upgrade()).toEqual(['015']);
+    expect(f.raw.query('SELECT * FROM _migrations ORDER BY version').all()).toEqual(ledger); expect(f.rows('operator_requests')).toEqual([]); expect(f.upgrade()).toEqual(['015', '016']);
   } finally { f.close(); }
 });

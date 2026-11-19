@@ -60,6 +60,7 @@ async function fixture(options: { tenancy?: 'single' | 'multi'; maxOwners?: numb
   let beforeObservation: (() => Promise<void>) | null = null;
   let beforeVerify: ((owner: CalendarIntegrationOwner) => Promise<void>) | null = null;
   let beforeSourceCommand: ((name: string) => Promise<void>) | null = null;
+  let pinFingerprint: string | null = null;
   let discoveryCalls = 0, ownerCalls = 0, capabilityCalls = 0, proofs = 0, pinCalls = 0;
   let installedSource: CalendarRuntimeSource | null = null, removeHints: (() => void) | undefined;
   const source = (value: CalendarRuntimeSource) => { installedSource = value; (calendar.runtime as unknown as { source: CalendarRuntimeSource }).source = value; };
@@ -86,8 +87,9 @@ async function fixture(options: { tenancy?: 'single' | 'multi'; maxOwners?: numb
         resolveOwner: scope => calendar.runtime.integrationOwnerForScope(scope),
         pin(owner) {
           pinCalls++;
-          return jobs!.bridge.pin(jobs!.bridge.system({ principal: 'jobs:source:src_' + 'f'.repeat(64), reason: 'Synthetic fixed native pin', scope: owner.scope }),
+          const pin = jobs!.bridge.pin(jobs!.bridge.system({ principal: 'jobs:source:src_' + 'f'.repeat(64), reason: 'Synthetic fixed native pin', scope: owner.scope }),
             CALENDAR_OBSERVATION_WORKFLOW, calendarObservationPinInput(), 1);
+          return pinFingerprint === null ? pin : { ...pin, fingerprint: pinFingerprint };
         },
         jobs: { forSource(source) { capabilityCalls++; expect(calendar.stats().activeLeases).toBe(0); return jobs!.service.forSource(source); } },
         inspect: (id, scope) => jobs!.workflows.getInstance(id, scope), now: () => jobs!.now(),
@@ -111,6 +113,7 @@ async function fixture(options: { tenancy?: 'single' | 'multi'; maxOwners?: numb
       pauseObservation(callback: typeof beforeObservation) { beforeObservation = callback; },
       pauseVerify(callback: typeof beforeVerify) { beforeVerify = callback; },
       pauseSourceCommand(callback: typeof beforeSourceCommand) { beforeSourceCommand = callback; },
+      overridePinFingerprint(value: string | null) { pinFingerprint = value; },
       async close() {
         // Drain source callers, then shared Jobs callbacks and Torrent activities;
         // only then retire native evidence capabilities and physical owners.
@@ -148,6 +151,19 @@ test('construction is inert; owner readiness is physically verified, capture-onl
     expect((await f.owner.read<CalendarIntegrationPolicyView>('calendar.integration.policy', { ruleId: 'observe' })).state).toBe('activating');
     expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_controls')).toHaveLength(0);
     expect(f.jobs.commands).toHaveLength(0); expect(f.calendar.stats().activeLeases).toBe(0);
+  } finally { await f.close(); }
+});
+
+test('an empty rule catalog is evidence-only and still physically verifies ordinary Calendar readiness', async () => {
+  const f = await fixture(), wake = scheduler(); try {
+    const empty = f.replace([]), before = f.counters();
+    await empty.ready(f.record); await empty.ready(f.record);
+    expect(f.counters()).toMatchObject({ proofs: before.proofs + 2, pinCalls: before.pinCalls, capabilityCalls: before.capabilityCalls });
+    await f.appointment('no-rules'); await empty.start(wake);
+    expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_policy_history')).toHaveLength(0);
+    expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_intents')).toHaveLength(0);
+    expect(f.jobs.commands).toHaveLength(0); expect(wake.pending.size).toBe(0);
+    expect(f.calendar.stats().activeLeases).toBe(0);
   } finally { await f.close(); }
 });
 
@@ -382,6 +398,129 @@ test('a removed/unselected retained rule fails closed for operator review withou
   } finally { await f.close(); }
 });
 
+test('removed active rules keep accepted receipt evidence and expiry cancellation progressing without new registration', async () => {
+  const f = await fixture(), wake = scheduler(); try {
+    await f.coordinator.ready(f.record); await f.appointment(); await f.coordinator.start(wake);
+    const original = f.calendar.sourceRows(f.session.scope, '_calendar_integration_intents')[0]!;
+    await f.coordinator.drain(); const empty = f.replace([]);
+    await expect(empty.ready(f.record)).rejects.toMatchObject({ code: 'CALENDAR_NOT_READY' });
+    await empty.start(wake);
+    expect(empty.diagnostics().scheduledAt).toBe(f.jobs.now() + 60_001);
+    expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_dispatch')[0]!.state).toBe('accepted');
+    f.jobs.advance(60_001); await wake.flush(f.jobs.now());
+    expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_dispatch')[0]!.state).toBe('cancelled');
+    expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_intents')[0]!.create_key).toBe(original.create_key);
+    expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_receipts')).toHaveLength(2);
+    expect(f.jobs.commands.filter(row => row.name === 'jobs.source.register')).toHaveLength(1);
+    expect(f.jobs.commands.filter(row => row.name === 'jobs.source.retire')).toHaveLength(0);
+    expect((await f.owner.read<CalendarIntegrationPolicyView>('calendar.integration.policy', { ruleId: 'observe' })).state).toBe('active');
+    expect(wake.pending.size).toBe(0);
+  } finally { await f.close(); }
+});
+
+test('removed rules reconcile an unknown accepted original create and later cancel without rotating its key', async () => {
+  let lose = true;
+  const f = await fixture({ afterJobsWrite(operation) {
+    if (operation.name === 'jobs.source.schedule.create' && lose) { lose = false; throw new JobsError('JOBS_OUTCOME_UNKNOWN'); }
+  } }), wake = scheduler(); try {
+    await f.coordinator.ready(f.record); await f.appointment(); await f.coordinator.start(wake);
+    const original = f.calendar.sourceRows(f.session.scope, '_calendar_integration_intents')[0]!;
+    expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_dispatch')[0]!.state).toBe('unknown');
+    await f.coordinator.drain(); const empty = f.replace([]); await empty.start(wake);
+    f.jobs.advance(1000); await wake.flush(f.jobs.now());
+    expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_dispatch')[0]!.state).toBe('accepted');
+    f.jobs.advance(59_001); await wake.flush(f.jobs.now());
+    expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_dispatch')[0]!.state).toBe('cancelled');
+    expect(f.jobs.commands.filter(row => row.name === 'jobs.source.schedule.create')).toHaveLength(1);
+    expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_intents')[0]!.create_key).toBe(original.create_key);
+    expect(f.jobs.commands.filter(row => row.name === 'jobs.source.retire')).toHaveLength(0);
+  } finally { await f.close(); }
+});
+
+test('removed rules reconcile an accepted activation control without hydrating fresh eligibility', async () => {
+  let lose = true;
+  const f = await fixture({ afterJobsWrite(operation) {
+    if (operation.name === 'jobs.source.register' && lose) { lose = false; throw new JobsError('JOBS_OUTCOME_UNKNOWN'); }
+  } }), wake = scheduler(); try {
+    await f.coordinator.start(wake);
+    const original = f.calendar.sourceRows(f.session.scope, '_calendar_integration_controls')[0]!;
+    await f.coordinator.drain(); const empty = f.replace([]); await empty.start(wake);
+    expect((await f.owner.read<{ pending: unknown }>('calendar.integration.controlEvidence', { ruleId: 'observe' })).pending).toBeNull();
+    expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_controls')[0]!.jobs_key).toBe(original.jobs_key);
+    expect(f.jobs.commands.filter(row => row.name === 'jobs.source.register')).toHaveLength(1);
+    expect(f.jobs.commands.filter(row => row.name === 'jobs.source.retire')).toHaveLength(0);
+    expect((await f.owner.read<CalendarIntegrationPolicyView>('calendar.integration.policy', { ruleId: 'observe' })).state).toBe('active');
+    await expect(empty.ready(f.record)).rejects.toMatchObject({ code: 'CALENDAR_NOT_READY' });
+    expect(wake.pending.size).toBe(0);
+  } finally { await f.close(); }
+});
+
+test('removed activation evidence waits for the original late accepted Jobs writer without activating again', async () => {
+  const entered = deferred(), gate = deferred(); let hold = true;
+  const f = await fixture({ async afterJobsWrite(operation) {
+    if (operation.name === 'jobs.source.register' && hold) { hold = false; entered.resolve(); await gate.promise; }
+  } }), wake = scheduler();
+  let starting: ReturnType<typeof capture> | undefined, recovering: ReturnType<typeof capture> | undefined;
+  try {
+    starting = capture(f.coordinator.start(wake)); await entered.promise;
+    const original = f.calendar.sourceRows(f.session.scope, '_calendar_integration_controls')[0]!;
+    const drained = await capture(f.coordinator.drain());
+    // Cancelling the startup caller cannot certify that its accepted native
+    // Jobs callback settled. Preserve that first truthful shutdown failure.
+    expect(drained.ok).toBe(false);
+    const empty = f.replace([]); let settled = false;
+    recovering = capture(empty.start(wake)).then(result => { settled = true; return result; });
+    await untilMemoryJobs(() => empty.diagnostics().intake.active === 1);
+    expect(settled).toBe(false); expect(f.jobs.commands.filter(row => row.name === 'jobs.source.register')).toHaveLength(1);
+    expect(f.calendar.stats().activeLeases).toBe(0); expect(f.jobs.stats().activeLeases).toBe(0);
+    gate.resolve(); expect((await recovering).ok).toBe(true);
+    expect((await f.owner.read<{ pending: unknown }>('calendar.integration.controlEvidence', { ruleId: 'observe' })).pending).toBeNull();
+    expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_controls')[0]!.jobs_key).toBe(original.jobs_key);
+    expect(f.jobs.commands.filter(row => row.name === 'jobs.source.register')).toHaveLength(1);
+    expect(f.jobs.commands.filter(row => row.name === 'jobs.source.retire')).toHaveLength(0);
+  } finally { gate.resolve(); await starting; await recovering; await f.close(); }
+});
+
+test('a removed active rule does not stop an already configured healthy rule from executing accepted work', async () => {
+  const f = await fixture(), wake = scheduler(); try {
+    const healthy = { id: 'healthy', version: '1', dueOffsetMs: 0, maxLatenessMs: 60_000 };
+    const both = f.replace([{ ...healthy, id: 'observe' }, healthy]);
+    await both.ready(f.record); await f.appointment('two-rules'); await both.start(wake);
+    expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_receipts')).toHaveLength(2);
+    await both.drain(); const next = f.replace([healthy]);
+    await expect(next.ready(f.record)).rejects.toMatchObject({ code: 'CALENDAR_NOT_READY' });
+    await next.start(wake); await f.jobs.tick();
+    await untilMemoryJobs(() => f.calendar.sourceRows(f.session.scope, '_calendar_integration_effect_outcomes').length === 1);
+    const intent = f.calendar.sourceRows(f.session.scope, '_calendar_integration_intents').find(row => row.rule_id === 'healthy')!;
+    expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_effect_admissions').map(row => row.intent_id)).toEqual([intent.id]);
+    expect(f.jobs.commands.filter(row => row.name === 'jobs.source.register')).toHaveLength(2);
+    expect(f.jobs.commands.filter(row => row.name === 'jobs.source.retire')).toHaveLength(0);
+    expect(next.diagnostics().blockedOwners[0]).toMatchObject({ unselectedRule: true });
+  } finally { await f.close(); }
+});
+
+test('a backed-off removed control cannot starve a later configured healthy rule', async () => {
+  let reject = true;
+  const f = await fixture({ beforeJobsWrite(operation) {
+    if (operation.name === 'jobs.source.register' && reject) throw new JobsError('JOBS_CAPACITY');
+  } }), wake = scheduler();
+  try {
+    const healthy = { id: 'zz-healthy', version: '1', dueOffsetMs: 0, maxLatenessMs: 60_000 };
+    const both = f.replace([{ ...healthy, id: 'observe' }, healthy]);
+    await both.ready(f.record); await f.appointment('two-rules'); await both.start(wake); await both.drain();
+    reject = false; f.jobs.advance(5000);
+    const next = f.replace([healthy]); await next.start(wake); await f.jobs.tick();
+    await untilMemoryJobs(() => f.calendar.sourceRows(f.session.scope, '_calendar_integration_effect_outcomes').length === 1);
+    const intent = f.calendar.sourceRows(f.session.scope, '_calendar_integration_intents').find(row => row.rule_id === 'zz-healthy')!;
+    expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_effect_admissions').map(row => row.intent_id)).toEqual([intent.id]);
+    const removed = await f.owner.read<CalendarIntegrationPolicyView>('calendar.integration.policy', { ruleId: 'observe' });
+    expect(removed.state).toBe('activating'); expect(removed.registration).toBeNull();
+    expect((await f.owner.read<{ pending: { lastFailure: string } }>('calendar.integration.controlEvidence', { ruleId: 'observe' })).pending.lastFailure).toBe('CALENDAR_NOT_READY');
+    expect(f.jobs.commands.filter(row => row.name === 'jobs.source.register')).toHaveLength(1);
+    expect(f.jobs.commands.filter(row => row.name === 'jobs.source.retire')).toHaveLength(0);
+  } finally { await f.close(); }
+});
+
 test('hints coalesce into one absolute wake, and a cancelled captured wake cannot execute after quiescence', async () => {
   const f = await fixture(), wake = scheduler(); try {
     await f.coordinator.start(wake); expect(wake.pending.size).toBe(0);
@@ -499,14 +638,61 @@ test('recovered observation evidence works before startup and after intake drain
   } finally { gate.resolve(); await f.close(); }
 });
 
-test('retired desired rules reconcile retirement but background startup/readiness never implicitly reactivate them', async () => {
+test('removed or changed code policies cannot freshly admit an already accepted original Jobs execution', async () => {
+  const f = await fixture(), wake = scheduler(), entered = deferred(), gate = deferred();
+  try {
+    f.pauseObservation(async () => { entered.resolve(); await gate.promise; });
+    await f.coordinator.ready(f.record); await f.appointment(); await f.coordinator.start(wake); await f.jobs.tick(); await entered.promise;
+    await f.coordinator.drain();
+    for (const rules of [[], [{ id: 'observe', version: '2', dueOffsetMs: 0, maxLatenessMs: 60_000 }]]) {
+      const recovered = f.replace(rules);
+      await expect(recovered.execute(f.contexts[0]!)).rejects.toMatchObject({ code: 'JOBS_AUTHORITY_RETIRED' });
+      expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_effect_admissions')).toHaveLength(0);
+    }
+    expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_receipts')).toHaveLength(1);
+    expect(f.jobs.commands.filter(row => row.name === 'jobs.source.schedule.create')).toHaveLength(1);
+  } finally { gate.resolve(); await f.close(); }
+});
+
+test('a changed native code pin during effect writer admission refuses the final fresh cutoff', async () => {
+  const f = await fixture(), wake = scheduler(), entered = deferred(), gate = deferred();
+  try {
+    f.pauseSourceCommand(async name => { if (name === 'calendar.integration.effect.admit') { entered.resolve(); await gate.promise; } });
+    await f.coordinator.ready(f.record); await f.appointment(); await f.coordinator.start(wake); await f.jobs.tick(); await entered.promise;
+    f.overridePinFingerprint('f'.repeat(64)); gate.resolve();
+    await untilMemoryJobs(() => !f.jobs.workflows.getInstance(f.contexts[0]!.instanceId, f.session.scope)?.status?.includes('running'));
+    expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_effect_admissions')).toHaveLength(0);
+    expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_effect_outcomes')).toHaveLength(0);
+  } finally { gate.resolve(); await f.close(); }
+});
+
+test('an already admitted observation settles after code configuration removal and pin replacement', async () => {
+  const f = await fixture(), wake = scheduler(), entered = deferred(), gate = deferred();
+  try {
+    f.pauseSourceCommand(async name => { if (name === 'calendar.integration.effect.settle') { entered.resolve(); await gate.promise; } });
+    await f.coordinator.ready(f.record); await f.appointment(); await f.coordinator.start(wake); await f.jobs.tick(); await entered.promise;
+    await f.coordinator.drain(); const empty = f.replace([]);
+    expect((await empty.inspect(f.session.scope))!.effects.admittedButUnsettled).toBe(true);
+    f.overridePinFingerprint('f'.repeat(64)); gate.resolve();
+    await untilMemoryJobs(() => f.calendar.sourceRows(f.session.scope, '_calendar_integration_effect_outcomes').length === 1);
+    expect((await empty.inspect(f.session.scope))!.effects.admittedButUnsettled).toBe(false);
+    expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_effect_admissions')).toHaveLength(1);
+    expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_receipts')).toHaveLength(1);
+  } finally { gate.resolve(); await f.close(); }
+});
+
+test('retired desired rules preserve physically verified ordinary readiness without implicit reactivation', async () => {
   const f = await fixture(), wake = scheduler(); try {
     await f.coordinator.start(wake);
     const active = await f.owner.read<CalendarIntegrationPolicyView>('calendar.integration.policy', { ruleId: 'observe' });
     await f.coordinator.drain();
     await f.owner.command('calendar.integration.policy.retire', { ruleId: 'observe', epoch: active.epoch }, { idempotencyKey: 'explicit-local-retirement' });
     const recovered = f.replace();
-    await expect(recovered.ready(f.record)).rejects.toMatchObject({ code: 'CALENDAR_NOT_READY' });
+    const proofs = f.counters().proofs;
+    await recovered.ready(f.record); expect(f.counters().proofs).toBeGreaterThan(proofs);
+    await f.session.api.resources.create({ label: 'AFTER_RETIREMENT', kind: 'room', timeZone: 'UTC' }, { idempotencyKey: 'after-retirement-resource' });
+    await f.appointment('after-retirement');
+    expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_intents')).toHaveLength(0);
     await recovered.start(wake);
     const retired = await f.owner.read<CalendarIntegrationPolicyView>('calendar.integration.policy', { ruleId: 'observe' });
     expect(retired.id).toBe(active.id); expect(retired.epoch).toBe(active.epoch); expect(retired.state).toBe('retired');
@@ -576,9 +762,12 @@ test('native inspection reports bounded redacted source and Jobs facts before an
       retained: { policies: { used: 1 }, intents: { used: 1 } },
       dispatch: { pending: false, unknown: false, blocked: false, accepted: true, claimed: false }, effects: { admittedButUnsettled: false } });
     expect(rule).toMatchObject({ ruleId: 'observe', epoch: 1, state: 'active', configured: true, pendingControl: null,
-      downstream: { generation: 1, revision: 1, state: 'active', matchesPolicy: true }, capacity: { sourceSchedules: { used: 1 }, file: { schedules: { used: 1 }, sources: { used: 1 }, sourcePolicies: { used: 1 } } } });
+      downstream: { generation: 1, revision: 1, state: 'active', matchesPolicy: true }, capacity: { version: 2,
+        retained: { sourceSchedules: { used: 1 }, file: { schedules: { used: 1 }, sources: { used: 1 }, sourcePolicies: { used: 1 } } },
+        working: { sourceSchedules: { used: 1 }, fileSchedules: { used: 1 } } } });
     expect(rule.selection).toEqual({ id: rule.id, epoch: rule.epoch, policyDigest: rule.policyDigest });
-    for (const budget of [view!.retained.policies, view!.retained.intents, rule.capacity!.sourceSchedules, ...Object.values(rule.capacity!.file)]) {
+    expect(rule.capacity!.retained.sourceSchedules).not.toHaveProperty('limit');
+    for (const budget of [view!.retained.policies, view!.retained.intents, ...Object.values(rule.capacity!.working), ...Object.values(rule.capacity!.retained.file)]) {
       expect(budget.limit).toBeGreaterThanOrEqual(budget.used); expect(budget.remaining).toBe(budget.limit - budget.used);
     }
     const wire = JSON.stringify(view);
@@ -604,7 +793,7 @@ test('native inspection retains admitted-but-unsettled evidence through intake d
   } finally { gate.resolve(); await f.close(); }
 });
 
-test('native selected retirement blocks readiness until explicit same-policy reactivation and stale selections stay inert', async () => {
+test('native selected retirement leaves ordinary readiness usable and explicit same-policy reactivation creates a new epoch', async () => {
   const f = await fixture(), wake = scheduler(); try {
     f.install(); await f.coordinator.start(wake);
     const initial = (await f.coordinator.inspect(f.session.scope))!.rules[0]!, input = { ruleId: initial.ruleId, expected: initial.selection };
@@ -616,7 +805,7 @@ test('native selected retirement blocks readiness until explicit same-policy rea
     expect(f.attributions).toHaveLength(writes); expect(f.jobs.commands).toHaveLength(jobs);
     const retired = await f.coordinator.retire(f.session.scope, input);
     expect(retired).toEqual({ ruleId: initial.ruleId, selection: initial.selection, localState: 'retired', downstream: 'retired', evidenceOwnerRequired: true });
-    await expect(f.coordinator.ready(f.record)).rejects.toMatchObject({ code: 'CALENDAR_NOT_READY' });
+    await f.coordinator.ready(f.record);
     expect((await f.coordinator.inspect(f.session.scope))!.rules[0]).toMatchObject({ id: initial.id, state: 'retired', downstream: { state: 'retired' } });
     const reactivated = await f.coordinator.reactivate(f.session.scope, input);
     expect(reactivated).toMatchObject({ ruleId: initial.ruleId, localState: 'active', downstream: 'active', selection: { epoch: initial.epoch + 1 }, evidenceOwnerRequired: true });
@@ -640,12 +829,16 @@ test('a restarted native coordinator can inspect and retire a removed rule but c
     await removed.start(wake);
     const before = f.attributions.length;
     await expect(removed.reactivate(f.session.scope, { ruleId: selected.ruleId, expected: selected.selection })).rejects.toMatchObject({ code: 'CALENDAR_NOT_READY' });
-    expect(f.attributions).toHaveLength(before); expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_policy_history')).toHaveLength(1);
-    expect((await removed.inspect(f.session.scope))!.rules[0]).toMatchObject({ configured: false, state: 'retired', downstream: { state: 'retired' } });
+    expect(f.attributions).toHaveLength(before); expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_policy_history')).toHaveLength(2);
+    expect((await removed.inspect(f.session.scope))!.rules.find(rule => rule.ruleId === selected.ruleId)).toMatchObject({ configured: false, state: 'retired', downstream: { state: 'retired' } });
+    await removed.ready(f.record); await f.appointment('healthy-after-removed-retirement');
+    removed.hint(createDatabaseRef(f.record.id)); await wake.flush(f.jobs.now());
+    expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_intents').map(row => row.rule_id)).toEqual(['different-rule']);
+    expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_dispatch')[0]!.state).toBe('accepted');
     await removed.drain(); const dormant = f.replace(), writes = f.attributions.length;
     await expect(dormant.reactivate(f.session.scope, { ruleId: selected.ruleId, expected: selected.selection })).rejects.toMatchObject({ code: 'CALENDAR_NOT_READY' });
     expect(f.attributions).toHaveLength(writes); expect(dormant.diagnostics().retainedOwners).toBe(0);
-    expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_policy_history')).toHaveLength(1);
+    expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_policy_history')).toHaveLength(2);
   } finally { await f.close(); }
 });
 

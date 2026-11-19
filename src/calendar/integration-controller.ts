@@ -158,6 +158,18 @@ export class CalendarIntegrationPolicyController {
     } catch (error) { return Promise.reject(error); }
   }
 
+  /** Existing journal evidence only: never prepare a control, activate/hydrate a
+   * source or infer retirement from configuration removal. A current missing
+   * activation stays review-blocked; only explicit local retirement or a newer
+   * source pointer permits recording same-gate absence of the old operation.
+   */
+  reconcileRetained(ruleInput: string): Promise<void> {
+    try {
+      this.assertOpen(); const ruleId = calendarKey(ruleInput, 64);
+      return this.run(ruleId, () => this.settleOlder(ruleId, undefined, true));
+    } catch (error) { return Promise.reject(error); }
+  }
+
   /** Synchronous eligibility quiescence happens BEFORE this operation waits in the per-rule pool. */
   retire(ruleInput: string, options?: CalendarIntegrationPolicyControlOptions): Promise<CalendarIntegrationRetirementResult> {
     try {
@@ -312,7 +324,7 @@ export class CalendarIntegrationPolicyController {
       signal ? { signal, assertCurrent: () => this.assertPolicyCell(policy, signal) } : undefined);
     const cell = this.cells.get(policy.ruleId); if (cell?.id === policy.id) cell.quiesced = true;
   }
-  private async settleOlder(ruleId: string, currentActivationId?: string): Promise<void> {
+  private async settleOlder(ruleId: string, currentActivationId?: string, evidenceOnly = false): Promise<void> {
     for (let step = 0; step < CALENDAR_INTEGRATION_LIMITS.rules * 2; step++) {
       const pending = (await this.evidence(ruleId)).pending;
       if (!pending) return;
@@ -323,7 +335,18 @@ export class CalendarIntegrationPolicyController {
       try {
         const result = await this.broker({ id: 'historical:' + pending.id, ruleId, epoch: pending.epoch, state: 'retired', policy: pending.policy, registration: null })
           .registration.reconcile(pending.jobsKey, { signal: this.signal });
-        this.assertOpen(); await this.ack(pending, result ? { state: 'accepted', registration: result } : { state: 'absent' });
+        if (evidenceOnly && !result) {
+          const current = await this.requirePolicy(ruleId);
+          if (current.epoch === pending.epoch && current.state !== 'retired') {
+            if (pending.lastFailure && pending.nextAttemptMs > this.time()) return;
+            throw new CalendarError('CALENDAR_NOT_READY');
+          }
+        }
+        // A factual accepted result may be journaled after intake quiesces;
+        // canonical ack/fail keep their independent owner evidence lifetime.
+        if (!evidenceOnly) this.assertOpen();
+        await this.ack(pending, result ? { state: 'accepted', registration: result } : { state: 'absent' });
+        if (evidenceOnly && this.closing) return;
       } catch (error) { await this.failed(pending, error); }
     }
     throw new CalendarError('CALENDAR_NOT_READY');

@@ -86,6 +86,7 @@ identity are rejected, not normalized away.
 | `appointments.get(id, {signal?}?)` | Current detail, including cancelled state; denied/missing concealed alike |
 | `appointments.create(input, options)` | Atomic capacity-one reservation on every selected resource |
 | `appointments.reschedule(id, input, control)` | Exact revision, instants, zone and both buffers required |
+| `appointments.update(id, patch, control)` | One atomic revision-controlled title/resource/time/type/visit/participant edit; omitted fields preserve accepted facts |
 | `appointments.cancel(id, {...control, reason?})` | Explicit cancellation enforcing current lifecycle/reason rules; releases all reservations |
 | `appointments.transitions(id, options?)` | Current effective status, policy/appointment revisions and allowed changes; manage on all co-resources |
 | `appointments.transition(id, {status, policyRevision, reason?}, control)` | Canonical status transition, exact current policy and appointment revisions |
@@ -141,6 +142,52 @@ reinterpret the instants. Buffers are 0–1,440 minutes each; appointment durati
 is positive and at most 31 days. Exact adjacency is allowed; buffered overlap is
 rejected transactionally. No host-timezone, DST-fold, duration, working-hours or
 quarter-hour assumption is silently applied by the backend.
+
+## Atomic appointment editing
+
+Use `appointments.update` when one Save changes multiple appointment fields.
+Do not chain `reschedule`, participant replacement and another write and present
+them as an atomic save. The native server and SDK use the same patch contract:
+
+```ts
+await calendar.appointments.update(appointment.id, {
+  title: 'Updated planning session',
+  resourceIds: [replacementCalendar.id],
+  startAt: '2026-12-01T16:00:00.000Z',
+  endAt: '2026-12-01T17:00:00.000Z',
+  timeZone: 'America/New_York',
+  bufferBeforeMinutes: 10,
+  bufferAfterMinutes: 10,
+}, { expectedRevision: appointment.revision, idempotencyKey: originalRequestKey });
+```
+
+The nonempty closed patch can contain `title`, a nonempty `resourceIds` set,
+`appointmentType`, `visit` and `participants`. Supplying any time/zone/buffer field
+requires **all five** interval fields above; no partial interval is guessed.
+Omission preserves accepted fields and bindings. Only type and visit accept
+explicit `null`; participant `[]` deliberately clears references and still needs
+the configured scope-manager participant permission. New participant targets are
+freshly admitted at the final native commit fence, not merely when selected.
+
+The writer requires management of every current co-resource and booking access
+to every resulting resource. Current type/location/working-hours and conflict
+rules are evaluated where occupancy, assignments or bindings actually change.
+Accepted historical metadata is not silently rebound to today's catalog. Removed
+resources stop receiving occupancy/detail membership, while retained reservation
+identities and immutable prior/update snapshots preserve history. The current
+set stays bounded independently of how many past transfers occurred.
+
+One accepted change creates one parent revision, safe receipt, semantic audit
+operation and integration mutation in the same source transaction. Rejection
+rolls them all back. An authorized original-key replay returns its original safe
+receipt; a quiet no-op does not manufacture a change. Genuine post-commit
+uncertainty stays unknown and requires reconciliation, never automatic replay.
+Terminal appointments reject new edits; history is not reopened by this API.
+
+The legacy `reschedule` and separate participant command remain supported with
+their existing identities. This rich edit does not enable recurrence, all-day,
+overbooking overrides, clinical progress, invitations or reminders. Those retain
+their explicit implementation/configuration gates.
 
 ## Locations, regions and authorized resource filters
 

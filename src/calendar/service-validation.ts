@@ -4,6 +4,18 @@ import type { CalendarAppointmentTypePageQuery, CalendarCommandReceipt, Calendar
 import { CalendarError } from './error';
 import { normalizeCalendarInstant } from './time';
 import { calendarInteger, calendarKey, calendarRecord, calendarText, calendarValue } from './validation';
+import { normalizeCalendarAppointmentUpdate } from './appointment-update';
+
+/** Atomic patch admission; omitted fields remain omitted before any await. */
+export function calendarAppointmentUpdateInput(input: unknown,
+  config: Pick<ResolvedCalendarConfig, 'maxResources' | 'maxParticipants'>): Record<string, unknown> {
+  const patch = normalizeCalendarAppointmentUpdate(input);
+  if (patch.resourceIds !== undefined && patch.resourceIds.length > config.maxResources
+    || patch.participants !== undefined && patch.participants.length > config.maxParticipants) {
+    throw new CalendarError('CALENDAR_INPUT_INVALID');
+  }
+  return { ...patch };
+}
 
 export function calendarPageQuery(input: unknown, config: Pick<ResolvedCalendarConfig, 'maxPageSize'>): CalendarLocationPageQuery {
   const r = calendarRecord(input, ['after', 'limit']);
@@ -127,11 +139,11 @@ export function calendarReceipt(input: unknown, requestId: string, operation: st
     'type.create': 'type.created', 'type.replace': 'type.updated', 'resource.types': 'resource.types-changed',
     'block.create': 'block.created', 'block.reschedule': 'block.rescheduled', 'block.cancel': 'block.cancelled',
     'hold.acquire': 'hold.acquired', 'hold.release': 'hold.released', 'hold.confirm': 'appointment.created',
-    'appointment.create': 'appointment.created', 'appointment.reschedule': 'appointment.rescheduled', 'appointment.cancel': 'appointment.cancelled',
+    'appointment.create': 'appointment.created', 'appointment.reschedule': 'appointment.rescheduled', 'appointment.update': 'appointment.updated', 'appointment.cancel': 'appointment.cancelled',
     'appointment.transition': 'appointment.transitioned', 'appointment.participants': 'appointment.participants-changed', 'lifecycle.replace': 'lifecycle.policy-changed' }[operation];
   if (!expected || r.requestId !== requestId || r.operation !== expected || r.id !== id || typeof r.changed !== 'boolean') throw new CalendarError('CALENDAR_STATE_INVALID');
   calendarInteger(r.revision, 1);
-  if (expectedRevision !== undefined && (operation === 'lifecycle.replace' || operation === 'appointment.transition' || operation === 'appointment.participants')
+  if (expectedRevision !== undefined && (operation === 'lifecycle.replace' || operation === 'appointment.transition' || operation === 'appointment.participants' || operation === 'appointment.update')
     && (r.revision !== expectedRevision + (r.changed ? 1 : 0) || operation === 'appointment.transition' && !r.changed)) throw new CalendarError('CALENDAR_STATE_INVALID');
   return Object.freeze({ requestId, operation: expected as CalendarCommandReceipt['operation'], id, revision: r.revision as number, changed: r.changed });
 }

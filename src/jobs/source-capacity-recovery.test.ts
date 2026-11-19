@@ -5,11 +5,12 @@ import type { DatabaseReadQueryContext } from '../databases/database-realm';
 import { trustedSystemServiceDataScope } from '../auth/service-data-scope';
 import { readSourceJobCapacity } from './realm-source-queries';
 import { JOB_LIMITS } from './realm-model';
+import { JOB_WORK_LIMITS } from './realm-capacity';
 import { JOB_SOURCE_LIMITS, JOB_SOURCE_RECOVERY_INTENTS_LIMIT, sourceIntentId } from './source-realm-model';
 import type { TrustedJobSource } from './source-authority';
 import { jobSourceId, type JobSourceIdentity, type JobSourceRegistration, type JobSourceScheduleReceipt } from './source-model';
 import { jobHash, jobJson } from './validation';
-import { memorySourceJobsFixture } from './test-support/memory-source-fixture';
+import { memorySourceJobsFixture, untilMemoryJobs } from './test-support/memory-source-fixture';
 
 const activate = { expectedRevision: 0, idempotencyKey: 'capacity-register', pinInput: { value: 'PRIVATE_CAPACITY_INPUT' } };
 type Fixture = Awaited<ReturnType<typeof memorySourceJobsFixture>>;
@@ -108,7 +109,7 @@ test('legacy ordinary-accounted recovery receipts retain their exact namespace, 
   } finally { await f.close(); }
 });
 
-test('capacity is existing-only safe retained accounting with source-local and shared-file limits', async () => {
+test('versioned capacity separates working occupancy from factual retained history without provisioning', async () => {
   const f = await memorySourceJobsFixture();
   try {
     const source = f.source(), untouched = f.stats();
@@ -117,21 +118,26 @@ test('capacity is existing-only safe retained accounting with source-local and s
     const created = await source.api.schedules.create(once(f), { idempotencyKey: 'capacity-once' });
     await source.api.schedules.cancel(created.id, { expectedRevision: 1, idempotencyKey: 'capacity-cancel' });
     const result = await source.api.capacity.get();
-    expect(result).toEqual({ source: { id: created.sourceId, registered: true, schedules: { used: 1, limit: JOB_SOURCE_LIMITS.schedules, remaining: JOB_SOURCE_LIMITS.schedules - 1 } },
-      file: { schedules: { used: 1, limit: JOB_LIMITS.schedules, remaining: JOB_LIMITS.schedules - 1 },
+    expect(result).toEqual({ version: 2, source: { id: created.sourceId, registered: true },
+      working: { sourceSchedules: { used: 0, limit: JOB_WORK_LIMITS.schedulesPerSource, remaining: JOB_WORK_LIMITS.schedulesPerSource },
+        fileSchedules: { used: 0, limit: JOB_WORK_LIMITS.schedules, remaining: JOB_WORK_LIMITS.schedules },
+        fileOccurrences: { used: 0, limit: JOB_WORK_LIMITS.occurrences, remaining: JOB_WORK_LIMITS.occurrences } },
+      retained: { sourceSchedules: { used: 1 }, file: { schedules: { used: 1, limit: JOB_LIMITS.schedules, remaining: JOB_LIMITS.schedules - 1 },
         intents: { used: 2, limit: JOB_LIMITS.intents, remaining: JOB_LIMITS.intents - 2 },
         sourceRecoveryIntents: { used: 1, limit: 21_024, remaining: 21_023 },
         occurrences: { used: 0, limit: JOB_LIMITS.occurrences, remaining: JOB_LIMITS.occurrences },
         sources: { used: 1, limit: JOB_SOURCE_LIMITS.sources, remaining: JOB_SOURCE_LIMITS.sources - 1 },
-        sourcePolicies: { used: 1, limit: JOB_SOURCE_LIMITS.policies, remaining: JOB_SOURCE_LIMITS.policies - 1 } } });
+        sourcePolicies: { used: 1, limit: JOB_SOURCE_LIMITS.policies, remaining: JOB_SOURCE_LIMITS.policies - 1 } } } });
     expect(JSON.stringify(result)).not.toMatch(/PRIVATE_CAPACITY_INPUT|authority|contract|principal|workflow|rootHash|ownerId|databaseId/);
     const other = f.source({ identity: { databaseId: 'another-synthetic-source' } }), otherResult = await other.api.capacity.get();
-    expect(otherResult?.source).toMatchObject({ registered: false, schedules: { used: 0, remaining: JOB_SOURCE_LIMITS.schedules } });
-    expect(otherResult?.file).toEqual(result?.file);
+    expect(otherResult?.source).toMatchObject({ registered: false });
+    expect(otherResult?.working.sourceSchedules).toMatchObject({ used: 0, remaining: JOB_WORK_LIMITS.schedulesPerSource });
+    expect(otherResult?.retained.sourceSchedules).toEqual({ used: 0 });
+    expect(otherResult?.retained.file).toEqual(result?.retained.file);
     const tenant = f.source({ scope: trustedSystemServiceDataScope({ scopeKind: 'tenant', tenantId: 'absent' }) });
     expect(await tenant.api.capacity.get()).toBeNull(); expect(f.stats().planes).toBe(1);
     accounting(f, source, 'intents', JOB_LIMITS.intents + 1);
-    expect((await source.api.capacity.get())?.file.intents).toEqual({ used: JOB_LIMITS.intents + 1, limit: JOB_LIMITS.intents, remaining: 0 });
+    expect((await source.api.capacity.get())?.retained.file.intents).toEqual({ used: JOB_LIMITS.intents + 1, limit: JOB_LIMITS.intents, remaining: 0 });
     source.retireEligibility(); expect((await source.api.capacity.get())?.source.registered).toBe(true);
     expect('capacity' in f.request()).toBe(false);
   } finally { await f.close(); }
@@ -151,8 +157,9 @@ test('capacity uses bounded primary-key reads without policy/admission scans and
       prepare<TRow, TParams extends SQLQueryBindings | SQLQueryBindings[]>(sql: string, params?: TParams) { statements.push(sql); return raw.prepare<TRow, TParams>(sql, params); },
     } };
     expect(readSourceJobCapacity(context, { identity: source.identity }).source.registered).toBe(true);
-    expect(statements).toEqual(["SELECT scope_id FROM _jobs_owner WHERE id='application'", 'SELECT * FROM _jobs_sources WHERE id=? AND scope_id=?', 'SELECT count FROM _jobs_usage WHERE id=?']);
-    for (const [sql, args] of [[statements[1]!, [jobSourceId(source.identity), 'application']], [statements[2]!, ['intents']]] as const) {
+    expect(statements).toEqual(["SELECT scope_id FROM _jobs_owner WHERE id='application'", 'SELECT * FROM _jobs_sources WHERE id=? AND scope_id=?',
+      'SELECT count FROM _jobs_usage WHERE id=?', 'SELECT count FROM _jobs_work_usage WHERE id=?']);
+    for (const [sql, args] of [[statements[1]!, [jobSourceId(source.identity), 'application']], [statements[2]!, ['intents']], [statements[3]!, ['schedules']]] as const) {
       const plan = raw.query<{ detail: string }, string[]>('EXPLAIN QUERY PLAN ' + sql).all(...args).map(row => row.detail).join('\n');
       expect(plan).toContain('SEARCH'); expect(plan).not.toContain('SCAN');
     }
@@ -164,5 +171,28 @@ test('capacity uses bounded primary-key reads without policy/admission scans and
     await expect(source.api.schedules.cancel(created.id, { expectedRevision: 1, idempotencyKey: 'owner-rejected-cancel' })).rejects.toMatchObject({ code: 'JOBS_AUTHORITY_RETIRED' });
     await expect(source.api.registration.retire({ expectedRevision: 1, idempotencyKey: 'owner-rejected-retire' })).rejects.toMatchObject({ code: 'JOBS_AUTHORITY_RETIRED' });
     expect(f.stats()).toMatchObject({ activeLeases: 0, backendLeases: 0 });
+  } finally { await f.close(); }
+});
+
+test('the actual Jobs runner and sealed Torrent completion release working quota but retain original source execution evidence', async () => {
+  const f = await memorySourceJobsFixture();
+  try {
+    const source = f.source(); await source.api.registration.activate(activate);
+    const created = await source.api.schedules.create(once(f), { idempotencyKey: 'real-completion' });
+    expect((await source.api.capacity.get())!.working.sourceSchedules.used).toBe(1);
+    f.advance(5000); await f.tick();
+    await untilMemoryJobs(() => {
+      const occurrence = f.rows(source.scope, '_jobs_occurrences')[0];
+      return typeof occurrence?.workflow_id === 'string' && f.workflows.getInstance(occurrence.workflow_id, source.scope)?.status === 'completed';
+    });
+    await f.tick();
+    const after = await source.api.capacity.get();
+    expect(after!.working.sourceSchedules.used).toBe(0); expect(after!.working.fileSchedules.used).toBe(0); expect(after!.working.fileOccurrences.used).toBe(0);
+    expect(after!.retained.sourceSchedules.used).toBe(1); expect(after!.retained.file.occurrences.used).toBe(1);
+    const evidence = await source.api.executions.get(created.id, { generation: 1, scheduledAt: f.now() });
+    expect(evidence?.status).toBe('completed'); expect(await source.api.receipts.get('real-completion')).toEqual(created);
+    await source.api.schedules.cancel(created.id, { expectedRevision: 1, idempotencyKey: 'cancel-completed' });
+    expect((await source.api.capacity.get())!.working.sourceSchedules.used).toBe(0);
+    expect(await source.api.receipts.get('real-completion')).toEqual(created); expect(f.calls).toHaveLength(1);
   } finally { await f.close(); }
 });

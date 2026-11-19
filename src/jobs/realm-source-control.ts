@@ -4,6 +4,7 @@ import { JobsError, jobCommand } from './error';
 import { digest, normalizeJobAdmission, type JobAdmission, type JobScheduleRow } from './model';
 import { assertJobOwner, decodeJobAdmission, insertJobAdmission, jobBudget, JOB_LIMITS, jobRevision, nextJobInteger, normalizeJobSeal, readJobAdmission } from './realm-model';
 import { appendJobSemanticAudit } from './semantic-audit';
+import { initializeJobSourceWork, initializeJobScheduleWork, refreshJobScheduleWork } from './realm-capacity';
 import { jobSourceId, normalizeJobSourceContract, normalizeJobSourceIdentity, type JobSourceIdentity } from './source-model';
 import { assertSourceAdmission, assertSourceRow, assertSourceSchedule, JOB_SOURCE_LIMITS, sourceIntent, sourcePolicyId,
   sourceRegistration, sourceScheduleReceipt, writeSourcePolicy, type JobSourceRow } from './source-realm-model';
@@ -21,6 +22,7 @@ export function registerJobSource(context: DatabaseWriteCommandContext, input: u
         const row: JobSourceRow = { id: jobSourceId(identity), scope_id: identity.scopeId, identity_json: jobJson(identity), identity_hash: jobHash(identity),
           current_generation: 1, revision: 1, state: 'active', created_at: now, updated_at: now };
         context.db.createStrict('_jobs_sources', row);
+        initializeJobSourceWork(context, row.id);
         const policy = { id: sourcePolicyId(row.id, 1), scope_id: identity.scopeId, source_id: row.id, generation: 1,
           contract_json: jobJson(contract), digest: hash, created_at: now };
         context.db.createStrict('_jobs_source_policies', policy);
@@ -65,13 +67,15 @@ export function createSourceJobSchedule(context: DatabaseWriteCommandContext, in
       if (context.db.get('job_schedules', admission.id)) throw new JobsError('JOBS_INTENT_CONFLICT');
       const due = sourceDue(admission, now);
       jobBudget(context, 'schedules', JOB_LIMITS.schedules);
-      jobBudget(context, 'source:' + jobHash(identity), JOB_SOURCE_LIMITS.schedules);
+      // Permanent factual count, not a retained per-source admission ceiling.
+      jobBudget(context, 'source:' + jobHash(identity), Number.MAX_SAFE_INTEGER);
       const row: JobScheduleRow = { id: admission.id, scope_id: identity.scopeId, actor_id: null, principal: null, updated_by: null, source_id: registry.id,
         definition_name: admission.definition, definition_version: admission.definitionVersion, run_as: 'service',
         control: 'active', revision: 1, generation: 1, created_at: now, updated_at: now };
       const change = context.db.createStrict('job_schedules', row);
       insertJobAdmission(context, admission, 1, seal);
       context.db.createStrict('_jobs_cursors', { id: row.id, scope_id: identity.scopeId, next_due_at: due, skipped: 0, blocked_code: null });
+      initializeJobScheduleWork(context, row);
       appendJobSemanticAudit(context, 'jobs.schedule.created', change, { revision: 1, generation: 1, control: 'active', ownership: 'service',
         sourceId: registry.id, policyGeneration: admission.source!.generation, ...(admission.initiatedBy === undefined ? {} : { initiatedBy: admission.initiatedBy }) });
       return { value: sourceScheduleReceipt(row, admission), policyGeneration: registry.current_generation };
@@ -106,6 +110,7 @@ export function changeSourceJobSchedule(context: DatabaseWriteCommandContext, in
         context.db.update('_jobs_cursors', row.id, { next_due_at: null });
       }
       const change = context.db.update('job_schedules', row.id, next);
+      refreshJobScheduleWork(context, row.id);
       appendJobSemanticAudit(context, admission ? 'jobs.schedule.readmitted' : 'jobs.schedule.cancelled', change,
         { revision: next.revision, generation: next.generation, previousControl: row.control, control: next.control, ownership: 'service',
           sourceId: registry.id, policyGeneration: admitted.source!.generation, ...(admitted.initiatedBy === undefined ? {} : { initiatedBy: admitted.initiatedBy }) });

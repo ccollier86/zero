@@ -12,6 +12,7 @@ import { CALENDAR_INTEGRATION_ADDITIONS, CALENDAR_INTEGRATION_TABLES } from './r
 import { CALENDAR_INTEGRATION_OWNERSHIP_ADDITIONS, CALENDAR_INTEGRATION_OWNERSHIP_TABLES } from './realm-integration-ownership-migration';
 import { CALENDAR_INTEGRATION_OPERATOR_TABLES } from './realm-integration-operator-migration';
 import { calendarRealm } from './realm';
+import { CALENDAR_APPOINTMENT_UPDATE_TABLES } from './realm-appointment-update-migration';
 import { calendarHash, calendarJson } from './validation';
 
 const ORIGINAL_010_CHECKSUM = '5a53a35f77b17cc698bbc21f2744be8f14cc2fd6da29e1df44ff225a1dc9cbb3';
@@ -68,8 +69,8 @@ test('011 preserves committed 010 migration/declaration identity and adds a sepa
   expect(hashMigration(calendarRealm.migrations[9]!)).toBe(ORIGINAL_010_CHECKSUM);
   expect(calendarRealm.migrationChecksums[9]).toEqual({ version: '010', checksum: ORIGINAL_010_CHECKSUM });
   expect(hashSchemaSnapshot(snapshotDeclaredTables(CALENDAR_INTEGRATION_TABLES))).toBe(ORIGINAL_010_TABLES);
-  expect(calendarRealm.version).toBe('15'); expect(calendarRealm.migrations[10]?.version).toBe('011');
-  expect(calendarRealm.tables).toEqual(CALENDAR_INTEGRATION_OPERATOR_TABLES);
+  expect(calendarRealm.version).toBe('16'); expect(calendarRealm.migrations[10]?.version).toBe('011');
+  expect(calendarRealm.tables).toEqual(CALENDAR_APPOINTMENT_UPDATE_TABLES);
   for (const [name, schema] of Object.entries(CALENDAR_INTEGRATION_OWNERSHIP_TABLES)) expect(calendarRealm.tables[name]).toEqual(schema);
   for (const [name, schema] of Object.entries(CALENDAR_INTEGRATION_TABLES)) expect(calendarRealm.tables[name]).toEqual(schema);
   expect(Object.isFrozen(CALENDAR_INTEGRATION_ADDITIONS)).toBe(true); expect(Object.isFrozen(CALENDAR_INTEGRATION_OWNERSHIP_ADDITIONS)).toBe(true);

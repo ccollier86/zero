@@ -7,6 +7,7 @@ import { jobSourceId, normalizeJobSourceIdentity, normalizeJobSourceOrigin, type
 import { assertSourceAdmission, assertSourceRow, assertSourceSchedule, decodeSourceIntent, decodeSourcePolicy,
   JOB_SOURCE_LIMITS, JOB_SOURCE_RECOVERY_INTENTS_LIMIT, sourceIntentId, sourcePolicyId, sourceRegistration, sourceScheduleReceipt, type JobSourceIntentRow, type JobSourcePolicyRow, type JobSourceRow } from './source-realm-model';
 import { jobHash, jobInteger, jobRecord, jobScope, jobText, jobTime } from './validation';
+import { JOB_WORK_LIMITS, jobWorkSourceKey } from './realm-capacity';
 
 /** Broker-only transport. The native facade never returns admission input or a seal to its caller. */
 export interface JobSourceExecutionContext {
@@ -47,7 +48,7 @@ export function getJobSource(context: DatabaseReadQueryContext, input: unknown) 
   return row ? sourceRegistration(row, policy(context, identity, row.current_generation), identity) : null;
 }
 
-/** Fixed-size owner/source proof and seven usage primary-key reads; no history scans,
+/** Fixed-size owner/source proof and usage primary-key reads; no history scans,
  * admissions, authority seals or source policy contracts are read or exposed. */
 export function readSourceJobCapacity(context: DatabaseReadQueryContext, input: unknown): JobSourceCapacity {
   const r = jobRecord(input, ['identity']), identity = normalizeJobSourceIdentity(r.identity), row = source(context, identity);
@@ -58,10 +59,21 @@ export function readSourceJobCapacity(context: DatabaseReadQueryContext, input: 
     try { used = retained ? jobInteger(retained.count) : 0; } catch { throw new JobsError('JOBS_STATE_INVALID'); }
     return { used, limit, remaining: Math.max(0, limit - used) };
   };
-  return { source: { id: jobSourceId(identity), registered: row !== null, schedules: capacity('source:' + jobHash(identity), JOB_SOURCE_LIMITS.schedules) },
-    file: { schedules: capacity('schedules', JOB_LIMITS.schedules), intents: capacity('intents', JOB_LIMITS.intents),
+  const working = context.database.query<{ count: number }>('SELECT count FROM _jobs_work_usage WHERE id=?');
+  const live = (id: string, limit: number, required = true): JobRetainedCapacity => {
+    const value = working.get(id);
+    if (!value && required) throw new JobsError('JOBS_STATE_INVALID');
+    let used: number;
+    try { used = value ? jobInteger(value.count) : 0; } catch { throw new JobsError('JOBS_STATE_INVALID'); }
+    return { used, limit, remaining: Math.max(0, limit - used) };
+  };
+  return { version: 2, source: { id: jobSourceId(identity), registered: row !== null },
+    working: { sourceSchedules: live(jobWorkSourceKey(jobSourceId(identity)), JOB_WORK_LIMITS.schedulesPerSource, row !== null),
+      fileSchedules: live('schedules', JOB_WORK_LIMITS.schedules), fileOccurrences: live('occurrences', JOB_WORK_LIMITS.occurrences) },
+    retained: { sourceSchedules: { used: capacity('source:' + jobHash(identity), Number.MAX_SAFE_INTEGER).used },
+      file: { schedules: capacity('schedules', JOB_LIMITS.schedules), intents: capacity('intents', JOB_LIMITS.intents),
       sourceRecoveryIntents: capacity('sourceRecoveryIntents', JOB_SOURCE_RECOVERY_INTENTS_LIMIT), occurrences: capacity('occurrences', JOB_LIMITS.occurrences),
-      sources: capacity('sources', JOB_SOURCE_LIMITS.sources), sourcePolicies: capacity('source-policies', JOB_SOURCE_LIMITS.policies) } };
+      sources: capacity('sources', JOB_SOURCE_LIMITS.sources), sourcePolicies: capacity('source-policies', JOB_SOURCE_LIMITS.policies) } } };
 }
 
 /** Retired sources may still read and reconcile their immutable historical ownership. */

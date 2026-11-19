@@ -17,6 +17,7 @@ import { assertCalendarBookingType, bindCalendarAppointmentType, calendarAppoint
 import { assertCalendarBookingVisit, assertCalendarVisitPolicy, bindCalendarAppointmentVisit, calendarAppointmentVisitAtRevision,
   calendarCurrentAppointmentVisit, calendarVisitInput, sameCalendarVisit } from './visit-bindings';
 import { bindCalendarAppointmentParticipants, calendarParticipantReferences, requireCalendarParticipantManager } from './participant-bindings';
+import { replaceCalendarAppointmentResourceCurrent } from './appointment-resource-bindings';
 
 function owner(context: DatabaseWriteCommandContext, scopeId: string): void {
   if (context.db.get('_calendar_owner', 'application')?.scope_id !== scopeId) throw new CalendarError('CALENDAR_STATE_INVALID');
@@ -135,6 +136,7 @@ export function commitCalendarAppointment(context: DatabaseWriteCommandContext, 
   if (options?.participants !== undefined) bindCalendarAppointmentParticipants(context, actor.scopeId, id, 1, options.participants);
   for (const resourceId of resourceIds) context.db.createStrict('_calendar_reservations', { id: reservationId(actor.scopeId, id, resourceId), scope_id: actor.scopeId,
     appointment_id: id, resource_id: resourceId, occupied_start_ms: interval.occupiedStartMs, occupied_end_ms: interval.occupiedEndMs, active: 1 });
+  replaceCalendarAppointmentResourceCurrent(context, actor.scopeId, id, 1, resourceIds);
   appendCalendarSemanticAudit(context, 'appointment.created', change, { revision: 1, resourceCount: resourceIds.length, status: 'confirmed', ...(visit ? { visitMode: visit.mode } : {}),
     ...(options?.participants !== undefined ? { participantCount: options.participants.length } : {}) });
 }

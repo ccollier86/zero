@@ -23,13 +23,14 @@ import { calendarRealm } from './realm';
 import { calendarActor, calendarSelection, CALENDAR_LIMITS } from './realm-model';
 import { CALENDAR_DEFAULT_LIFECYCLE_POLICY, calendarLifecyclePolicyFields, requireCalendarLifecycleManager } from './lifecycle-model';
 import type { CalendarServiceBroker } from './service';
-import { calendarAppointmentTypeInput, calendarAppointmentTypePageQuery, calendarLocationInput, calendarPageQuery, calendarRange, calendarResourcePageQuery, calendarVisitLocationQuery } from './service-validation';
+import { calendarAppointmentTypeInput, calendarAppointmentTypePageQuery, calendarAppointmentUpdateInput, calendarLocationInput, calendarPageQuery, calendarRange, calendarResourcePageQuery, calendarVisitLocationQuery } from './service-validation';
 import { normalizeCalendarInstant, normalizeCalendarTimeZone } from './time';
 import { calendarHash, calendarInteger, calendarKey, calendarRecord, calendarScope, calendarText, calendarValue } from './validation';
 import { calendarParticipantReferences, requireCalendarParticipantManager } from './participant-bindings';
 import { calendarIntegrationInput, calendarIntegrationOptions, type CalendarIntegrationCommandOptions,
   type CalendarIntegrationOwner, type CalendarIntegrationReadOptions } from './integration-runtime';
 import type { CalendarIntegrationOperatorRequestReceipt } from './integration-operator-request-model';
+import type { DatabaseOpenAdmission } from '../databases/database-open-admission';
 
 export interface CalendarRuntimeSource {
   prepare(owner: CalendarOwnerRecord): void;
@@ -57,7 +58,7 @@ const COMMANDS = new Set(['calendar.resource.create', 'calendar.resource.grant',
   'calendar.type.create', 'calendar.type.replace', 'calendar.resource.types', 'calendar.lifecycle.replace', 'calendar.appointment.transition',
   'calendar.block.create', 'calendar.block.reschedule', 'calendar.block.cancel',
   'calendar.hold.acquire', 'calendar.hold.release', 'calendar.hold.confirm',
-  'calendar.appointment.create', 'calendar.appointment.reschedule', 'calendar.appointment.cancel', 'calendar.appointment.participants']);
+  'calendar.appointment.create', 'calendar.appointment.reschedule', 'calendar.appointment.update', 'calendar.appointment.cancel', 'calendar.appointment.participants']);
 
 export class CalendarRuntime implements CalendarServiceBroker {
   private state: 'ready' | 'closing' | 'closed' | 'close-failed' = 'ready';
@@ -80,16 +81,22 @@ export class CalendarRuntime implements CalendarServiceBroker {
   static async open(options: CalendarRuntimeOptions): Promise<CalendarRuntime> {
     if (options.persistence.defaultActorEntrypoint && !existsSync(options.persistence.defaultActorEntrypoint)) throw new CalendarError('CALENDAR_NOT_READY');
     if (!installCalendarOwnerSchema(options.system, options.installAllowed)) throw new CalendarError('CALENDAR_NOT_READY');
+    let prepared: CalendarRuntime | undefined;
     const owner = new DatabaseCoordinator({
       rootDirectory: options.config.rootDirectory, realm: calendarRealm, createExecutor: options.persistence.createExecutor,
       placement: { default: 'file', hot: null }, sqlite: { synchronous: 'FULL' }, readers: true,
       maxDatabases: options.config.maxActiveDatabases, maxDatabaseFiles: options.config.maxDatabaseFiles,
       maxQueuedPerDatabase: 64, maxQueuedTotal: 256, queueTimeoutMs: 5000, operationTimeoutMs: 15000, sweepIntervalMs: false,
       authorityCommitCoordinator: options.authority.coordinator, requireCommitAuthority: true,
+      openAdmission: id => {
+        if (!prepared) throw new CalendarError('CALENDAR_NOT_READY');
+        return prepared.openAdmission(id);
+      },
       ...(options.authority.actorContext ? { actorAuthorityContext: options.authority.actorContext } : {}),
       ...(options.observability ? { observability: createDatabaseObservability(options.observability) } : {}),
     });
     const runtime = new CalendarRuntime(options, owner);
+    prepared = runtime;
     try {
       const records = runtime.records();
       for (const record of records) runtime.assertRetained(record);
@@ -303,12 +310,11 @@ export class CalendarRuntime implements CalendarServiceBroker {
       const guard = this.guard(() => { this.assertIntegrationOwner(owner); return opts.assertCurrent(); }, signal);
       guard();
       const body = kind === 'verify' ? null : calendarIntegrationInput(owner, scope, kind, name, input, opts.key);
-      // Existing-only admission is not an explicit migration API. On a cold
-      // acquisition the shared Fabric actor still performs its native schema
-      // open/validation (including its existing migration preparation) BEFORE
-      // the same-lease owner proof below/in execute(). SYSTEM fingerprint
-      // matching is not proof of a stale physical ledger; that lower-layer
-      // ordering remains a qualification gate for this unactivated boundary.
+      // Existing-only is not a migration API: the native cold-open contract
+      // proves physical owner and current ledger/schema before writable open.
+      // Retain same-lease owner/current-authority proof below as a distinct
+      // operation fence; a cold-generation check is never request authority.
+      // Actual file/actor ordering still needs physical qualification.
       if (kind !== 'verify') return await this.execute<T>(owner, kind, name, body, guard,
         kind === 'command' ? 'calendar-integration:' + calendarHash([calendarRealm.fingerprint, owner.id, owner.owner_id, name, opts.key!]) : undefined,
         false, signal);
@@ -373,6 +379,20 @@ export class CalendarRuntime implements CalendarServiceBroker {
       || current.root_hash !== owner.root_hash || current.realm_fingerprint !== owner.realm_fingerprint || current.established !== 1
       || !this.filePresent(owner.id)) throw new CalendarError('CALENDAR_STATE_INVALID');
   }
+  /** Native cold-generation policy, never authored request data. Existing
+   * current metadata must NOT authorize automatic physical schema repair.
+   * Staged creation alone permits an absent owner; any present row must match.
+   */
+  private openAdmission(id: string): DatabaseOpenAdmission {
+    this.assertReady();
+    const record = this.record(id);
+    if (!record) throw new CalendarError('CALENDAR_STATE_INVALID');
+    this.assertRetained(record);
+    return Object.freeze({ schema: record.established === 1 && record.realm_fingerprint === calendarRealm.fingerprint ? 'current' : 'prepare',
+      row: Object.freeze({ table: '_calendar_owner', id: 'application',
+        equals: Object.freeze({ owner_id: record.owner_id, scope_id: record.scope_id }),
+        ...(record.established === 1 ? {} : { allowMissing: true as const }) }) });
+  }
   private readySourceOwner(record: CalendarOwnerRecord): Promise<void> {
     try {
       this.assertIntegrationOwner(record);
@@ -416,6 +436,11 @@ export class CalendarRuntime implements CalendarServiceBroker {
     const actor = calendarActor(body.actor);
     if (actor.scopeId !== scopeId) throw new CalendarError('CALENDAR_FORBIDDEN');
     const { actor: _actor, ...query } = body;
+    if (name === 'calendar.appointment.update') {
+      const { requestId, id, expectedRevision, ...patch } = query;
+      calendarKey(requestId); calendarKey(id); calendarInteger(expectedRevision, 1);
+      Object.assign(body, calendarAppointmentUpdateInput(patch, this.options.config));
+    }
     if (name === 'calendar.resources') return { ...calendarResourcePageQuery(query, this.options.config), actor };
     if (name === 'calendar.locations') return { ...calendarPageQuery(query, this.options.config), actor };
     if (name === 'calendar.visitLocations') return { ...calendarVisitLocationQuery(query, this.options.config), actor };
@@ -423,7 +448,7 @@ export class CalendarRuntime implements CalendarServiceBroker {
     if (name === 'calendar.busy' || name === 'calendar.appointments' || name === 'calendar.blocks' || name === 'calendar.holds') return { ...calendarRange(query, this.options.config), actor };
     if ((name === 'calendar.appointment.create' || name === 'calendar.block.create' || name === 'calendar.hold.acquire')
       && (!Array.isArray(body.resourceIds) || body.resourceIds.length > this.options.config.maxResources)) throw new CalendarError('CALENDAR_INPUT_INVALID');
-    if (name === 'calendar.appointment.participants' || (name === 'calendar.appointment.create' || name === 'calendar.hold.acquire') && Object.hasOwn(body, 'participants')) {
+    if (name === 'calendar.appointment.participants' || (name === 'calendar.appointment.create' || name === 'calendar.appointment.update' || name === 'calendar.hold.acquire') && Object.hasOwn(body, 'participants')) {
       requireCalendarParticipantManager(actor);
       const references = calendarParticipantReferences(name === 'calendar.appointment.participants' ? body.references : body.participants);
       if (references.length > this.options.config.maxParticipants) throw new CalendarError('CALENDAR_INPUT_INVALID');

@@ -16,6 +16,10 @@ export interface CalendarIntegrationObservationDependencies {
   readonly inspect: (instanceId: string, scope: ServiceDataScope) => WorkflowInstanceRecord | null;
   /** Owner-bound original Jobs occurrence/sealed Torrent receipt evidence, including before dispatch acknowledgment. */
   readonly executions: SourceJobs['executions'];
+  /** Code-owned fresh-admission fence only. Historical facts and an already
+   * admitted observation keep the independent owner/authority settlement guard.
+   */
+  readonly assertAdmissionCurrent?: () => void;
   readonly now?: () => number;
 }
 export interface CalendarIntegrationObservationResult { readonly intentId: string; readonly state: 'observed' | 'admitted' }
@@ -40,6 +44,11 @@ export async function observeCalendarIntegration(deps: CalendarIntegrationObserv
   guard();
   if (!intent || !intent.registration || identity.principal !== jobSourcePrincipal(jobSourceId(intent.policy.source.identity))
     || calendarJson(input) !== calendarJson(intent.input) || intent.policy.adapter !== 'observation-v1') throw new CalendarError('CALENDAR_FORBIDDEN');
+  const prior = await deps.owner.read<CalendarIntegrationEffectView | null>('calendar.integration.effect', { id: input.intentId },
+    { signal: context.signal, assertCurrent: guard });
+  guard();
+  const admissionGuard = () => { guard(); if (!prior) deps.assertAdmissionCurrent?.(); };
+  admissionGuard();
   const instance = deps.inspect(calendarKey(context.instanceId), deps.owner.scope), pin = intent.policy.source.workflow;
   if (!instance || instance.instance_id !== context.instanceId || instance.tenant_id !== identity.tenantId
     || instance.name !== pin.name || instance.definition_id !== pin.definitionId || instance.definition_version !== pin.version
@@ -50,12 +59,13 @@ export async function observeCalendarIntegration(deps: CalendarIntegrationObserv
   if (calendarJson(retainedInput) !== calendarJson(input)) throw new CalendarError('CALENDAR_FORBIDDEN');
   const scheduleId = jobSourceScheduleId(intent.policy.source.identity, intent.createKey);
   const evidence = await deps.executions.get(scheduleId, { generation: 1, scheduledAt: Date.parse(intent.at) });
-  guard();
+  admissionGuard();
   if (!evidence || evidence.instanceId !== context.instanceId || evidence.scheduleId !== scheduleId || evidence.generation !== 1
     || evidence.scheduledAt !== Date.parse(intent.at) || evidence.sourceId !== intent.registration.id
     || evidence.policyGeneration !== intent.registration.generation || evidence.policyHash !== intent.registration.policyHash
     || evidence.inputHash !== calendarHash(input) || calendarJson(evidence.workflow) !== calendarJson(pin)) throw new CalendarError('CALENDAR_FORBIDDEN');
-  guard();
+  admissionGuard();
+  if (prior) return { intentId: input.intentId, state: prior.outcome === 'observed' ? 'observed' : 'admitted' };
   const now = () => calendarInteger((deps.now ?? Date.now)(), 0, 8_640_000_000_000_000);
   // A fresh PHYSICAL admission key is intentional. Replaying a successful native
   // transport receipt must not return its earlier admitted:true as fresh permission.
@@ -63,7 +73,7 @@ export async function observeCalendarIntegration(deps: CalendarIntegrationObserv
   const nonce = 'observe_' + crypto.randomUUID();
   const admitted = await deps.owner.command<{ admitted: boolean; effect: CalendarIntegrationEffectView }>('calendar.integration.effect.admit', {
     id: input.intentId, executionId: context.instanceId, nonce, registration: intent.registration, workflow: pin,
-  }, { idempotencyKey: 'calendar-observe-admit:' + nonce, signal: context.signal, assertCurrent: guard });
+  }, { idempotencyKey: 'calendar-observe-admit:' + nonce, signal: context.signal, assertCurrent: admissionGuard });
   guard();
   if (!admitted.admitted) return { intentId: input.intentId, state: admitted.effect.outcome === 'observed' ? 'observed' : 'admitted' };
   const effect = await deps.owner.command<CalendarIntegrationEffectView>('calendar.integration.effect.settle', {

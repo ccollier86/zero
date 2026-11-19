@@ -10,12 +10,13 @@ import { calendarHold } from './holds-model';
 import { calendarLocation, requireCalendarLocationManager } from './locations-model';
 import { calendarType, requireCalendarTypeManager } from './appointment-types-model';
 import { recordCalendarIntegrationMutation } from './integration-model';
+import { calendarCurrentResourceMembership, CALENDAR_APPOINTMENT_RESOURCE_CURRENT } from './appointment-resource-bindings';
 
 export const CALENDAR_LIMITS = Object.freeze({ resources: 10_000, appointments: 100_000, blocks: 100_000, holds: 100_000, locations: 10_000,
   locationHistory: 100_000, resourceLocationHistory: 100_000, types: 10_000, typeHistory: 100_000, resourceTypeHistory: 100_000,
   appointmentTypeHistory: 100_000, appointmentVisitHistory: 100_000, appointmentParticipantHistory: 100_000, holdParticipantBindings: 100_000,
   policyHistory: 100_000, appointmentLifecycleHistory: 100_000, availabilityPolicyHistory: 100_000, availabilityPolicyWindows: 1_000_000,
-  receipts: 200_000, selection: 16, page: 100, rangeMs: 31 * 86_400_000 });
+  appointmentUpdateHistory: 100_000, receipts: 200_000, selection: 16, page: 100, rangeMs: 31 * 86_400_000 });
 export interface CalendarResourceRow extends Row { id: string; scope_id: string; label: string; kind: CalendarResourceView['kind']; owner_id: string | null; time_zone: string; revision: number; active: number }
 export interface CalendarAppointmentRow extends Row { id: string; scope_id: string; title: string; start_at: string; end_at: string; start_ms: number; end_ms: number; time_zone: string; buffer_before: number; buffer_after: number; occupied_start_ms: number; occupied_end_ms: number; status: CalendarAppointmentView['status']; revision: number; created_by: string }
 export interface CalendarReceiptRow extends Row { id: string; scope_id: string; principal: string; request_id: string; digest: string; result_json: string; target_kind: 'resource' | 'appointment' | 'block' | 'hold' | 'location' | 'type' | 'lifecycle'; target_id: string; required_right: 'book' | 'manage' }
@@ -54,7 +55,8 @@ export function requireCalendarRight(context: DatabaseWriteCommandContext, actor
   if (!hasCalendarRight(actor, row, grant, right)) throw new CalendarError('CALENDAR_NOT_FOUND');
 }
 export function appointmentResources(context: DatabaseWriteCommandContext, actor: CalendarActor, id: string): string[] {
-  const rows = context.db.find('_calendar_reservations', { select: ['resource_id'], filters: [eq('scope_id', actor.scopeId), eq('appointment_id', id)], limit: CALENDAR_LIMITS.selection + 1 });
+  const table = calendarCurrentResourceMembership(context) ? CALENDAR_APPOINTMENT_RESOURCE_CURRENT : '_calendar_reservations';
+  const rows = context.db.find(table, { select: ['resource_id'], filters: [eq('scope_id', actor.scopeId), eq('appointment_id', id)], limit: CALENDAR_LIMITS.selection + 1 });
   if (!rows.length || rows.length > CALENDAR_LIMITS.selection) throw new CalendarError('CALENDAR_STATE_INVALID');
   return rows.map(row => String(row.resource_id)).sort();
 }
@@ -79,7 +81,7 @@ export function calendarRevision(row: { revision: number }, input: unknown): voi
 export function nextCalendarRevision(revision: number): number { return calendarInteger(revision, 1, Number.MAX_SAFE_INTEGER - 1) + 1; }
 export function calendarBudget(context: DatabaseWriteCommandContext, key: 'resources' | 'appointments' | 'blocks' | 'holds' | 'locations' | 'locationHistory' | 'resourceLocationHistory'
   | 'types' | 'typeHistory' | 'resourceTypeHistory' | 'appointmentTypeHistory' | 'appointmentVisitHistory' | 'appointmentParticipantHistory' | 'holdParticipantBindings' | 'policyHistory' | 'appointmentLifecycleHistory'
-  | 'availabilityPolicyHistory' | 'availabilityPolicyWindows' | 'receipts', amount = 1): void {
+  | 'availabilityPolicyHistory' | 'availabilityPolicyWindows' | 'appointmentUpdateHistory' | 'receipts', amount = 1): void {
   calendarInteger(amount, 0);
   if (!amount) return;
   const prior = context.db.get('_calendar_usage', key), count = prior ? calendarInteger(prior.count) : 0;
@@ -114,7 +116,7 @@ export function parseCalendarReceipt(row: CalendarReceiptRow): CalendarCommandRe
   try {
     const r = calendarRecord(JSON.parse(row.result_json), ['requestId', 'operation', 'id', 'revision', 'changed']);
     const operations = { resource: ['resource.created', 'resource.grant-changed', 'resource.availability-changed', 'resource.locations-changed', 'resource.types-changed', 'resource.availability-policy-changed'],
-      appointment: ['appointment.created', 'appointment.rescheduled', 'appointment.cancelled', 'appointment.transitioned', 'appointment.participants-changed'], block: ['block.created', 'block.rescheduled', 'block.cancelled'],
+      appointment: ['appointment.created', 'appointment.rescheduled', 'appointment.updated', 'appointment.cancelled', 'appointment.transitioned', 'appointment.participants-changed'], block: ['block.created', 'block.rescheduled', 'block.cancelled'],
       hold: ['hold.acquired', 'hold.released'], location: ['location.created', 'location.updated'], type: ['type.created', 'type.updated'], lifecycle: ['lifecycle.policy-changed'] };
     if (r.requestId !== row.request_id || r.id !== row.target_id || typeof r.changed !== 'boolean'
       || !operations[row.target_kind]?.includes(r.operation as string)

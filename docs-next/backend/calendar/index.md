@@ -159,6 +159,31 @@ calendar. A separate private integration protocol now exercises source-owned
 handoff and final observation admission; managed activation, retained-capacity
 operations and real reminder/provider adapters remain gates in the full plan.
 
+### Existing storage and retired integration rules
+
+Calendar now supplies Fabric's native cold-open admission contract. Established
+current ownership metadata requires a read-only physical owner, migration-ledger
+and declared-schema proof before writable actor preparation. Explicit setup can
+prepare an older realm only after proving its existing owner; only a staged new
+owner can admit a missing owner row. The parent and each replacement actor bind
+the same detached contract and proof. The default behavior of other Fabric
+consumers is unchanged unless they opt into this contract.
+
+This checks declared schema and available native invariants, not arbitrary
+migration-created trigger/view equivalence. The same-lease owner and current
+authority checks remain required for each operation. Physical file/WAL/HOT and
+bundled-actor tests have not run under the current storage-integrity hold.
+
+An explicitly retired integration rule no longer blocks unrelated appointments
+or revives from stale configuration. Removing an active rule still requires
+operator review before new capture; original accepted/unknown Jobs receipts,
+retirement and cancellation evidence continue through their original identities.
+An empty rule catalog can therefore support evidence-only recovery without
+pretending removal is retirement. Fresh observation admission separately checks
+the configured policy and native workflow pin; accepted facts keep an independent
+settlement lifetime. These are private native lifecycle contracts, not a public
+reminder capability or a safe-disable certificate.
+
 ## Qualification boundary
 
 The branch has pure admission, real in-memory ReactiveDB/realm/native writer,

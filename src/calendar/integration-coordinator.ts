@@ -102,7 +102,7 @@ export class CalendarIntegrationCoordinator implements CalendarObservationExecut
 
   /** Construction is inert: no discovery, owner/pin/capability lookup, files or scheduled work. */
   constructor(private readonly options: CalendarIntegrationCoordinatorOptions) {
-    if (!options || !Array.isArray(options.rules) || !options.rules.length || options.rules.length > CALENDAR_INTEGRATION_LIMITS.rules
+    if (!options || !Array.isArray(options.rules) || options.rules.length > CALENDAR_INTEGRATION_LIMITS.rules
       || ['pin', 'owner', 'discover', 'resolveOwner', 'inspect'].some(key => typeof options[key as keyof CalendarIntegrationCoordinatorOptions] !== 'function')
       || typeof options.jobs?.forSource !== 'function' || options.now !== undefined && typeof options.now !== 'function'
       || options.onFailure !== undefined && typeof options.onFailure !== 'function') throw new CalendarError('CALENDAR_CONFIG_INVALID');
@@ -228,7 +228,7 @@ export class CalendarIntegrationCoordinator implements CalendarObservationExecut
             configured: this.rules.some(rule => rule.id === policy.ruleId), selection: calendarIntegrationPolicySelection(policy),
             downstream: registration && { generation: registration.generation, revision: registration.revision,
               state: registration.state, matchesPolicy: registration.policyHash === calendarHash(policy.policy.source) },
-            capacity: capacity && { sourceSchedules: capacity.source.schedules, file: capacity.file } });
+            capacity });
         }
         const after = await owner.read<CalendarIntegrationInspection>('calendar.integration.inspection', {}, read); await confirm();
         if (calendarIntegrationInspectionKey(before) !== calendarIntegrationInspectionKey(after)) throw new CalendarError('CALENDAR_POLICY_STALE');
@@ -339,7 +339,8 @@ export class CalendarIntegrationCoordinator implements CalendarObservationExecut
         const originalGuard = context.assertCurrentAuthority;
         const execution = Object.freeze({ ...context, signal,
           assertCurrentAuthority: () => { this.assertEvidence(); signal.throwIfAborted(); originalGuard(); } });
-        return observeCalendarIntegration({ owner, executions: jobs.executions, inspect: this.options.inspect, now: this.options.now }, execution);
+        return observeCalendarIntegration({ owner, executions: jobs.executions, inspect: this.options.inspect, now: this.options.now,
+          assertAdmissionCurrent: () => this.assertConfiguredPolicy(owner, intent.policy) }, execution);
       }, { key: 'calendar-evidence:' + calendarHash([serviceDataScopeKey(scope), id]), signal: AbortSignal.any([context.signal!, this.evidenceStop.signal]) }));
     } catch (error) { return Promise.reject(error); }
   }
@@ -461,15 +462,15 @@ export class CalendarIntegrationCoordinator implements CalendarObservationExecut
   private async prepare(cell: OwnerCell, strict: boolean): Promise<void> {
     cell.retiredRule = false;
     const retained = await this.policies(cell);
-    cell.unselectedRule = retained.some(policy => !this.rules.some(rule => rule.id === policy.ruleId));
+    cell.unselectedRule = retained.some(policy => policy.state !== 'retired' && !this.rules.some(rule => rule.id === policy.ruleId));
     if (cell.unselectedRule) throw new CalendarError('CALENDAR_NOT_READY');
     for (const rule of this.rules) {
       const current = retained.find(policy => policy.ruleId === rule.id);
       if (current?.state === 'retired') {
         cell.retiredRule = true;
-        // A stale desired-config list must never resurrect an explicitly retired
-        // rule. Operator-authorized reactivation is a separate unopened gate.
-        if (strict) throw new CalendarError('CALENDAR_NOT_READY'); continue;
+        // Retirement disables capture, not ordinary Calendar writes. Preserve
+        // the physical readiness proof above without implicitly reactivating.
+        continue;
       }
       const desired = calendarObservationPolicy(cell.owner, rule, this.options.pin(cell.owner));
       // A fresh verified snapshot, not a successful-readiness cache. Exact
@@ -487,10 +488,12 @@ export class CalendarIntegrationCoordinator implements CalendarObservationExecut
     try {
       await cell.owner.verify({ signal: this.intakeStop.signal }); this.assertIntake(); verified = true;
       const policies = await this.policies(cell);
-      cell.unselectedRule = policies.some(policy => !this.rules.some(rule => rule.id === policy.ruleId));
+      cell.unselectedRule = policies.some(policy => policy.state !== 'retired' && !this.rules.some(rule => rule.id === policy.ruleId));
+      cell.retiredRule = policies.some(policy => policy.state === 'retired');
       // Removed configuration is not authority to revive or retire an old
-      // source. Fail closed for explicit operator review before any Jobs call.
-      if (cell.unselectedRule) throw new CalendarError('CALENDAR_NOT_READY');
+      // source. Original-key evidence and explicit retirement still progress;
+      // capture preparation waits for review while other configured controls
+      // and previously accepted work retain their independent progress.
       let pending = false;
       for (const policy of policies) {
         const proof = await cell.owner.read<CalendarIntegrationControlEvidence>('calendar.integration.controlEvidence', { ruleId: policy.ruleId });
@@ -500,11 +503,26 @@ export class CalendarIntegrationCoordinator implements CalendarObservationExecut
         if (policy.state === 'retired') {
           await cell.controller.retire(policy.ruleId); cell.hydrated.set(policy.ruleId, key); controlRule = null; continue;
         }
+        if (!this.rules.some(rule => rule.id === policy.ruleId)) {
+          try { await cell.controller.reconcileRetained(policy.ruleId); }
+          catch (error) {
+            // A durably backed-off removed control must not starve a later
+            // configured rule. Unjournaled/owner failures still stop the pass.
+            const retry = await cell.owner.read<CalendarIntegrationControlEvidence>('calendar.integration.controlEvidence', { ruleId: policy.ruleId });
+            if (!retry.pending?.lastFailure || retry.pending.nextAttemptMs <= this.time()) throw error;
+            cell.lastFailure = code(error); this.report(cell.lastFailure);
+          }
+          controlRule = null; continue;
+        }
         // Every pass checks pending original controls, not just initial startup.
         // A local retirement preserves policy.id, so cache state is essential.
         const result = await cell.controller.activate(policy.ruleId); controlRule = null;
         if (result.policy.state === 'active' && result.result?.state === 'accepted') cell.hydrated.set(policy.ruleId, 'active:' + result.policy.id);
         else pending = true;
+      }
+      if (cell.unselectedRule) {
+        cell.lastFailure = 'CALENDAR_NOT_READY'; this.report(cell.lastFailure);
+        dispatching = true; await cell.dispatcher.runBatch(); dispatching = false; return;
       }
       // A backoff result is not settlement. Do not prepare desired B yet, but
       // durably defer ready appointments and keep historical cancels progressing.
@@ -529,14 +547,13 @@ export class CalendarIntegrationCoordinator implements CalendarObservationExecut
         durable = !!proof.pending?.lastFailure && proof.pending.nextAttemptMs > this.time();
       } catch { /* A failed evidence read cannot fabricate a durable retry marker. */ }
       localFailure = !durable;
-      if (verified && controlRule && !dispatching && !cell.unselectedRule) try {
+      if (verified && controlRule && !dispatching) try {
         // The first thrown activation failure needs this pass too, not just a
         // later returned-backoff result. No source lease crosses this Jobs wait.
         await cell.dispatcher.runBatch();
       } catch (dispatchError) { localFailure = true; cell.lastFailure = code(dispatchError); this.report(cell.lastFailure); }
     } finally {
       if (this.state !== 'quiescing' && this.state !== 'closed') {
-        if (cell.unselectedRule) { cell.nextWakeAt = null; return; }
         try {
           const wake = await cell.owner.read<{ nextWakeAt: number | null }>('calendar.integration.nextWake', {});
           if (!wake || wake.nextWakeAt !== null && !Number.isSafeInteger(wake.nextWakeAt)) throw new CalendarError('CALENDAR_STATE_INVALID');
@@ -556,6 +573,17 @@ export class CalendarIntegrationCoordinator implements CalendarObservationExecut
     if (!Array.isArray(policies) || policies.length > CALENDAR_INTEGRATION_LIMITS.rules) throw new CalendarError('CALENDAR_STATE_INVALID');
     return policies;
   }
+  /** Code configuration fences fresh work only. Retained facts keep their
+   * independent owner/authority lifetime, including qualified older realms.
+   */
+  private assertConfiguredPolicy(owner: CalendarIntegrationOwner, policy: CalendarIntegrationPolicySpec): void {
+    this.assertEvidence(); owner.assertCurrent();
+    const rule = this.rules.find(rule => rule.id === policy.ruleId);
+    if (!rule) throw new JobsError('JOBS_AUTHORITY_RETIRED');
+    const desired = calendarObservationPolicy(owner, rule, this.options.pin(owner));
+    const compatible = { ...desired, source: { ...desired.source, realmFingerprint: policy.source.realmFingerprint } };
+    if (calendarHash(compatible) !== calendarHash(policy)) throw new JobsError('JOBS_AUTHORITY_RETIRED');
+  }
   private bindJobs(owner: CalendarIntegrationOwner, input: CalendarIntegrationPolicySpec,
     guards: CalendarIntegrationEligibilityGuards, signal: AbortSignal): SourceJobs {
     // The current physical owner proof is independent of an immutable receipt's
@@ -574,7 +602,12 @@ export class CalendarIntegrationCoordinator implements CalendarObservationExecut
       assertOwnerCurrent: () => { this.assertEvidence(); owner.assertCurrent(); },
       confirmOwnerCurrent: async () => { this.assertEvidence(); await owner.verify(); this.assertEvidence(); },
       assertEligible: () => {
-        if (this.state !== 'running' && this.state !== 'starting') throw new JobsError('JOBS_AUTHORITY_RETIRED'); guards.assertEligible();
+        if (this.state !== 'running' && this.state !== 'starting') throw new JobsError('JOBS_AUTHORITY_RETIRED');
+        // Membership permits original configured-rule A control recovery before
+        // desired B preparation. It does not grant B's fresh effect cutoff;
+        // observeCalendarIntegration separately fences the exact desired pin.
+        if (!this.rules.some(rule => rule.id === input.ruleId)) throw new JobsError('JOBS_AUTHORITY_RETIRED');
+        guards.assertEligible();
       },
       confirmEligible: async () => { await guards.confirmEligible(); },
     });

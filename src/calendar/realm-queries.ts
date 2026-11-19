@@ -14,6 +14,7 @@ import { readCalendarAppointmentTypeSnapshot } from './appointment-type-bindings
 import { requireCalendarTypeManager } from './appointment-types-model';
 import { readCalendarAppointmentLifecycle, requireCalendarLifecycleManager } from './lifecycle-model';
 import { readCalendarAppointmentVisitSnapshot } from './visit-bindings';
+import { readCalendarResourceMembershipTable } from './appointment-resource-bindings';
 
 function owner(context: DatabaseReadQueryContext, scopeId: string): void {
   const row = context.database.query<{ scope_id: string }>("SELECT scope_id FROM _calendar_owner WHERE id='application'").get();
@@ -26,8 +27,9 @@ function resource(context: DatabaseReadQueryContext, actor: CalendarActor, id: s
   if (!hasCalendarRight(actor, row, grant, right)) throw new CalendarError('CALENDAR_NOT_FOUND');
   return row;
 }
-function resourceIds(context: DatabaseReadQueryContext, scopeId: string, id: string): string[] {
-  const rows = context.database.query<{ resource_id: string }>('SELECT resource_id FROM _calendar_reservations WHERE scope_id=? AND appointment_id=? ORDER BY resource_id LIMIT ?').all(scopeId, id, CALENDAR_LIMITS.selection + 1);
+function resourceIds(context: DatabaseReadQueryContext, scopeId: string, id: string, selectedTable?: ReturnType<typeof readCalendarResourceMembershipTable>): string[] {
+  const table = selectedTable ?? readCalendarResourceMembershipTable(context);
+  const rows = context.database.query<{ resource_id: string }>(`SELECT resource_id FROM ${table} WHERE scope_id=? AND appointment_id=? ORDER BY resource_id LIMIT ?`).all(scopeId, id, CALENDAR_LIMITS.selection + 1);
   if (!rows.length || rows.length > CALENDAR_LIMITS.selection) throw new CalendarError('CALENDAR_STATE_INVALID');
   return rows.map(row => row.resource_id);
 }
@@ -91,12 +93,13 @@ export function queryCalendarAppointments(context: DatabaseReadQueryContext, inp
   const r = range(context, input, 'details');
   if (!r.ids.length) return { items: [], truncated: false };
   const placeholders = r.ids.map(() => '?').join(','), right = rightSql(r.actor, 'resource', 'details');
+  const membership = readCalendarResourceMembershipTable(context);
   // Complete authorization, including unselected co-resources, is filtered before LIMIT/truncation.
   const rows = context.database.query<CalendarAppointmentRow>(`SELECT a.* FROM calendar_appointments a WHERE a.scope_id=? AND a.status='confirmed' AND a.occupied_start_ms>=? AND a.occupied_start_ms<? AND a.occupied_end_ms>?
-    AND EXISTS(SELECT 1 FROM _calendar_reservations selected WHERE selected.scope_id=a.scope_id AND selected.appointment_id=a.id AND selected.resource_id IN (${placeholders}))
-    AND NOT EXISTS(SELECT 1 FROM _calendar_reservations rr JOIN calendar_resources resource ON resource.id=rr.resource_id AND resource.scope_id=rr.scope_id WHERE rr.scope_id=a.scope_id AND rr.appointment_id=a.id AND NOT ${right.sql})
+    AND EXISTS(SELECT 1 FROM ${membership} selected WHERE selected.scope_id=a.scope_id AND selected.appointment_id=a.id AND selected.resource_id IN (${placeholders}))
+    AND NOT EXISTS(SELECT 1 FROM ${membership} rr JOIN calendar_resources resource ON resource.id=rr.resource_id AND resource.scope_id=rr.scope_id WHERE rr.scope_id=a.scope_id AND rr.appointment_id=a.id AND NOT ${right.sql})
     ORDER BY a.occupied_start_ms,a.id LIMIT ?`).all(r.actor.scopeId, calendarOverlapSearchStart(r.startMs), r.endMs, r.startMs, ...r.ids, ...right.params, r.limit + 1);
-  return { items: rows.slice(0, r.limit).map(row => appointmentView(row, resourceIds(context, r.actor.scopeId, row.id),
+  return { items: rows.slice(0, r.limit).map(row => appointmentView(row, resourceIds(context, r.actor.scopeId, row.id, membership),
     readCalendarAppointmentTypeSnapshot(context, r.actor.scopeId, row.id), readCalendarAppointmentLifecycle(context, r.actor.scopeId, row.id), readCalendarAppointmentVisitSnapshot(context, r.actor.scopeId, row.id))), truncated: rows.length > r.limit };
 }
 export function readCalendarAppointment(context: DatabaseReadQueryContext, input: unknown) {

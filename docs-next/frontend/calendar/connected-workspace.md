@@ -77,8 +77,10 @@ recovery ledger. The richer recovered `AppointmentEditor` remains a separate
 synchronous local UI; passing a Promise to it does not install persistence.
 
 `CalendarCoreTypeFields` uses the currently authorized selected-resource type
-intersection, not an omitted manager-wide catalog. Rescheduling queries every
-reserved co-resource, preserving the resource set. The selector is paged and
+intersection, not an omitted manager-wide catalog. Editing queries the resulting
+selected resource set. A multi-resource appointment keeps its full set in the
+single-calendar selector; arbitrary set edits use the native update facade.
+The selector is paged and
 retryable, and source-accepted historical types remain distinguishable from new
 unsubmitted choices. A new choice missing from the current live page loses its
 label and cannot be saved until explicitly reviewed; no stale snapshot is promoted
@@ -92,7 +94,7 @@ or silently coerce manually edited times. Typed intervals/buffers must still mat
 before dispatch. Untyped bookings expose explicit whole-minute buffers.
 
 Creation sends only a type reference; the source captures its canonical snapshot.
-Reschedule omission preserves the accepted type, selecting another current version
+Edit/reschedule omission preserves the accepted type, selecting another current version
 replaces it, and `null` explicitly clears it. Historical preservation is not a
 promise that changed occupancy passes today's policy. The server may reject an
 untyped booking when a resource requires a type. Catalog/policy administration UI
@@ -119,10 +121,23 @@ all submitted targets; selection sends no invitation and grants no calendar acce
 Details resolve private participant presentation separately from the ordinary
 appointment DTO. `Manage participants…` opens
 `CalendarAppointmentParticipantsDialog`, a distinct revision-controlled
-`participants.replace` operation. Rescheduling never writes participants, title
-or resource membership, and no pair of sequential saves is presented as atomic.
+`participants.replace` operation. The connected edit form sends one native
+`appointments.update` for its title/time/type/visit and single-calendar transfer;
+it does not silently chain a participant save. A programmatic native update can
+include participants in the same transaction when the configured permission is
+available. The legacy `reschedule` still never writes title, participants or
+resource membership. No pair of sequential saves is presented as atomic.
 Retained unavailable accounts remain removable. A pristine/reverted replacement
 cannot submit by button, Enter or a retained callback.
+
+Existing appointment titles are editable without a second save flow. A pristine
+or reverted edit has disabled Save and cannot submit through Enter or a retained
+callback. A single-calendar transfer refreshes type/location discovery against
+the selected result, not the old provider's accepted metadata. Missing replacement
+calendars cannot be submitted through a retained selector. Multi-resource sets
+are never collapsed by that single-value control. The existing native modal,
+unknown-request recovery, newer-typing protection and revision fences apply to
+the one atomic update acknowledgment.
 
 ## Modal, draft and receipt lifecycle
 

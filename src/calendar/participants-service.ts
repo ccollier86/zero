@@ -96,7 +96,7 @@ export async function calendarParticipantCommitGuard(input: {
   await authority.confirm(); authority.guard();
   if (prior !== null) return authority.guard;
   let references: readonly CalendarParticipantReference[] = [];
-  if (operation === 'hold.confirm' || operation === 'appointment.participants') {
+  if (operation === 'hold.confirm' || operation === 'appointment.participants' || operation === 'appointment.update') {
     const bound = await broker.read<BoundReferences>(authority.scope,
       operation === 'hold.confirm' ? 'calendar.holdParticipantAdmission' : 'calendar.appointmentParticipants',
       { actor: authority.actor, id }, authority.guard, authority.signal);
@@ -108,7 +108,8 @@ export async function calendarParticipantCommitGuard(input: {
       references = calendarParticipantReferences(bound.references);
     } else {
       const previous = new Set((bound.references ?? []).map(ref => ref.userId));
-      references = calendarParticipantReferences(body.references).filter(ref => !previous.has(ref.userId));
+      references = calendarParticipantReferences(operation === 'appointment.update' ? body.participants : body.references)
+        .filter(ref => !previous.has(ref.userId));
     }
   } else references = calendarParticipantReferences(body.participants);
   const source = requireParticipants(config, directory, authority.actor);

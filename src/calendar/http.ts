@@ -2,7 +2,7 @@
 import { t } from 'elysia';
 import { createServerExtensionApp, defineEndpoint, defineRouter, type AnyZeroEndpointDefinition } from '../frontend/server/server-extensions';
 import type { ZeroAppRuntime } from '../runtime/zero-app-runtime';
-import type { CalendarAppointmentInput, CalendarAvailabilityInput, CalendarBlockInput, CalendarBlockRescheduleInput,
+import type { CalendarAppointmentInput, CalendarAppointmentUpdateInput, CalendarAvailabilityInput, CalendarBlockInput, CalendarBlockRescheduleInput,
   CalendarAppointmentTypeInput, CalendarAppointmentTypeReplacement, CalendarAppointmentTypePageQuery, CalendarResourceTypesInput,
   CalendarLifecyclePolicyInput, CalendarAppointmentTransitionInput, CalendarCancellationOptions,
   CalendarControlOptions, CalendarGrant, CalendarHoldInput, CalendarHoldConfirmationInput, CalendarLocationInput, CalendarLocationPageQuery, CalendarLocationReplacement,
@@ -273,6 +273,11 @@ export async function createCalendarHttp(runtime: ZeroAppRuntime) {
       } }),
       defineEndpoint({ method: 'GET', path: '/appointments/:id', params: t.Object({ id: key }), async handler({ zero, params }) {
         if (!zero.calendar) throw new CalendarError('CALENDAR_NOT_READY'); return zero.calendar.appointments.get(params.id);
+      } }),
+      defineEndpoint({ method: 'PUT', path: '/appointments/:id', params: t.Object({ id: key }), body: t.Unknown(), async handler({ zero, params, body, request }) {
+        if (!zero.calendar) throw new CalendarError('CALENDAR_NOT_READY'); admitQueryKeys(request, []);
+        const value = calendarRecord(body, ['appointment', 'options']);
+        return zero.calendar.appointments.update(params.id, value.appointment as CalendarAppointmentUpdateInput, value.options as CalendarControlOptions);
       } }),
       defineEndpoint({ method: 'GET', path: '/appointments/:id/transitions', params: t.Object({ id: key }), async handler({ zero, params, request }) {
         if (!zero.calendar) throw new CalendarError('CALENDAR_NOT_READY'); admitQueryKeys(request, []);

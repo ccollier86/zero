@@ -1,6 +1,6 @@
 /** Private native operator contracts. No request mutation, provider or disable certificate. */
 import type { ServiceDataScope } from '../auth/service-data-scope';
-import type { JobSourceCapacity, JobRetainedCapacity } from '../jobs/source-model';
+import type { JobSourceCapacity } from '../jobs/source-model';
 import { CalendarError } from './error';
 import type { CalendarIntegrationPolicySelection } from './integration-controller';
 import type { CalendarIntegrationInspection, CalendarIntegrationInspectionRule } from './integration-inspection-model';
@@ -26,7 +26,8 @@ export interface CalendarIntegrationOperatorRule extends CalendarIntegrationInsp
     readonly generation: number; readonly revision: number;
     readonly state: 'active' | 'retired'; readonly matchesPolicy: boolean;
   };
-  readonly capacity: null | { readonly sourceSchedules: JobRetainedCapacity; readonly file: JobSourceCapacity['file'] };
+  /** Explicit versioned working occupancy versus durable retained-history budget. */
+  readonly capacity: JobSourceCapacity | null;
 }
 export interface CalendarIntegrationOperatorInspection extends Omit<CalendarIntegrationInspection, 'rules'> {
   readonly rules: readonly CalendarIntegrationOperatorRule[];

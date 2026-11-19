@@ -141,6 +141,56 @@ test('a pending A control blocks prepare B and evidence recovery never silently 
   } finally { await f.close(); }
 });
 
+test('retained control reconciliation journals accepted activation without hydrating eligibility or changing its key', async () => {
+  const f = await fixture(); try {
+    const original = f.controller(); await original.prepare(f.policy()); f.loseActivation();
+    await expect(original.activate('observation')).rejects.toMatchObject({ code: 'JOBS_OUTCOME_UNKNOWN' });
+    const pending = await f.owner.read<CalendarIntegrationControlView>('calendar.integration.control', { ruleId: 'observation', epoch: 1, action: 'activate' });
+    await original.close(); const recovered = f.controller(); await recovered.reconcileRetained('observation');
+    const accepted = await f.owner.read<CalendarIntegrationControlView>('calendar.integration.control', { ruleId: 'observation', epoch: 1, action: 'activate' });
+    expect(accepted.jobsKey).toBe(pending.jobsKey); expect(accepted.result?.state).toBe('accepted');
+    expect(f.mutations).toHaveLength(1); expect(() => f.bindings.at(-1)!.guards.assertEligible()).toThrow();
+    expect(recovered.diagnostics().rules).toBe(0);
+  } finally { await f.close(); }
+});
+
+test('a missing current activation remains pending review under retained reconciliation until explicit retirement', async () => {
+  const f = await fixture(); try {
+    const original = f.controller(); await original.prepare(f.policy()); f.rejectActivation(true);
+    await expect(original.activate('observation')).rejects.toMatchObject({ code: 'JOBS_CAPACITY' });
+    await original.close(); const recovered = f.controller(); await recovered.reconcileRetained('observation');
+    f.advance(5000); f.rejectActivation(false);
+    await expect(recovered.reconcileRetained('observation')).rejects.toMatchObject({ code: 'CALENDAR_NOT_READY' });
+    const pending = await f.owner.read<CalendarIntegrationControlView>('calendar.integration.control', { ruleId: 'observation', epoch: 1, action: 'activate' });
+    expect(pending.result).toBeNull(); expect(pending.lastFailure).toBe('CALENDAR_NOT_READY');
+    expect(f.mutations).toHaveLength(0);
+    expect((await f.owner.read<CalendarIntegrationPolicyView>('calendar.integration.policy', { ruleId: 'observation' })).state).toBe('activating');
+    expect((await recovered.retire('observation')).result).toBe('no-registration');
+    expect((await f.owner.read<CalendarIntegrationControlView>('calendar.integration.control', { ruleId: 'observation', epoch: 1, action: 'activate' })).result).toEqual({ state: 'absent' });
+    expect(f.mutations).toHaveLength(0);
+  } finally { await f.close(); }
+});
+
+test('a retained accepted control acknowledgment keeps factual owner authority after intake quiesces', async () => {
+  const f = await fixture(), entered = deferred(), gate = deferred();
+  let reconciling: ReturnType<typeof capture> | undefined;
+  try {
+    const original = f.controller(); await original.prepare(f.policy()); f.loseActivation();
+    await expect(original.activate('observation')).rejects.toMatchObject({ code: 'JOBS_OUTCOME_UNKNOWN' });
+    await original.close();
+    const evidenceOwner: CalendarIntegrationOwner = { ...f.owner, async command(name, input, options) {
+      if (name === 'calendar.integration.control.ack') { entered.resolve(); await gate.promise; }
+      return f.owner.command(name, input, options);
+    } };
+    const recovered = f.controller(evidenceOwner); reconciling = capture(recovered.reconcileRetained('observation'));
+    await entered.promise; recovered.quiesce(); gate.resolve(); await reconciling;
+    await recovered.close(); await recovered.drainPhysical();
+    const accepted = await f.owner.read<CalendarIntegrationControlView>('calendar.integration.control', { ruleId: 'observation', epoch: 1, action: 'activate' });
+    expect(accepted.result?.state).toBe('accepted'); expect(f.mutations).toHaveLength(1);
+    expect(() => f.bindings.at(-1)!.guards.assertEligible()).toThrow(); expect(f.owner.signal.aborted).toBe(false);
+  } finally { gate.resolve(); await reconciling; await f.close(); }
+});
+
 test('a proven rejected activation retains backoff and retirement barrier settles absence without inventing retirement', async () => {
   const f = await fixture(); try {
     const c = f.controller(); await c.prepare(f.policy()); f.rejectActivation(true);

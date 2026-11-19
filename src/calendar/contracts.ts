@@ -238,7 +238,7 @@ export interface CalendarCommandReceipt {
     | 'resource.availability-policy-changed'
     | 'location.created' | 'location.updated'
     | 'type.created' | 'type.updated' | 'resource.types-changed'
-    | 'appointment.created' | 'appointment.rescheduled' | 'appointment.cancelled' | 'appointment.transitioned' | 'appointment.participants-changed'
+    | 'appointment.created' | 'appointment.rescheduled' | 'appointment.updated' | 'appointment.cancelled' | 'appointment.transitioned' | 'appointment.participants-changed'
     | 'lifecycle.policy-changed'
     | 'block.created' | 'block.rescheduled' | 'block.cancelled' | 'hold.acquired' | 'hold.released';
   readonly id: string;
@@ -282,6 +282,20 @@ export interface CalendarRescheduleInput {
   readonly bufferBeforeMinutes: number;
   readonly bufferAfterMinutes: number;
 }
+/** One atomic rich edit. Omitted fields preserve accepted facts; only type/visit accept explicit null. */
+export type CalendarAppointmentUpdateInput = {
+  readonly title?: string;
+  readonly resourceIds?: readonly string[];
+  readonly appointmentType?: CalendarAppointmentTypeReference | null;
+  readonly visit?: CalendarVisitInput | null;
+  readonly participants?: readonly CalendarParticipantReference[];
+} & ({
+  readonly startAt: string; readonly endAt: string; readonly timeZone: string;
+  readonly bufferBeforeMinutes: number; readonly bufferAfterMinutes: number;
+} | {
+  readonly startAt?: never; readonly endAt?: never; readonly timeZone?: never;
+  readonly bufferBeforeMinutes?: never; readonly bufferAfterMinutes?: never;
+});
 export interface CalendarRequestOptions {
   readonly idempotencyKey: string;
   readonly signal?: AbortSignal;
@@ -416,6 +430,7 @@ export interface ScopedCalendar {
     get(id: string, options?: CalendarReadOptions): Promise<CalendarAppointmentView>;
     create(input: CalendarAppointmentInput, options: CalendarRequestOptions): Promise<CalendarCommandReceipt>;
     reschedule(id: string, input: CalendarRescheduleInput, options: CalendarControlOptions): Promise<CalendarCommandReceipt>;
+    update(id: string, input: CalendarAppointmentUpdateInput, options: CalendarControlOptions): Promise<CalendarCommandReceipt>;
     cancel(id: string, options: CalendarCancellationOptions): Promise<CalendarCommandReceipt>;
     transitions(id: string, options?: CalendarReadOptions): Promise<CalendarAppointmentTransitions>;
     transition(id: string, input: CalendarAppointmentTransitionInput, options: CalendarControlOptions): Promise<CalendarCommandReceipt>;

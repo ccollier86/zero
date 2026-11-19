@@ -7,7 +7,8 @@ import { bindJobOwner, changeJobSchedule, createJobSchedule } from './realm-cont
 import { blockJobOccurrence, claimJobOccurrence, completeJobOccurrence, materializeJobOccurrences, receiveJobDispatch, blockJobCursor, deferJobOccurrenceClaim } from './realm-dispatch';
 import { dueJobSchedules, listJobOccurrences, listJobSchedules, pendingJobOccurrences, readJobDispatchContext, readJobIntent, readJobOwner, readJobSchedule, readJobScheduleContext, dispatchedJobOccurrences, readJobWake } from './realm-queries';
 import { withJobCommitHints } from './commit-hints';
-import { CURRENT_JOB_TABLES } from './realm-source-schema';
+import { JOB_CAPACITY_CURRENT_TABLES } from './realm-capacity-schema';
+import { JOB_CAPACITY_MIGRATION } from './realm-capacity-migration';
 import { JOB_SOURCE_MIGRATION } from './realm-source-migration';
 import { registerJobSource, retireJobSource, createSourceJobSchedule, changeSourceJobSchedule } from './realm-source-control';
 import { getJobSource, readSourceJobSchedule, readSourceJobIntent, readJobSourceDispatch, readSourceJobExecution, readSourceJobCapacity } from './realm-source-queries';
@@ -19,7 +20,7 @@ function query(handler: (context: Parameters<DatabaseReadQueryHandler>[0], input
   };
 }
 export const jobsRealm = defineDatabaseRealm({
-  name: 'zero-jobs', version: '2', tables: CURRENT_JOB_TABLES,
+  name: 'zero-jobs', version: '3', tables: JOB_CAPACITY_CURRENT_TABLES,
   migrations: [{ version: '001', description: 'Private scheduling ownership, immutable admissions, permanent intents and fenced occurrence handoffs', safety: 'safe', up(database) {
     for (const [table, columns] of Object.entries(JOB_TABLES)) database.run('CREATE TABLE ' + quoteSqlIdentifier(table) + ' (' + Object.entries(columns).map(([name, definition]) => quoteSqlIdentifier(name) + ' ' + definition).join(',') + ')');
     for (const sql of [
@@ -73,7 +74,7 @@ export const jobsRealm = defineDatabaseRealm({
     database.run(`CREATE TRIGGER jobs_occurrence_stage BEFORE UPDATE ON _jobs_occurrences WHEN NOT(
       (OLD.state='pending' AND NEW.state IN ('claimed','terminal','cancelled')) OR (OLD.state='claimed' AND NEW.state IN ('claimed','dispatched','blocked')) OR
       (OLD.state='dispatched' AND NEW.state='terminal')) BEGIN SELECT RAISE(ABORT,'Private occurrence stage is inconsistent'); END`);
-  } }, JOB_SOURCE_MIGRATION],
+  } }, JOB_SOURCE_MIGRATION, JOB_CAPACITY_MIGRATION],
   commands: withJobCommitHints({ 'jobs.owner.bind': bindJobOwner, 'jobs.schedule.create': createJobSchedule, 'jobs.schedule.change': changeJobSchedule,
     'jobs.materialize': materializeJobOccurrences, 'jobs.claim': claimJobOccurrence, 'jobs.claim.defer': deferJobOccurrenceClaim, 'jobs.dispatch': receiveJobDispatch,
     'jobs.block': blockJobOccurrence, 'jobs.complete': completeJobOccurrence, 'jobs.cursor.block': blockJobCursor,

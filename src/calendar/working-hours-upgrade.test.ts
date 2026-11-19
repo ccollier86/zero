@@ -98,7 +98,7 @@ function fixture() {
 }
 
 test('009 is additive over the actual pinned eight migration functions, registered checksums and complete 008 schema', () => {
-  expect(calendarRealm.migrations.map(migration => migration.version)).toEqual([...versions, '009', '010', '011', '012', '013', '014', '015']);
+  expect(calendarRealm.migrations.map(migration => migration.version)).toEqual([...versions, '009', '010', '011', '012', '013', '014', '015', '016']);
   expect(calendarRealm.migrations.slice(0, 8).map(hashMigration)).toEqual([...ORIGINAL_008_CHECKSUMS]);
   expect(calendarRealm.migrationChecksums.slice(0, 8)).toEqual(ORIGINAL_008_CHECKSUMS.map((checksum, index) => ({ version: versions[index], checksum })));
   expect(hashSchemaSnapshot(snapshotDeclaredTables(CALENDAR_PARTICIPANT_TABLES))).toBe(ORIGINAL_008_TABLES);
@@ -116,10 +116,15 @@ test('populated 008 upgrade retains all families, exact receipts, sequences, SQL
     const hold = f.query<CalendarHoldView>('hold', { actor, id: 'legacy-hold' });
     const availability = f.query('availability', { actor, id: 'person' });
     for (const [table, rows] of Object.entries(before)) expect(rows.length, 'Seed every 008 family: ' + table).toBeGreaterThan(0);
-    expect(f.upgrade()).toEqual(['009', '010', '011', '012', '013', '014', '015']); expect(f.oldRows()).toEqual(before); expect(f.db.currentSeq).toBe(seq);
+    expect(f.upgrade()).toEqual(['009', '010', '011', '012', '013', '014', '015', '016']); expect(f.oldRows()).toEqual(before); expect(f.db.currentSeq).toBe(seq);
     expect(f.raw.query("SELECT * FROM _migrations WHERE version<='008' ORDER BY version").all()).toEqual(ledger);
     for (const definition of definitions) expect(f.raw.query('SELECT type,name,sql FROM sqlite_master WHERE type=? AND name=?').get(definition.type, definition.name)).toEqual(definition);
-    for (const table of f.additions) expect(f.raw.query(`SELECT * FROM ${table}`).all()).toEqual([]);
+    for (const table of f.additions) {
+      if (table === '_calendar_appointment_resource_state') expect(f.raw.query(`SELECT * FROM ${table}`).all()).toEqual([{ id: 'application', version: 16 }]);
+      else if (table === '_calendar_appointment_resource_current') expect(f.raw.query(`SELECT * FROM ${table} ORDER BY id`).all()).toEqual(
+        f.raw.query('SELECT r.id,r.scope_id,r.appointment_id,r.resource_id,a.revision AS binding_revision FROM _calendar_reservations r JOIN calendar_appointments a ON a.scope_id=r.scope_id AND a.id=r.appointment_id ORDER BY r.id').all());
+      else expect(f.raw.query(`SELECT * FROM ${table}`).all()).toEqual([]);
+    }
     expect(f.query<unknown>('availability', { actor, id: 'person' })).toEqual(availability);
     expect(f.query<CalendarAppointmentView>('appointment', { actor, id: 'legacy-typed-visit' })).toEqual(appointment);
     expect(f.query<CalendarHoldView>('hold', { actor, id: 'legacy-hold' })).toEqual(hold);

@@ -6,6 +6,7 @@ import { initialScheduleDue } from './schedule-time';
 import { assertJobOwner, insertJobAdmission, jobActor, jobBudget, jobIntent, JOB_LIMITS, jobRevision, jobScope, nextJobInteger, normalizeJobSeal, ownedJob, scheduleView } from './realm-model';
 import { jobHash, jobRecord, jobText, jobTime } from './validation';
 import { appendJobSemanticAudit } from './semantic-audit';
+import { initializeJobScheduleWork, refreshJobScheduleWork } from './realm-capacity';
 
 export function bindJobOwner(context: DatabaseWriteCommandContext, input: unknown) {
   return jobCommand(() => {
@@ -34,6 +35,7 @@ export function createJobSchedule(context: DatabaseWriteCommandContext, input: u
       const change = context.db.createStrict('job_schedules', row);
       insertJobAdmission(context, admission, 1, seal);
       context.db.createStrict('_jobs_cursors', { id: row.id, scope_id: actor.scopeId, next_due_at: next, skipped: 0, blocked_code: null });
+      initializeJobScheduleWork(context, row);
       appendJobSemanticAudit(context, 'jobs.schedule.created', change, { revision: row.revision, generation: row.generation, control: row.control, ownership: row.run_as });
       return scheduleView(row);
     });
@@ -64,6 +66,7 @@ export function changeJobSchedule(context: DatabaseWriteCommandContext, input: u
         context.db.update('_jobs_cursors', row.id, { next_due_at: due, skipped: 0, blocked_code: null });
       } else context.db.update('_jobs_cursors', row.id, { next_due_at: null });
       const change = context.db.update('job_schedules', row.id, next);
+      refreshJobScheduleWork(context, row.id);
       // Already admitted Torrent work is not claimed to have been undone. Old generations cannot acquire new dispatch claims.
       appendJobSemanticAudit(context, admission ? 'jobs.schedule.readmitted' : r.action === 'pause' ? 'jobs.schedule.paused' : 'jobs.schedule.cancelled', change,
         { revision: next.revision, generation: next.generation, previousControl: row.control, control: next.control, ownership: row.run_as });

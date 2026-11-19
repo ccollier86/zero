@@ -8,7 +8,8 @@ import { admitCalendarRequest, type CalendarAuthority } from './authority';
 import type { ResolvedCalendarConfig } from './config';
 import { calendarLocationIds, calendarLocationInput, calendarPageQuery, calendarResourcePageQuery, calendarRange, calendarReceipt,
   calendarAppointmentTypePageQuery, calendarAppointmentTypeInput, calendarTypeReference, calendarResourceTypesInput,
-  calendarLifecyclePolicyInput, calendarAppointmentTransitionInput, calendarLifecycleReason, calendarVisitInput, calendarVisitLocationQuery } from './service-validation';
+  calendarLifecyclePolicyInput, calendarAppointmentTransitionInput, calendarLifecycleReason, calendarVisitInput, calendarVisitLocationQuery,
+  calendarAppointmentUpdateInput } from './service-validation';
 import { watchCalendarPage } from './watch';
 import type { CalendarParticipantDirectory } from './participants-directory';
 import { calendarParticipantBroker, calendarParticipantCommitGuard, calendarParticipantQuery } from './participants-service';
@@ -192,6 +193,7 @@ export class CalendarService {
         query: (query, options) => this.read(request, 'appointments', () => calendarRange(query, this.config), options),
         get: (id, options) => this.read(request, 'appointment', () => ({ id: calendarKey(id) }), options),
         create: createAppointment,
+        update: (id, input, options) => this.write(request, 'appointment.update', input, options, id),
         reschedule: (id, input, options) => this.write(request, 'appointment.reschedule', input, options, id),
         cancel: (id, options) => this.write(request, 'appointment.cancel', {}, options, id),
         transitions: (id, options) => this.read(request, 'appointmentTransitions', () => ({ id: calendarKey(id) }), options),
@@ -275,6 +277,7 @@ export class CalendarService {
         : ['resourceIds', 'title', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'appointmentType', 'visit', 'participants'];
       // Detach before the first await; authored mutation cannot alter an admitted command.
       const body = calendarValue(calendarRecord(input, fields)) as Record<string, unknown>;
+      if (operation === 'appointment.update') Object.assign(body, calendarAppointmentUpdateInput(body, this.config));
       for (const field of ['participants', 'references'] as const) if (Object.hasOwn(body, field)) {
         body[field] = calendarParticipantReferences(body[field]);
         if ((body[field] as unknown[]).length > this.config.maxParticipants) throw new CalendarError('CALENDAR_INPUT_INVALID');
@@ -287,11 +290,11 @@ export class CalendarService {
       if (operation === 'resource.availability-policy') Object.assign(body, normalizeCalendarAvailabilityPolicy(body));
       if (operation === 'appointment.transition') Object.assign(body, calendarAppointmentTransitionInput(body));
       if (Object.hasOwn(body, 'appointmentType')) {
-        if (body.appointmentType === null) { if (operation !== 'appointment.reschedule') throw new CalendarError('CALENDAR_INPUT_INVALID'); }
+        if (body.appointmentType === null) { if (operation !== 'appointment.reschedule' && operation !== 'appointment.update') throw new CalendarError('CALENDAR_INPUT_INVALID'); }
         else body.appointmentType = calendarTypeReference(body.appointmentType);
       }
       if (Object.hasOwn(body, 'visit')) {
-        if (body.visit === null) { if (operation !== 'appointment.reschedule') throw new CalendarError('CALENDAR_INPUT_INVALID'); }
+        if (body.visit === null) { if (operation !== 'appointment.reschedule' && operation !== 'appointment.update') throw new CalendarError('CALENDAR_INPUT_INVALID'); }
         else body.visit = calendarVisitInput(body.visit);
       }
       const opts = calendarRecord(options, target === undefined ? ['idempotencyKey', 'signal']
