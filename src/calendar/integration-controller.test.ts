@@ -19,13 +19,14 @@ const capture = <T>(task: Promise<T>) => task.then(value => ({ ok: true as const
 function deferred() { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; }
 const selection = (policy: CalendarIntegrationPolicyView): CalendarIntegrationPolicySelection => ({ id: policy.id, epoch: policy.epoch, policyDigest: calendarHash(policy.policy) });
 
-async function fixture() {
+async function fixture(fixtureOptions: { nativeHydration?: boolean } = {}) {
   const calendar = memoryCalendarServiceFixture({ tenancy: 'single' }), session = calendar.session('owner', { manager: true });
   try {
     const resource = await session.api.resources.create({ label: 'PRIVATE_RESOURCE', kind: 'person', timeZone: 'UTC' }, { idempotencyKey: 'seed' });
     const owner = calendar.runtime.forIntegrationOwner(calendar.runtime.integrationOwners()[0]!);
     const currents = new Map<string, JobSourceRegistration>(), receipts = new Map<string, JobSourceRegistration>();
-    const bindings: Array<{ policy: CalendarIntegrationPolicySpec; guards: CalendarIntegrationEligibilityGuards }> = [];
+    const bindings: Array<{ policy: CalendarIntegrationPolicySpec; guards: CalendarIntegrationEligibilityGuards; jobs: SourceJobs }> = [];
+    const attached = new Map<string, SourceJobs>();
     const mutations: Array<{ action: 'activate' | 'retire'; key: string; expected: number; sourceId: string }> = [];
     let now = Date.now(), factoryCalls = 0, loseActivationReply = false, loseRetirementReply = false, rejectActivation = false;
     let beforeActivate: (() => Promise<void>) | null = null, afterActivate: (() => void) | null = null;
@@ -35,9 +36,14 @@ async function fixture() {
       expect(row).toBeDefined(); return row!;
     };
     const jobs = (policy: CalendarIntegrationPolicySpec, guards: CalendarIntegrationEligibilityGuards): SourceJobs => {
-      factoryCalls++; bindings.push({ policy, guards });
+      factoryCalls++;
       const sourceId = jobSourceId(policy.source.identity), keyFor = (key: string) => sourceId + ':' + key;
-      return { capacity: { async get() { throw new Error('Controller does not request capacity in this fixture.'); } }, registration: {
+      const jobs: SourceJobs = { ...(fixtureOptions.nativeHydration ? { hydration: {
+        async attach() { throw new Error('Controller does not attach in this fixture.'); },
+        tryDetach() { throw new Error('Controller must not detach native sources.'); },
+        inspect() { return { attached: attached.get(sourceId) === jobs, residentSources: attached.size, residentLimit: 1024 as const,
+          preparing: 0, queued: 0, active: 0, preparedDispatch: 0, activeDispatch: 0 }; },
+      } } : {}), capacity: { async get() { throw new Error('Controller does not request capacity in this fixture.'); } }, registration: {
         async get() { assertNoLease(); return currents.get(sourceId) ?? null; },
         async reconcile(key) { assertNoLease(); return receipts.get(keyFor(key)) ?? null; },
         async activate(options) {
@@ -45,7 +51,7 @@ async function fixture() {
           expect(row.action).toBe('activate'); expect(row.expected_jobs_revision).toBe(options.expectedRevision);
           expect(row.epoch).toBe(normalizeCalendarObservationInput(options.pinInput).policyEpoch);
           const prior = receipts.get(keyFor(options.idempotencyKey));
-          if (prior) return prior;
+          if (prior) { if (fixtureOptions.nativeHydration) attached.set(sourceId, jobs); return prior; }
           await guards.confirmEligible(); await beforeActivate?.(); await guards.confirmEligible();
           options.signal?.throwIfAborted();
           if (rejectActivation) throw new JobsError('JOBS_CAPACITY');
@@ -55,6 +61,7 @@ async function fixture() {
           const registration: JobSourceRegistration = same ? current : { id: sourceId, state: 'active', policyHash: hash,
             generation: (current?.generation ?? 0) + 1, revision: (current?.revision ?? 0) + 1 };
           currents.set(sourceId, registration); receipts.set(keyFor(options.idempotencyKey), registration);
+          if (fixtureOptions.nativeHydration) attached.set(sourceId, jobs);
           mutations.push({ action: 'activate', key: options.idempotencyKey, expected: options.expectedRevision, sourceId });
           afterActivate?.();
           if (loseActivationReply) { loseActivationReply = false; throw new JobsError('JOBS_OUTCOME_UNKNOWN'); }
@@ -70,6 +77,7 @@ async function fixture() {
           if (!current || current.revision !== options.expectedRevision) throw new JobsError('JOBS_REVISION_CONFLICT');
           const registration: JobSourceRegistration = current.state === 'retired' ? current : { ...current, state: 'retired', revision: current.revision + 1 };
           currents.set(sourceId, registration); receipts.set(keyFor(options.idempotencyKey), registration);
+          if (fixtureOptions.nativeHydration) attached.delete(sourceId);
           mutations.push({ action: 'retire', key: options.idempotencyKey, expected: options.expectedRevision, sourceId });
           if (loseRetirementReply) { loseRetirementReply = false; throw new JobsError('JOBS_OUTCOME_UNKNOWN'); }
           return registration;
@@ -78,6 +86,7 @@ async function fixture() {
       executions: { async get() { throw new Error('Controller does not execute workflows.'); } },
       schedules: { async reconcileCreate() { throw new Error('No schedule reconciliation.'); }, async create() { throw new Error('No schedules.'); }, async replace() { throw new Error('No schedules.'); },
         async cancel() { throw new Error('No schedules.'); }, async get() { throw new Error('No schedules.'); } } };
+      bindings.push({ policy, guards, jobs }); return jobs;
     };
     const controllers: CalendarIntegrationPolicyController[] = [];
     const controller = (source: CalendarIntegrationOwner = owner) => { const result = new CalendarIntegrationPolicyController({ owner: source, jobs, now: () => now }); controllers.push(result); return result; };
@@ -127,6 +136,62 @@ test('lost activation acknowledgment reconciles original accepted key without an
     expect(recovered.control.id).toBe(pending.id); expect(recovered.control.jobsKey).toBe(pending.jobsKey);
     expect(recovered.policy.state).toBe('active'); expect(f.mutations).toHaveLength(1);
   } finally { await f.close(); }
+});
+
+test('selected SourceJobs binding is stable and historical evidence cannot orphan its native attachment', async () => {
+  const f = await fixture({ nativeHydration: true }); try {
+    const c = f.controller(), policy = await c.prepare(f.policy()); f.loseActivation();
+    await expect(c.activate(policy.ruleId)).rejects.toMatchObject({ code: 'JOBS_OUTCOME_UNKNOWN' });
+    const jobs = c.sourceBinding(policy.ruleId, calendarHash(policy.policy))!;
+    expect(jobs).toBe(f.bindings[0]!.jobs); expect(jobs.hydration!.inspect().attached).toBe(true);
+    expect(c.sourceBindings()).toMatchObject([{ policyId: policy.id, selected: true, jobs }]);
+    await c.reconcileRetained(policy.ruleId);
+    expect(f.factoryCalls()).toBe(2); // the second broker is evidence-only
+    expect(() => f.bindings[1]!.guards.assertEligible()).toThrow();
+    expect(c.sourceBinding(policy.ruleId, calendarHash(policy.policy))).toBe(jobs);
+    expect(c.sourceBindings()).toHaveLength(1); expect(jobs.hydration!.inspect().attached).toBe(true);
+    await c.activate(policy.ruleId); await c.activate(policy.ruleId);
+    expect(f.factoryCalls()).toBe(2); expect(f.mutations).toHaveLength(1);
+    expect(c.sourceBinding(policy.ruleId, '0'.repeat(64))).toBeNull();
+    expect(c.diagnostics()).toMatchObject({ physicalCallbacks: 0, sourceBindings: 1, idleReleaseQualified: false });
+    await c.close(); expect(f.owner.signal.aborted).toBe(false); expect(jobs.hydration!.inspect().attached).toBe(true);
+  } finally { await f.close(); }
+});
+
+test('prepared replacement retains the prior exact native handle without growing an epoch history', async () => {
+  const f = await fixture({ nativeHydration: true }); try {
+    const c = f.controller(), a = await c.prepare(f.policy()); await c.activate(a.ruleId);
+    const old = c.sourceBinding(a.ruleId, calendarHash(a.policy))!;
+    const b = await c.prepare(f.policy(a.ruleId, '2'));
+    expect(c.sourceBinding(a.ruleId, calendarHash(a.policy))).toBeNull();
+    expect(c.sourceBindings()).toMatchObject([{ policyId: a.id, selected: false, jobs: old }]);
+    expect(old.hydration!.inspect().attached).toBe(true); expect(() => f.bindings[0]!.guards.assertEligible()).toThrow();
+    await c.activate(b.ruleId);
+    const current = c.sourceBinding(b.ruleId, calendarHash(b.policy))!;
+    expect(current).not.toBe(old); expect(current.hydration!.inspect().attached).toBe(true);
+    for (let version = 3; version <= 6; version++) {
+      const policy = await c.prepare(f.policy(a.ruleId, String(version))); await c.activate(policy.ruleId);
+      expect(c.sourceBindings()).toHaveLength(2);
+      expect(c.sourceBindings().filter(binding => binding.selected)).toHaveLength(1);
+    }
+    expect(c.diagnostics().idleReleaseQualified).toBe(false); expect(f.owner.signal.aborted).toBe(false);
+  } finally { await f.close(); }
+});
+
+test('caller cancellation does not hide an actual controller callback or release its selected handle', async () => {
+  const f = await fixture({ nativeHydration: true }), entered = deferred(), gate = deferred(), cancelled = new AbortController();
+  let activating: ReturnType<typeof capture> | undefined;
+  try {
+    const c = f.controller(), policy = await c.prepare(f.policy());
+    f.beforeActivate(async () => { entered.resolve(); await gate.promise; });
+    activating = capture(c.activate(policy.ruleId, { signal: cancelled.signal })); await entered.promise;
+    const jobs = c.sourceBinding(policy.ruleId, calendarHash(policy.policy)); cancelled.abort(new Error('synthetic-cancel'));
+    expect((await activating).ok).toBe(false);
+    expect(c.diagnostics()).toMatchObject({ physicalCallbacks: 1, pool: { active: 1 }, idleReleaseQualified: false });
+    expect(c.sourceBinding(policy.ruleId, calendarHash(policy.policy))).toBe(jobs);
+    gate.resolve(); await eventuallyCalendar(() => c.diagnostics().physicalCallbacks === 0);
+    expect(c.sourceBinding(policy.ruleId, calendarHash(policy.policy))).toBe(jobs); expect(f.owner.signal.aborted).toBe(false);
+  } finally { gate.resolve(); await activating; await f.close(); }
 });
 
 test('a pending A control blocks prepare B and evidence recovery never silently revives its quiesced source', async () => {

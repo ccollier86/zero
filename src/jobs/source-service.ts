@@ -1,4 +1,5 @@
 /** Internal native-service facade over the SAME Jobs runner, pool and Torrent receipts. */
+import { types as utilTypes } from 'node:util';
 import type { ServiceDataScope } from '../auth/service-data-scope';
 import type { WorkPool } from '../workers/work-pool';
 import { SchedulerError } from '../scheduler/scheduler-error';
@@ -41,12 +42,13 @@ export interface SourceJobDispatchPin {
   /** Releases an uninvoked permit only. Running callbacks cannot be abandoned. */
   abandon(): boolean;
 }
+export type SourceJobsDetachResult = 'detached' | 'busy' | 'not-current';
 /** Private evidence/control surface; it is not a request API or an alternative general scheduler. */
 export interface SourceJobs {
   /** Native residency only; absence on a legacy embedding is not scalable hydration readiness. */
   readonly hydration?: {
     attach(options: SourceHydrationOptions): Promise<JobSourceRegistration>;
-    tryDetach(): 'detached' | 'busy' | 'not-current';
+    tryDetach(): SourceJobsDetachResult;
     inspect(): SourceHydrationStatus;
   };
   /** Existing-only owner-authorized accounting; absence never provisions an empty scope. */
@@ -85,8 +87,11 @@ interface ActivationToken { readonly expectedRevision: number; retired: boolean;
 type PinPhase = 'preparing' | 'queued' | 'active' | 'preparedDispatch' | 'activeDispatch';
 type PhysicalCounts = Record<PinPhase, number>;
 interface PhysicalPin { move(phase: PinPhase): void; release(): void }
+interface SourceHandle { readonly id: string; readonly capability: TrustedJobSource; readonly guard: () => void }
 export class JobsSourceBroker {
   private readonly live = new Map<string, LiveBinding>();
+  private readonly handles = new WeakMap<object, SourceHandle>();
+  private detaching = false;
   private readonly physical = new Map<string, PhysicalCounts>();
   private readonly physicalWaiters = new Set<() => void>();
   private readonly uninvokedDispatch = new Set<() => boolean>();
@@ -115,6 +120,45 @@ export class JobsSourceBroker {
   async drainPhysical(): Promise<void> {
     if (!this.closed) throw new JobsError('JOBS_NOT_READY');
     while (this.physical.size) await new Promise<void>(resolve => { this.physicalWaiters.add(resolve); });
+  }
+  /** Native all-or-nothing residency release. No supplied handle properties or
+   * iterators are evaluated, and owner guards run before ALL final inspection. */
+  tryDetachSources(supplied: readonly SourceJobs[]): SourceJobsDetachResult {
+    function reject(): never { throw new JobsError('JOBS_INPUT_INVALID'); }
+    if (!supplied || typeof supplied !== 'object' || utilTypes.isProxy(supplied) || !Array.isArray(supplied)
+      || Object.getPrototypeOf(supplied) !== Array.prototype || supplied.length > 1024) reject();
+    if (Reflect.ownKeys(supplied).length !== supplied.length + 1) reject();
+    const selected = new Set<SourceHandle>(), groups = new Map<string, Set<TrustedJobSource>>();
+    for (let index = 0; index < supplied.length; index++) {
+      const descriptor = Object.getOwnPropertyDescriptor(supplied, String(index));
+      if (!descriptor || !('value' in descriptor)) reject();
+      const handle: unknown = descriptor.value;
+      if (!handle || typeof handle !== 'object' || utilTypes.isProxy(handle)) reject();
+      const source = this.handles.get(handle); if (!source) reject();
+      selected.add(source);
+      let members = groups.get(source.id); if (!members) groups.set(source.id, members = new Set());
+      members.add(source.capability);
+    }
+    this.assertReady();
+    // An owner guard is required to be synchronous. A reentrant detach from
+    // that callback must not partially mutate the outer set during validation.
+    if (this.detaching) return 'busy';
+    this.detaching = true;
+    try {
+      for (const source of selected) source.guard();
+      this.assertReady();
+      // A later guard may have started a preparing/queued/active callback for
+      // an earlier owner. Never inspect/delete incrementally between guards.
+      for (const id of groups.keys()) if (this.physical.has(id)) return 'busy';
+      for (const [id, members] of groups) {
+        const current = this.live.get(id);
+        if (current && !members.has(current.source)) return 'not-current';
+      }
+      // From this point to return: no callback, await, authority check or user
+      // object access. The exact validated set is removed atomically in JS.
+      for (const id of groups.keys()) this.live.delete(id);
+      return 'detached';
+    } finally { this.detaching = false; }
   }
   forSource(capability: TrustedJobSource): SourceJobs {
     const source = requireJobSource(capability), id = jobSourceId(source.identity);
@@ -236,7 +280,7 @@ export class JobsSourceBroker {
         this.options.wake(); return result;
       }, { key: jobGateKey(source.scope, scheduleId), signal: opts.signal });
     };
-    return Object.freeze({
+    const facade: SourceJobs = Object.freeze({
       hydration: Object.freeze({
         attach: owned(async (input: SourceHydrationOptions) => {
           const r = jobRecord(input, ['originalActivateKey', 'expectedRegistration', 'pinInput', 'signal']);
@@ -275,16 +319,7 @@ export class JobsSourceBroker {
             }, { key: sourceGateKey(id), signal: operationSignal });
           } finally { this.endActivation(id, token); }
         }),
-        tryDetach: () => {
-          guard();
-          // Retirement/replacement may already have removed the resident map
-          // entry. That is not proof that its old physical callbacks settled.
-          if (this.physical.has(id)) return 'busy' as const;
-          const old = this.live.get(id);
-          if (!old) return 'detached' as const;
-          if (old.source !== capability) return 'not-current' as const;
-          this.live.delete(id); return 'detached' as const;
-        },
+        tryDetach: () => this.tryDetachSources([facade]),
         inspect: () => { guard(); return this.hydrationStatus(id, capability); },
       }),
       capacity: Object.freeze({ get: () => read<JobSourceCapacity | null>('jobs.source.capacity', { identity: source.identity }) }),
@@ -432,6 +467,7 @@ export class JobsSourceBroker {
         },
       }),
     });
+    this.handles.set(facade, { id, capability, guard }); return facade;
   }
   /** Called only AFTER exact Torrent receipt inspection, and after the schedule pool wait. */
   async prepareDispatch(scope: ServiceDataScope, admission: JobAdmission): Promise<SourceJobDispatchPin> {

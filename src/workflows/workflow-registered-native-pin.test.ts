@@ -55,6 +55,47 @@ async function fixture(multi = true) {
 const fixedInput = calendarObservationPinInput();
 const rejected = (operation: () => unknown, code: string) => expect(operation).toThrow(expect.objectContaining({ code }));
 
+test('owner-independent native catalog stamp is read-only metadata, not a scoped pin or enqueue grant', async () => {
+  const f = await fixture();
+  try {
+    const compiled = f.registry.getCompiledWorkflow(CALENDAR_OBSERVATION_WORKFLOW)!;
+    const changes = f.db.prepare('SELECT total_changes() AS n').get();
+    const stamp = f.bridge.registeredCatalogStamp(compiled.name, 1);
+    expect(stamp).toEqual({ name: compiled.name, version: 1, format: 'flow',
+      schemaVersion: compiled.graph.schemaVersion, fingerprint: compiled.fingerprint });
+    expect(Object.isFrozen(stamp)).toBe(true);
+    expect(f.bridge.registeredCatalogStamp(compiled.name, 1)).toEqual(stamp);
+    expect(f.db.prepare('SELECT total_changes() AS n').get()).toEqual(changes);
+    expect(f.stats()).toEqual({ lookups: 0, calls: 0 });
+    const safe = f.registry.getCompiledWorkflow('native-pin.safe')!;
+    f.graph.versions.publish({ name: compiled.name, version: 1, source: 'database', graph: safe.graph,
+      graphFormat: safe.format, schemaVersion: safe.graph.schemaVersion, scope: { type: 'tenant', id: alpha.tenantId } });
+    // A code stamp still exists, but it cannot authorize a tenant-shadowed start.
+    expect(f.bridge.registeredCatalogStamp(compiled.name, 1)).toEqual(stamp);
+    rejected(() => f.bridge.pinRegistered(f.authority(), compiled.name, fixedInput, 1), 'WORKFLOW_NOT_FOUND');
+    expect(f.db.list('workflow_instances')).toHaveLength(0);
+    await f.service.dispose();
+    rejected(() => f.bridge.registeredCatalogStamp(compiled.name, 1), 'WORKFLOW_NOT_READY');
+  } finally { await f.close(); }
+});
+
+test('native catalog stamp rejects missing, database, implicit, legacy and mismatched-version definitions', async () => {
+  const f = await fixture();
+  try {
+    const changes = f.db.prepare('SELECT total_changes() AS n').get();
+    rejected(() => f.bridge.registeredCatalogStamp('native-pin.missing', 1), 'WORKFLOW_VERSION_NOT_FOUND');
+    for (const name of ['native-pin.database-registered', 'native-pin.implicit-version', 'native-pin.legacy']) {
+      rejected(() => f.bridge.registeredCatalogStamp(name, 1), 'WORKFLOW_VERSION_CONFLICT');
+    }
+    for (const version of [0, -1, 1.5, NaN]) rejected(() => f.bridge.registeredCatalogStamp(CALENDAR_OBSERVATION_WORKFLOW, version), 'WORKFLOW_REQUEST_INVALID');
+    rejected(() => f.bridge.registeredCatalogStamp(CALENDAR_OBSERVATION_WORKFLOW, 2), 'WORKFLOW_VERSION_CONFLICT');
+    expect(f.db.prepare('SELECT total_changes() AS n').get()).toEqual(changes);
+    expect(f.stats()).toEqual({ lookups: 0, calls: 0 });
+    f.advance(30_001);
+    rejected(() => f.bridge.registeredCatalogStamp(CALENDAR_OBSERVATION_WORKFLOW, 1), 'WORKFLOW_RUNTIME_LEASE_LOST');
+  } finally { await f.close(); }
+});
+
 test('a fixed observation graph has an exact code-owned pin before recovery without executing or mutating anything', async () => {
   const f = await fixture();
   try {

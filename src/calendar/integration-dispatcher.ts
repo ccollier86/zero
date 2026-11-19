@@ -81,7 +81,11 @@ export class CalendarIntegrationDispatcher {
     await Promise.allSettled(this.active ? [this.active] : []);
     if (this.cleanupFailures.size) throw new CalendarError('CALENDAR_OUTCOME_UNKNOWN');
   }
-  diagnostics() { return { closing: this.closing, active: this.active !== null, wakeQueued: this.wakeQueued, batchSize: this.batchSize,
+  diagnostics() { return { closing: this.closing, active: this.active !== null, wakeQueued: this.wakeQueued, wakeAgain: this.wakeAgain, batchSize: this.batchSize,
+    // Even a settled handoff caller may have an actual Jobs body protected by
+    // its source-level pin. A resident registry must fence owner intake, join
+    // callers AND inspect/detach the exact native source before removing it.
+    idleReleaseQualified: false as const,
     unsettledUninvokedClaims: [...this.cleanupFailures].map(([id, code]) => ({ id, code })) }; }
   private guard = () => {
     if (this.closing) throw new CalendarError('CALENDAR_NOT_READY');

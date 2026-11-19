@@ -31,6 +31,7 @@ import { calendarIntegrationInput, calendarIntegrationOptions, type CalendarInte
   type CalendarIntegrationOwner, type CalendarIntegrationReadOptions } from './integration-runtime';
 import type { CalendarIntegrationOperatorRequestReceipt } from './integration-operator-request-model';
 import type { DatabaseOpenAdmission } from '../databases/database-open-admission';
+import { CalendarIntegrationWakeCatalog, installCalendarIntegrationWakeCatalog, type CalendarIntegrationWakeCoverage } from './integration-wake-catalog';
 
 export interface CalendarRuntimeSource {
   prepare(owner: CalendarOwnerRecord): void;
@@ -47,6 +48,8 @@ export interface CalendarRuntimeOptions {
   readonly authority: { coordinator: AuthorityCommitCoordinator; actorContext: DatabaseActorAuthorityContext | null };
   readonly observability?: PlatformObservabilityRuntime;
   readonly source?: (coordinator: DatabaseCoordinator) => CalendarRuntimeSource | Promise<CalendarRuntimeSource>;
+  /** @internal Native integrated composition only; ordinary/logging-only core stays unchanged. */
+  readonly integrationWake?: true;
 }
 const QUERIES = new Set(['calendar.resources', 'calendar.busy', 'calendar.appointments', 'calendar.appointment',
   'calendar.locations', 'calendar.location', 'calendar.resourceLocations', 'calendar.locationAssignmentWitnesses', 'calendar.visitLocations',
@@ -74,13 +77,17 @@ export class CalendarRuntime implements CalendarServiceBroker {
   private source: CalendarRuntimeSource | null = null;
   private removeCommit: (() => void) | null = null;
   private readonly rootHash: string;
+  private readonly wakeCatalog: CalendarIntegrationWakeCatalog | null;
+  private readonly wakeWrites = new Map<string, number>();
   private constructor(private readonly options: CalendarRuntimeOptions, private readonly owner: DatabaseCoordinator) {
     this.rootHash = calendarHash(canonicalDatabaseRootIdentity(options.config.rootDirectory));
+    this.wakeCatalog = options.integrationWake ? new CalendarIntegrationWakeCatalog(options.system, this.rootHash) : null;
   }
 
   static async open(options: CalendarRuntimeOptions): Promise<CalendarRuntime> {
     if (options.persistence.defaultActorEntrypoint && !existsSync(options.persistence.defaultActorEntrypoint)) throw new CalendarError('CALENDAR_NOT_READY');
     if (!installCalendarOwnerSchema(options.system, options.installAllowed)) throw new CalendarError('CALENDAR_NOT_READY');
+    if (options.integrationWake && !await installCalendarIntegrationWakeCatalog(options.system, options.installAllowed)) throw new CalendarError('CALENDAR_NOT_READY');
     let prepared: CalendarRuntime | undefined;
     const owner = new DatabaseCoordinator({
       rootDirectory: options.config.rootDirectory, realm: calendarRealm, createExecutor: options.persistence.createExecutor,
@@ -198,7 +205,74 @@ export class CalendarRuntime implements CalendarServiceBroker {
   }
 
   diagnostics() { return { state: this.state, activeOperations: this.active.size, initializingScopes: this.initializers.size,
-    readyingOwners: this.sourceReadiness.size, fabric: this.owner.diagnostics() }; }
+    readyingOwners: this.sourceReadiness.size,
+    ...(this.wakeCatalog ? { integrationWake: this.wakeCatalog.coverage(), writingOwners: this.wakeWrites.size } : {}),
+    fabric: this.owner.diagnostics() }; }
+
+  /** @internal Native SYSTEM metadata only. Not request CRUD or source authority. */
+  integrationWakeCatalog(): CalendarIntegrationWakeCatalog {
+    this.assertReady();
+    if (!this.wakeCatalog) throw new CalendarError('CALENDAR_NOT_READY');
+    return this.wakeCatalog;
+  }
+
+  /** @internal Startup metadata reconciliation only. Pages release SYSTEM
+   * admission between awaits; this grants no source or physical-file authority. */
+  prepareIntegrationWakes(stamp: string, now: number, assertCurrent: () => void, signal?: AbortSignal): Promise<CalendarIntegrationWakeCoverage> {
+    return this.track(async () => {
+      const operationSignal = signal ? AbortSignal.any([this.stop.signal, signal]) : this.stop.signal;
+      const guard = this.guard(assertCurrent, operationSignal), catalog = this.integrationWakeCatalog();
+      const options = { assertCurrent: guard, signal: operationSignal };
+      guard(); let coverage = await catalog.reconcileConfiguration(stamp, now, options); guard();
+      for (let pages = 0; !coverage.complete; pages++) {
+        if (pages > this.options.config.maxDatabaseFiles) throw new CalendarError('CALENDAR_STATE_INVALID');
+        coverage = await catalog.seedPage({ generation: coverage.configurationGeneration, now, limit: 100 }, options); guard();
+      }
+      return coverage;
+    });
+  }
+
+  /** @internal Only a fresh canonical query after all owner writes settle may
+   * clear its dirty marker. SYSTEM and private leases never overlap. */
+  refreshIntegrationWake(record: CalendarOwnerRecord,
+    failure?: { readonly classification: 'retry' | 'review'; readonly nextWakeAt: number }): Promise<number | null> {
+    return this.track(() => this.refreshIntegrationOwnerWake(record, failure));
+  }
+
+  private async refreshIntegrationOwnerWake(record: CalendarOwnerRecord,
+    failure?: { readonly classification: 'retry' | 'review'; readonly nextWakeAt: number }): Promise<number | null> {
+    this.assertReady();
+    if (!this.wakeCatalog) throw new CalendarError('CALENDAR_NOT_READY');
+    // A held physical write is not quiet, but it also must not turn the global
+    // absolute wake into an immediate retry loop. Retry publication preserves
+    // dirty evidence and can safely occur before that write settles.
+    const deferred = failure ?? (this.wakeWrites.has(record.id) ? { classification: 'retry' as const, nextWakeAt: Date.now() + 1000 } : undefined);
+    const checkpoint = this.wakeCatalog.sample(record);
+    if (deferred) {
+      const nextWakeAt = calendarInteger(deferred.nextWakeAt, 0, 8_640_000_000_000_000);
+      // Retry metadata is not a physical-readiness certificate. A missing or
+      // rejected private owner must remain durably visible for investigation.
+      const published = await this.wakeCatalog.publish(record, checkpoint, { classification: deferred.classification, nextWakeAt }, {
+        signal: this.stop.signal, assertCurrent: () => this.assertReady(),
+      });
+      return published ? nextWakeAt : 0;
+    }
+    this.assertIntegrationOwner(record);
+    const owner = this.forIntegrationOwner(record);
+    const result = await owner.read<{ nextWakeAt: number | null }>('calendar.integration.nextWake', {});
+    owner.assertCurrent();
+    if (!result || result.nextWakeAt !== null && !Number.isSafeInteger(result.nextWakeAt)) throw new CalendarError('CALENDAR_STATE_INVALID');
+    const nextWakeAt = result.nextWakeAt === null ? null : calendarInteger(result.nextWakeAt, 0, 8_640_000_000_000_000);
+    if (this.wakeWrites.has(record.id)) return this.refreshIntegrationOwnerWake(record, { classification: 'retry', nextWakeAt: Date.now() + 1000 });
+    const published = await this.wakeCatalog.publish(record, checkpoint, { classification: 'ready', nextWakeAt }, {
+      signal: this.stop.signal,
+      assertCurrent: () => {
+        this.assertIntegrationOwner(record);
+        if (this.wakeWrites.has(record.id)) throw new CalendarError('CALENDAR_NOT_READY');
+      },
+    });
+    return published ? nextWakeAt : 0;
+  }
 
   /** @internal Actor-facing operator reads have a separate strict registry and
    * cannot be reached through the native owner or ordinary Calendar request API.
@@ -489,12 +563,43 @@ export class CalendarRuntime implements CalendarServiceBroker {
       guard(); const current = this.record(id);
       if (!current || current.owner_id !== record.owner_id || current.scope_id !== scopeId || current.root_hash !== this.rootHash) throw new CalendarError('CALENDAR_STATE_INVALID');
       this.options.system.prepare('UPDATE _calendar_owners SET established=1,realm_fingerprint=? WHERE id=? AND owner_id=?').run(calendarRealm.fingerprint, id, record.owner_id);
+      this.wakeCatalog?.seedEstablishedInTransaction({ ...record, established: 1, realm_fingerprint: calendarRealm.fingerprint }, Date.now());
     }), signal ? { signal } : {});
     guard(); const established = { ...record, established: 1, realm_fingerprint: calendarRealm.fingerprint };
     this.source?.prepare(established); return established;
   }
 
   private async execute<T>(record: CalendarOwnerRecord, kind: 'query' | 'command', name: string, input: unknown,
+    guard: () => void, requestId?: string, provision = false, signal?: AbortSignal, finalCommitGuard?: () => void): Promise<T> {
+    guard();
+    if (!this.wakeCatalog || kind !== 'command' || name === 'calendar.owner.bind') return this.executePrivate(record, kind, name, input, guard, requestId, provision, signal, finalCommitGuard);
+    this.wakeWrites.set(record.id, (this.wakeWrites.get(record.id) ?? 0) + 1);
+    try {
+      // This short SYSTEM transaction must succeed before acquiring a private
+      // writer lease. A process death after the later private commit therefore
+      // leaves a due marker, not a falsely quiet retained owner.
+      try { await this.wakeCatalog.markDirty(record, Date.now(), { assertCurrent: guard, ...(signal ? { signal } : {}) }); }
+      catch (error) {
+        guard();
+        if (error instanceof CalendarError) throw error;
+        // This required metadata admission failed before the private command
+        // acquired any lease. Do not leak SQL or claim an uncertain domain write.
+        throw new CalendarError('CALENDAR_NOT_READY', 'not-started');
+      }
+      guard();
+      try { this.source?.wake(createDatabaseRef(record.id)); } catch { /* Durable marker, not the hint, owns recovery. */ }
+      return await this.executePrivate(record, kind, name, input, guard, requestId, provision, signal, finalCommitGuard);
+    } finally {
+      const count = (this.wakeWrites.get(record.id) ?? 1) - 1;
+      if (count) this.wakeWrites.set(record.id, count); else this.wakeWrites.delete(record.id);
+      // The native coordinator refreshes once after its complete owner turn,
+      // not with an extra canonical query after every individual command. Until
+      // then the durable dirty marker remains due. No receipt outcome depends
+      // on successful wake publication.
+    }
+  }
+
+  private async executePrivate<T>(record: CalendarOwnerRecord, kind: 'query' | 'command', name: string, input: unknown,
     guard: () => void, requestId?: string, provision = false, signal?: AbortSignal, finalCommitGuard?: () => void): Promise<T> {
     guard();
     // Target eligibility authorizes this commit, not the immutable historical

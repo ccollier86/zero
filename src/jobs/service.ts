@@ -11,7 +11,7 @@ import type { JobAdmission, JobScheduleRow } from './model';
 import { JobOperatorPolicy } from './operator-policy';
 import type { JobScheduleReadDetail, JobScheduleReadSummary } from './operator-views';
 import type { ActorJobScheduleRow } from './realm-model';
-import { JobsSourceBroker, type SourceJobs } from './source-service';
+import { JobsSourceBroker, type SourceJobs, type SourceJobsDetachResult } from './source-service';
 import type { TrustedJobSource } from './source-authority';
 import { JobsRunner, jobGateKey } from './runner';
 import { JobsRuntime } from './runtime';
@@ -59,6 +59,8 @@ export class JobsService {
   tick(): Promise<void> { return this.runner.tick(); }
   /** @internal Native source lifecycle only; never project this method to a request/activity. */
   forSource(source: TrustedJobSource): SourceJobs { return this.sources.forSource(source); }
+  /** @internal Native atomic idle release only. Never project to a request/activity. */
+  tryDetachSources(handles: readonly SourceJobs[]): SourceJobsDetachResult { return this.sources.tryDetachSources(handles); }
   diagnostics() { return { automaticWakes: this.automaticWakes, gate: this.gate.status(), runner: this.runner.diagnostics(), persistence: this.options.runtime.diagnostics() }; }
   /** @internal Stop new work, but retain native owner/evidence capability until Torrent stops. */
   quiesce(): void {

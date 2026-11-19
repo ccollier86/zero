@@ -20,6 +20,78 @@ or data migration is authorized by these checks.
 
 ## November 18 finish-line review: cold admission and retained evidence
 
+### November 19 follow-up: durable wake admission and stable native residency
+
+The new native SYSTEM wake catalog and original owner-schema tests passed
+**31 tests, 320 assertions, two files**. These are actual MEMORY SQL/transaction
+checks, not a physical file qualification. Coverage includes resumable bounded
+seeding beyond 64 owners, insertion behind cursors, fixed-horizon fairness beyond
+a permanently failing prefix, exact schema/owner admission, configuration/dirty
+CAS, failed-proof fencing and atomic establishment rollback. Generation-zero
+metadata cannot publish quiet. Retry/review publication advances the failure
+generation and never fabricates successful observation.
+
+Runtime/managed/coordinator wiring is now implemented: native-only opt-in,
+dirty-before-private-lease commands, atomic establishment seed, whole-operation
+tracked final-turn refresh and exact code-graph configuration invalidation.
+The final three-file runtime/managed/coordinator set passed **85 tests, 796
+assertions** in 52.41 seconds. The earlier five-file date/wake/runtime/managed/
+native-pin integration set passed **94 tests, 954 assertions** in 28.83 seconds.
+Those sets overlap and are not summed. A separate final shutdown/startup check
+passed **three tests, 21 assertions**; the original runtime suite passed
+**20 tests, 154 assertions** before those added checks.
+
+Independent review found an actual self-hint idle loop: an empty claim changed
+the pass's RAM revision even after canonical quiet publication. The integrated
+path now compares only the final-refresh window, while standalone retains its
+original pass baseline. A managed test repeatedly becomes quiet after empty
+claims (**one test, 13 assertions**); a concurrent publication-window hint and
+adjacent cases passed **four tests, 37 assertions**. These are explicit native
+MEMORY composition/scheduler doubles, not real browser or process evidence.
+Busy physical writes receive finite dirty retry metadata rather than spinning
+an immediate global wake; only a later canonical observation can clear it.
+
+The stable selected/prior capability inventory, historical-broker separation,
+controller late-callback accounting and final-turn hook set passed **95 tests,
+1,408 assertions, three files**. Native atomic source-set detach then passed
+**171 tests, 3,445 assertions, nine files**, with the final unchanged-source
+confirmation **20 tests, 2,230 assertions**. The broker recognizes only its
+minted handles, validates every owner before final pin/membership checks, and
+removes the complete set without callback/await interleaving. A later busy,
+foreign or replaced handle cannot leave earlier sources partially detached.
+Root review independently confirmed that boundary. This does not yet provide
+an owner registry, eviction or demand hydration.
+
+The private unregistered `017` date-storage/compiler/`016`-upgrade set passed
+**38 tests, 1,060 assertions, three files**. Earlier duplicate trigger declarations
+were fixed. One later run had 37 passes and one wall-clock timeout; that exact
+case passed in 0.95 seconds, followed by the complete clean run above. Historical
+001–016 hashes remain intact; no canonical all-day capability is enabled.
+The native owner-independent registered-graph stamp/deferred-start set passed
+**14 tests, 95 assertions**, including proof that a stamp cannot bypass a
+tenant-shadowed scoped pin or outlive the workflow owner.
+
+Final combined no-emit checking passed **497 roots, 4,086 source files, zero
+diagnostics**. Initial passes caught new helper control-flow typing and test
+constructor/union expectation errors; these were corrected without widening
+production contracts. The first inventory test invocation used the wrong
+dependency/timeout harness and failed; only the approved exact-overlay rerun
+above is qualification evidence. No full frozen-release suite is claimed.
+
+A separate raw fresh Migrator probe confirmed that Calendar `001` assumes tables
+which native file startup has not created. The ordinary MEMORY service skips
+migrations and cannot disprove that defect. The F3 repair plan now requires
+per-original-boundary table preparation without editing historical migration
+functions or predefining a latest schema over a retained file. This remains an
+explicit implementation/release blocker.
+
+All owned test/compiler processes and MEMORY handles closed. No physical
+fixtures, temporary dependencies, emitted build/cache, Docker resources or
+archives were created. The unchanged integrity hold is not bypassed. Global
+resident owner leases/demand attach, the rest of F3–F8 and actual physical/
+browser/Linux/package/updater gates remain open; there is no main merge or
+normal updater selection in this checkpoint.
+
 ### November 19 follow-up: physical source lifetime and canonical time foundations
 
 The idle source attachment/final shutdown set passed **159 tests, 3,365

@@ -13,6 +13,7 @@ import { canonicalDatabaseRootIdentity } from '../databases/database-file';
 import { createDatabaseReadQuerySession, withDatabaseReadQuerySession } from '../databases/database-read-query-capability';
 import { runDatabaseRealmCommand, runDatabaseRealmQuery } from '../databases/database-realm';
 import { createReactiveDB } from '../sync/reactive-db';
+import { registerReactiveDBCommitAdmission } from '../sync/reactive-db-commit-admission';
 import { resolveCalendarConfig, type ResolvedCalendarConfig } from './config';
 import type { CalendarActor, CalendarCommandReceipt, CalendarLifecyclePolicy, CalendarParticipantReference } from './contracts';
 import { CalendarError } from './error';
@@ -22,6 +23,7 @@ import { calendarRealm } from './realm';
 import { grantId } from './realm-model';
 import { assertCalendarOwnerRecord, calendarDatabaseId, CalendarRuntime, emptyCalendarRead, type CalendarRuntimeOptions } from './runtime';
 import { calendarHash } from './validation';
+import { CalendarIntegrationWakeCatalog, installCalendarIntegrationWakeCatalog } from './integration-wake-catalog';
 
 const project = '/synthetic-zero-calendar-runtime-never-created';
 const scope = applicationServiceDataScope();
@@ -81,6 +83,13 @@ function fixture(configOverrides: Partial<ResolvedCalendarConfig> = {}) {
     // No mock result is claimed as proof of native file/inode safety.
     (runtime as unknown as { filePresent(id: string): boolean }).filePresent = () => simulatedFilePresent;
     return { runtime, system, realm, stats: () => ({ acquisitions, releases, closes }),
+      async enableWake() {
+        await installCalendarIntegrationWakeCatalog(system, true);
+        const catalog = new CalendarIntegrationWakeCatalog(system, calendarHash(canonicalDatabaseRootIdentity(config.rootDirectory)));
+        // Explicit constructor/transport test seam, not managed startup proof.
+        (runtime as unknown as { wakeCatalog: CalendarIntegrationWakeCatalog }).wakeCatalog = catalog;
+        return catalog;
+      },
       beforeAcquire(callback: (() => Promise<void>) | null) { beforeAcquire = callback; },
       afterCommand(callback: (() => void | Promise<void>) | null) { afterCommand = callback; },
       beforeExecute(callback: typeof beforeExecute) { beforeExecute = callback; },
@@ -364,4 +373,173 @@ test('an unconfirmed native close stays failed and can retry cleanup without reo
     expect(f.runtime.diagnostics().state).toBe('closed');
     expect(f.stats().closes).toBe(2);
   } finally { f.beforeClose(null); await f.close(); }
+});
+
+test('native integration wake metadata is opt-in and establishment seeds the original owner atomically', async () => {
+  const f = fixture();
+  try {
+    expect(f.system.prepare("SELECT 1 FROM sqlite_master WHERE name='_calendar_integration_wakes'").get()).toBeNull();
+    expect(() => f.runtime.integrationWakeCatalog()).toThrow(expect.objectContaining({ code: 'CALENDAR_NOT_READY' }));
+    const catalog = await f.enableWake();
+    await f.runtime.write(scope, 'calendar.resource.create', resource, resource.requestId, noop);
+    const owner = f.runtime.integrationOwnerForScope(scope)!;
+    const checkpoint = catalog.sample(owner);
+    expect(checkpoint).toMatchObject({ owner, configurationGeneration: 0, dirtyGeneration: 2 });
+    expect(catalog.coverage()).toMatchObject({ complete: false, configurationStamp: null });
+    expect(f.runtime.integrationWakeCatalog()).toBe(catalog);
+    expect(f.stats().acquisitions).toBe(3); // No per-command extra wake query.
+    const coverage = await f.runtime.prepareIntegrationWakes('synthetic-config-a', 1, noop);
+    expect(coverage.complete).toBe(true);
+    expect(await f.runtime.refreshIntegrationWake(owner)).toBeNull();
+    expect(f.system.prepare('SELECT dirty_generation,published_generation,wake_at FROM _calendar_integration_wakes WHERE id=?').get(owner.id))
+      .toMatchObject({ dirty_generation: 3, published_generation: 3, wake_at: null });
+  } finally { await f.close(); }
+});
+
+test('required wake marker refusal prevents private acquisition and retains truthful not-started outcome', async () => {
+  const f = fixture();
+  try {
+    const catalog = await f.enableWake();
+    await f.runtime.write(scope, 'calendar.resource.create', resource, resource.requestId, noop);
+    const owner = f.runtime.integrationOwnerForScope(scope)!;
+    const coverage = await catalog.reconcileConfiguration('synthetic-config-a', 1);
+    await catalog.seedPage({ generation: coverage.configurationGeneration, now: 1 });
+    await f.runtime.refreshIntegrationWake(owner);
+    const prior = f.stats(), before = catalog.sample(owner);
+    f.system.exec("CREATE TRIGGER synthetic_wake_refusal BEFORE UPDATE ON _calendar_integration_wakes BEGIN SELECT RAISE(ABORT,'synthetic marker refusal'); END");
+    const next = { ...resource, id: 'marker-refused', requestId: 'marker-refused' };
+    await expect(f.runtime.write(scope, 'calendar.resource.create', next, next.requestId, noop))
+      .rejects.toMatchObject({ code: 'CALENDAR_NOT_READY', outcome: 'not-started' });
+    expect(f.stats()).toEqual(prior); expect(catalog.sample(owner)).toEqual(before);
+    expect(f.realm.get('calendar_resources', next.id)).toBeNull();
+    expect(f.runtime.diagnostics()).toMatchObject({ writingOwners: 0 });
+  } finally { await f.close(); }
+});
+
+test('native source writes mark before private work without a SYSTEM lease and publish only after actual owner settlement', async () => {
+  const f = fixture(); let release!: () => void, entered!: () => void;
+  const waiting = new Promise<void>(resolve => { release = resolve; }), committed = new Promise<void>(resolve => { entered = resolve; });
+  try {
+    const catalog = await f.enableWake();
+    await f.runtime.write(scope, 'calendar.resource.create', resource, resource.requestId, noop);
+    const record = f.runtime.integrationOwnerForScope(scope)!, owner = f.runtime.forIntegrationOwner(record);
+    const coverage = await catalog.reconcileConfiguration('synthetic-config-a', 1);
+    await catalog.seedPage({ generation: coverage.configurationGeneration, now: 1 });
+    await f.runtime.refreshIntegrationWake(record);
+    const before = catalog.sample(record);
+    f.beforeExecute(async operation => {
+      if (operation.type !== 'command') return;
+      expect(f.system.getRawDatabase().inTransaction).toBe(false);
+      expect(catalog.sample(record).dirtyGeneration).toBe(before.dirtyGeneration + 1);
+    });
+    f.afterCommand(async () => { entered(); await waiting; });
+    const pending = owner.command('calendar.integration.claim', { now: 1, nonce: 'synthetic-claim', leaseMs: 1000, limit: 1 }, { idempotencyKey: 'synthetic-claim' });
+    await committed;
+    const acquisitions = f.stats().acquisitions;
+    const requestedAt = Date.now(), retryAt = await f.runtime.refreshIntegrationWake(record);
+    expect(retryAt).not.toBeNull(); expect(retryAt!).toBeGreaterThanOrEqual(requestedAt + 1000);
+    expect(f.system.prepare('SELECT classification,wake_at,published_generation FROM _calendar_integration_wakes WHERE id=?').get(record.id))
+      .toMatchObject({ classification: 'retry', wake_at: retryAt });
+    expect(f.stats().acquisitions).toBe(acquisitions);
+    expect(f.runtime.diagnostics()).toMatchObject({ writingOwners: 1 });
+    release(); expect(await pending).toEqual([]);
+    f.afterCommand(null); f.beforeExecute(null);
+    expect(await f.runtime.refreshIntegrationWake(record)).toBeNull();
+    const latest = catalog.sample(record);
+    expect(latest.dirtyGeneration).toBe(before.dirtyGeneration + 2); // Source write + failed/busy proof generation.
+    expect(f.system.prepare('SELECT published_generation FROM _calendar_integration_wakes WHERE id=?').get(record.id))
+      .toEqual({ published_generation: latest.dirtyGeneration });
+  } finally { release(); f.afterCommand(null); f.beforeExecute(null); await f.close(); }
+});
+
+test('an owner write racing canonical wake observation cannot publish stale quiet metadata', async () => {
+  const f = fixture(); let release!: () => void, entered!: () => void;
+  const waiting = new Promise<void>(resolve => { release = resolve; }), reading = new Promise<void>(resolve => { entered = resolve; });
+  try {
+    const catalog = await f.enableWake();
+    await f.runtime.write(scope, 'calendar.resource.create', resource, resource.requestId, noop);
+    const record = f.runtime.integrationOwnerForScope(scope)!;
+    const coverage = await catalog.reconcileConfiguration('synthetic-config-a', 1);
+    await catalog.seedPage({ generation: coverage.configurationGeneration, now: 1 });
+    f.beforeExecute(async operation => {
+      if (operation.type === 'query' && operation.name === 'calendar.integration.nextWake') { entered(); await waiting; }
+    });
+    const refreshing = f.runtime.refreshIntegrationWake(record);
+    await reading;
+    const next = { ...resource, id: 'racing-resource', requestId: 'racing-resource' };
+    await f.runtime.write(scope, 'calendar.resource.create', next, next.requestId, noop);
+    release(); expect(await refreshing).toBe(0);
+    expect(f.system.prepare('SELECT dirty_generation,published_generation,wake_at IS NOT NULL AS due FROM _calendar_integration_wakes WHERE id=?').get(record.id))
+      .toMatchObject({ published_generation: 0, due: 1 });
+    f.beforeExecute(null); expect(await f.runtime.refreshIntegrationWake(record)).toBeNull();
+  } finally { release(); f.beforeExecute(null); await f.close(); }
+});
+
+test('failed canonical publication leaves a due marker without rewriting accepted command truth', async () => {
+  const f = fixture();
+  try {
+    const catalog = await f.enableWake();
+    await f.runtime.write(scope, 'calendar.resource.create', resource, resource.requestId, noop);
+    const record = f.runtime.integrationOwnerForScope(scope)!;
+    const coverage = await catalog.reconcileConfiguration('synthetic-config-a', 1);
+    await catalog.seedPage({ generation: coverage.configurationGeneration, now: 1 });
+    const before = catalog.sample(record);
+    f.system.exec("CREATE TRIGGER synthetic_publication_refusal BEFORE UPDATE OF published_generation ON _calendar_integration_wakes BEGIN SELECT RAISE(ABORT,'synthetic publication refusal'); END");
+    const next = { ...resource, id: 'publication-survivor', requestId: 'publication-survivor' };
+    expect(await f.runtime.write(scope, 'calendar.resource.create', next, next.requestId, noop)).toMatchObject({ operation: 'resource.created' });
+    await expect(f.runtime.refreshIntegrationWake(record)).rejects.toThrow();
+    expect(catalog.sample(record).dirtyGeneration).toBe(before.dirtyGeneration + 1);
+    expect(f.realm.get('calendar_resources', next.id)).not.toBeNull();
+    expect(f.system.prepare('SELECT published_generation,wake_at IS NOT NULL AS due FROM _calendar_integration_wakes WHERE id=?').get(record.id))
+      .toMatchObject({ published_generation: 0, due: 1 });
+    f.system.exec('DROP TRIGGER synthetic_publication_refusal');
+    f.missingFile();
+    expect(await f.runtime.refreshIntegrationWake(record, { classification: 'review', nextWakeAt: 5000 })).toBe(5000);
+    expect(f.system.prepare('SELECT classification,published_generation,wake_at FROM _calendar_integration_wakes WHERE id=?').get(record.id))
+      .toMatchObject({ classification: 'review', published_generation: 0, wake_at: 5000 });
+  } finally { await f.close(); }
+});
+
+test('wake startup resumes bounded metadata pages beyond64 owners without acquiring their private databases', async () => {
+  const f = fixture();
+  try {
+    const catalog = await f.enableWake();
+    const rootHash = calendarHash(canonicalDatabaseRootIdentity(config.rootDirectory));
+    for (let i = 0; i < 137; i++) {
+      const scopeId = 'tenant:synthetic-wake-' + i;
+      f.system.prepare('INSERT INTO _calendar_owners(id,scope_id,owner_id,root_hash,realm_fingerprint,established) VALUES(?,?,?,?,?,1)')
+        .run(calendarDatabaseId(scopeId), scopeId, 'cal_00000000-0000-4000-8000-' + String(i).padStart(12, '0'), rootHash, calendarRealm.fingerprint);
+    }
+    const originals = f.system.prepare('SELECT * FROM _calendar_owners ORDER BY id').all();
+    const coverage = await f.runtime.prepareIntegrationWakes('synthetic-config-a', 1, noop);
+    expect(coverage.complete).toBe(true);
+    expect(f.system.prepare('SELECT count(*) AS n FROM _calendar_integration_wakes').get()).toEqual({ n: 137 });
+    expect(f.system.prepare('SELECT * FROM _calendar_owners ORDER BY id').all()).toEqual(originals);
+    expect(f.stats().acquisitions).toBe(0); expect(catalog.nextWakeAt(100)).toBe(1);
+  } finally { await f.close(); }
+});
+
+test('final runtime close joins wake publication after its private read has already released', async () => {
+  const f = fixture(); let release!: () => void, entered!: () => void;
+  let remove: (() => void) | undefined;
+  const waiting = new Promise<void>(resolve => { release = resolve; }), publishing = new Promise<void>(resolve => { entered = resolve; });
+  try {
+    const catalog = await f.enableWake();
+    await f.runtime.write(scope, 'calendar.resource.create', resource, resource.requestId, noop);
+    const owner = f.runtime.integrationOwnerForScope(scope)!;
+    await f.runtime.prepareIntegrationWakes('synthetic-config-a', 1, noop);
+    const original = catalog.sample(owner);
+    remove = registerReactiveDBCommitAdmission(f.system, async operation => { entered(); await waiting; return operation(); });
+    const refreshing = f.runtime.refreshIntegrationWake(owner);
+    const result = refreshing.then(() => { throw new Error('Retired publication must reject.'); }, error => error);
+    await publishing;
+    expect(f.stats().acquisitions).toBe(f.stats().releases);
+    expect(f.runtime.diagnostics()).toMatchObject({ activeOperations: 1 });
+    let closed = false;
+    const closing = f.runtime.close(); void closing.then(() => { closed = true; });
+    await Promise.resolve(); expect(closed).toBe(false); expect(f.stats().closes).toBe(0);
+    release(); expect(await result).toMatchObject({ code: 'CALENDAR_NOT_READY' });
+    await closing; expect(f.stats().closes).toBe(1);
+    expect(catalog.sample(owner)).toEqual(original);
+  } finally { release(); remove?.(); await f.close(); }
 });

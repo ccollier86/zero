@@ -5,6 +5,9 @@
 import { expect, spyOn, test } from 'bun:test';
 import { Elysia } from 'elysia';
 import { CalendarRuntime, type CalendarRuntimeOptions, type CalendarRuntimeSource } from '../../calendar/runtime';
+import { CalendarIntegrationWakeCatalog, installCalendarIntegrationWakeCatalog } from '../../calendar/integration-wake-catalog';
+import { canonicalDatabaseRootIdentity } from '../../databases/database-file';
+import { calendarHash } from '../../calendar/validation';
 import { memoryCalendarServiceFixture } from '../../calendar/test-support/memory-service-fixture';
 import { CALENDAR_OBSERVATION_JOB, CALENDAR_OBSERVATION_WORKFLOW, calendarObservationPinInput,
   registerCalendarObservationWorkflow } from '../../calendar/integration-catalog';
@@ -77,10 +80,15 @@ async function fixture(options: { beforeObservation?: () => Promise<void>;
   const openJobs = spyOn(JobsRuntime, 'open').mockResolvedValue(memory.runtime);
   restores.push(() => openJobs.mockRestore());
   const internal = calendar.runtime as unknown as { owner: DatabaseCoordinator; source: CalendarRuntimeSource | null;
+    wakeCatalog: CalendarIntegrationWakeCatalog | null;
     options: CalendarRuntimeOptions };
   const openCalendarMemory = async (options: CalendarRuntimeOptions) => {
     // Reproduce only native source installation around the actual memory-backed
     // CalendarRuntime. No real open/path probe/process transport is invoked.
+    if (options.integrationWake) {
+      await installCalendarIntegrationWakeCatalog(options.system, options.installAllowed);
+      internal.wakeCatalog = new CalendarIntegrationWakeCatalog(options.system, calendarHash(canonicalDatabaseRootIdentity(options.config.rootDirectory)));
+    }
     internal.source = await options.source?.(internal.owner) ?? null;
     for (const record of calendar.runtime.integrationOwners()) internal.source?.prepare(record);
     removeHints = observeDatabaseCoordinatorCommits(internal.owner, ref => internal.source?.wake(ref));
@@ -147,6 +155,27 @@ test('private managed construction is dormant; exact fixed pins prepare capture 
     await untilMemoryJobs(() => f.calendar.sourceRows(f.session.scope, '_calendar_integration_effect_outcomes').length === 1);
     expect(f.contexts).toHaveLength(1); expect(f.contexts[0]!.zero).toBeNull();
   } finally { pin.mockRestore(); await f.close(); }
+});
+
+test('integrated empty passes become quiet instead of endlessly rearming their own dirty-marker hints', async () => {
+  const f = await fixture();
+  try {
+    const owner = await f.prepare(); await f.publish(); await owner.start(f.scheduler);
+    expect(owner.coordinator.diagnostics()).toMatchObject({ state: 'running', scheduledAt: null });
+    expect(f.scheduler.list().filter(entry => entry.name.startsWith('calendar-integration:'))).toEqual([]);
+    const record = f.calendar.runtime.integrationOwners()[0]!, native = f.calendar.runtime.forIntegrationOwner(record);
+    for (let i = 0; i < 3; i++) {
+      await native.command('calendar.integration.claim', { now: f.memory.now(), nonce: 'empty-wake-' + i, leaseMs: 1000, limit: 1 },
+        { idempotencyKey: 'empty-wake-' + i });
+      const wake = f.scheduler.list().find(entry => entry.name.startsWith('calendar-integration:'));
+      expect(wake).toBeDefined(); expect(f.scheduler.run(wake!.name)).toBe(true);
+      await untilMemoryJobs(() => owner.coordinator.diagnostics().scheduledAt === null
+        && owner.coordinator.diagnostics().intake.active === 0);
+      expect(f.scheduler.list().filter(entry => entry.name.startsWith('calendar-integration:'))).toEqual([]);
+    }
+    expect(f.contexts).toHaveLength(0);
+    expect(f.calendar.runtime.integrationWakeCatalog().nextWakeAt(f.memory.now())).toBeNull();
+  } finally { await f.close(); }
 });
 
 test('private managed startup requires the exact published Workflow owner and makes no Jobs write or timer before admission', async () => {

@@ -49,17 +49,20 @@ export interface CalendarIntegrationCoordinatorOptions {
   readonly resolveOwner: (scope: ServiceDataScope) => CalendarOwnerRecord | null;
   readonly jobs: Pick<JobsService, 'forSource'>;
   readonly inspect: (instanceId: string, scope: ServiceDataScope) => WorkflowInstanceRecord | null;
+  /** Native SYSTEM publication after this owner's whole pass has settled.
+   * The implementation samples/queries/generation-CASes without overlapping
+   * SYSTEM and private leases. Rejection leaves the durable marker dirty. */
+  readonly refreshWake?: (record: CalendarOwnerRecord,
+    failure?: { readonly classification: 'retry' | 'review'; readonly nextWakeAt: number }) => Promise<number | null>;
   readonly now?: () => number;
   readonly onFailure?: (code: CalendarIntegrationCode) => void;
   readonly maxOwners?: number;
   readonly batchSize?: number;
 }
-interface Binding { readonly hash: string; readonly jobs: SourceJobs }
 interface OwnerCell {
   readonly owner: CalendarIntegrationOwner;
   readonly controller: CalendarIntegrationPolicyController;
   readonly dispatcher: CalendarIntegrationDispatcher;
-  readonly bindings: Map<string, Binding>;
   readonly hydrated: Map<string, string>;
   ready: Promise<void> | null;
   revision: number;
@@ -73,7 +76,8 @@ const RETRY_MS = 1000;
 /** This is an explicit PRIVATE envelope, not lazy scalable hydration of the 10,000-owner catalog.
  * Eight permanent rule identities x 64 owners consumes at most 512 source slots;
  * Jobs' 1024-source limit is SHARED, not reserved, and still may reject admission.
- * Cells are not evicted: eviction cannot release Jobs' retained physical source identities.
+ * Cells are not evicted at this seam: exact Jobs detach is necessary but does
+ * not itself fence owner readiness/intake/evidence or settle their real bodies.
  */
 export const CALENDAR_INTEGRATION_COORDINATOR_MAX_OWNERS = 64;
 
@@ -105,7 +109,8 @@ export class CalendarIntegrationCoordinator implements CalendarObservationExecut
     if (!options || !Array.isArray(options.rules) || options.rules.length > CALENDAR_INTEGRATION_LIMITS.rules
       || ['pin', 'owner', 'discover', 'resolveOwner', 'inspect'].some(key => typeof options[key as keyof CalendarIntegrationCoordinatorOptions] !== 'function')
       || typeof options.jobs?.forSource !== 'function' || options.now !== undefined && typeof options.now !== 'function'
-      || options.onFailure !== undefined && typeof options.onFailure !== 'function') throw new CalendarError('CALENDAR_CONFIG_INVALID');
+      || options.onFailure !== undefined && typeof options.onFailure !== 'function'
+      || options.refreshWake !== undefined && typeof options.refreshWake !== 'function') throw new CalendarError('CALENDAR_CONFIG_INVALID');
     this.maxOwners = calendarInteger(options.maxOwners ?? CALENDAR_INTEGRATION_COORDINATOR_MAX_OWNERS, 1, CALENDAR_INTEGRATION_COORDINATOR_MAX_OWNERS);
     this.batchSize = calendarInteger(options.batchSize ?? 25, 1, CALENDAR_INTEGRATION_LIMITS.page);
     const ids = new Set<string>();
@@ -125,6 +130,13 @@ export class CalendarIntegrationCoordinator implements CalendarObservationExecut
       // Runtime/source close stops intake only. Torrent may still need evidence.
       close: () => this.drain(),
     });
+  }
+
+  /** Durable discovery hint only, never a fresh policy/pin authority proof.
+   * No owner lookup, random controller identity or function source enters it. */
+  configurationStamp(): string {
+    return calendarHash({ semantics: 'calendar-integration-coordinator-v1', rules: this.rules,
+      jobFingerprint: CALENDAR_OBSERVATION_JOB.fingerprint });
   }
 
   /** Physical owner proof and capture-only preparation. NEVER resolves SourceJobs. */
@@ -409,10 +421,16 @@ export class CalendarIntegrationCoordinator implements CalendarObservationExecut
     await this.evidence.drainPhysical();
   }
   diagnostics() {
+    const lifecycle = [...this.cells.values()].map(cell => ({ controller: cell.controller.diagnostics(), dispatcher: cell.dispatcher.diagnostics() }));
     return { state: this.state, retainedOwners: this.cells.size, maxOwners: this.maxOwners, scheduledAt: this.scheduled?.at ?? null,
       uncancelledWakeAt: this.uncancelledWake?.at ?? null,
       wakeFailure: this.wakeFailure,
       readiness: this.readiness.status(), intake: this.intake.status(), evidence: this.evidence.status(),
+      residency: { idleReleaseQualified: false as const,
+        sourceBindings: lifecycle.reduce((sum, cell) => sum + cell.controller.sourceBindings, 0),
+        physicalControllerCallbacks: lifecycle.reduce((sum, cell) => sum + cell.controller.physicalCallbacks, 0),
+        activeDispatchers: lifecycle.filter(cell => cell.dispatcher.active).length,
+        unsettledUninvokedClaims: lifecycle.reduce((sum, cell) => sum + cell.dispatcher.unsettledUninvokedClaims.length, 0) },
       blockedOwners: [...this.cells.values()].filter(cell => cell.lastFailure || cell.retiredRule || cell.unselectedRule).map(cell => ({
         owner: calendarHash(cell.owner.owner.id), code: cell.lastFailure, retiredRule: cell.retiredRule, unselectedRule: cell.unselectedRule,
       })) };
@@ -428,19 +446,16 @@ export class CalendarIntegrationCoordinator implements CalendarObservationExecut
     if (record.established !== 1) throw new CalendarError('CALENDAR_NOT_READY');
     const owner = this.options.owner(record); owner.assertCurrent();
     if (calendarHash(owner.owner) !== calendarHash(record)) throw new CalendarError('CALENDAR_STATE_INVALID');
-    const bindings = new Map<string, Binding>();
-    const controller = new CalendarIntegrationPolicyController({ owner, now: this.options.now, jobs: (policy, guards) => {
-      const jobs = this.bindJobs(owner, policy, guards, owner.signal);
-      // At most one retained native capability per current rule. Historical
-      // evidence capabilities are transient; never retain 10,000 policy epochs.
-      bindings.set(policy.ruleId, { hash: calendarHash(policy), jobs }); return jobs;
-    } });
+    const controller = new CalendarIntegrationPolicyController({ owner, now: this.options.now,
+      jobs: (policy, guards) => this.bindJobs(owner, policy, guards, owner.signal) });
     const dispatcher = new CalendarIntegrationDispatcher({ store: owner, batchSize: this.batchSize, now: this.options.now,
       onFailure: code => this.report(code), jobs: intent => {
-        const live = bindings.get(intent.ruleId);
-        return live?.hash === calendarHash(intent.policy) ? live.jobs : this.bindJobs(owner, intent.policy, retiredGuards, owner.signal);
+        // Historical control/evidence lookups must never replace the selected
+        // controller's exact capability with an ineligible transient handle.
+        return controller.sourceBinding(intent.ruleId, calendarHash(intent.policy))
+          ?? this.bindJobs(owner, intent.policy, retiredGuards, owner.signal);
       } });
-    const cell: OwnerCell = { owner, controller, dispatcher, bindings, hydrated: new Map(), ready: null,
+    const cell: OwnerCell = { owner, controller, dispatcher, hydrated: new Map(), ready: null,
       revision: 0, nextWakeAt: this.time(), lastFailure: null, retiredRule: false, unselectedRule: false };
     this.cells.set(record.id, cell); this.refs.set(createDatabaseRef(record.id), cell); return cell;
   }
@@ -483,6 +498,7 @@ export class CalendarIntegrationCoordinator implements CalendarObservationExecut
   }
   private async process(cell: OwnerCell): Promise<void> {
     const revision = cell.revision;
+    let refreshRevision: number | null = null;
     let controlRule: string | null = null, verified = false, dispatching = false, localFailure = false;
     cell.lastFailure = null;
     try {
@@ -555,16 +571,31 @@ export class CalendarIntegrationCoordinator implements CalendarObservationExecut
     } finally {
       if (this.state !== 'quiescing' && this.state !== 'closed') {
         try {
-          const wake = await cell.owner.read<{ nextWakeAt: number | null }>('calendar.integration.nextWake', {});
-          if (!wake || wake.nextWakeAt !== null && !Number.isSafeInteger(wake.nextWakeAt)) throw new CalendarError('CALENDAR_STATE_INVALID');
-          cell.nextWakeAt = wake.nextWakeAt === null ? null : calendarInteger(wake.nextWakeAt, 0, 8_640_000_000_000_000);
+          if (this.options.refreshWake) {
+            const failure = localFailure || cell.unselectedRule ? {
+              classification: cell.unselectedRule || cell.lastFailure === 'JOBS_AUTHORITY_RETIRED'
+                || cell.lastFailure === 'JOBS_DEFINITION_UNAVAILABLE' ? 'review' as const : 'retry' as const,
+              nextWakeAt: this.time() + RETRY_MS,
+            } : undefined;
+            refreshRevision = cell.revision;
+            const nextWakeAt = await this.options.refreshWake(cell.owner.owner, failure);
+            cell.nextWakeAt = nextWakeAt === null ? null : calendarInteger(nextWakeAt, 0, 8_640_000_000_000_000);
+          } else {
+            const wake = await cell.owner.read<{ nextWakeAt: number | null }>('calendar.integration.nextWake', {});
+            if (!wake || wake.nextWakeAt !== null && !Number.isSafeInteger(wake.nextWakeAt)) throw new CalendarError('CALENDAR_STATE_INVALID');
+            cell.nextWakeAt = wake.nextWakeAt === null ? null : calendarInteger(wake.nextWakeAt, 0, 8_640_000_000_000_000);
+          }
           // An unjournaled owner/read/pin refusal must neither sleep until an
           // unrelated accepted expiry nor spin an unprocessable ready-at-now
           // row. Back this owner off locally; durable control failures retain
           // their exact source deadline and independently progressing dispatch.
           if (localFailure) cell.nextWakeAt = this.time() + RETRY_MS;
         } catch (error) { localFailure = true; cell.lastFailure = code(error); this.report(cell.lastFailure); cell.nextWakeAt = this.time() + RETRY_MS; }
-        if (!localFailure && cell.revision !== revision) cell.nextWakeAt = Math.min(cell.nextWakeAt ?? Infinity, this.time());
+        // The native query/CAS covers this pass's own writes. Only hints arriving
+        // during its final refresh can race publication/return to this RAM wake
+        // owner. Comparing to pass start would make every empty claim spin.
+        const observedRevision = this.options.refreshWake ? refreshRevision : revision;
+        if (!localFailure && observedRevision !== null && cell.revision !== observedRevision) cell.nextWakeAt = Math.min(cell.nextWakeAt ?? Infinity, this.time());
       }
     }
   }

@@ -258,7 +258,7 @@ Jobs/Torrent physical joins and Calendar evidence drainage still precede provide
 disposal. Setting `calendar:false` is not a replacement for that procedure.
 
 Historical source contracts retain their original realm fingerprint. Recovery
-accepts only the current realm or the pinned genuine `010`–`014` native realms,
+accepts only the current realm or the pinned genuine `010`–`015` native realms,
 while still matching every physical identity, catalog and semantic field against
 the freshly proven current owner. New policy installation still requires the
 current realm. No old policy or Jobs receipt is rewritten to make an upgrade fit.
@@ -490,10 +490,12 @@ acquisition and physical `_calendar_owner` proof on that same lease. Proof is no
 cached across reopening. Owner lifetime is separate from policy retirement so
 old evidence can still be reconciled.
 
-The shared cold actor's existing open path can prepare/validate schema before
-the domain-owner check. The new facade does not explicitly migrate, bind or
-provision, but it is **not a guarantee that the lower layer is read-only**.
-Physical startup/ownership behavior still needs qualification before activation.
+Native cold-open admission now proves established owner/binding and current
+ledger/schema through a read-only handle before the writer service can prepare
+that file. Staged creation and explicit older-schema preparation remain separate
+contracts; source effects do not gain migration permission. Same-lease owner and
+final authority checks remain required. Actual file/actor ordering still needs
+physical qualification before activation; MEMORY doubles are not that proof.
 
 Logging and dispatch sources can be composed with independent advisory wakes,
 partial-start cleanup and full reverse-order close. Managed composition must
@@ -507,6 +509,40 @@ even that acknowledgment does not declare safe-to-disable. A later
 reactivation must create a new epoch. `calendar:false` remains entirely inert and
 cannot retrospectively record an unobserved A → disabled → A transition. The
 public operator-facing retirement/adoption procedure is not yet implemented.
+
+### Durable wake metadata and resident capability ownership
+
+The private managed composition now opts into a separately admitted SYSTEM wake
+catalog. Ordinary core and logging-only Calendar do not acquire its schema or
+per-command cost. Established ownership and its initial due marker commit
+together. Every later business, operator or native integration command must
+mark the exact owner dirty before acquiring a private writer lease. Failed
+marker admission means that command never started. SYSTEM admission is released
+before private work; no cross-file transaction is implied.
+
+After the complete owner turn, the runtime samples the latest dirty generation,
+queries canonical `calendar.integration.nextWake`, releases that lease and
+generation-CASes the metadata. There is no extra wake query after every command.
+A concurrent write or failed publication leaves recovery work due. Busy physical
+work and failed/reviewed owner proofs retain dirty evidence with finite retry;
+they cannot publish quiet. The entire publication wait belongs to runtime
+shutdown, including after its private read has released.
+
+Configuration seeding resumes through bounded indexed pages, with an explicit
+captured tail/completeness and durable due-turn cursor. New establishment seeds
+itself, including insertion behind the seed cursor. The configuration stamp
+includes detached rules, native Job contract, exact Calendar realm, observation
+semantics and registered code-graph metadata. That graph stamp grants no scoped
+workflow pin or dispatch authority. Original scoped pin checks still apply.
+
+The controller now retains its exact selected native capability separately from
+transient historical evidence handles, including a prior attachment while policy
+replacement settles. Historical reads cannot silently replace that inventory.
+Physical callback/claim-cleanup diagnostics are not an owner-release certificate.
+The coordinator still has its explicit 64-owner resident envelope: catalog-driven
+global discovery, atomic multi-source idle release, owner lease pins and demand
+attachment must be integrated before that ceiling can represent only residency.
+No metadata scan alone completes scalable hydration or safe disable.
 
 ## Capacity and remaining activation gates
 
@@ -524,9 +560,12 @@ that range rejects in the source transaction; it cannot leave an impossible
 schedule retrying forever. Ordinary calendar dates without an installed rule
 retain their broader supported range. Lateness is bounded separately to 31 days.
 
-Jobs still retains at most 1,000 schedules/source, 10,000 schedules/file and
-100,000 receipts/occurrences. This finite one-off bridge is **not yet a sustainable
-automatic reminder service**. Public managed configuration, final native catalog
+Jobs now distinguishes working occupancy from retained history and final-writer
+settlement reserve. Its finite configurable retained defaults remain 1,000
+schedules/source, 10,000 schedules/file and 100,000 ordinary intents/occurrences;
+configured changes do not delete history or manufacture physical headroom. See
+[source-owned capacity](../scheduler/source-owned-jobs.md). This bridge is **not
+yet an enabled automatic reminder service**. Public managed configuration, final native catalog
 mounting, larger catalog discovery/hydration, public audited operator retirement/adoption,
 capacity management,
 provider-specific uncertainty handling and physical/browser/Linux/package/updater

@@ -36,7 +36,13 @@ export interface CalendarIntegrationRetirementResult {
   readonly policy: CalendarIntegrationPolicyView; readonly control: CalendarIntegrationControlView | null;
   readonly result: 'retired' | 'no-registration'; readonly registration: JobSourceRegistration | null;
 }
-interface Cell { readonly id: string; readonly hash: string; readonly sourceId: string; quiesced: boolean }
+interface Cell { readonly id: string; readonly hash: string; readonly sourceId: string; quiesced: boolean; jobs?: SourceJobs }
+/** Native handles only. This snapshot is NOT permission to release an owner:
+ * an owner registry must first fence new intake and join actual callbacks. */
+export interface CalendarIntegrationSourceBinding {
+  readonly ruleId: string; readonly policyId: string; readonly policyHash: string;
+  readonly sourceId: string; readonly jobs: SourceJobs; readonly selected: boolean;
+}
 interface Retirement { id?: string; hash?: string; explicit: boolean; settled: boolean; pending: number; started: boolean; missing: boolean }
 const RETRY_MS = 1000;
 
@@ -44,7 +50,11 @@ export class CalendarIntegrationPolicyController {
   private readonly pool = new WorkPool({ concurrency: 8, maxConcurrentPerKey: 1, maxQueued: 32, maxQueuedPerKey: 32, queueTimeoutMs: 5000 });
   private readonly stop = new AbortController();
   private readonly cells = new Map<string, Cell>();
+  /** One formerly selected native attachment per rule during replacement.
+   * Historical evidence brokers are deliberately never installed here. */
+  private readonly retainedBindings = new Map<string, Cell>();
   private readonly retirements = new Map<string, Retirement>();
+  private physicalCallbacks = 0;
   /** Separate concurrent native selections from historical install replay.
    * After unknown selected installation, inspect current state; a stale token
    * is not a human idempotency receipt or permission to manufacture success. */
@@ -230,11 +240,34 @@ export class CalendarIntegrationPolicyController {
    * A bounded close rejection must be reported separately, not relabelled clean.
    */
   drainPhysical(): Promise<void> { return this.pool.drainPhysical(); }
-  diagnostics() { return { closing: this.closing, rules: this.cells.size, retirementMarkers: this.retirements.size, pool: this.pool.status() }; }
+  /** Pure lookup: never constructs a capability or enters either writer gate.
+   * An exact policy may remain quiesced; its original evidence stays usable. */
+  sourceBinding(ruleId: string, policyHash: string): SourceJobs | null {
+    const cell = this.cells.get(ruleId); return cell?.hash === policyHash ? cell.jobs ?? null : null;
+  }
+  /** At most two handles per permanent rule: selected + previous attachment.
+   * Consumers must inspect exact native hydration again under their own owner
+   * pin. Legacy clients or a failed inspection are not release qualification. */
+  sourceBindings(): readonly CalendarIntegrationSourceBinding[] {
+    const result: CalendarIntegrationSourceBinding[] = [];
+    for (const [ruleId, cell] of this.cells) if (cell.jobs) result.push(Object.freeze({ ruleId, policyId: cell.id,
+      policyHash: cell.hash, sourceId: cell.sourceId, jobs: cell.jobs, selected: true }));
+    for (const [ruleId, cell] of this.retainedBindings) if (cell.jobs && this.cells.get(ruleId) !== cell) result.push(Object.freeze({ ruleId,
+      policyId: cell.id, policyHash: cell.hash, sourceId: cell.sourceId, jobs: cell.jobs, selected: false }));
+    return Object.freeze(result);
+  }
+  diagnostics() { return { closing: this.closing, rules: this.cells.size, retirementMarkers: this.retirements.size, pool: this.pool.status(),
+    physicalCallbacks: this.physicalCallbacks, sourceBindings: this.sourceBindings().length,
+    // Neither controller idleness nor Jobs idleness fences concurrent owner
+    // readiness/intake/evidence. Residency admission supplies that next seam.
+    idleReleaseQualified: false as const }; }
 
   private run<T>(ruleId: string, work: (signal: AbortSignal) => Promise<T>, requestSignal?: AbortSignal): Promise<T> {
     const signal = requestSignal ? AbortSignal.any([this.signal, requestSignal]) : this.signal;
-    return this.pool.run(async operationSignal => { operationSignal.throwIfAborted(); this.assertOpen(); return work(operationSignal); },
+    return this.pool.run(async operationSignal => {
+      operationSignal.throwIfAborted(); this.assertOpen(); this.physicalCallbacks++;
+      try { return await work(operationSignal); } finally { this.physicalCallbacks--; }
+    },
       { key: 'calendar-policy:' + calendarHash([this.options.owner.owner.id, ruleId]), signal });
   }
   private assertOpen(): void { if (this.closing) throw new CalendarError('CALENDAR_NOT_READY'); this.signal.throwIfAborted(); this.options.owner.assertCurrent(); }
@@ -285,12 +318,24 @@ export class CalendarIntegrationPolicyController {
       return prior;
     }
     if (!prior && this.cells.size >= CALENDAR_INTEGRATION_LIMITS.rules) throw new CalendarError('CALENDAR_CAPACITY');
-    if (prior) prior.quiesced = true;
-    const cell = { id: policy.id, hash, sourceId: jobSourceId(policy.policy.source.identity), quiesced: policy.state === 'retired' || this.closing || this.retirementPending(policy.ruleId, policy.id) || this.explicitRetirement(policy.ruleId, policy.id) };
+    if (prior) {
+      prior.quiesced = true;
+      // Capture the old exact attachment BEFORE replacing its eligibility
+      // cell. A prepared B must not orphan still-resident A's native handle.
+      // Inspection is synchronous/read-only. Unknown legacy embeddings are
+      // deliberately not claimed to provide complete native residency proof.
+      if (prior.jobs?.hydration) {
+        try { if (prior.jobs.hydration.inspect().attached) this.retainedBindings.set(policy.ruleId, prior); } catch { /* Retain an earlier proven attachment, if any. */ }
+      }
+    }
+    const cell: Cell = { id: policy.id, hash, sourceId: jobSourceId(policy.policy.source.identity), quiesced: policy.state === 'retired' || this.closing || this.retirementPending(policy.ruleId, policy.id) || this.explicitRetirement(policy.ruleId, policy.id) };
     this.cells.set(policy.ruleId, cell); return cell;
   }
   private broker(policy: CalendarIntegrationPolicyView): SourceJobs {
-    const current = this.cells.get(policy.ruleId), cell: Cell = current?.id === policy.id ? current : { id: policy.id, hash: calendarHash(policy.policy), sourceId: jobSourceId(policy.policy.source.identity), quiesced: true };
+    const current = this.cells.get(policy.ruleId), hash = calendarHash(policy.policy);
+    const selected = current?.id === policy.id && current.hash === hash;
+    const cell: Cell = selected ? current : { id: policy.id, hash, sourceId: jobSourceId(policy.policy.source.identity), quiesced: true };
+    if (selected && cell.jobs) return cell.jobs;
     const assertEligible = () => {
       this.assertOpen();
       if (cell.quiesced || this.cells.get(policy.ruleId) !== cell || this.retirementPending(policy.ruleId, policy.id) || this.explicitRetirement(policy.ruleId, policy.id)) throw new JobsError('JOBS_AUTHORITY_RETIRED');
@@ -306,6 +351,7 @@ export class CalendarIntegrationPolicyController {
       try { Promise.prototype.then.call(jobs, undefined, () => {}); } catch {}
       throw new CalendarError('CALENDAR_CONFIG_INVALID');
     }
+    if (selected) cell.jobs = jobs;
     return jobs;
   }
   private policy(ruleId: string, signal?: AbortSignal): Promise<CalendarIntegrationPolicyView | null> { return this.options.owner.read('calendar.integration.policy', { ruleId }, signal ? { signal } : undefined); }

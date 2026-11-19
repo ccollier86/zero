@@ -46,6 +46,10 @@ export class WorkflowDeferredStartBridge {
   pinRegistered(authority: WorkflowPersistedExecutionAuthority, name: string, input: unknown, version: number): WorkflowPinnedStart {
     this.assertCurrent(authority); const pin = this.dependencies.graph.pinRegisteredStart(name, input, authority, version); this.assertCurrent(authority); return pin;
   }
+  /** Discovery stamp only, not the scoped/authorized pin required for enqueue. */
+  registeredCatalogStamp(name: string, version: number): import('./workflow-deferred-start-contract').WorkflowRegisteredCatalogStamp {
+    this.assertRuntimeCurrent(); const stamp = this.dependencies.graph.registeredCatalogStamp(name, version); this.assertRuntimeCurrent(); return stamp;
+  }
   seal(authority: WorkflowPersistedExecutionAuthority, binding: string): WorkflowAuthoritySeal {
     this.assertCurrent(authority); return this.dependencies.authority.store.sealAuthority(DOMAIN, authority, bound(binding));
   }

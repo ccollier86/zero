@@ -1,7 +1,9 @@
 /** Private native composition only. No public config, automatic mount or provider bag. */
 import { CalendarError } from '../../calendar/error';
 import { CALENDAR_OBSERVATION_JOB, CALENDAR_OBSERVATION_WORKFLOW, CALENDAR_OBSERVATION_WORKFLOW_VERSION,
-  calendarObservationPinInput, type CalendarObservationExecution, type CalendarObservationRule } from '../../calendar/integration-catalog';
+  CALENDAR_OBSERVATION_SEMANTICS, calendarObservationPinInput, type CalendarObservationExecution, type CalendarObservationRule } from '../../calendar/integration-catalog';
+import { calendarRealm } from '../../calendar/realm';
+import { calendarHash } from '../../calendar/validation';
 import { CalendarIntegrationCoordinator } from '../../calendar/integration-coordinator';
 import type { CalendarAuthority } from '../../calendar/authority';
 import type { CalendarIntegrationNativeOperations } from '../../calendar/integration-operator';
@@ -89,6 +91,10 @@ export async function prepareManagedCalendarIntegration(input: ManagedCalendarIn
         if (!provider) throw new CalendarError('CALENDAR_NOT_READY');
         return provider.persistence.integrationOwnerForScope(scope);
       },
+      refreshWake: (record, failure) => {
+        if (!provider) throw new CalendarError('CALENDAR_NOT_READY');
+        return provider.persistence.refreshIntegrationWake(record, failure);
+      },
       pin: owner => bridge.pinRegistered(bridge.system({ principal: 'calendar:observation:catalog',
         reason: 'Fixed native Calendar observation graph', scope: owner.scope }),
       CALENDAR_OBSERVATION_WORKFLOW, calendarObservationPinInput(), CALENDAR_OBSERVATION_WORKFLOW_VERSION),
@@ -124,7 +130,7 @@ export async function prepareManagedCalendarIntegration(input: ManagedCalendarIn
       },
       async closeProvider() { await provider?.closeProvider(); },
     });
-    preparation = prepareManagedCalendarCore({ ...input, signal }, { source: () => selected.source, closeWith: jobs.close,
+    preparation = prepareManagedCalendarCore({ ...input, signal }, { source: () => selected.source, closeWith: jobs.close, integrationWake: true,
       retainProvider: owner => { provider = owner; } });
     core = await preparation;
     signal.throwIfAborted();
@@ -153,6 +159,11 @@ export async function prepareManagedCalendarIntegration(input: ManagedCalendarIn
           if (runtime.get(ZERO_WORKFLOW_SERVICE) !== workflows) throw new CalendarError('CALENDAR_NOT_READY');
           bridge.assertRuntimeCurrent();
         };
+        assertPublished();
+        const configurationStamp = calendarHash({ coordinator: selected.configurationStamp(), realm: calendarRealm.fingerprint,
+          semantics: CALENDAR_OBSERVATION_SEMANTICS,
+          graph: bridge.registeredCatalogStamp(CALENDAR_OBSERVATION_WORKFLOW, CALENDAR_OBSERVATION_WORKFLOW_VERSION) });
+        await prepared.persistence.prepareIntegrationWakes(configurationStamp, Date.now(), assertPublished, signal);
         assertPublished();
         await selected.start(scheduler);
         try { assertPublished(); }

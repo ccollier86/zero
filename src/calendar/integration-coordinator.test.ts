@@ -12,7 +12,7 @@ import { memorySourceJobsFixture, untilMemoryJobs, type MemoryJobsOperation } fr
 import { currentLoggingAttribution, runWithLoggingAttribution } from '../logging/logging-attribution';
 import { loggingContext } from '../logging/test-support/logging-fixture';
 import type { StepContext } from '../workflows/types';
-import { CalendarIntegrationCoordinator, type CalendarIntegrationWakeScheduler } from './integration-coordinator';
+import { CalendarIntegrationCoordinator, type CalendarIntegrationCoordinatorOptions, type CalendarIntegrationWakeScheduler } from './integration-coordinator';
 import { CALENDAR_OBSERVATION_JOB, CALENDAR_OBSERVATION_WORKFLOW, calendarObservationPinInput, registerCalendarObservationWorkflow } from './integration-catalog';
 import type { CalendarObservationRule } from './integration-catalog';
 import type { CalendarIntegrationPolicyView } from './integration-model';
@@ -48,6 +48,7 @@ function scheduler() {
 }
 
 async function fixture(options: { tenancy?: 'single' | 'multi'; maxOwners?: number; commitHints?: boolean; nativeJobsWriter?: boolean;
+  refreshWake?: CalendarIntegrationCoordinatorOptions['refreshWake'];
   beforeJobsRead?: (operation: MemoryJobsOperation) => void | Promise<void>;
   beforeJobsWrite?: (operation: MemoryJobsOperation) => void | Promise<void>;
   afterJobsWrite?: (operation: MemoryJobsOperation) => void | Promise<void> } = {}) {
@@ -92,7 +93,7 @@ async function fixture(options: { tenancy?: 'single' | 'multi'; maxOwners?: numb
           return pinFingerprint === null ? pin : { ...pin, fingerprint: pinFingerprint };
         },
         jobs: { forSource(source) { capabilityCalls++; expect(calendar.stats().activeLeases).toBe(0); return jobs!.service.forSource(source); } },
-        inspect: (id, scope) => jobs!.workflows.getInstance(id, scope), now: () => jobs!.now(),
+        inspect: (id, scope) => jobs!.workflows.getInstance(id, scope), now: () => jobs!.now(), refreshWake: options.refreshWake,
       });
       all.push(value); return value;
     };
@@ -152,6 +153,79 @@ test('construction is inert; owner readiness is physically verified, capture-onl
     expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_controls')).toHaveLength(0);
     expect(f.jobs.commands).toHaveLength(0); expect(f.calendar.stats().activeLeases).toBe(0);
   } finally { await f.close(); }
+});
+
+test('configuration stamp is detached, deterministic and inert across coordinator instances', async () => {
+  const f = await fixture(); try {
+    const before = f.counters(), stamp = f.coordinator.configurationStamp(), same = f.replace();
+    expect(stamp).toMatch(/^[a-f0-9]{64}$/); expect(same.configurationStamp()).toBe(stamp);
+    expect(f.counters()).toEqual(before);
+    const different = f.replace([{ id: 'observe', version: '2', dueOffsetMs: 0, maxLatenessMs: 60_000 }]);
+    expect(different.configurationStamp()).not.toBe(stamp); expect(f.counters()).toEqual(before);
+  } finally { await f.close(); }
+});
+
+test('native wake publication runs once after a full owner pass and replaces the redundant source wake query', async () => {
+  let refresh: NonNullable<CalendarIntegrationCoordinatorOptions['refreshWake']> = async () => null;
+  const f = await fixture({ refreshWake: (record, failure) => refresh(record, failure) }), wake = scheduler();
+  const calls: unknown[] = [];
+  try {
+    refresh = async (record, failure) => {
+      calls.push({ record, failure }); expect(record).toEqual(f.record); expect(failure).toBeUndefined();
+      expect(f.calendar.stats().activeLeases).toBe(0); expect(f.jobs.stats().activeLeases).toBe(0);
+      expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_dispatch')[0]!.state).toBe('accepted');
+      expect(f.jobs.rows(f.session.scope, 'job_schedules')).toHaveLength(1);
+      return f.jobs.now() + 12_345;
+    };
+    await f.coordinator.ready(f.record); await f.appointment(); await f.coordinator.start(wake);
+    expect(calls).toHaveLength(1); expect(f.sourceReads.filter(name => name === 'calendar.integration.nextWake')).toEqual([]);
+    expect(f.coordinator.diagnostics().scheduledAt).toBe(f.jobs.now() + 12_345);
+    expect(f.coordinator.diagnostics().residency).toMatchObject({ sourceBindings: 1, physicalControllerCallbacks: 0,
+      activeDispatchers: 0, unsettledUninvokedClaims: 0, idleReleaseQualified: false });
+  } finally { await f.close(); }
+});
+
+test('a refused native wake publication retains accepted Jobs facts and retries locally without a second publication', async () => {
+  let calls = 0, fail = true;
+  const f = await fixture({ refreshWake: async () => { calls++; if (fail) throw new Error('synthetic-publication-refused'); return null; } }), wake = scheduler();
+  try {
+    await f.coordinator.ready(f.record); await f.appointment(); await f.coordinator.start(wake);
+    expect(calls).toBe(1); expect(f.coordinator.diagnostics().scheduledAt).toBe(f.jobs.now() + 1000);
+    expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_dispatch')[0]!.state).toBe('accepted');
+    expect(f.jobs.rows(f.session.scope, 'job_schedules')).toHaveLength(1);
+    fail = false; f.jobs.advance(1000); await wake.flush(f.jobs.now());
+    expect(calls).toBe(2); expect(f.coordinator.diagnostics().scheduledAt).toBeNull();
+    expect(f.jobs.rows(f.session.scope, 'job_schedules')).toHaveLength(1);
+    expect(f.sourceReads.filter(name => name === 'calendar.integration.nextWake')).toEqual([]);
+  } finally { await f.close(); }
+});
+
+test('a hint arriving during native wake publication cannot be overwritten by its earlier quiet return', async () => {
+  let refresh: NonNullable<CalendarIntegrationCoordinatorOptions['refreshWake']> = async () => null;
+  const f = await fixture({ refreshWake: (record, failure) => refresh(record, failure) }), wake = scheduler();
+  try {
+    refresh = async () => { f.coordinator.hint(createDatabaseRef(f.record.id)); return null; };
+    await f.coordinator.start(wake);
+    expect(f.coordinator.diagnostics().scheduledAt).toBe(f.jobs.now());
+    refresh = async () => null;
+    await wake.flush(f.jobs.now());
+    expect(f.coordinator.diagnostics().scheduledAt).toBeNull();
+  } finally { await f.close(); }
+});
+
+test('an unjournaled owner failure publishes a finite durable retry instead of a false clean source snapshot', async () => {
+  let refresh: NonNullable<CalendarIntegrationCoordinatorOptions['refreshWake']> = async () => null;
+  const f = await fixture({ refreshWake: (record, failure) => refresh(record, failure) }), wake = scheduler();
+  const calls: unknown[] = [];
+  try {
+    refresh = async (record, failure) => { calls.push({ record, failure }); return failure!.nextWakeAt; };
+    f.pauseVerify(async () => { throw new Error('synthetic-owner-unavailable'); });
+    await f.coordinator.start(wake);
+    expect(calls).toEqual([{ record: f.record, failure: { classification: 'retry', nextWakeAt: f.jobs.now() + 1000 } }]);
+    expect(f.sourceReads.filter(name => name === 'calendar.integration.nextWake')).toEqual([]);
+    expect(f.coordinator.diagnostics().scheduledAt).toBe(f.jobs.now() + 1000);
+    expect(f.jobs.commands).toEqual([]);
+  } finally { f.pauseVerify(null); await f.close(); }
 });
 
 test('an empty rule catalog is evidence-only and still physically verifies ordinary Calendar readiness', async () => {

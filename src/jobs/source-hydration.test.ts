@@ -2,7 +2,8 @@
  * broker-only transport double. No files, identity deletion or timer fixture. */
 import { expect, spyOn, test } from 'bun:test';
 import { WorkPool } from '../workers/work-pool';
-import { JobsSourceBroker } from './source-service';
+import { JobsSourceBroker, type SourceJobs } from './source-service';
+import { createTrustedJobSource, requireJobSource } from './source-authority';
 import type { JobsRuntime } from './runtime';
 import { JobsError } from './error';
 import { jobSourceId, type JobSourceContract, type JobSourceRegistration } from './source-model';
@@ -15,6 +16,144 @@ function deferred() { let resolve!: () => void; const promise = new Promise<void
 function sourceBroker(f: Awaited<ReturnType<typeof memorySourceJobsFixture>>): JobsSourceBroker {
   return (f.service as unknown as { sources: JobsSourceBroker }).sources;
 }
+
+test('native set detach refuses a later busy source with zero partial release, then releases the exact duplicate-containing set without writes', async () => {
+  const f = await memorySourceJobsFixture({ nativeWriter: true });
+  try {
+    const first = f.source(), second = f.source({ identity: { databaseId: 'synthetic-second-owner' } });
+    await first.api.registration.activate(activation); await second.api.registration.activate(activation);
+    const work = await second.api.schedules.create({ input: {}, at: new Date(f.now() + 1000).toISOString() }, { idempotencyKey: 'set-detach-pinned' });
+    const { admission } = await second.api.schedules.get(work.id), pin = await sourceBroker(f).prepareDispatch(second.scope, admission);
+    const before = f.native(first.scope)!.engine.inspectAdmission(), commands = f.commands.length, sequence = f.torrentDb.currentSeq;
+    expect(f.service.tryDetachSources([first.api, second.api])).toBe('busy');
+    expect(first.api.hydration!.inspect().attached).toBe(true); expect(second.api.hydration!.inspect().attached).toBe(true);
+    pin.abandon();
+    expect(f.service.tryDetachSources([first.api, first.api, second.api])).toBe('detached');
+    expect(first.api.hydration!.inspect()).toMatchObject({ attached: false, residentSources: 0 });
+    expect(second.api.hydration!.inspect().attached).toBe(false);
+    expect(await second.api.receipts.get('set-detach-pinned')).toEqual(work);
+    expect(f.native(first.scope)!.engine.inspectAdmission()).toEqual(before);
+    expect(f.commands).toHaveLength(commands); expect(f.torrentDb.currentSeq).toBe(sequence); expect(f.calls).toHaveLength(0);
+    expect(f.rows(first.scope, '_jobs_sources')).toHaveLength(2);
+  } finally { await f.close(); }
+});
+
+test('set detach requires the exact current capability among selected/prior handles; absent members succeed without deleting another replacement', async () => {
+  const f = await memorySourceJobsFixture({ nativeWriter: true });
+  try {
+    const first = f.source(), prior = f.source({ identity: { databaseId: 'synthetic-prior-owner' } });
+    await first.api.registration.activate(activation); const registration = await prior.api.registration.activate(activation);
+    const replacement = f.source({ identity: prior.identity });
+    await replacement.api.hydration!.attach({ originalActivateKey: activation.idempotencyKey, expectedRegistration: registration, pinInput: {} });
+    prior.retireEligibility();
+    const before = f.native(first.scope)!.engine.inspectAdmission(), commands = f.commands.length;
+    expect(f.service.tryDetachSources([first.api, prior.api])).toBe('not-current');
+    expect(first.api.hydration!.inspect().attached).toBe(true); expect(replacement.api.hydration!.inspect().attached).toBe(true);
+    expect(f.service.tryDetachSources([prior.api])).toBe('not-current');
+    expect(f.service.tryDetachSources([first.api, prior.api, replacement.api])).toBe('detached');
+    expect(first.api.hydration!.inspect().residentSources).toBe(0);
+    expect(f.service.tryDetachSources([prior.api, replacement.api, first.api])).toBe('detached');
+    expect(f.service.tryDetachSources([])).toBe('detached');
+    expect(await prior.api.receipts.get(activation.idempotencyKey)).toEqual(registration);
+    expect(f.native(first.scope)!.engine.inspectAdmission()).toEqual(before); expect(f.commands).toHaveLength(commands);
+  } finally { await f.close(); }
+});
+
+test('set detach rejects foreign, spoofed, accessor, proxy and oversized containers without evaluating supplied code or releasing any source', async () => {
+  const f = await memorySourceJobsFixture({ nativeWriter: true }), foreign = await memorySourceJobsFixture();
+  try {
+    const source = f.source(); await source.api.registration.activate(activation);
+    let evaluated = 0;
+    const bomb = () => { evaluated++; throw new Error('untrusted handle code evaluated'); };
+    const accessor = {}; Object.defineProperty(accessor, 'hydration', { get: bomb });
+    const arrayAccessor = new Array(1); Object.defineProperty(arrayAccessor, '0', { enumerable: true, get: bomb });
+    const extra = [source.api]; Object.defineProperty(extra, 'extra', { get: bomb });
+    const proxy = new Proxy(source.api, { get: bomb, getOwnPropertyDescriptor: bomb, ownKeys: bomb });
+    const arrayProxy = new Proxy([source.api], { get: bomb, getOwnPropertyDescriptor: bomb, ownKeys: bomb });
+    const revoked = Proxy.revocable([source.api], {}); revoked.revoke();
+    const invalid: unknown[] = [null, {}, [foreign.source().api], [{ ...source.api }], [accessor], [proxy], arrayAccessor,
+      arrayProxy, revoked.proxy, new Array(1025).fill(source.api), [source.api, ,], extra, Object.setPrototypeOf([source.api], null)];
+    const before = f.commands.length, checks = f.stats().ownerChecks;
+    for (const handles of invalid) expect(() => f.service.tryDetachSources(handles as readonly SourceJobs[])).toThrow(expect.objectContaining({ code: 'JOBS_INPUT_INVALID' }));
+    expect(f.stats().ownerChecks).toBe(checks); expect(evaluated).toBe(0);
+    expect(source.api.hydration!.inspect().attached).toBe(true); expect(f.commands).toHaveLength(before);
+  } finally { try { await foreign.close(); } finally { await f.close(); } }
+});
+
+test('a later rejecting owner guard releases none of the set; quiesce retains owner-only release but final close refuses even an empty set', async () => {
+  const f = await memorySourceJobsFixture({ nativeWriter: true }); let refuse = false;
+  try {
+    const first = f.source(), second = f.source({ identity: { databaseId: 'synthetic-guard-owner' } });
+    const original = requireJobSource(second.capability), capability = createTrustedJobSource({ ...original, assertOwnerCurrent() {
+      original.assertOwnerCurrent(); if (refuse) throw new JobsError('JOBS_AUTHORITY_RETIRED');
+    } }), api = f.service.forSource(capability);
+    await first.api.registration.activate(activation); await api.registration.activate(activation); refuse = true;
+    expect(() => f.service.tryDetachSources([first.api, api])).toThrow(expect.objectContaining({ code: 'JOBS_AUTHORITY_RETIRED' }));
+    refuse = false; expect(first.api.hydration!.inspect().attached).toBe(true); expect(api.hydration!.inspect().attached).toBe(true);
+    f.service.quiesce(); expect(f.service.tryDetachSources([first.api, api])).toBe('detached');
+    expect(await api.registration.get()).toMatchObject({ state: 'active', generation: 1 });
+    await f.service.close();
+    expect(() => f.service.tryDetachSources([])).toThrow(expect.objectContaining({ code: 'JOBS_NOT_READY' }));
+    expect(() => first.api.hydration!.tryDetach()).toThrow(expect.objectContaining({ code: 'JOBS_NOT_READY' }));
+  } finally { refuse = false; await f.close(); }
+});
+
+test('a guard cannot reenter individual/set deletion and partially mutate an outer all-or-nothing validation', async () => {
+  const f = await memorySourceJobsFixture({ nativeWriter: true }); let armed = false, nested: unknown, observed = false;
+  try {
+    const first = f.source(), second = f.source({ identity: { databaseId: 'synthetic-reentrant-guard' } });
+    const original = requireJobSource(second.capability), capability = createTrustedJobSource({ ...original, assertOwnerCurrent() {
+      original.assertOwnerCurrent();
+      if (armed) { armed = false; nested = first.api.hydration!.tryDetach(); observed = first.api.hydration!.inspect().attached; }
+    } }), api = f.service.forSource(capability);
+    await first.api.registration.activate(activation); await api.registration.activate(activation); armed = true;
+    expect(f.service.tryDetachSources([first.api, api])).toBe('detached');
+    expect(nested).toBe('busy'); expect(observed).toBe(true);
+    expect(first.api.hydration!.inspect().residentSources).toBe(0);
+  } finally { armed = false; await f.close(); }
+});
+
+test('all guards precede the final pin/membership check when a later guard starts read-only replacement for an earlier source', async () => {
+  const held = deferred(); let armed = false, hold = false, entered = false, attaching: Promise<unknown> | undefined;
+  const f = await memorySourceJobsFixture({ nativeWriter: true, async beforeRead(operation) {
+    if (hold && operation.name === 'jobs.source.receipt') { entered = true; await held.promise; }
+  } });
+  try {
+    const first = f.source(), registration = await first.api.registration.activate(activation), replacement = f.source({ identity: first.identity });
+    const second = f.source({ identity: { databaseId: 'synthetic-late-guard' } }), original = requireJobSource(second.capability);
+    const capability = createTrustedJobSource({ ...original, assertOwnerCurrent() {
+      original.assertOwnerCurrent();
+      if (armed) {
+        armed = false;
+        attaching = replacement.api.hydration!.attach({ originalActivateKey: activation.idempotencyKey, expectedRegistration: registration, pinInput: {} });
+      }
+    } }), api = f.service.forSource(capability);
+    await api.registration.activate(activation); const before = f.commands.length; armed = true; hold = true;
+    expect(f.service.tryDetachSources([first.api, api])).toBe('busy');
+    await untilMemoryJobs(() => entered && f.stats().backendLeases === 0);
+    expect(first.api.hydration!.inspect().attached).toBe(true); expect(api.hydration!.inspect().attached).toBe(true);
+    held.resolve(); await attaching;
+    expect(first.api.hydration!.inspect().attached).toBe(false); expect(replacement.api.hydration!.inspect().attached).toBe(true);
+    expect(f.service.tryDetachSources([first.api, api])).toBe('not-current'); expect(api.hydration!.inspect().attached).toBe(true);
+    expect(f.service.tryDetachSources([first.api, replacement.api, api])).toBe('detached'); expect(f.commands).toHaveLength(before);
+  } finally { armed = false; held.resolve(); await attaching?.catch(() => {}); await f.close(); }
+});
+
+test('set detach retains every member while a later dispatch body stays physical after outer timeout', async () => {
+  const f = await memorySourceJobsFixture({ nativeWriter: true }), held = deferred(); let body: Promise<unknown> | undefined;
+  try {
+    const first = f.source(), second = f.source({ identity: { databaseId: 'synthetic-set-active-dispatch' } });
+    await first.api.registration.activate(activation); await second.api.registration.activate(activation);
+    const work = await second.api.schedules.create({ input: {}, at: new Date(f.now() + 1000).toISOString() }, { idempotencyKey: 'set-active-dispatch' });
+    const { admission } = await second.api.schedules.get(work.id), pin = await sourceBroker(f).prepareDispatch(second.scope, admission);
+    body = pin.run(async () => { await held.promise; pin.assertCurrent(); return 'settled'; });
+    await expect(Promise.race([body, Promise.reject(new JobsError('JOBS_OUTCOME_UNKNOWN'))])).rejects.toMatchObject({ code: 'JOBS_OUTCOME_UNKNOWN' });
+    expect(f.service.tryDetachSources([first.api, second.api])).toBe('busy'); expect(pin.abandon()).toBe(false);
+    expect(first.api.hydration!.inspect().attached).toBe(true); expect(second.api.hydration!.inspect().activeDispatch).toBe(1);
+    held.resolve(); expect(await body).toBe('settled');
+    expect(f.service.tryDetachSources([first.api, second.api])).toBe('detached'); expect(f.calls).toHaveLength(0);
+  } finally { held.resolve(); await body?.catch(() => {}); await f.close(); }
+});
 
 test('native detach and exact read-only attach preserve original receipts/history/working obligations and spend no key', async () => {
   const f = await memorySourceJobsFixture({ nativeWriter: true });

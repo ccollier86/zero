@@ -9,7 +9,7 @@ import type { ReactiveDB } from '../sync/reactive-db';
 import type { CompiledWorkflowDefinition } from './workflow-compiler';
 import type { WorkflowAccessPrincipal } from './workflow-access';
 import { workflowAccessPrincipalFromExecutionIdentity } from './workflow-access';
-import type { WorkflowPinnedStart } from './workflow-deferred-start-contract';
+import type { WorkflowPinnedStart, WorkflowRegisteredCatalogStamp } from './workflow-deferred-start-contract';
 import { isApplicationWorkflowDefinition } from './workflow-definition-scope';
 import { WorkflowError } from './workflow-error';
 import type { WorkflowPersistedExecutionAuthority } from './workflow-execution-authority';
@@ -183,6 +183,19 @@ export class WorkflowGraphRuntime {
     this.starts.assertRegisteredNamespaceCurrent(name, authority);
     return Object.freeze({ name, version, definitionId: resolved.catalog.definition_id,
       versionId: resolved.version.version_id, fingerprint: resolved.version.fingerprint });
+  }
+
+  /** @internal Owner-independent discovery invalidation; deliberately no SQL,
+   * authority, scope selection or start. Dispatch still requires the full pin. */
+  registeredCatalogStamp(name: string, version: number): WorkflowRegisteredCatalogStamp {
+    this.assertAvailable();
+    if (!Number.isSafeInteger(version) || version < 1) throw new WorkflowError('A native catalog requires an explicit graph version', 'WORKFLOW_REQUEST_INVALID', 422);
+    const compiled = this.registry.getCompiledWorkflow(name);
+    if (!compiled) throw new WorkflowError('Registered workflow is not available', 'WORKFLOW_VERSION_NOT_FOUND', 404);
+    if (compiled.authoringSource !== 'code' || compiled.format === 'legacy' || compiled.version !== version) {
+      throw new WorkflowError('Registered workflow does not match the fixed code version', 'WORKFLOW_VERSION_CONFLICT', 409);
+    }
+    return Object.freeze({ name, version, format: compiled.format, schemaVersion: compiled.graph.schemaVersion, fingerprint: compiled.fingerprint });
   }
 
   /** Final tenant-namespace fence for registered legacy-code starts. */

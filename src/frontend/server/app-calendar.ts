@@ -50,6 +50,7 @@ export interface ManagedCalendarCoreOwner extends ManagedCalendarProviderOwner {
 export async function prepareManagedCalendarCore(input: ManagedCalendarInput, native: {
   readonly source?: CalendarRuntimeSourceFactory;
   readonly closeWith?: () => Promise<void>;
+  readonly integrationWake?: true;
   /** Capture exact ownership before participant/route publication can fail. */
   readonly retainProvider?: (owner: ManagedCalendarProviderOwner) => void;
 } = {}): Promise<ManagedCalendarCoreOwner | null> {
@@ -72,6 +73,7 @@ export async function prepareManagedCalendarCore(input: ManagedCalendarInput, na
     authority,
     observability: runtime.require(ZERO_OBSERVABILITY_RUNTIME),
     ...(source ? { source } : {}),
+    ...(native.integrationWake ? { integrationWake: true } : {}),
   });
   const lifetime = new AbortController();
   let directory: ManagedCalendarParticipantDirectory | undefined, service: CalendarService | undefined;

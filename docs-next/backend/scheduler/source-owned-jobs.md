@@ -293,6 +293,16 @@ and joins pre-gate owner confirmations/evidence reads before closing SQL. Earlie
 quiesce/drain deliberately keeps evidence available for dependent Torrent work.
 There is no timeout that fabricates physical settlement.
 
+The native `JobsService.tryDetachSources(handles)` now releases an entire
+minted-handle set atomically. It validates all owner guards, then every physical
+pin and exact current capability, before the no-callback/no-await removal phase.
+Absent bindings succeed; a live replacement outside the supplied set or any
+busy source refuses the entire operation. Fabricated/foreign/accessor/proxy
+handles are not an administrative detach capability. Selected and prior native
+handles for one source can be supplied together. Individual `tryDetach()` uses
+the same path. This changes residency only, not registration, retirement,
+receipts, epochs, working capacity, settlement reserve or evidence lifetime.
+
 These source-checked primitives do not by themselves implement a scalable
 Calendar owner registry or automatic on-demand hydration. Those remaining native
 SYSTEM wake/residency paths and physical deployment qualification stay open.
