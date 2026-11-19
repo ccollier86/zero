@@ -39,6 +39,10 @@ publication, search, and production agent bundles.
     canonical Guardian-user references, independent discovery/detail/binding policy,
     final target-revocation fences, provisioning-clock gap, app-contact adapter
     boundaries and the next participant qualification matrix; not an implemented API.
+  - [Independent appointment overlap design](./calendar-overrides-design.md):
+    next canonical F4 package after effective locations; separate Guardian/object
+    grants, readonly review, private keyed witness, atomic exception history and
+    native editor ownership. Planned, not an enabled API or migration.
 
 - [Logging and auditing replacement](./logging-auditing-replacement-plan.md):
   the current generic product plan replacing transport-centered activity with

@@ -711,7 +711,12 @@ The rich editor still uses one async atomic save/receipt owner, preserving newer
 drafts and explicit unknown reconciliation. Standalone approved preview defaults
 remain unchanged.
 
-**Independent override, later canonical package.** Preserve the four-right
+**Independent override, later canonical package.**
+
+The [reviewed next-package design](./calendar-overrides-design.md) fixes initial
+scope to manual one-off appointment overlaps and details the complete authority,
+readonly review, keyed witness, final writer, private history and UI contracts.
+It is not implemented or an enabled capability. Preserve the four-right
 `CalendarGrant`/`setGrants` replacement contract. Add a separate explicit override
 capability, disabled by default, with an independently compiled current Guardian
 requirement and separate Calendar-owned object grants/history. Resource ownership,
