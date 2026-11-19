@@ -7,6 +7,7 @@ import { hashMigration, hashSchemaSnapshot, snapshotDeclaredTables } from '../mi
 import { createReactiveDB } from '../sync/reactive-db';
 import { CALENDAR_INTEGRATION_CONTROL_TABLES } from './realm-integration-controls-migration';
 import { CALENDAR_INTEGRATION_QUEUE_ADDITIONS, CALENDAR_INTEGRATION_QUEUE_TABLES } from './realm-integration-queue-migration';
+import { CALENDAR_INTEGRATION_INSPECTION_TABLES } from './realm-integration-inspection-migration';
 import { calendarRealm } from './realm';
 import { calendarHash } from './validation';
 
@@ -36,7 +37,7 @@ function fixture() {
     const definitions = () => raw.query("SELECT type,name,sql FROM sqlite_master WHERE type IN ('table','index','trigger') AND name NOT LIKE 'sqlite_%' ORDER BY type,name").all();
     const define = () => { for (const [name, schema] of Object.entries(CALENDAR_INTEGRATION_QUEUE_ADDITIONS)) db.defineTable(name, schema); };
     const upgrade = () => {
-      define(); const migrator = new Migrator({ database: raw, dbPath: ':memory:', migrations: calendarRealm.migrations, createBackups: false, log() {} });
+      define(); const migrator = new Migrator({ database: raw, dbPath: ':memory:', migrations: calendarRealm.migrations.slice(0, 13), createBackups: false, log() {} });
       try { const applied = migrator.run(); expect(migrator.status().every(row => row.checksumMatches)).toBe(true); return applied; } finally { migrator.dispose(); }
     };
     return { db, raw, owner, rows, definitions, define, upgrade, close: () => db.dispose() };
@@ -47,8 +48,8 @@ test('013 preserves the actual 012 closure/checksum and complete frozen historic
   expect(hashMigration(calendarRealm.migrations[11]!)).toBe(ORIGINAL_012_CHECKSUM);
   expect(calendarRealm.migrationChecksums[11]).toEqual({ version: '012', checksum: ORIGINAL_012_CHECKSUM });
   expect(hashSchemaSnapshot(snapshotDeclaredTables(CALENDAR_INTEGRATION_CONTROL_TABLES))).toBe(ORIGINAL_012_TABLES);
-  expect(calendarRealm.version).toBe('13'); expect(calendarRealm.migrations[12]?.version).toBe('013');
-  expect(calendarRealm.tables).toEqual(CALENDAR_INTEGRATION_QUEUE_TABLES);
+  expect(calendarRealm.version).toBe('14'); expect(calendarRealm.migrations[12]?.version).toBe('013');
+  expect(calendarRealm.tables).toEqual(CALENDAR_INTEGRATION_INSPECTION_TABLES);
   for (const [name, schema] of Object.entries(CALENDAR_INTEGRATION_CONTROL_TABLES)) expect(calendarRealm.tables[name]).toEqual(schema);
   expect(Object.isFrozen(CALENDAR_INTEGRATION_QUEUE_ADDITIONS)).toBe(true); expect(Object.isFrozen(CALENDAR_INTEGRATION_QUEUE_TABLES)).toBe(true);
 });

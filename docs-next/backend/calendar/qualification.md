@@ -18,6 +18,76 @@ This is feature-branch evidence, not a release certificate. No calendar backend
 archive has been selected by normal `zero-update`, and no application deployment
 or data migration is authorized by these checks.
 
+## November 18 private operator inspection and selected-control checkpoint
+
+The next private source phase adds bounded rule/control/capacity inspection,
+selected native retire/reactivate and a Guardian-managed **read-only** projection.
+It does not enable public mutations, automatic configuration, reminders, sends,
+recurrence, booking or any new application/hosted-demo behavior.
+
+Reviewed boundaries and regression evidence include:
+
+- Additive `014` preserves the original `001`–`013` closures, full historical
+  declaration maps, ledgers, accepted rows and sequence. Its derived pending-
+  effect presence backfill runs once during explicit migration. Admission and
+  outcome triggers then maintain presence in the same source transaction.
+  Late migration refusal rolls back, and conflicting pre-existing identities
+  refuse rather than being silently replaced. Query plans use indexed bounded
+  searches, not retained-history scans or temporary sorting.
+- Selection is the actual policy ID, epoch and digest. Stale/forged/pre-aborted
+  controls cannot poison a newer eligible cell. Source CAS fences cross-controller
+  races; controller-specific selected-install keys cannot convert a rival
+  installation into an apparent transport-replay success. Explicit retirement
+  does not auto-resurrect, and same-policy reactivation creates a new epoch only
+  after original retirement settles.
+- Inspection allocates neither an intake cell nor absent owner/Jobs storage,
+  pins no workflow and makes no Jobs mutation. Removed rules remain inspectable
+  and retireable but not automatically reactivateable. A source-policy change
+  across a Jobs wait refuses the combined read. Capacity is a separate Jobs
+  observation, not a reservation or an atomic cross-database snapshot.
+- An actually admitted observation held before factual settlement remains
+  visible as unsettled during intake drainage. Retired/empty state returns no
+  safe-disable or effect-completion certificate. Native evidence lifetime and
+  shared physical shutdown order remain intact.
+- Queued cancellation starts no control. Cancellation after accepted Jobs
+  retirement reports unknown, then reconciles the original key without another
+  Jobs retirement. No callback manufactures rollback or authorizes blind replay.
+- Guardian inspection derives canonical scope, requires management permission,
+  rejects caller routing/callback/mutation options, and withholds data after
+  revocation, account/scope replacement, cancellation or failed final revalidation.
+  Review also found that final withholding alone did not fence intermediate
+  private reads. Transient trusted authority callbacks now guard/confirm every
+  owner/source/Jobs wait; they are never retained by background controls.
+- Historical policy contracts preserve their original schema identity. Genuine
+  native `010`–`013` realm pins are reconstructed from committed registry names,
+  immutable complete declarations and preserved migration closures. Retained
+  binding admits those pins against fresh current physical ownership; new
+  installation still rejects an old realm. Native Jobs receipt retirement
+  regressions verify preservation rather than rewriting historical contracts.
+
+The detailed contract and remaining public operator/audit boundary are in the
+[integration guide](./integrations.md#selected-native-controls-and-inspection).
+The final frozen-source native-memory run passed **790 tests, 17,695 assertions,
+91 files** in 200.01 seconds across Calendar (excluding its physical-file test),
+source-owned Jobs, Scheduler, WorkPool drainage and native managed composition.
+The three final internal authority-wait regressions are included. An interim
+run reported 785 passes and two failures in the new wrapper/managed-facade cases
+while the callback handoff was being integrated; it is not represented as a
+pass. The fresh isolated pair passed 20 tests, followed by the complete frozen
+91-file run above. Intermediate no-emit fixture/contextual-type errors were
+corrected separately, not relabelled as initial passes.
+
+Final no-emit TypeScript passed with **408 roots, 4,008 source files and zero
+diagnostics**, with incremental and emission output disabled. Documentation
+validation passed for **907 reachable pages**, with zero structural problems.
+`git diff --check` passed. No dependency tree, file-backed fixture, actor process,
+build, Docker resource, archive or preview was created or retained by this phase.
+
+All current tests use synthetic MEMORY state, explicit physical transport doubles
+and `finally` cleanup. They are not physical actor, full managed `createApp`,
+real-browser, bundled Linux, archive or updater acceptance. Those gates remain
+unexecuted under the unchanged external filesystem integrity hold.
+
 ## November 18 private managed composition and recovery-capacity checkpoint
 
 The subsequent source phase composes the actual native Calendar core/logging

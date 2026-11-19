@@ -153,6 +153,8 @@ export function memoryCalendarServiceFixture(options: { tenancy?: 'single' | 'mu
       };
     };
     return { config, runtime, service, system, session,
+      /** Owned synthetic MEMORY state only, for retained-history boundary tests. */
+      sourceDatabase(scope: ServiceDataScope) { return planes.get(calendarDatabaseId(serviceDataScopeKey(scope)))?.db; },
       sourceRows(scope: ServiceDataScope, table: string) { return planes.get(calendarDatabaseId(serviceDataScopeKey(scope)))?.db.list(table) ?? []; },
       sourceSequence(scope: ServiceDataScope) { return planes.get(calendarDatabaseId(serviceDataScopeKey(scope)))?.db.currentSeq ?? 0; },
       stats: () => ({ planes: planes.size, ownerRows: (system.prepare('SELECT count(*) AS count FROM _calendar_owners').get() as { count: number }).count,

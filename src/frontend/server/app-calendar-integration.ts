@@ -3,6 +3,9 @@ import { CalendarError } from '../../calendar/error';
 import { CALENDAR_OBSERVATION_JOB, CALENDAR_OBSERVATION_WORKFLOW, CALENDAR_OBSERVATION_WORKFLOW_VERSION,
   calendarObservationPinInput, type CalendarObservationExecution, type CalendarObservationRule } from '../../calendar/integration-catalog';
 import { CalendarIntegrationCoordinator } from '../../calendar/integration-coordinator';
+import type { CalendarAuthority } from '../../calendar/authority';
+import type { CalendarIntegrationNativeOperations } from '../../calendar/integration-operator';
+import { calendarIntegrationInspectionForAuthority, type CalendarIntegrationInspectionForAuthority } from '../../calendar/integration-operator-service';
 import type { ResolvedJobsConfig } from '../../jobs/config';
 import { JobDefinitionCatalog } from '../../jobs/definition';
 import { emitPlatformEventTo } from '../../observability/sink';
@@ -28,6 +31,10 @@ export function withManagedCalendarObservationJobs(config: ResolvedJobsConfig): 
 
 export interface ManagedCalendarIntegrationOwner extends CalendarObservationExecution {
   readonly coordinator: CalendarIntegrationCoordinator;
+  /** Private native controls only; NOT a request provider or public route. */
+  readonly operations: CalendarIntegrationNativeOperations;
+  /** Guardian-managed read-only projection; no mutating operator access. */
+  inspectionForAuthority(request: CalendarAuthority): CalendarIntegrationInspectionForAuthority;
   /** Call after Torrent publication and BEFORE enabling Jobs automatic wakes. */
   start(scheduler: SchedulerService): Promise<void>;
   /** Exactly the Jobs owner's shared close, not an independent Calendar close. */
@@ -45,7 +52,8 @@ export async function prepareManagedCalendarIntegration(input: ManagedCalendarIn
   readonly jobs: ManagedJobsOwner;
   readonly rules: readonly CalendarObservationRule[];
 }): Promise<ManagedCalendarIntegrationOwner | null> {
-  if (!input.config.calendar) return null;
+  const calendarConfig = input.config.calendar;
+  if (!calendarConfig) return null;
   const { jobs, workflows, runtime } = input;
   let core: ManagedCalendarCoreOwner | null = null;
   let provider: ManagedCalendarProviderOwner | null = null;
@@ -117,7 +125,14 @@ export async function prepareManagedCalendarIntegration(input: ManagedCalendarIn
     core = await preparation;
     signal.throwIfAborted();
     if (!core) throw new CalendarError('CALENDAR_NOT_READY');
+    const operations = Object.freeze<CalendarIntegrationNativeOperations>({
+      inspect: (scope, options) => selected.inspect(scope, options),
+      retire: (scope, options) => selected.retire(scope, options),
+      reactivate: (scope, options) => selected.reactivate(scope, options),
+    });
     return Object.freeze({ coordinator: selected,
+      operations,
+      inspectionForAuthority: (request: CalendarAuthority) => calendarIntegrationInspectionForAuthority(operations, request, calendarConfig, signal),
       execute: (context: Parameters<CalendarObservationExecution['execute']>[0]) => selected.execute(context),
       async start(scheduler: SchedulerService) {
         const assertPublished = () => {

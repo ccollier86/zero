@@ -798,14 +798,20 @@ Current managed-coordinator integration checklist, not a reminder/provider adapt
    now tracks actual callback settlement separately from cancelled callers.
    Torrent's native physical barrier also retains ignored/late invocation bodies
    after compatibility disposal grace; managed Jobs joins it before final close.
-5. **Native capacity projection/recovery headroom implemented; operator controls
-   pending:** add explicit retire-before-disable/adoption, sustainable retained-
-   capacity handling and bounded/lazy owner hydration before opening configuration.
+5. **Native capacity, selected controls and read-only inspection implemented;
+   public operator projection pending:** exact current selection/CAS, explicit
+   retire/reactivate, bounded indexed source/effect presence and redacted Jobs
+   accounting are private native contracts. Guardian projection is read-only.
+   Add source-atomic initiating-actor/operator receipts/semantic audit before
+   projecting mutations; finish explicit retire-before-disable/adoption,
+   sustainable retained capacity and larger bounded owner hydration before
+   opening configuration. Empty queues or retired controls never certify that
+   running effects finished or their evidence owner can be removed.
 6. Qualify actual actors, interruption/restart, managed logging, browser, Linux
    bundle, exact archive and updater after storage integrity is verified.
 
-The next implementation decision is private managed composition, not public
-activation. A two-phase Calendar core owner composes logging and integration
+Private managed composition is implemented; it is not public activation.
+A two-phase Calendar core owner composes logging and integration
 sources inside the exact unpublished Torrent owner's dependency hook, after
 dormant Jobs preparation. Pure fixed workflow registration and an exact branded
 Jobs catalog precede that hook. Native code pins must reject scoped name
@@ -813,7 +819,10 @@ shadowing, not merely match a name/version. Dependency attachment is explicitly
 sealed before recovery; coordinator hydration precedes automatic Jobs startup.
 One shared lifecycle owns Calendar intake, actual Jobs callbacks, Torrent
 invocations, raw Calendar evidence callbacks and final providers, in that order.
-No subordinate runtime cleanup may bypass an unsettled physical barrier.
+No subordinate runtime cleanup may bypass an unsettled physical barrier. The next
+operator step is the source-atomic actor/receipt/audit boundary, followed by its
+authorized projection and explicit adoption/disable procedure—not simply mounting
+the existing native mutation methods behind a route.
 
 Capacity review also found that the ordinary receipt ceiling could prevent
 new cancel/retire operations. Add separate bounded source recovery headroom of
@@ -822,7 +831,18 @@ receipt namespace and every historical counter. Only cancel/retire use it;
 new registration/create/readmission remain ordinary. Add a private existing-only
 capacity projection using fixed usage primary-key reads. This is finite recovery
 headroom, not a solution for indefinite retained history or automatic reminders.
-Sustainable retained-capacity, operator retire/adopt/reactivate and larger owner
+The subsequent private operator checkpoint adds source realm `014`, preserving
+all `001`–`013` closures/maps. Inspection uses fixed usage counters, indexed
+existence checks and at most eight current rules. A trigger-maintained derived
+pending-effect presence table avoids reading retained effect history on every
+inspection. Selected controls share the retained coordinator/controller and
+final source CAS. Registered reactivation must settle original retirement first;
+unknown results require inspection/reconciliation rather than a new replay key.
+Historical contract recovery admits only pinned native `010`–`013` fingerprints
+against fresh current physical ownership; new installs still require the current
+realm. See the [native operator contract](../backend/calendar/integrations.md#selected-native-controls-and-inspection).
+
+Sustainable retained-capacity, public audited operator/adoption and larger owner
 hydration still gate public activation. No public configuration, application
 deployment or release selection is part of this checkpoint.
 

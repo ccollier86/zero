@@ -23,7 +23,7 @@ source-local effect cutoff. The only effect adapter is an internal observation;
 it does not send messages or call providers. A fixed native catalog, readiness
 hook, durable policy controller and bounded native coordinator are implemented
 internally. Managed Jobs now constructs dormant evidence before Torrent recovery;
-automatic calendar mounting, public configuration and operator integration remain
+automatic calendar mounting, public configuration and audited operator mutations remain
 pending. Do not import these internal modules into an application to bypass that
 boundary.
 
@@ -63,6 +63,12 @@ replacement all use this seam. Replay and unchanged commands create no new work.
 Every new appointment revision obsoletes the prior integration eligibility;
 terminal lifecycle outcomes create no new observation. Old accepted or uncertain
 downstream evidence remains retained.
+
+Additive `014` adds an indexed admitted-but-unsettled presence projection and a
+bounded private inspection query. Source admission and settlement maintain the
+projection atomically; the explicit migration alone backfills historical
+admissions without outcomes. No inspection read scans the admission history or
+rewrites it. All `001`–`013` closures and complete declaration maps are preserved.
 
 Only explicitly installed policy epochs participate. Their fixed adapter, rule
 and semantic versions, physical source identity, exact Jobs definition, complete
@@ -120,7 +126,65 @@ If Jobs was never registered, retirement reports `no-registration` without
 inventing a downstream retirement receipt. If retained presence proves that a
 registration existed but it is now missing, the operation fails closed instead.
 Neither result promises `safeToDisable`; pending work/effects still require the
-future managed drain and operator procedure.
+shared physical drain and a completed operator procedure.
+
+### Selected native controls and inspection
+
+The private managed owner exposes `operations.inspect(scope)`,
+`operations.retire(scope, {ruleId, expected, signal?})` and
+`operations.reactivate(scope, {ruleId, expected, signal?})`. `expected` is the
+inspection's exact `{id, epoch, policyDigest}` selection. These are native
+composition contracts, **not public app imports, browser routes or SDK methods**.
+Controls share the coordinator's retained controller and per-owner intake queue;
+they do not create an independent eligibility owner. The native wrapper's cutoff
+begins when its queued work is admitted, not when the wrapper is first called.
+
+Selected controls check the current selection in the keyed controller and final
+source transaction. A stale, forged or pre-aborted selection cannot quiesce a
+newer healthy cell. Explicit retirement is sticky against automatic preparation.
+Reactivation requires a running coordinator, a configured rule and settled
+original downstream retirement (or proven never-registration), then creates a
+new epoch even for A → A. Removed rules remain inspectable and retireable, but
+cannot be reactivated merely by naming their old ID.
+
+Selected installation keys are separated between controller instances so two
+concurrent identical requests must compete on the actual source CAS, not share a
+transport replay. These selections are not human idempotency receipts. After an
+unknown result, inspect and reconcile original controls; do not blindly replay a
+stale selection. A queued cancellation starts no operation, while cancellation
+after dispatch is conservatively unknown. Multi-stage reactivation can leave an
+accepted new local epoch with downstream activation pending; it is not rolled
+back by a later refusal.
+
+Inspection is existing-only and bounded. It returns retained usage budgets,
+current selections, one indexed pending control per rule, dispatch existence
+flags, admitted-but-unsettled presence, redacted downstream registration facts
+and Jobs capacity. It never provisions missing owners/files, hydrates rules,
+pins workflows, starts timers or mutates Jobs. Source policy changes across Jobs
+waits refuse the combined response as stale. Source and Jobs observations are
+still **not an atomic cross-database snapshot** or an exact backlog count.
+No contracts, workflow pins, keys, capabilities, seals or payloads are returned.
+
+`inspectionForAuthority(request).get({signal?})` is the private managed read-only
+projection. It derives the canonical Guardian scope, requires Calendar management
+permission, and revalidates captured authority before reading and before returning
+private data, including between internal owner/source/Jobs waits through transient
+trusted callbacks. Public read options still allow only cancellation, never caller-
+authored authority callbacks. It exposes only `get`. Mutating request projection remains gated
+on a source-atomic initiating-actor/operator-receipt/semantic-audit contract;
+an authorize → native call → post-audit sequence would leave a crash gap.
+
+Retirement, empty queues and even an acknowledged downstream retirement do not
+prove that running effects finished. Inspection and control results deliberately
+retain `evidenceOwnerRequired: true`, with no `safeToDisable` field. Shared
+Jobs/Torrent physical joins and Calendar evidence drainage still precede provider
+disposal. Setting `calendar:false` is not a replacement for that procedure.
+
+Historical source contracts retain their original realm fingerprint. Recovery
+accepts only the current realm or the pinned genuine `010`–`013` native realms,
+while still matching every physical identity, catalog and semantic field against
+the freshly proven current owner. New policy installation still requires the
+current realm. No old policy or Jobs receipt is rewritten to make an upgrade fit.
 
 ## Fixed native observation catalog
 
@@ -362,10 +426,10 @@ drain. The shared managed Jobs preparation/stop sequence is now implemented;
 automatic calendar coordinator mounting remains disabled.
 
 Local retirement must happen before Jobs retirement and its exact acknowledgment;
-only a completed operator protocol may then declare safe-to-disable. A later
+even that acknowledgment does not declare safe-to-disable. A later
 reactivation must create a new epoch. `calendar:false` remains entirely inert and
 cannot retrospectively record an unobserved A → disabled → A transition. The
-operator-facing retirement/adoption procedure is not yet implemented.
+public operator-facing retirement/adoption procedure is not yet implemented.
 
 ## Capacity and remaining activation gates
 
@@ -386,7 +450,7 @@ retain their broader supported range. Lateness is bounded separately to 31 days.
 Jobs still retains at most 1,000 schedules/source, 10,000 schedules/file and
 100,000 receipts/occurrences. This finite one-off bridge is **not yet a sustainable
 automatic reminder service**. Public managed configuration, final native catalog
-mounting, larger catalog discovery/hydration, operator retirement/adoption,
+mounting, larger catalog discovery/hydration, public audited operator retirement/adoption,
 capacity management,
 provider-specific uncertainty handling and physical/browser/Linux/package/updater
 qualification remain explicit gates. Current source/memory evidence and test

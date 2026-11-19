@@ -107,7 +107,7 @@ test('real migrator upgrades populated 001 without rewriting legacy rows, trigge
     const data = f.legacyData(), seq = f.db.currentSeq;
     const triggers = f.raw.query<{ name: string; sql: string }, []>("SELECT name,sql FROM sqlite_master WHERE type='trigger' ORDER BY name").all();
     const ledger = f.raw.query("SELECT * FROM _migrations WHERE version='001'").get();
-    expect(f.upgrade()).toEqual(['002', '003', '004', '005', '006', '007', '008', '009', '010', '011', '012', '013']);
+    expect(f.upgrade()).toEqual(['002', '003', '004', '005', '006', '007', '008', '009', '010', '011', '012', '013', '014']);
     expect(f.legacyData()).toEqual(data); expect(f.db.currentSeq).toBe(seq);
     expect(f.raw.query("SELECT * FROM _migrations WHERE version='001'").get()).toEqual(ledger);
     for (const trigger of triggers) expect(f.raw.query('SELECT name,sql FROM sqlite_master WHERE name=? AND type=\'trigger\'').get(trigger.name)).toEqual(trigger);

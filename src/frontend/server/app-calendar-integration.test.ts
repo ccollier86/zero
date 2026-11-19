@@ -168,6 +168,23 @@ test('private managed startup requires the exact published Workflow owner and ma
   } finally { await f.close(); }
 });
 
+test('managed inspection reuses native ownership but exposes only fresh Guardian-authorized reads', async () => {
+  const f = await fixture();
+  try {
+    const owner = await f.prepare(), before = f.memory.commands.length;
+    expect(Object.keys(owner.operations).sort()).toEqual(['inspect', 'reactivate', 'retire']);
+    const view = owner.inspectionForAuthority(f.session.authority);
+    expect(Object.keys(view)).toEqual(['get']); expect(Object.isFrozen(view)).toBe(true);
+    const inspection = await view.get();
+    expect(inspection).toMatchObject({ rules: [], evidenceOwnerRequired: true, snapshot: 'separate-source-and-jobs-observations' });
+    expect(f.memory.commands.length).toBe(before); expect(f.scheduler.list()).toEqual([]);
+    const ordinary = f.calendar.session('reader');
+    await expect(owner.inspectionForAuthority(ordinary.authority).get()).rejects.toMatchObject({ code: 'CALENDAR_FORBIDDEN' });
+    f.session.revoke(); await expect(view.get()).rejects.toBeDefined();
+    await owner.close(); await expect(view.get()).rejects.toBeDefined();
+  } finally { await f.close(); }
+});
+
 test('private Job catalog adds only the exact branded source definition and rejects native-name collisions', async () => {
   const f = await fixture();
   try {

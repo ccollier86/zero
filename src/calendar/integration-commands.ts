@@ -3,7 +3,8 @@ import type { DatabaseFindFilter } from '../databases/database-operations';
 import type { DatabaseWriteCommandContext } from '../databases/database-realm';
 import { jobSourceId } from '../jobs/source-model';
 import { CalendarError, calendarCommand } from './error';
-import { calendarHash, calendarInteger, calendarJson, calendarKey } from './validation';
+import { calendarHash, calendarInteger, calendarJson, calendarKey, calendarRecord } from './validation';
+import { calendarIntegrationControlId } from './integration-controls';
 import { calendarNow } from './hold-time';
 import { selectCalendarIntegrationQueue } from './integration-queue';
 import { effectiveCalendarAppointmentStatus, isCalendarLifecycleTerminal } from './lifecycle-model';
@@ -28,12 +29,40 @@ function currentPolicy(context: DatabaseWriteCommandContext, scopeId: string, ru
   return { current, history, view: () => integrationPolicyView(history, context.db.get('_calendar_integration_policy_current', ruleId) as IntegrationCurrentRow,
     context.db.get('_calendar_integration_policy_registrations', history.id)?.registration_json as string | null ?? null) };
 }
+/** A native selected mutation is a current-pointer CAS, not historical receipt
+ * replay. Validate it before the install request-history branch as well. */
+function selectedPolicy(context: DatabaseWriteCommandContext, scopeId: string, ruleId: string, epoch: number, input: unknown) {
+  const s = calendarRecord(input, ['id', 'epoch', 'policyDigest']), selectedEpoch = calendarInteger(s.epoch, 1);
+  if (epoch !== selectedEpoch || s.id !== calendarHash([scopeId, ruleId, selectedEpoch])
+    || typeof s.policyDigest !== 'string' || !/^[a-f0-9]{64}$/.test(s.policyDigest)) throw new CalendarError('CALENDAR_INPUT_INVALID');
+  const selected = currentPolicy(context, scopeId, ruleId, selectedEpoch);
+  const view = selected.view();
+  if (selected.current.policy_id !== s.id || view.id !== s.id || view.ruleId !== ruleId || view.epoch !== selectedEpoch
+    || selected.history.digest !== s.policyDigest || calendarHash(view.policy) !== s.policyDigest) throw new CalendarError('CALENDAR_POLICY_STALE');
+  return selected;
+}
 export function installCalendarIntegrationPolicy(context: DatabaseWriteCommandContext, input: unknown) {
   return calendarCommand(() => {
-    const { r, owner } = owned(context, input, ['policy', 'expectedEpoch', 'now']);
+    const { r, owner } = owned(context, input, ['policy', 'expectedEpoch', 'now', 'expectedSelection', 'requireRetired']);
     const policy = integrationPolicy(r.policy), expectedEpoch = calendarInteger(r.expectedEpoch), requestId = calendarKey(r.requestId), now = integrationTime(r.now);
     const identity = policy.source.identity;
     if (identity.ownerId !== owner.expectedOwnerId || identity.scopeId !== owner.scopeId || identity.databaseId !== 'calendar:' + calendarHash(owner.scopeId)) throw new CalendarError('CALENDAR_STATE_INVALID');
+    if (r.requireRetired !== undefined && typeof r.requireRetired !== 'boolean' || r.requireRetired === true && r.expectedSelection === undefined) throw new CalendarError('CALENDAR_INPUT_INVALID');
+    if (r.expectedSelection !== undefined) {
+      const selected = selectedPolicy(context, owner.scopeId, policy.ruleId, expectedEpoch, r.expectedSelection);
+      if (r.requireRetired === true) {
+        if (selected.current.state !== 'retired') throw new CalendarError('CALENDAR_POLICY_STALE');
+        if (context.db.find('_calendar_integration_control_attempts', { filters: [eq('scope_id', owner.scopeId), eq('rule_id', policy.ruleId), eq('result_id', null)], limit: 1 }).length) throw new CalendarError('CALENDAR_POLICY_STALE');
+        const registered = context.db.get('_calendar_integration_registered_sources', selected.history.source_id);
+        if (registered) {
+          if (registered.scope_id !== owner.scopeId || registered.rule_id !== policy.ruleId) throw new CalendarError('CALENDAR_STATE_INVALID');
+          const id = calendarIntegrationControlId(owner.scopeId, owner.expectedOwnerId, policy.ruleId, expectedEpoch, 'retire');
+          const result = context.db.get('_calendar_integration_control_results', id);
+          if (!result || result.scope_id !== owner.scopeId || result.state !== 'accepted' || typeof result.registration_json !== 'string'
+            || calendarRecord(JSON.parse(result.registration_json)).state !== 'retired') throw new CalendarError('CALENDAR_POLICY_STALE');
+        }
+      }
+    }
     const previous = context.db.find('_calendar_integration_policy_history', { filters: [eq('scope_id', owner.scopeId), eq('request_id', requestId)], limit: 1 })[0] as IntegrationPolicyRow | undefined;
     const digest = calendarHash(policy), sourceId = jobSourceId(identity);
     const binding = context.db.get('_calendar_integration_rule_sources', policy.ruleId);
@@ -74,8 +103,9 @@ export function activateCalendarIntegrationPolicy(context: DatabaseWriteCommandC
 }
 export function retireCalendarIntegrationPolicy(context: DatabaseWriteCommandContext, input: unknown) {
   return calendarCommand(() => {
-    const { r, owner } = owned(context, input, ['ruleId', 'epoch', 'now']);
-    const selected = currentPolicy(context, owner.scopeId, r.ruleId, r.epoch);
+    const { r, owner } = owned(context, input, ['ruleId', 'epoch', 'now', 'expectedSelection']);
+    const selected = r.expectedSelection === undefined ? currentPolicy(context, owner.scopeId, r.ruleId, r.epoch)
+      : selectedPolicy(context, owner.scopeId, calendarKey(r.ruleId, 64), calendarInteger(r.epoch, 1), r.expectedSelection);
     if (selected.current.state !== 'retired') context.db.update('_calendar_integration_policy_current', selected.current.id, { state: 'retired' });
     return selected.view();
   });

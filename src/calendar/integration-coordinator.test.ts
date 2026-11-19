@@ -4,6 +4,7 @@
  * network listeners, dependencies or generated output; every owner closes in finally.
  */
 import { expect, spyOn, test } from 'bun:test';
+import { trustedSystemServiceDataScope } from '../auth/service-data-scope';
 import { createDatabaseRef } from '../databases/database-file';
 import { observeDatabaseCoordinatorCommits } from '../databases/database-coordinator-commit-notifications';
 import { JobsError } from '../jobs/error';
@@ -18,8 +19,10 @@ import type { CalendarIntegrationPolicyView } from './integration-model';
 import type { CalendarIntegrationOwner } from './integration-runtime';
 import type { CalendarRuntime, CalendarRuntimeSource } from './runtime';
 import { memoryCalendarServiceFixture } from './test-support/memory-service-fixture';
+import { calendarHash } from './validation';
 
 function deferred() { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; }
+const capture = <T>(task: Promise<T>) => task.then(value => ({ ok: true as const, value }), error => ({ ok: false as const, error }));
 function scheduler() {
   type Definition = Parameters<CalendarIntegrationWakeScheduler['scheduleAt']>[0];
   const pending = new Map<string, Definition>(), captured: Definition[] = [];
@@ -45,16 +48,18 @@ function scheduler() {
 }
 
 async function fixture(options: { tenancy?: 'single' | 'multi'; maxOwners?: number; commitHints?: boolean;
+  beforeJobsRead?: (operation: MemoryJobsOperation) => void | Promise<void>;
   beforeJobsWrite?: (operation: MemoryJobsOperation) => void | Promise<void>;
   afterJobsWrite?: (operation: MemoryJobsOperation) => void | Promise<void> } = {}) {
   const calendar = memoryCalendarServiceFixture({ tenancy: options.tenancy ?? 'single' });
   const all: CalendarIntegrationCoordinator[] = [], contexts: StepContext[] = [], attributionOwner = {};
-  const attributions: unknown[] = [];
+  const attributions: unknown[] = [], sourceReads: string[] = [];
   let coordinator: CalendarIntegrationCoordinator | undefined;
   let jobs: Awaited<ReturnType<typeof memorySourceJobsFixture>> | undefined;
   let clock: ReturnType<typeof spyOn<typeof Date, 'now'>> | undefined;
   let beforeObservation: (() => Promise<void>) | null = null;
   let beforeVerify: ((owner: CalendarIntegrationOwner) => Promise<void>) | null = null;
+  let beforeSourceCommand: ((name: string) => Promise<void>) | null = null;
   let discoveryCalls = 0, ownerCalls = 0, capabilityCalls = 0, proofs = 0, pinCalls = 0;
   let installedSource: CalendarRuntimeSource | null = null, removeHints: (() => void) | undefined;
   const source = (value: CalendarRuntimeSource) => { installedSource = value; (calendar.runtime as unknown as { source: CalendarRuntimeSource }).source = value; };
@@ -62,13 +67,14 @@ async function fixture(options: { tenancy?: 'single' | 'multi'; maxOwners?: numb
     jobs = await memorySourceJobsFixture({ tenancy: options.tenancy ?? 'single', definition: CALENDAR_OBSERVATION_JOB,
       registerWorkflow(registry) { registerCalendarObservationWorkflow(registry, () => ({ async execute(context) {
         contexts.push(context); await beforeObservation?.(); return coordinator!.execute(context);
-      } })); }, beforeWrite: options.beforeJobsWrite, afterWrite: options.afterJobsWrite });
+      } })); }, beforeRead: options.beforeJobsRead, beforeWrite: options.beforeJobsWrite, afterWrite: options.afterJobsWrite });
     clock = spyOn(Date, 'now').mockImplementation(() => jobs!.now());
     const nativeOwner = (record: Parameters<CalendarRuntime['forIntegrationOwner']>[0]): CalendarIntegrationOwner => {
       ownerCalls++;
       const owner = calendar.runtime.forIntegrationOwner(record);
       return { ...owner, async verify(opts) { proofs++; await beforeVerify?.(owner); return owner.verify(opts); },
-        command(name, input, opts) { attributions.push(currentLoggingAttribution(attributionOwner)); return owner.command(name, input, opts); } };
+        read(name, input, opts) { sourceReads.push(name); return owner.read(name, input, opts); },
+        async command(name, input, opts) { attributions.push(currentLoggingAttribution(attributionOwner)); await beforeSourceCommand?.(name); return owner.command(name, input, opts); } };
     };
     const make = (rules: readonly CalendarObservationRule[] = [{ id: 'observe', version: '1', dueOffsetMs: 0, maxLatenessMs: 60_000 }]) => {
       const value = new CalendarIntegrationCoordinator({ rules,
@@ -97,13 +103,14 @@ async function fixture(options: { tenancy?: 'single' | 'multi'; maxOwners?: numb
     const owner = calendar.runtime.forIntegrationOwner(record);
     const appointment = (key = 'appointment', offset = 0) => session.api.appointments.create({ title: 'PRIVATE_TITLE', resourceIds: [resource.id],
       startAt: new Date(jobs!.now() + offset).toISOString(), endAt: new Date(jobs!.now() + offset + 60_000).toISOString(), timeZone: 'UTC' }, { idempotencyKey: key });
-    return { calendar, jobs, session, resource, record, owner, contexts, attributions, attributionOwner, appointment,
+    return { calendar, jobs, session, resource, record, owner, contexts, attributions, sourceReads, attributionOwner, appointment,
       get coordinator() { return coordinator!; },
       install() { source(coordinator!.source); },
       replace(rules?: readonly CalendarObservationRule[]) { coordinator = make(rules); source(coordinator.source); return coordinator; },
       counters: () => ({ discoveryCalls, ownerCalls, capabilityCalls, proofs, pinCalls }),
       pauseObservation(callback: typeof beforeObservation) { beforeObservation = callback; },
       pauseVerify(callback: typeof beforeVerify) { beforeVerify = callback; },
+      pauseSourceCommand(callback: typeof beforeSourceCommand) { beforeSourceCommand = callback; },
       async close() {
         // Drain source callers, then shared Jobs callbacks and Torrent activities;
         // only then retire native evidence capabilities and physical owners.
@@ -530,5 +537,224 @@ test('background native policy writes and wake work do not inherit request loggi
     });
     await wake.flush(f.jobs.now());
     expect(f.attributions.length).toBeGreaterThan(0); expect(f.attributions.every(value => value === null)).toBe(true);
+  } finally { await f.close(); }
+});
+
+test('native inspection is existing-only and never hydrates an owner, pins a graph or provisions Jobs storage', async () => {
+  const f = await fixture({ tenancy: 'multi' }); try {
+    const absent = trustedSystemServiceDataScope({ scopeKind: 'tenant', tenantId: 'absent-owner' }), before = f.counters();
+    const expected = { id: calendarHash(['tenant:absent-owner', 'observe', 1]), epoch: 1, policyDigest: 'f'.repeat(64) };
+    expect(await f.coordinator.inspect(absent)).toBeNull();
+    await expect(f.coordinator.retire(absent, { ruleId: 'observe', expected })).rejects.toMatchObject({ code: 'CALENDAR_NOT_FOUND' });
+    await expect(f.coordinator.reactivate(absent, { ruleId: 'observe', expected })).rejects.toMatchObject({ code: 'CALENDAR_NOT_FOUND' });
+    expect(f.counters()).toEqual(before); expect(f.calendar.runtime.integrationOwners()).toHaveLength(1);
+    const empty = await f.coordinator.inspect(f.session.scope);
+    expect(empty).toMatchObject({ rules: [], retained: { policies: { used: 0 }, intents: { used: 0 } }, evidenceOwnerRequired: true,
+      snapshot: 'separate-source-and-jobs-observations' });
+    expect(f.coordinator.diagnostics().retainedOwners).toBe(0); expect(f.counters()).toMatchObject({ discoveryCalls: 0, pinCalls: 0, capabilityCalls: 0 });
+    expect(f.attributions).toHaveLength(0); expect(f.jobs.commands).toHaveLength(0); expect(f.jobs.stats().planes).toBe(0);
+    await f.coordinator.ready(f.record); await f.coordinator.drain();
+    const cold = f.replace(), counters = f.counters(), rows = f.calendar.sourceRows(f.session.scope, '_calendar_integration_policy_history');
+    const captured = await cold.inspect(f.session.scope);
+    expect(captured?.rules[0]).toMatchObject({ ruleId: 'observe', state: 'activating', configured: true, downstream: null, capacity: null });
+    expect(cold.diagnostics()).toMatchObject({ state: 'dormant', retainedOwners: 0 });
+    expect(f.counters()).toMatchObject({ discoveryCalls: counters.discoveryCalls, pinCalls: counters.pinCalls });
+    expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_policy_history')).toEqual(rows);
+    expect(f.jobs.commands).toHaveLength(0); expect(f.jobs.stats().planes).toBe(0);
+    const cancelled = new AbortController(); cancelled.abort(new Error('pre-aborted-inspection'));
+    await expect(cold.inspect(f.session.scope, { signal: cancelled.signal })).rejects.toThrow('pre-aborted-inspection');
+    expect(cold.diagnostics().retainedOwners).toBe(0); expect(f.calendar.stats().activeLeases).toBe(0);
+  } finally { await f.close(); }
+});
+
+test('native inspection reports bounded redacted source and Jobs facts before and after intake drainage', async () => {
+  const f = await fixture(), wake = scheduler(); try {
+    await f.coordinator.ready(f.record); const appointment = await f.appointment(); await f.coordinator.start(wake);
+    const commands = f.jobs.commands.length, sourceWrites = f.attributions.length, pins = f.counters().pinCalls;
+    const view = await f.coordinator.inspect(f.session.scope), rule = view!.rules[0]!;
+    expect(view).toMatchObject({ evidenceOwnerRequired: true, snapshot: 'separate-source-and-jobs-observations',
+      retained: { policies: { used: 1 }, intents: { used: 1 } },
+      dispatch: { pending: false, unknown: false, blocked: false, accepted: true, claimed: false }, effects: { admittedButUnsettled: false } });
+    expect(rule).toMatchObject({ ruleId: 'observe', epoch: 1, state: 'active', configured: true, pendingControl: null,
+      downstream: { generation: 1, revision: 1, state: 'active', matchesPolicy: true }, capacity: { sourceSchedules: { used: 1 }, file: { schedules: { used: 1 }, sources: { used: 1 }, sourcePolicies: { used: 1 } } } });
+    expect(rule.selection).toEqual({ id: rule.id, epoch: rule.epoch, policyDigest: rule.policyDigest });
+    for (const budget of [view!.retained.policies, view!.retained.intents, rule.capacity!.sourceSchedules, ...Object.values(rule.capacity!.file)]) {
+      expect(budget.limit).toBeGreaterThanOrEqual(budget.used); expect(budget.remaining).toBe(budget.limit - budget.used);
+    }
+    const wire = JSON.stringify(view);
+    for (const secret of ['PRIVATE_', f.resource.id, appointment.id, 'jobsKey', 'jobs_key', 'createKey', 'rootHash', 'rootDirectory', 'workflow', 'pinInput', 'initiatedBy', 'executionId', 'instanceId', 'safeToDisable']) expect(wire).not.toContain(secret);
+    expect(f.jobs.commands).toHaveLength(commands); expect(f.attributions).toHaveLength(sourceWrites); expect(f.counters().pinCalls).toBe(pins);
+    await f.coordinator.drain(); const after = await f.coordinator.inspect(f.session.scope);
+    expect(after).toEqual(view); expect(after!.evidenceOwnerRequired).toBe(true);
+    expect(f.owner.signal.aborted).toBe(false); expect(f.calendar.stats().activeLeases).toBe(0); expect(f.jobs.stats().activeLeases).toBe(0);
+  } finally { await f.close(); }
+});
+
+test('native inspection retains admitted-but-unsettled evidence through intake drain without claiming effects drained', async () => {
+  const f = await fixture(), wake = scheduler(), entered = deferred(), gate = deferred();
+  try {
+    f.pauseSourceCommand(async name => { if (name === 'calendar.integration.effect.settle') { entered.resolve(); await gate.promise; } });
+    await f.coordinator.ready(f.record); await f.appointment(); await f.coordinator.start(wake); await f.jobs.tick(); await entered.promise;
+    expect((await f.coordinator.inspect(f.session.scope))!.effects).toEqual({ admittedButUnsettled: true });
+    await f.coordinator.drain();
+    const retained = await f.coordinator.inspect(f.session.scope); expect(retained!.effects.admittedButUnsettled).toBe(true); expect(retained!.evidenceOwnerRequired).toBe(true);
+    expect(retained).not.toHaveProperty('safeToDisable'); expect(f.calendar.stats().activeLeases).toBe(0);
+    gate.resolve(); await untilMemoryJobs(() => f.calendar.sourceRows(f.session.scope, '_calendar_integration_effect_outcomes').length === 1);
+    expect((await f.coordinator.inspect(f.session.scope))!.effects.admittedButUnsettled).toBe(false);
+  } finally { gate.resolve(); await f.close(); }
+});
+
+test('native selected retirement blocks readiness until explicit same-policy reactivation and stale selections stay inert', async () => {
+  const f = await fixture(), wake = scheduler(); try {
+    f.install(); await f.coordinator.start(wake);
+    const initial = (await f.coordinator.inspect(f.session.scope))!.rules[0]!, input = { ruleId: initial.ruleId, expected: initial.selection };
+    const cancelled = new AbortController(); cancelled.abort(new Error('pre-aborted-control'));
+    const writes = f.attributions.length, jobs = f.jobs.commands.length;
+    await expect(f.coordinator.retire(f.session.scope, { ...input, signal: cancelled.signal })).rejects.toThrow('pre-aborted-control');
+    await expect(f.coordinator.reactivate(f.session.scope, { ...input, signal: cancelled.signal })).rejects.toThrow('pre-aborted-control');
+    await expect(f.coordinator.retire(f.session.scope, { ...input, expected: { ...input.expected, policyDigest: '0'.repeat(64) } })).rejects.toMatchObject({ code: 'CALENDAR_POLICY_STALE' });
+    expect(f.attributions).toHaveLength(writes); expect(f.jobs.commands).toHaveLength(jobs);
+    const retired = await f.coordinator.retire(f.session.scope, input);
+    expect(retired).toEqual({ ruleId: initial.ruleId, selection: initial.selection, localState: 'retired', downstream: 'retired', evidenceOwnerRequired: true });
+    await expect(f.coordinator.ready(f.record)).rejects.toMatchObject({ code: 'CALENDAR_NOT_READY' });
+    expect((await f.coordinator.inspect(f.session.scope))!.rules[0]).toMatchObject({ id: initial.id, state: 'retired', downstream: { state: 'retired' } });
+    const reactivated = await f.coordinator.reactivate(f.session.scope, input);
+    expect(reactivated).toMatchObject({ ruleId: initial.ruleId, localState: 'active', downstream: 'active', selection: { epoch: initial.epoch + 1 }, evidenceOwnerRequired: true });
+    expect(reactivated.selection.id).not.toBe(initial.id);
+    await expect(f.coordinator.retire(f.session.scope, input)).rejects.toMatchObject({ code: 'CALENDAR_POLICY_STALE' });
+    await expect(f.coordinator.reactivate(f.session.scope, input)).rejects.toMatchObject({ code: 'CALENDAR_POLICY_STALE' });
+    await f.coordinator.ready(f.record); await f.appointment('after-explicit-reactivation'); f.coordinator.hint(createDatabaseRef(f.record.id)); await wake.flush(f.jobs.now());
+    const current = (await f.coordinator.inspect(f.session.scope))!.rules[0]!;
+    expect(current.selection).toEqual(reactivated.selection); expect(current.downstream).toMatchObject({ state: 'active', generation: 2, matchesPolicy: true });
+    expect(f.jobs.rows(f.session.scope, 'job_schedules')).toHaveLength(1); expect(f.jobs.commands.filter(row => row.name === 'jobs.source.register')).toHaveLength(2);
+  } finally { await f.close(); }
+});
+
+test('a restarted native coordinator can inspect and retire a removed rule but cannot reactivate it or a dormant rule', async () => {
+  const f = await fixture(), wake = scheduler(); try {
+    await f.coordinator.start(wake); const selected = (await f.coordinator.inspect(f.session.scope))!.rules[0]!; await f.coordinator.drain();
+    const removed = f.replace([{ id: 'different-rule', version: '1', dueOffsetMs: 0, maxLatenessMs: 60_000 }]);
+    const cold = await removed.inspect(f.session.scope); expect(cold!.rules[0]).toMatchObject({ configured: false, selection: selected.selection, downstream: { state: 'active' } });
+    expect(removed.diagnostics().retainedOwners).toBe(0);
+    const retired = await removed.retire(f.session.scope, { ruleId: selected.ruleId, expected: selected.selection }); expect(retired.downstream).toBe('retired');
+    await removed.start(wake);
+    const before = f.attributions.length;
+    await expect(removed.reactivate(f.session.scope, { ruleId: selected.ruleId, expected: selected.selection })).rejects.toMatchObject({ code: 'CALENDAR_NOT_READY' });
+    expect(f.attributions).toHaveLength(before); expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_policy_history')).toHaveLength(1);
+    expect((await removed.inspect(f.session.scope))!.rules[0]).toMatchObject({ configured: false, state: 'retired', downstream: { state: 'retired' } });
+    await removed.drain(); const dormant = f.replace(), writes = f.attributions.length;
+    await expect(dormant.reactivate(f.session.scope, { ruleId: selected.ruleId, expected: selected.selection })).rejects.toMatchObject({ code: 'CALENDAR_NOT_READY' });
+    expect(f.attributions).toHaveLength(writes); expect(dormant.diagnostics().retainedOwners).toBe(0);
+    expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_policy_history')).toHaveLength(1);
+  } finally { await f.close(); }
+});
+
+test('native inspection refuses a source policy changed during a separate Jobs read', async () => {
+  const entered = deferred(), gate = deferred(); let armed = false;
+  const f = await fixture({ beforeJobsRead: async operation => {
+    if (armed && operation.name === 'jobs.source.capacity') { entered.resolve(); await gate.promise; }
+  } }), wake = scheduler(); let inspecting: ReturnType<typeof capture> | undefined;
+  try {
+    await f.coordinator.start(wake); const before = (await f.coordinator.inspect(f.session.scope))!.rules[0]!;
+    armed = true; inspecting = capture(f.coordinator.inspect(f.session.scope)); await entered.promise;
+    expect(f.calendar.stats().activeLeases).toBe(0); expect(f.jobs.stats().activeLeases).toBe(0);
+    await f.owner.command('calendar.integration.policy.retire', { ruleId: before.ruleId, epoch: before.epoch }, { idempotencyKey: 'source-changed-during-inspection' });
+    gate.resolve(); const result = await inspecting; expect(result.ok).toBe(false); if (!result.ok) expect(result.error.code).toBe('CALENDAR_POLICY_STALE');
+    expect(f.jobs.commands.filter(row => row.name === 'jobs.source.retire')).toHaveLength(0);
+  } finally { gate.resolve(); await inspecting; await f.close(); }
+});
+
+test('a cancelled native control waiting in the owner queue is proven not started and leaves the active rule untouched', async () => {
+  const f = await fixture(), wake = scheduler(), entered = deferred(), gate = deferred(); let firing: Promise<boolean> | undefined;
+  try {
+    await f.coordinator.start(wake); const selected = (await f.coordinator.inspect(f.session.scope))!.rules[0]!;
+    f.pauseVerify(async () => { entered.resolve(); await gate.promise; });
+    f.coordinator.hint(createDatabaseRef(f.record.id)); firing = wake.fire(f.jobs.now()); void firing.catch(() => {}); await entered.promise;
+    const cancelled = new AbortController(), queued = capture(f.coordinator.retire(f.session.scope, { ruleId: selected.ruleId, expected: selected.selection, signal: cancelled.signal }));
+    expect(f.coordinator.diagnostics().intake.queued).toBe(1); cancelled.abort(new Error('synthetic-queued-cancel'));
+    const result = await queued; expect(result.ok).toBe(false); if (!result.ok) expect(result.error.message).toBe('synthetic-queued-cancel');
+    expect(f.coordinator.diagnostics().intake.queued).toBe(0); gate.resolve(); await firing;
+    const current = (await f.coordinator.inspect(f.session.scope))!.rules[0]!; expect(current.selection).toEqual(selected.selection); expect(current.state).toBe('active');
+    expect(f.jobs.commands.filter(row => row.name === 'jobs.source.retire')).toHaveLength(0);
+    expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_controls')).toHaveLength(1);
+  } finally { gate.resolve(); await firing?.catch(() => {}); await f.close(); }
+});
+
+test('cancelling an admitted native retirement reports unknown and original accepted retirement remains reconcilable', async () => {
+  const entered = deferred(), gate = deferred(); let hold = true;
+  const f = await fixture({ afterJobsWrite: async operation => {
+    if (hold && operation.name === 'jobs.source.retire') { hold = false; entered.resolve(); await gate.promise; }
+  } }), wake = scheduler(); let retiring: ReturnType<typeof capture> | undefined;
+  try {
+    await f.coordinator.start(wake); const selected = (await f.coordinator.inspect(f.session.scope))!.rules[0]!, cancelled = new AbortController();
+    retiring = capture(f.coordinator.retire(f.session.scope, { ruleId: selected.ruleId, expected: selected.selection, signal: cancelled.signal })); await entered.promise;
+    cancelled.abort(new Error('synthetic-active-cancel'));
+    const result = await retiring; expect(result.ok).toBe(false); if (!result.ok) expect(result.error).toMatchObject({ code: 'CALENDAR_OUTCOME_UNKNOWN', outcome: 'unknown' });
+    expect((await f.owner.read<CalendarIntegrationPolicyView>('calendar.integration.policy', { ruleId: selected.ruleId })).state).toBe('retired');
+    gate.resolve();
+    await untilMemoryJobs(() => f.calendar.sourceRows(f.session.scope, '_calendar_integration_control_attempts').some(row => row.last_failure === 'JOBS_OUTCOME_UNKNOWN'));
+    const partial = (await f.coordinator.inspect(f.session.scope))!.rules[0]!;
+    expect(partial).toMatchObject({ selection: selected.selection, state: 'retired', downstream: { state: 'retired' }, pendingControl: { action: 'retire', lastFailure: 'JOBS_OUTCOME_UNKNOWN' } });
+    const original = f.calendar.sourceRows(f.session.scope, '_calendar_integration_controls').find(row => row.action === 'retire')!;
+    f.jobs.advance(1000);
+    const reconciled = await f.coordinator.retire(f.session.scope, { ruleId: selected.ruleId, expected: selected.selection }); expect(reconciled.downstream).toBe('retired');
+    expect((await f.coordinator.inspect(f.session.scope))!.rules[0]!.pendingControl).toBeNull();
+    expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_controls').find(row => row.action === 'retire')!.jobs_key).toBe(original.jobs_key);
+    expect(f.jobs.commands.filter(row => row.name === 'jobs.source.retire')).toHaveLength(1);
+  } finally { gate.resolve(); await retiring; await f.close(); }
+});
+
+test('trusted native inspection revocation during its first Jobs read prevents capacity reads and never retains callbacks', async () => {
+  const entered = deferred(), gate = deferred(), reads: string[] = []; let armed = false, revoked = false, checks = 0, confirmations = 0;
+  const f = await fixture({ beforeJobsRead: async operation => {
+    if (!armed) return;
+    reads.push(operation.name);
+    if (operation.name === 'jobs.source') { entered.resolve(); await gate.promise; }
+  } }), wake = scheduler(); let inspecting: ReturnType<typeof capture> | undefined;
+  try {
+    await f.coordinator.start(wake); armed = true; f.sourceReads.length = 0;
+    inspecting = capture(f.coordinator.inspect(f.session.scope, {
+      assertCurrent() { checks++; if (revoked) throw new Error('trusted-native-authority-revoked'); },
+      async confirmCurrent() { confirmations++; if (revoked) throw new Error('trusted-native-confirmation-revoked'); },
+    }));
+    await entered.promise; expect(reads).toEqual(['jobs.source']); expect(confirmations).toBe(3);
+    expect(f.calendar.stats().activeLeases).toBe(0); expect(f.jobs.stats().activeLeases).toBe(0);
+    revoked = true; gate.resolve(); const result = await inspecting;
+    expect(result.ok).toBe(false); if (!result.ok) expect(result.error.message).toBe('trusted-native-authority-revoked');
+    expect(reads).toEqual(['jobs.source']); expect(f.sourceReads).toEqual(['calendar.integration.inspection', 'calendar.integration.policies']);
+    const oldChecks = checks, oldConfirmations = confirmations; armed = false;
+    expect((await f.coordinator.inspect(f.session.scope))!.rules[0]!.state).toBe('active');
+    expect(checks).toBe(oldChecks); expect(confirmations).toBe(oldConfirmations);
+  } finally { gate.resolve(); await inspecting; await f.close(); }
+});
+
+test('trusted asynchronous confirmation after owner verification prevents the first private source query', async () => {
+  const reads: string[] = []; let armed = false;
+  const f = await fixture({ beforeJobsRead(operation) { if (armed) reads.push(operation.name); } }), wake = scheduler();
+  try {
+    await f.coordinator.start(wake); armed = true; f.sourceReads.length = 0;
+    const proofs = f.counters().proofs, acquisitions = f.calendar.stats().acquisitions; let confirmations = 0;
+    await expect(f.coordinator.inspect(f.session.scope, { async confirmCurrent() {
+      confirmations++; expect(f.counters().proofs).toBe(proofs + 1); expect(f.calendar.stats().activeLeases).toBe(0);
+      await Promise.resolve(); throw new Error('trusted-async-confirmation-retired');
+    } })).rejects.toThrow('trusted-async-confirmation-retired');
+    expect(confirmations).toBe(1); expect(f.calendar.stats().acquisitions).toBe(acquisitions + 1);
+    expect(f.sourceReads).toEqual([]); expect(reads).toEqual([]);
+    expect(f.coordinator.diagnostics().evidence).toMatchObject({ active: 0, queued: 0 });
+    expect(f.coordinator.diagnostics().retainedOwners).toBe(1);
+  } finally { await f.close(); }
+});
+
+test('a yielding trusted synchronous inspection guard fails closed before owner proof or private reads', async () => {
+  const f = await fixture(); try {
+    let checks = 0, confirmations = 0; const before = f.calendar.stats().acquisitions;
+    await expect(f.coordinator.inspect(f.session.scope, {
+      async assertCurrent() { checks++; await Promise.resolve(); throw new Error('consumed-invalid-guard-continuation'); },
+      async confirmCurrent() { confirmations++; },
+    })).rejects.toMatchObject({ code: 'AUTH_STATE_INVARIANT_FAILED' });
+    await Promise.resolve();
+    expect(checks).toBe(1); expect(confirmations).toBe(0); expect(f.counters().proofs).toBe(0);
+    expect(f.calendar.stats().acquisitions).toBe(before); expect(f.sourceReads).toEqual([]); expect(f.jobs.commands).toHaveLength(0);
+    expect(f.coordinator.diagnostics()).toMatchObject({ retainedOwners: 0, evidence: { active: 0, queued: 0 } });
   } finally { await f.close(); }
 });

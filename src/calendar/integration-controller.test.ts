@@ -8,14 +8,16 @@ import type { WorkPool } from '../workers/work-pool';
 import { jobSourceId, type JobSourceRegistration } from '../jobs/source-model';
 import type { SourceJobs } from '../jobs/source-service';
 import { calendarObservationPolicy, CALENDAR_OBSERVATION_WORKFLOW, normalizeCalendarObservationInput } from './integration-catalog';
-import { CalendarIntegrationPolicyController, type CalendarIntegrationEligibilityGuards } from './integration-controller';
+import { CalendarIntegrationPolicyController, type CalendarIntegrationEligibilityGuards, type CalendarIntegrationPolicySelection } from './integration-controller';
 import type { CalendarIntegrationControlView } from './integration-controls';
 import type { CalendarIntegrationPolicySpec, CalendarIntegrationPolicyView } from './integration-model';
+import type { CalendarIntegrationOwner } from './integration-runtime';
 import { calendarHash } from './validation';
 import { eventuallyCalendar, memoryCalendarServiceFixture } from './test-support/memory-service-fixture';
 
 const capture = <T>(task: Promise<T>) => task.then(value => ({ ok: true as const, value }), error => ({ ok: false as const, error }));
 function deferred() { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; }
+const selection = (policy: CalendarIntegrationPolicyView): CalendarIntegrationPolicySelection => ({ id: policy.id, epoch: policy.epoch, policyDigest: calendarHash(policy.policy) });
 
 async function fixture() {
   const calendar = memoryCalendarServiceFixture({ tenancy: 'single' }), session = calendar.session('owner', { manager: true });
@@ -78,7 +80,7 @@ async function fixture() {
         async cancel() { throw new Error('No schedules.'); }, async get() { throw new Error('No schedules.'); } } };
     };
     const controllers: CalendarIntegrationPolicyController[] = [];
-    const controller = () => { const result = new CalendarIntegrationPolicyController({ owner, jobs, now: () => now }); controllers.push(result); return result; };
+    const controller = (source: CalendarIntegrationOwner = owner) => { const result = new CalendarIntegrationPolicyController({ owner: source, jobs, now: () => now }); controllers.push(result); return result; };
     const policy = (id = 'observation', version = '1') => calendarObservationPolicy(owner,
       { id, version, dueOffsetMs: 0, maxLatenessMs: 60_000 }, { name: CALENDAR_OBSERVATION_WORKFLOW, version: 1, definitionId: 'fixed-definition', versionId: 'fixed-version', fingerprint: '3'.repeat(64) });
     return { calendar, session, owner, resource, controller, policy, bindings, mutations, currents, receipts,
@@ -282,4 +284,185 @@ test('different rules progress independently and controller close leaves native 
     await expect(c.prepare(f.policy('c'))).rejects.toMatchObject({ code: 'CALENDAR_NOT_READY' });
     expect([...f.currents.values()].every(row => row.state === 'active')).toBe(true);
   } finally { gate.resolve(); await f.close(); }
+});
+
+test('stale and forged native selections cannot change a newer policy or poison its eligibility', async () => {
+  const f = await fixture(); try {
+    const c = f.controller(), a = await c.prepare(f.policy()); await c.activate(a.ruleId);
+    const b = await c.prepare(f.policy('observation', '2')); await c.activate(b.ruleId);
+    const live = f.bindings.at(-1)!.guards, calls = f.factoryCalls(), count = f.mutations.length;
+    for (const expected of [selection(a), { ...selection(b), policyDigest: '0'.repeat(64) }]) {
+      const retiring = c.retire(b.ruleId, { expected }); live.assertEligible();
+      await expect(retiring).rejects.toMatchObject({ code: 'CALENDAR_POLICY_STALE' }); live.assertEligible();
+      await expect(c.activate(b.ruleId, { expected })).rejects.toMatchObject({ code: 'CALENDAR_POLICY_STALE' }); live.assertEligible();
+      const replacing = c.prepare(f.policy('observation', '3'), { expected }); live.assertEligible();
+      await expect(replacing).rejects.toMatchObject({ code: 'CALENDAR_POLICY_STALE' }); live.assertEligible();
+    }
+    for (const expected of [{ ...selection(b), epoch: b.epoch + 1 }, { ...selection(b), id: 'f'.repeat(64) }, { ...selection(b), jobs: {} }]) {
+      await expect(c.retire(b.ruleId, { expected })).rejects.toMatchObject({ code: 'CALENDAR_INPUT_INVALID' }); live.assertEligible();
+    }
+    expect((await f.owner.read<CalendarIntegrationPolicyView>('calendar.integration.policy', { ruleId: b.ruleId })).id).toBe(b.id);
+    expect(c.diagnostics().retirementMarkers).toBe(0); expect(f.factoryCalls()).toBe(calls); expect(f.mutations).toHaveLength(count);
+  } finally { await f.close(); }
+});
+
+test('invalid and pre-aborted selected controls do not quiesce a healthy source', async () => {
+  const f = await fixture(); try {
+    const c = f.controller(), a = await c.prepare(f.policy()); await c.activate(a.ruleId);
+    const live = f.bindings.at(-1)!.guards, cancelled = new AbortController(); cancelled.abort(new Error('synthetic-cancel'));
+    for (const task of [c.retire(a.ruleId, { expected: selection(a), signal: cancelled.signal }),
+      c.activate(a.ruleId, { expected: selection(a), signal: cancelled.signal }),
+      c.prepare(f.policy('observation', '2'), { expected: selection(a), signal: cancelled.signal }),
+      c.prepare(f.policy('observation', '2'), { signal: cancelled.signal })]) {
+      live.assertEligible(); await expect(task).rejects.toThrow('synthetic-cancel'); live.assertEligible();
+    }
+    await expect(c.prepare(f.policy('observation', '2'), { requireRetired: true })).rejects.toMatchObject({ code: 'CALENDAR_INPUT_INVALID' });
+    await expect(c.prepare(f.policy('observation', '2'), { expected: selection(a), requireRetired: true })).rejects.toMatchObject({ code: 'CALENDAR_POLICY_STALE' });
+    const policy = f.policy('observation', '2');
+    for (const opts of [undefined, { expected: selection(a) }]) {
+      await expect(c.prepare({ ...policy, source: { ...policy.source, identity: { ...policy.source.identity, ownerId: 'wrong-owner' } } }, opts))
+        .rejects.toMatchObject({ code: 'CALENDAR_STATE_INVALID' }); live.assertEligible();
+      await expect(c.prepare({ ...policy, source: { ...policy.source, identity: { ...policy.source.identity, domain: 'wrong-permanent-source' } } }, opts))
+        .rejects.toMatchObject({ code: 'CALENDAR_INTENT_CONFLICT' }); live.assertEligible();
+    }
+    live.assertEligible(); expect(c.diagnostics().retirementMarkers).toBe(0); expect(f.mutations).toHaveLength(1);
+  } finally { await f.close(); }
+});
+
+test('busy queued stale selections are detached and never quiesce the current cell', async () => {
+  const f = await fixture(), gate = deferred(); let blocker: Promise<unknown> | undefined;
+  const owned: Array<ReturnType<typeof capture>> = [];
+  try {
+    const c = f.controller(), a = await c.prepare(f.policy()); await c.activate(a.ruleId);
+    const b = await c.prepare(f.policy('observation', '2')); await c.activate(b.ruleId);
+    const live = f.bindings.at(-1)!.guards, pool = (c as unknown as { pool: WorkPool }).pool;
+    blocker = pool.run(() => gate.promise, { key: 'calendar-policy:' + calendarHash([f.owner.owner.id, b.ruleId]) });
+    const stale = { ...selection(a) };
+    owned.push(capture(c.retire(b.ruleId, { expected: stale })), capture(c.activate(b.ruleId, { expected: stale })),
+      capture(c.prepare(f.policy('observation', '3'), { expected: stale })));
+    Object.assign(stale, selection(b)); live.assertEligible(); expect(c.diagnostics().pool.queued).toBe(3);
+    expect(c.diagnostics().retirementMarkers).toBe(0); gate.resolve(); await blocker;
+    for (const result of await Promise.all(owned)) { expect(result.ok).toBe(false); if (!result.ok) expect(result.error.code).toBe('CALENDAR_POLICY_STALE'); }
+    live.assertEligible(); expect(f.mutations).toHaveLength(2);
+  } finally { gate.resolve(); await blocker; await Promise.allSettled(owned); await f.close(); }
+});
+
+test('selected retirement stays exact and requires deliberate retired selection to create a new same-policy epoch', async () => {
+  const f = await fixture(); try {
+    const c = f.controller(), policy = f.policy(), a = await c.prepare(policy); await c.activate(a.ruleId, { expected: selection(a) });
+    const old = f.bindings.at(-1)!.guards, retiring = c.retire(a.ruleId, { expected: selection(a) });
+    expect(() => old.assertEligible()).toThrow();
+    const retired = await retiring; expect(retired.policy.id).toBe(a.id); expect(retired.policy.state).toBe('retired'); expect(retired.result).toBe('retired');
+    await expect(c.prepare(policy)).rejects.toMatchObject({ code: 'CALENDAR_POLICY_STALE' });
+    await expect(c.prepare(f.policy('observation', '2'))).rejects.toMatchObject({ code: 'CALENDAR_POLICY_STALE' });
+    const b = await c.prepare(policy, { expected: selection(a), requireRetired: true }); expect(b.epoch).toBe(a.epoch + 1); expect(b.id).not.toBe(a.id);
+    const activated = await c.activate(b.ruleId, { expected: selection(b) }); expect(activated.result?.state === 'accepted' && activated.result.registration.generation).toBe(2);
+    const live = f.bindings.at(-1)!.guards; live.assertEligible();
+    await expect(c.retire(b.ruleId, { expected: selection(a) })).rejects.toMatchObject({ code: 'CALENDAR_POLICY_STALE' });
+    await expect(c.activate(b.ruleId, { expected: selection(a) })).rejects.toMatchObject({ code: 'CALENDAR_POLICY_STALE' });
+    live.assertEligible(); expect(() => old.assertEligible()).toThrow(); expect(c.diagnostics().retirementMarkers).toBe(0);
+  } finally { await f.close(); }
+});
+
+test('selected unknown retirement blocks all preparation until its original downstream key is accepted', async () => {
+  const f = await fixture(); try {
+    const c = f.controller(), a = await c.prepare(f.policy()); await c.activate(a.ruleId); f.loseRetirement();
+    await expect(c.retire(a.ruleId, { expected: selection(a) })).rejects.toMatchObject({ code: 'JOBS_OUTCOME_UNKNOWN' });
+    const original = await f.owner.read<CalendarIntegrationControlView>('calendar.integration.control', { ruleId: a.ruleId, epoch: a.epoch, action: 'retire' });
+    expect(original.result).toBeNull(); expect(original.lastFailure).toBe('JOBS_OUTCOME_UNKNOWN');
+    await expect(c.prepare(f.policy(), { expected: selection(a), requireRetired: true })).rejects.toMatchObject({ code: 'CALENDAR_NOT_READY' });
+    await expect(c.prepare(f.policy())).rejects.toMatchObject({ code: 'CALENDAR_NOT_READY' });
+    const retired = await c.retire(a.ruleId, { expected: selection(a) }); expect(retired.control?.jobsKey).toBe(original.jobsKey); expect(retired.control?.result?.state).toBe('accepted');
+    expect(f.mutations.map(row => row.action)).toEqual(['activate', 'retire']);
+    const b = await c.prepare(f.policy(), { expected: selection(a), requireRetired: true }); expect(b.epoch).toBe(2);
+  } finally { await f.close(); }
+});
+
+test('selected retirement acknowledges late activation without reviving the epoch', async () => {
+  const f = await fixture(); let retiring: ReturnType<CalendarIntegrationPolicyController['retire']> | undefined;
+  try {
+    const c = f.controller(), a = await c.prepare(f.policy());
+    f.afterActivate(() => { retiring = c.retire(a.ruleId, { expected: selection(a) }); });
+    await expect(c.activate(a.ruleId, { expected: selection(a) })).rejects.toMatchObject({ code: 'JOBS_OUTCOME_UNKNOWN' });
+    const retired = await retiring!; expect(retired.policy.id).toBe(a.id); expect(retired.policy.state).toBe('retired'); expect(retired.result).toBe('retired');
+    const original = await f.owner.read<CalendarIntegrationControlView>('calendar.integration.control', { ruleId: a.ruleId, epoch: a.epoch, action: 'activate' });
+    expect(original.result?.state).toBe('accepted'); expect(f.mutations.map(row => row.action)).toEqual(['activate', 'retire']);
+    await expect(c.prepare(f.policy())).rejects.toMatchObject({ code: 'CALENDAR_POLICY_STALE' });
+  } finally { await retiring?.catch(() => {}); await f.close(); }
+});
+
+test('a selected retirement source CAS refuses a newer controller policy without retiring its Jobs source', async () => {
+  const f = await fixture(), entered = deferred(), gate = deferred(); let retiring: ReturnType<typeof capture> | undefined;
+  try {
+    const source: CalendarIntegrationOwner = { ...f.owner, async command(name, input, options) {
+      if (name === 'calendar.integration.policy.retire') { entered.resolve(); await gate.promise; }
+      return f.owner.command(name, input, options);
+    } };
+    const c = f.controller(source), a = await c.prepare(f.policy()); await c.activate(a.ruleId);
+    retiring = capture(c.retire(a.ruleId, { expected: selection(a) })); await entered.promise;
+    const other = f.controller(), b = await other.prepare(f.policy('observation', '2')); await other.activate(b.ruleId);
+    const live = f.bindings.at(-1)!.guards; live.assertEligible(); gate.resolve();
+    const result = await retiring; expect(result.ok).toBe(false); if (!result.ok) expect(result.error.code).toBe('CALENDAR_POLICY_STALE');
+    live.assertEligible(); expect(f.mutations.map(row => row.action)).toEqual(['activate', 'activate']);
+    const current = await f.owner.read<CalendarIntegrationPolicyView>('calendar.integration.policy', { ruleId: a.ruleId }); expect(current.id).toBe(b.id); expect(current.state).toBe('active');
+  } finally { gate.resolve(); await retiring; await f.close(); }
+});
+
+test('a selected retirement fences an already-waiting background preparation before its source command', async () => {
+  const f = await fixture(), entered = deferred(), gate = deferred();
+  let preparing: ReturnType<typeof capture> | undefined, retiring: ReturnType<typeof capture> | undefined;
+  try {
+    const source: CalendarIntegrationOwner = { ...f.owner, async command(name, input, options) {
+      if (name === 'calendar.integration.policy.install' && (input as { policy: CalendarIntegrationPolicySpec }).policy.ruleVersion === '2') { entered.resolve(); await gate.promise; }
+      return f.owner.command(name, input, options);
+    } };
+    const c = f.controller(source), a = await c.prepare(f.policy()); await c.activate(a.ruleId);
+    preparing = capture(c.prepare(f.policy('observation', '2'))); await entered.promise;
+    const retirement = capture(c.retire(a.ruleId, { expected: selection(a) })); retiring = retirement; gate.resolve();
+    const refused = await preparing; expect(refused.ok).toBe(false); if (!refused.ok) expect(refused.error.code).toBe('CALENDAR_NOT_READY');
+    const retired = await retirement; expect(retired.ok).toBe(true); if (retired.ok) { expect(retired.value.policy.id).toBe(a.id); expect(retired.value.result).toBe('retired'); }
+    expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_policy_history')).toHaveLength(1);
+    expect(f.mutations.map(row => row.action)).toEqual(['activate', 'retire']);
+  } finally { gate.resolve(); await preparing; await retiring; await f.close(); }
+});
+
+test('concurrent identical selected reactivations use real source CAS, not another controller historical install replay', async () => {
+  const f = await fixture(), entered = deferred(), gate = deferred(); let preparing: ReturnType<typeof capture> | undefined, armed = false;
+  try {
+    const source: CalendarIntegrationOwner = { ...f.owner, async command(name, input, options) {
+      if (armed && name === 'calendar.integration.policy.install') { entered.resolve(); await gate.promise; }
+      return f.owner.command(name, input, options);
+    } };
+    const c = f.controller(source), a = await c.prepare(f.policy()); await c.activate(a.ruleId); await c.retire(a.ruleId, { expected: selection(a) });
+    armed = true;
+    preparing = capture(c.prepare(f.policy(), { expected: selection(a), requireRetired: true })); await entered.promise;
+    const other = f.controller(), b = await other.prepare(f.policy(), { expected: selection(a), requireRetired: true });
+    await other.activate(b.ruleId, { expected: selection(b) }); const live = f.bindings.at(-1)!.guards;
+    gate.resolve(); const refused = await preparing; expect(refused.ok).toBe(false); if (!refused.ok) expect(refused.error.code).toBe('CALENDAR_POLICY_STALE');
+    live.assertEligible(); expect(b.epoch).toBe(2); expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_policy_history')).toHaveLength(2);
+    expect(f.mutations.map(row => row.action)).toEqual(['activate', 'retire', 'activate']);
+    // Unknown/superseded selected installation is inspected, never relabelled as
+    // this caller's success just because the desired content happens to match.
+    await expect(c.prepare(f.policy(), { expected: selection(a), requireRetired: true })).rejects.toMatchObject({ code: 'CALENDAR_POLICY_STALE' }); live.assertEligible();
+  } finally { gate.resolve(); await preparing; await f.close(); }
+});
+
+test('selected source install enforces retired state, digest and original retirement acceptance in its own transaction', async () => {
+  const f = await fixture(); try {
+    const c = f.controller(), a = await c.prepare(f.policy()); await c.activate(a.ruleId);
+    const install = (expectedSelection: CalendarIntegrationPolicySelection, key: string) => f.owner.command('calendar.integration.policy.install', {
+      policy: f.policy('observation', '2'), expectedEpoch: a.epoch, expectedSelection, requireRetired: true,
+    }, { idempotencyKey: key });
+    await expect(install(selection(a), 'selected-still-live')).rejects.toMatchObject({ code: 'CALENDAR_POLICY_STALE' });
+    await f.owner.command('calendar.integration.policy.retire', { ruleId: a.ruleId, epoch: a.epoch, expectedSelection: selection(a) }, { idempotencyKey: 'selected-source-local-only' });
+    await expect(install(selection(a), 'selected-downstream-not-retired')).rejects.toMatchObject({ code: 'CALENDAR_POLICY_STALE' });
+    await c.retire(a.ruleId, { expected: selection(a) });
+    await expect(install({ ...selection(a), policyDigest: 'f'.repeat(64) }, 'selected-bad-digest')).rejects.toMatchObject({ code: 'CALENDAR_POLICY_STALE' });
+    await expect(install({ ...selection(a), id: 'f'.repeat(64) }, 'selected-inconsistent-id')).rejects.toMatchObject({ code: 'CALENDAR_INPUT_INVALID' });
+    const installed = await install(selection(a), 'selected-valid-source-cas') as CalendarIntegrationPolicyView; expect(installed.epoch).toBe(2);
+    // A fresh source command still cannot use the old selection after install.
+    await expect(f.owner.command('calendar.integration.policy.install', { policy: f.policy('observation', '3'), expectedEpoch: a.epoch,
+      expectedSelection: selection(a), requireRetired: true }, { idempotencyKey: 'selected-now-stale' })).rejects.toMatchObject({ code: 'CALENDAR_POLICY_STALE' });
+    expect(f.calendar.sourceRows(f.session.scope, '_calendar_integration_policy_history')).toHaveLength(2);
+  } finally { await f.close(); }
 });
