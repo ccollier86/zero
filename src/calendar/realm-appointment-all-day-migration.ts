@@ -1,4 +1,4 @@
-/** PREPARATORY017 only. Not registered by calendarRealm and not a public capability.
+/** Registered017 appointment LocalDate metadata and frozen occupancy authority.
  * Appointment-only: holds/blocks retain their historical timed constraints.
  * Earlier maps/functions remain immutable checksum inputs. No semantic backfill.
  */
@@ -45,7 +45,8 @@ export const CALENDAR_APPOINTMENT_ALL_DAY_ADDITIONS: Readonly<Record<string, Tab
     occupied_end_ms: "INTEGER NOT NULL CHECK(typeof(occupied_end_ms)='integer' AND occupied_end_ms=end_ms+buffer_after*60000 AND occupied_end_ms-occupied_start_ms<=2851200000)",
     engine_json: `TEXT ${branch}` }),
   [current]: Object.freeze({ id: 'TEXT PRIMARY KEY NOT NULL', scope_id: 'TEXT NOT NULL', appointment_id: 'TEXT NOT NULL REFERENCES calendar_appointments(id)',
-    binding_id: `TEXT NOT NULL REFERENCES ${history}(id)` }),
+    binding_id: `TEXT NOT NULL REFERENCES ${history}(id)`, kind: "TEXT NOT NULL CHECK(kind IN ('timed-v1','all-day-local-v1'))",
+    start_date: 'TEXT', end_date: "TEXT CHECK(((kind='timed-v1' AND start_date IS NULL AND end_date IS NULL) OR (kind='all-day-local-v1' AND start_date IS NOT NULL AND end_date IS NOT NULL AND end_date>start_date)) IS 1)" }),
 });
 /** New map only. Never mutates any001–016 declaration. */
 export function calendarAppointmentAllDayTables(): Readonly<Record<string, TableSchema>> {
@@ -79,6 +80,7 @@ export function migrateCalendarAppointmentAllDay(database: Parameters<Migration[
   database.run(`INSERT INTO ${state}(id,version) VALUES('application',17)`);
   database.run(`CREATE UNIQUE INDEX calendar_appointment_time_generation ON ${history}(scope_id,appointment_id,appointment_revision)`);
   database.run(`CREATE UNIQUE INDEX calendar_appointment_time_current_identity ON ${current}(scope_id,appointment_id)`);
+  database.run(`CREATE INDEX calendar_appointment_time_current_dates ON ${current}(scope_id,kind,start_date,appointment_id)`);
   for (const operation of ['UPDATE', 'DELETE']) database.run(`CREATE TRIGGER ${state}_${operation.toLowerCase()} BEFORE ${operation} ON ${state} BEGIN SELECT RAISE(ABORT,'Private calendar version is immutable'); END`);
   database.run(`CREATE TRIGGER ${state}_no_replace BEFORE INSERT ON ${state} WHEN EXISTS(SELECT 1 FROM ${state}) BEGIN SELECT RAISE(ABORT,'Private calendar version is immutable'); END`);
   for (const table of [history, current]) {
@@ -108,6 +110,7 @@ export function migrateCalendarAppointmentAllDay(database: Parameters<Migration[
   for (const operation of ['INSERT', 'UPDATE']) database.run(`CREATE TRIGGER ${current}_parent_${operation.toLowerCase()} BEFORE ${operation} ON ${current} WHEN NOT EXISTS(
     SELECT 1 FROM ${history} h JOIN calendar_appointments a ON a.scope_id=h.scope_id AND a.id=h.appointment_id
     WHERE h.id=NEW.binding_id AND h.scope_id=NEW.scope_id AND h.appointment_id=NEW.appointment_id AND a.status='confirmed'
+      AND NEW.kind IS h.kind AND NEW.start_date IS h.start_date AND NEW.end_date IS h.end_date
       AND h.appointment_revision=a.revision AND ${equal('a', 'h')} AND ${unsealed}
       AND NOT EXISTS(SELECT 1 FROM ${history} later WHERE later.scope_id=h.scope_id AND later.appointment_id=h.appointment_id AND later.appointment_revision>h.appointment_revision))
     BEGIN SELECT RAISE(ABORT,'Private appointment time pointer is inconsistent'); END`);
@@ -133,10 +136,17 @@ export function migrateCalendarAppointmentAllDay(database: Parameters<Migration[
         AND NOT EXISTS(SELECT 1 FROM ${history} h WHERE h.scope_id=a.scope_id AND h.appointment_id=a.id))
       OR EXISTS(SELECT 1 FROM ${current} p JOIN ${history} h ON h.id=p.binding_id AND h.scope_id=p.scope_id AND h.appointment_id=p.appointment_id
         WHERE p.scope_id=a.scope_id AND p.appointment_id=a.id AND h.appointment_revision<=a.revision AND ${equal('a', 'h')}
+          AND p.kind IS h.kind AND p.start_date IS h.start_date AND p.end_date IS h.end_date
           AND NOT EXISTS(SELECT 1 FROM ${history} later WHERE later.scope_id=h.scope_id AND later.appointment_id=h.appointment_id AND later.appointment_revision>h.appointment_revision))))
     OR EXISTS(SELECT 1 FROM calendar_appointments a JOIN _calendar_appointment_type_current p ON p.scope_id=a.scope_id AND p.appointment_id=a.id
       JOIN _calendar_appointment_type_bindings b ON b.id=p.binding_id WHERE a.scope_id=NEW.scope_id AND a.id=NEW.target_id AND a.time_kind='all-day-local-v1' AND b.type_id IS NOT NULL)
     ) BEGIN SELECT RAISE(ABORT,'Private current appointment time is inconsistent'); END`);
+  // Fresh consumption remains a timed-hold protocol. Do not compare a retained
+  // already-confirmed hold against an appointment converted at a later revision.
+  database.run(`CREATE TRIGGER calendar_hold_confirmation_time_kind BEFORE UPDATE ON calendar_holds
+    WHEN OLD.status<>'confirmed' AND NEW.status='confirmed' AND NOT EXISTS(SELECT 1 FROM calendar_appointments a
+      WHERE a.id=NEW.appointment_id AND a.scope_id=NEW.scope_id AND a.time_kind='timed-v1')
+    BEGIN SELECT RAISE(ABORT,'Private hold confirmation requires timed appointment'); END`);
 }
 export const CALENDAR_APPOINTMENT_ALL_DAY_MIGRATION: Readonly<Migration> = Object.freeze({ version: '017',
   description: 'Private appointment LocalDate authority and frozen occupancy', up: migrateCalendarAppointmentAllDay });

@@ -2,7 +2,7 @@
  *
  * Policies first existed in 010. These are the actual realm identities recorded
  * from 11e9bbc (010), c32d307 (011), 6b3bf16 (012), fdc8262 (013), c6ede3d (014),
- * and 8bd8f25 (015), plus the genuine pre-manifest016 identity, using each
+ * and 8bd8f25 (015), plus genuine016 before and after native manifest opt-in, using each
  * complete immutable table map, preserved migration closures and original
  * command/query names. Handler bodies do not participate in realm fingerprints.
  * Never accept an arbitrary retained fingerprint or rewrite old policy history.
@@ -15,6 +15,7 @@ export const CALENDAR_INTEGRATION_HISTORICAL_REALMS = Object.freeze([
   Object.freeze({ version: '014', fingerprint: 'sha256:642282673e4e569527bd1d85a6946bd289baf5a4af366d95bb82394b6739e650' }),
   Object.freeze({ version: '015', fingerprint: 'sha256:c49625860fd495b46bfa2e614e40b7283eb8312b41114eef5e7b4cb1cd98f603' }),
   Object.freeze({ version: '016', fingerprint: 'sha256:2b0e98dabe59b6cf27edf49b3bb37b3f11dc6b1e6d0274c6a590db5a3ba601b5' }),
+  Object.freeze({ version: '016', fingerprint: 'sha256:fcfd500b5352a27f6bc43d9122c1af8cdafc85680994f4191ee75903485179f8' }),
 ]);
 
 /** Historical contract compatibility only; current physical owner proof stays separate. */

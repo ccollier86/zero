@@ -11,6 +11,7 @@ import { calendarLocation, requireCalendarLocationManager } from './locations-mo
 import { calendarType, requireCalendarTypeManager } from './appointment-types-model';
 import { recordCalendarIntegrationMutation } from './integration-model';
 import { calendarCurrentResourceMembership, CALENDAR_APPOINTMENT_RESOURCE_CURRENT } from './appointment-resource-bindings';
+import { calendarCurrentAppointmentTime, CALENDAR_APPOINTMENT_TIME_STATE } from './appointment-time-bindings';
 
 export const CALENDAR_LIMITS = Object.freeze({ resources: 10_000, appointments: 100_000, blocks: 100_000, holds: 100_000, locations: 10_000,
   locationHistory: 100_000, resourceLocationHistory: 100_000, types: 10_000, typeHistory: 100_000, resourceTypeHistory: 100_000,
@@ -151,6 +152,13 @@ export function calendarIntent(context: DatabaseWriteCommandContext, actor: Cale
   }
   calendarBudget(context, 'receipts');
   const result = run(requestId);
+  // Participant/lifecycle/status edits seal the same retained time authority.
+  // This fresh-state check never runs ahead of original receipt replay.
+  if (targetKind === 'appointment' && result.changed) {
+    const parent = context.db.get('calendar_appointments', result.id);
+    if (!parent) throw new CalendarError('CALENDAR_STATE_INVALID');
+    if (parent.time_kind !== undefined || context.db.hasTable(CALENDAR_APPOINTMENT_TIME_STATE)) calendarCurrentAppointmentTime(context, parent);
+  }
   context.db.createStrict(targetKind === 'lifecycle' ? '_calendar_lifecycle_receipts' : targetKind === 'type' ? '_calendar_type_receipts' : targetKind === 'location' ? '_calendar_location_receipts' : targetKind === 'hold' ? '_calendar_hold_receipts' : targetKind === 'block' ? '_calendar_block_receipts' : '_calendar_receipts', { id, scope_id: actor.scopeId, principal: actor.principal, request_id: requestId, digest,
     result_json: calendarJson(result), target_kind: targetKind, target_id: result.id, required_right: requiredRight });
   if (result.changed) context.db.createStrict(targetKind === 'lifecycle' ? '_calendar_lifecycle_effect_intents' : targetKind === 'type' ? '_calendar_type_effect_intents' : targetKind === 'location' ? '_calendar_location_effect_intents' : targetKind === 'hold' ? '_calendar_hold_effect_intents' : targetKind === 'block' ? '_calendar_block_effect_intents' : '_calendar_effect_intents', { id, scope_id: actor.scopeId, receipt_id: id,

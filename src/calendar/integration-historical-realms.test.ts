@@ -33,21 +33,24 @@ const generations = [
     schema: '67d756b28b2671d19eeb37afda6f65c75540d83bf55ebf6514db99e5c06a8df0' },
   { version: '016', count: 16, tables: CALENDAR_APPOINTMENT_UPDATE_TABLES, commands: 37, queries: 35,
     schema: 'a9de3c82718367f9dfb5db628706f7a2b2fda542d12fc27be8d2d589a8d1f2a4' },
+  { version: '016', count: 16, tables: CALENDAR_APPOINTMENT_UPDATE_TABLES, commands: 37, queries: 35, manifest: true,
+    schema: 'a9de3c82718367f9dfb5db628706f7a2b2fda542d12fc27be8d2d589a8d1f2a4' },
 ] as const;
 
 test('retained source compatibility pins are genuine complete010–016 realms, including pre-manifest016', () => {
   expect(CALENDAR_INTEGRATION_HISTORICAL_REALMS.map(realm => realm.version)).toEqual(generations.map(realm => realm.version));
-  for (const generation of generations) {
+  for (const [index, generation] of generations.entries()) {
     const commands = Object.fromEntries(Object.entries(calendarRealm.commands).filter(([name]) => (generation.count >= 16 || name !== 'calendar.appointment.update')
       && (generation.count >= 15 || !name.startsWith('calendar.integration.operator.')) && (generation.count >= 12 || !CONTROL_COMMANDS.has(name))));
-    const queries = Object.fromEntries(Object.entries(calendarRealm.queries).filter(([name]) => (generation.count >= 15 || !name.startsWith('calendar.integration.operator.')) && (generation.count >= 14 || name !== 'calendar.integration.inspection')
+    const queries = Object.fromEntries(Object.entries(calendarRealm.queries).filter(([name]) => name !== 'calendar.appointmentsByDate' && (generation.count >= 15 || !name.startsWith('calendar.integration.operator.')) && (generation.count >= 14 || name !== 'calendar.integration.inspection')
       && (generation.count >= 13 || name !== 'calendar.integration.nextWake') && (generation.count >= 12 || !CONTROL_QUERIES.has(name))));
     const historical = defineDatabaseRealm({ name: calendarRealm.name, version: String(generation.count), tables: generation.tables,
-      migrations: calendarRealm.migrations.slice(0, generation.count), commands, queries });
+      migrations: calendarRealm.migrations.slice(0, generation.count), commands, queries,
+      ...('manifest' in generation ? { migrationTableStages: calendarRealm.migrationTableStages!.slice(0, 16) } : {}) });
     expect(Object.keys(historical.commands)).toHaveLength(generation.commands);
     expect(Object.keys(historical.queries)).toHaveLength(generation.queries);
     expect(historical.schemaChecksum).toBe(generation.schema);
-    expect(historical.fingerprint).toBe(CALENDAR_INTEGRATION_HISTORICAL_REALMS.find(realm => realm.version === generation.version)!.fingerprint);
+    expect(historical.fingerprint).toBe(CALENDAR_INTEGRATION_HISTORICAL_REALMS[index]!.fingerprint);
     expect(historical.fingerprint).not.toBe(calendarRealm.fingerprint);
     if (generation.version === '013') expect(historical.fingerprint).toBe(calendarInspectionHistoricalRealm.fingerprint);
   }

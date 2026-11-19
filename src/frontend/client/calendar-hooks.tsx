@@ -9,7 +9,7 @@ import type { CalendarAppointmentPage, CalendarAppointmentView, CalendarAppointm
   CalendarLifecyclePolicy, CalendarAppointmentTransitions, CalendarCapabilities, CalendarAvailabilityPolicyView,
   CalendarParticipantDirectoryQuery, CalendarParticipantDirectoryPage, CalendarParticipantsView,
   CalendarLocationPage, CalendarLocationPageQuery, CalendarLocationView, CalendarResourceLocationsView, CalendarVisitLocationQuery,
-  CalendarRangeQuery, CalendarResourcePage, CalendarResourcePageQuery, CalendarWatchOptions, CalendarWatchUpdate } from '../../calendar/contracts';
+  CalendarRangeQuery, CalendarDateRangeQuery, CalendarResourcePage, CalendarResourcePageQuery, CalendarWatchOptions, CalendarWatchUpdate } from '../../calendar/contracts';
 import { CalendarReadError } from './calendar-mutation';
 export interface CalendarReadResult<T> {
   readonly status: 'idle' | 'loading' | 'ready' | 'error';
@@ -108,6 +108,10 @@ function useCalendarRead<T>(identity: string | null, load: (client: Client, sign
 export function useCalendarAppointments(query: CalendarRangeQuery | null): UseCalendarAppointmentsResult {
   const identity = query === null ? null : JSON.stringify([query.resourceIds, query.startAt, query.endAt, query.limit ?? null]);
   return useCalendarLive<CalendarAppointmentPage>(identity, (client, listener, options) => client.calendar.appointments.watch(query!, listener, options));
+}
+export function useCalendarAppointmentDates(query: CalendarDateRangeQuery | null): UseCalendarAppointmentsResult {
+  const identity = query === null ? null : JSON.stringify(['appointment-dates', query.resourceIds, query.startDate, query.endDate, query.limit ?? null]);
+  return useCalendarLive<CalendarAppointmentPage>(identity, (client, listener, options) => client.calendar.appointments.watchDates(query!, listener, options));
 }
 /** Directory and appointment views share the same current-scope retirement contract. */
 function useCalendarLive<T>(identity: string | null,

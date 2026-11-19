@@ -32,6 +32,8 @@ export interface AppointmentFormControls {
   attendeeControl?: ReactNode;
   repeatControl?: ReactNode;
   timeControls?: ReactNode;
+  /** Undefined preserves the standalone typed date picker; null deliberately omits it. */
+  dateControl?: ReactNode;
   appointmentTypeControl?: ReactNode;
   titleHelper?: ReactNode;
   appearanceControl?: ReactNode;

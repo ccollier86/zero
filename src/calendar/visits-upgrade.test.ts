@@ -8,7 +8,8 @@ import { Migrator } from '../migrations/migrator';
 import { hashMigration, hashSchemaSnapshot, snapshotDeclaredTables } from '../migrations/schema-snapshot';
 import { createReactiveDB } from '../sync/reactive-db';
 import type { CalendarActor, CalendarAppointmentView, CalendarCommandReceipt, CalendarHoldView, CalendarLocationPage, CalendarLifecyclePolicy } from './contracts';
-import { calendarRealm } from './realm';
+// Preserve this recorded upgrade boundary through016; latest017 is qualified separately.
+import { calendarRealm016 as calendarRealm } from './test-support/calendar-realm-016';
 import { CALENDAR_APPOINTMENT_UPDATE_TABLES } from './realm-appointment-update-migration';
 import { CALENDAR_LIFECYCLE_TABLES } from './realm-lifecycle-migration';
 import { CALENDAR_INTEGRATION_ADDITIONS } from './realm-integrations-migration';

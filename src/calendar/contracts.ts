@@ -18,6 +18,8 @@ export interface CalendarCapabilities {
   readonly manage: boolean;
   /** Caller may discover/manage native account participants in this configured service. */
   readonly participants: boolean;
+  /** Absent on older servers. This covers untyped appointments, not holds or blocks. */
+  readonly allDayAppointments?: boolean;
   readonly limits: { readonly maxRangeDays: number; readonly maxPageSize: number; readonly maxResources: number; readonly maxParticipants: number };
 }
 /** Native account identity only. Calendar files never duplicate Guardian profiles or credentials. */
@@ -216,6 +218,8 @@ export interface CalendarHoldView {
 }
 export interface CalendarHoldPage { readonly items: readonly CalendarHoldView[]; readonly truncated: boolean }
 export interface CalendarAppointmentView {
+  /** Authoritative LocalDate fact; ordinary timed JSON retains its original shape. */
+  readonly interval?: CalendarAllDayAppointmentInterval;
   readonly visit?: CalendarVisitSnapshot;
   readonly lifecycle?: CalendarAppointmentLifecycle;
   readonly appointmentType?: CalendarAppointmentTypeSnapshot;
@@ -252,6 +256,30 @@ export interface CalendarRangeQuery {
   readonly limit?: number;
 }
 
+/** Authored Gregorian dates, independent of the viewer's timezone; end is exclusive. */
+export interface CalendarAllDayAppointmentInterval {
+  readonly kind: 'all-day-local-v1';
+  readonly startDate: string;
+  readonly endDate: string;
+  readonly timeZone: string;
+}
+export interface CalendarExplicitTimedAppointmentInterval {
+  readonly kind: 'timed-v1';
+  readonly startAt: string;
+  readonly endAt: string;
+  readonly timeZone: string;
+  readonly bufferBeforeMinutes: number;
+  readonly bufferAfterMinutes: number;
+}
+export type CalendarAppointmentIntervalInput = CalendarAllDayAppointmentInterval | CalendarExplicitTimedAppointmentInterval;
+export interface CalendarDateRangeQuery {
+  readonly resourceIds: readonly string[];
+  readonly startDate: string;
+  /** Exclusive bound; not an ISO instant or a browser-local Date. */
+  readonly endDate: string;
+  readonly limit?: number;
+}
+
 export interface CalendarResourceInput {
   readonly label: string;
   readonly kind: CalendarResourceKind;
@@ -270,6 +298,17 @@ export interface CalendarAppointmentInput {
   readonly bufferBeforeMinutes?: number;
   readonly bufferAfterMinutes?: number;
 }
+/** Additive explicit-interval creation; the existing timed input interface is unchanged. */
+export interface CalendarExplicitAppointmentInput extends Omit<CalendarAppointmentInput,
+  'startAt' | 'endAt' | 'timeZone' | 'bufferBeforeMinutes' | 'bufferAfterMinutes'> {
+  readonly interval: CalendarAppointmentIntervalInput;
+  readonly startAt?: never;
+  readonly endAt?: never;
+  readonly timeZone?: never;
+  readonly bufferBeforeMinutes?: never;
+  readonly bufferAfterMinutes?: never;
+}
+export type CalendarAppointmentCreateInput = CalendarAppointmentInput | CalendarExplicitAppointmentInput;
 /** Rescheduling explicitly supplies both buffers, never guesses them from a stale browser snapshot. */
 export interface CalendarRescheduleInput {
   /** Omission preserves the accepted visit at the expected revision; null explicitly clears it. */
@@ -290,9 +329,15 @@ export type CalendarAppointmentUpdateInput = {
   readonly visit?: CalendarVisitInput | null;
   readonly participants?: readonly CalendarParticipantReference[];
 } & ({
+  readonly interval?: never;
   readonly startAt: string; readonly endAt: string; readonly timeZone: string;
   readonly bufferBeforeMinutes: number; readonly bufferAfterMinutes: number;
 } | {
+  readonly interval?: never;
+  readonly startAt?: never; readonly endAt?: never; readonly timeZone?: never;
+  readonly bufferBeforeMinutes?: never; readonly bufferAfterMinutes?: never;
+} | {
+  readonly interval: CalendarAppointmentIntervalInput;
   readonly startAt?: never; readonly endAt?: never; readonly timeZone?: never;
   readonly bufferBeforeMinutes?: never; readonly bufferAfterMinutes?: never;
 });
@@ -427,8 +472,10 @@ export interface ScopedCalendar {
   };
   readonly appointments: {
     query(query: CalendarRangeQuery, options?: CalendarReadOptions): Promise<CalendarAppointmentPage>;
+    /** Only all-day appointments, matched on their authoritative date labels. */
+    queryDates(query: CalendarDateRangeQuery, options?: CalendarReadOptions): Promise<CalendarAppointmentPage>;
     get(id: string, options?: CalendarReadOptions): Promise<CalendarAppointmentView>;
-    create(input: CalendarAppointmentInput, options: CalendarRequestOptions): Promise<CalendarCommandReceipt>;
+    create(input: CalendarAppointmentCreateInput, options: CalendarRequestOptions): Promise<CalendarCommandReceipt>;
     reschedule(id: string, input: CalendarRescheduleInput, options: CalendarControlOptions): Promise<CalendarCommandReceipt>;
     update(id: string, input: CalendarAppointmentUpdateInput, options: CalendarControlOptions): Promise<CalendarCommandReceipt>;
     cancel(id: string, options: CalendarCancellationOptions): Promise<CalendarCommandReceipt>;
@@ -437,6 +484,8 @@ export interface ScopedCalendar {
     watchTransitions(id: string, listener: (transitions: CalendarAppointmentTransitions, update?: CalendarWatchUpdate) => void,
       options?: CalendarWatchOptions): () => void;
     watch(query: CalendarRangeQuery, listener: (page: CalendarAppointmentPage, update?: CalendarWatchUpdate) => void,
+      options?: CalendarWatchOptions): () => void;
+    watchDates(query: CalendarDateRangeQuery, listener: (page: CalendarAppointmentPage, update?: CalendarWatchUpdate) => void,
       options?: CalendarWatchOptions): () => void;
   };
   readonly busy: { query(query: CalendarRangeQuery, options?: CalendarReadOptions): Promise<CalendarBusyPage> };

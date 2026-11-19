@@ -2,6 +2,7 @@
 import { expect, test } from 'bun:test';
 import { CalendarError, type CalendarErrorCode } from './error';
 import { calendarRealm } from './realm';
+import { calendarRealm016 } from './test-support/calendar-realm-016';
 import { calendarJson } from './validation';
 import { admitCalendarTimedSeriesAuthoring, normalizeCalendarTimedSeriesAuthoring, type CalendarTimedSeriesAuthoring } from './series-authoring';
 
@@ -131,6 +132,6 @@ test('source/template authority/query fields and hostile descriptors reject with
     rejects(() => normalizeCalendarTimedSeriesAuthoring(bad, limits)); rejects(() => admitCalendarTimedSeriesAuthoring(bad, limits));
   }
   expect(touched).toBe(0);
-  expect(calendarRealm.version).toBe('16'); expect(calendarRealm.fingerprint).toBe('sha256:fcfd500b5352a27f6bc43d9122c1af8cdafc85680994f4191ee75903485179f8');
+  expect(calendarRealm016.version).toBe('16'); expect(calendarRealm016.fingerprint).toBe('sha256:fcfd500b5352a27f6bc43d9122c1af8cdafc85680994f4191ee75903485179f8');
   expect(Object.keys(calendarRealm.commands).some(name => name.includes('series'))).toBe(false);
 });

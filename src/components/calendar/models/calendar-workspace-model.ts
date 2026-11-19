@@ -3,9 +3,11 @@ import type { CalendarAppointmentView, CalendarCommandReceipt, CalendarRangeQuer
   CalendarAppointmentTypeSnapshot, CalendarParticipantReference } from '../../../calendar/contracts';
 import type { CalendarResource, ScheduleEvent } from '../types';
 import type { CalendarViewMode } from '../recovered/calendar/types/calendar-view-mode';
-import { dateKey, isDay } from './calendar-date';
+import { dateKey } from './calendar-date';
+import { calendarLocalDate } from './calendar-local-date';
 import { monthDates, weekDates } from './calendar-model';
 const DAY_MS = 86400_000;
+const isDay = (value: string) => calendarLocalDate(value) !== null;
 export interface CalendarCoreDraft { resourceId: string; title: string; date: string; start: number; end: number;
   visitMode?: CalendarVisitMode | 'unspecified'; visitLocation?: CalendarLocationSnapshot;
   appointmentType?: CalendarAppointmentTypeSnapshot | null; bufferBeforeMinutes?: number; bufferAfterMinutes?: number;
@@ -49,9 +51,11 @@ export function calendarUiResource(resource: CalendarResourceView): CalendarReso
 }
 export function calendarZonedParts(instant: string | number, timeZone: string): { date: string; minute: number; second: number; offset: number } {
   const epoch = typeof instant === 'number' ? instant : Date.parse(instant);
-  const parts = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).formatToParts(epoch);
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone, calendar: 'gregory', era: 'short', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).formatToParts(epoch);
   const value = (kind: Intl.DateTimeFormatPartTypes) => parts.find(part => part.type === kind)!.value;
-  const date = `${value('year')}-${value('month')}-${value('day')}`, minute = Number(value('hour')) * 60 + Number(value('minute')), second = Number(value('second'));
+  const year = value('era') === 'BC' ? 1 - Number(value('year')) : Number(value('year'));
+  const yearLabel = year < 0 ? '-' + String(-year).padStart(6, '0') : year > 9999 ? '+' + String(year).padStart(6, '0') : String(year).padStart(4, '0');
+  const date = `${yearLabel}-${value('month')}-${value('day')}`, minute = Number(value('hour')) * 60 + Number(value('minute')), second = Number(value('second'));
   const wall = Date.parse(`${date}T${value('hour')}:${value('minute')}:${value('second')}.000Z`);
   return { date, minute, second, offset: wall - Math.floor(epoch / 1000) * 1000 };
 }
@@ -82,6 +86,7 @@ export function projectCalendarAppointments(records: readonly CalendarAppointmen
   const events: ScheduleEvent[] = [], sourceByEventId = new Map<string, CalendarAppointmentView>(), supplemental = new Map<string, CalendarAppointmentView>();
   const first = days[0], last = days.at(-1); if (!first || !last) return { events, sourceByEventId, supplemental: [] };
   for (const source of records) {
+    if (source.interval) continue; // LocalDate authority has a dedicated projection, never midnight minute geometry.
     const start = calendarZonedParts(source.startAt, timeZone), end = calendarZonedParts(source.endAt, timeZone);
     if (start.date > last || end.date < first || end.date === first && end.minute === 0 && end.second === 0) continue;
     const admitted = source.resourceIds.filter(id => resourceIds.includes(id)); if (!admitted.length) continue;

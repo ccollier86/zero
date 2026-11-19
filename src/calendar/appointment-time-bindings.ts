@@ -69,7 +69,8 @@ function stored(parent: Row, pointer: Row | null, history: Row | null, latest: R
       || history.scope_id !== parent.scope_id || history.appointment_id !== parent.id || latest.id !== history.id
       || calendarInteger(history.appointment_revision, 1) > Number(parent.revision)) invalid();
     const fact = historyFact(history);
-    if (fact.kind !== kind || Object.entries(calendarAppointmentTimeFields(fact)).some(([field, value]) => parent[field] !== value)) invalid();
+    if (fact.kind !== kind || pointer.kind !== history.kind || pointer.start_date !== history.start_date || pointer.end_date !== history.end_date
+      || Object.entries(calendarAppointmentTimeFields(fact)).some(([field, value]) => parent[field] !== value)) invalid();
     return fact;
   } catch { return invalid(); }
 }
@@ -84,6 +85,17 @@ export function calendarAppointmentTime(context: DatabaseWriteCommandContext, pa
     return stored(parent, pointer, history, latest);
   } catch { return invalid(); }
 }
+/** Precise pre017 compatibility for original timed command paths. A retained
+ * kind or any017 table makes missing metadata corruption, never timed fallback. */
+export function calendarCurrentAppointmentTime(context: DatabaseWriteCommandContext, parent: Row): CalendarAppointmentTimeFact {
+  if (parent.time_kind !== undefined || context.db.hasTable(CALENDAR_APPOINTMENT_TIME_STATE)
+    || context.db.hasTable(CALENDAR_APPOINTMENT_TIME_CURRENT) || context.db.hasTable(CALENDAR_APPOINTMENT_TIME_HISTORY)) return calendarAppointmentTime(context, parent);
+  try { return Object.freeze({ kind: 'timed-v1', interval: projection(parent, 'timed-v1') }); } catch { return invalid(); }
+}
+export function requireCalendarAppointmentTimeStorage(context: DatabaseWriteCommandContext): void {
+  if (!context.db.hasTable(CALENDAR_APPOINTMENT_TIME_STATE)) throw new CalendarError('CALENDAR_NOT_READY');
+  if (context.db.get(CALENDAR_APPOINTMENT_TIME_STATE, 'application')?.version !== 17) invalid();
+}
 export function readCalendarAppointmentTime(context: DatabaseReadQueryContext, parent: Row): CalendarAppointmentTimeFact {
   try {
     if (context.database.query<{ version: number }>(`SELECT version FROM ${CALENDAR_APPOINTMENT_TIME_STATE} WHERE id='application'`).get()?.version !== 17) invalid();
@@ -91,6 +103,17 @@ export function readCalendarAppointmentTime(context: DatabaseReadQueryContext, p
     const history = pointer ? context.database.query<Row>(`SELECT * FROM ${CALENDAR_APPOINTMENT_TIME_HISTORY} WHERE id=?`).get(String(pointer.binding_id)) : null;
     const latest = context.database.query<Row>(`SELECT * FROM ${CALENDAR_APPOINTMENT_TIME_HISTORY} WHERE scope_id=? AND appointment_id=? ORDER BY appointment_revision DESC LIMIT 1`).get(String(parent.scope_id), String(parent.id));
     return stored(parent, pointer, history, latest);
+  } catch { return invalid(); }
+}
+/** Genuine pre017 read compatibility only. Current kind/schema or applied017
+ * evidence forbids falling back when authoritative metadata is missing. */
+export function readCalendarCurrentAppointmentTime(context: DatabaseReadQueryContext, parent: Row): CalendarAppointmentTimeFact {
+  if (parent.time_kind !== undefined || context.database.query("SELECT 1 FROM sqlite_schema WHERE name IN (?,?,?) LIMIT 1")
+    .get(CALENDAR_APPOINTMENT_TIME_STATE, CALENDAR_APPOINTMENT_TIME_CURRENT, CALENDAR_APPOINTMENT_TIME_HISTORY)) return readCalendarAppointmentTime(context, parent);
+  try {
+    if (context.database.query("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='_zero_migrations'").get()
+      && context.database.query("SELECT 1 FROM _zero_migrations WHERE version='017' AND direction='up' AND status='applied' LIMIT 1").get()) invalid();
+    return Object.freeze({ kind: 'timed-v1' as const, interval: projection(parent, 'timed-v1') });
   } catch { return invalid(); }
 }
 export function resolveCalendarAppointmentTimeIntent(input: unknown, current?: CalendarAppointmentTimeFact): CalendarAppointmentTimeFact {
@@ -145,6 +168,7 @@ export function bindCalendarAppointmentTime(context: DatabaseWriteCommandContext
   if (usage) context.db.update('_calendar_usage', 'appointmentTimeHistory', { count: count + 1 });
   else context.db.createStrict('_calendar_usage', { id: 'appointmentTimeHistory', count: 1 });
   context.db.createStrict(CALENDAR_APPOINTMENT_TIME_HISTORY, row);
-  if (pointer) context.db.update(CALENDAR_APPOINTMENT_TIME_CURRENT, identity, { binding_id: row.id });
-  else context.db.createStrict(CALENDAR_APPOINTMENT_TIME_CURRENT, { id: identity, scope_id: scopeId, appointment_id: appointmentId, binding_id: row.id });
+  const selected = { binding_id: row.id, kind: row.kind, start_date: row.start_date, end_date: row.end_date };
+  if (pointer) context.db.update(CALENDAR_APPOINTMENT_TIME_CURRENT, identity, selected);
+  else context.db.createStrict(CALENDAR_APPOINTMENT_TIME_CURRENT, { id: identity, scope_id: scopeId, appointment_id: appointmentId, ...selected });
 }

@@ -23,7 +23,7 @@ import { calendarRealm } from './realm';
 import { calendarActor, calendarSelection, CALENDAR_LIMITS } from './realm-model';
 import { CALENDAR_DEFAULT_LIFECYCLE_POLICY, calendarLifecyclePolicyFields, requireCalendarLifecycleManager } from './lifecycle-model';
 import type { CalendarServiceBroker } from './service';
-import { calendarAppointmentTypeInput, calendarAppointmentTypePageQuery, calendarAppointmentUpdateInput, calendarLocationInput, calendarPageQuery, calendarRange, calendarResourcePageQuery, calendarVisitLocationQuery } from './service-validation';
+import { calendarAppointmentTypeInput, calendarAppointmentTypePageQuery, calendarAppointmentUpdateInput, calendarLocationInput, calendarPageQuery, calendarRange, calendarDateRange, calendarResourcePageQuery, calendarVisitLocationQuery } from './service-validation';
 import { normalizeCalendarInstant, normalizeCalendarTimeZone } from './time';
 import { calendarHash, calendarInteger, calendarKey, calendarRecord, calendarScope, calendarText, calendarValue } from './validation';
 import { calendarParticipantReferences, requireCalendarParticipantManager } from './participant-bindings';
@@ -51,7 +51,7 @@ export interface CalendarRuntimeOptions {
   /** @internal Native integrated composition only; ordinary/logging-only core stays unchanged. */
   readonly integrationWake?: true;
 }
-const QUERIES = new Set(['calendar.resources', 'calendar.busy', 'calendar.appointments', 'calendar.appointment',
+const QUERIES = new Set(['calendar.resources', 'calendar.busy', 'calendar.appointments', 'calendar.appointmentsByDate', 'calendar.appointment',
   'calendar.locations', 'calendar.location', 'calendar.resourceLocations', 'calendar.locationAssignmentWitnesses', 'calendar.visitLocations',
   'calendar.types', 'calendar.type', 'calendar.resourceTypes', 'calendar.lifecycle', 'calendar.appointmentTransitions',
   'calendar.availability', 'calendar.availabilityPolicy', 'calendar.blocks', 'calendar.block', 'calendar.holds', 'calendar.hold', 'calendar.receipt',
@@ -530,6 +530,7 @@ export class CalendarRuntime implements CalendarServiceBroker {
     if (name === 'calendar.locations') return { ...calendarPageQuery(query, this.options.config), actor };
     if (name === 'calendar.visitLocations') return { ...calendarVisitLocationQuery(query, this.options.config), actor };
     if (name === 'calendar.types') return { ...calendarAppointmentTypePageQuery(query, this.options.config), actor };
+    if (name === 'calendar.appointmentsByDate') return { ...calendarDateRange(query, this.options.config), actor };
     if (name === 'calendar.busy' || name === 'calendar.appointments' || name === 'calendar.blocks' || name === 'calendar.holds') return { ...calendarRange(query, this.options.config), actor };
     if ((name === 'calendar.appointment.create' || name === 'calendar.block.create' || name === 'calendar.hold.acquire')
       && (!Array.isArray(body.resourceIds) || body.resourceIds.length > this.options.config.maxResources)) throw new CalendarError('CALENDAR_INPUT_INVALID');
@@ -707,6 +708,7 @@ export function emptyCalendarRead(name: string, input: unknown): unknown {
     : name === 'calendar.locationAssignmentWitnesses' ? ['actor', 'locationIds']
     : name === 'calendar.lifecycle' ? ['actor']
     : name === 'calendar.receipt' ? ['actor', 'requestId'] : ['calendar.appointment', 'calendar.appointmentTransitions', 'calendar.appointmentParticipants', 'calendar.holdParticipants', 'calendar.holdParticipantAdmission', 'calendar.block', 'calendar.hold', 'calendar.availability', 'calendar.availabilityPolicy', 'calendar.location', 'calendar.resourceLocations', 'calendar.type', 'calendar.resourceTypes'].includes(name) ? ['actor', 'id']
+    : name === 'calendar.appointmentsByDate' ? ['actor', 'resourceIds', 'startDate', 'endDate', 'limit']
     : name === 'calendar.busy' || name === 'calendar.appointments' || name === 'calendar.blocks' || name === 'calendar.holds' ? ['actor', 'resourceIds', 'startAt', 'endAt', 'limit'] : null;
   if (!fields) throw new CalendarError('CALENDAR_INPUT_INVALID');
   const r = calendarRecord(input, fields); calendarActor(r.actor);
@@ -739,6 +741,12 @@ export function emptyCalendarRead(name: string, input: unknown): unknown {
   if (name === 'calendar.locationAssignmentWitnesses') {
     if (calendarSelection(r.locationIds).length) throw new CalendarError('CALENDAR_NOT_FOUND');
     return [];
+  }
+  if (name === 'calendar.appointmentsByDate') {
+    const { actor: _actor, ...query } = r;
+    const accepted = calendarDateRange(query, { maxRangeDays: 31, maxPageSize: CALENDAR_LIMITS.page, maxResources: CALENDAR_LIMITS.selection });
+    if (accepted.resourceIds.length) throw new CalendarError('CALENDAR_NOT_FOUND');
+    return { items: [], truncated: false };
   }
   if (name === 'calendar.type') {
     calendarKey(r.id);

@@ -7,19 +7,27 @@ import { formatDay, formatMinute } from '../models/calendar-model';
 import { attentionLabel, eventColor, progressLabel } from '../models/appointment-presentation';
 import { AppointmentStatusPopover, VisitIcon } from './appointment-controls';
 import type { CalendarResource, EventDraft, EventPresentation, MenuTarget, ScheduleEvent } from '../types';
+import type { CalendarAllDayOccurrence } from '../models/calendar-all-day-model';
+import { CalendarAllDayEvents } from './calendar-all-day-events';
+import { calendarFormatCivilDate } from '../models/calendar-local-date';
 import '../styles/calendar-agenda.css';
 export interface CalendarAgendaProps {
   date: string; events: readonly ScheduleEvent[]; resources: readonly CalendarResource[];
+  civilDate?: string; allDayOccurrences?: readonly CalendarAllDayOccurrence[];
   eventPresentation?(event: ScheduleEvent): EventPresentation;
   onMenu(target: MenuTarget, trigger: HTMLElement, point?: { x: number; y: number }): void;
   onUpdate?(id: string, change: Partial<EventDraft>): void;
   onDetails?(event: ScheduleEvent): void;
 }
-export function CalendarAgenda({ date, events, resources, eventPresentation, onMenu, onUpdate, onDetails }: CalendarAgendaProps) {
+export function CalendarAgenda({ date, events, resources, civilDate, allDayOccurrences, eventPresentation, onMenu, onUpdate, onDetails }: CalendarAgendaProps) {
   const entries = agendaEntries(events, resources, date, eventPresentation);
-  return <section className="calendar-agenda calendar-scroll" aria-label={`Appointment list, ${formatDay(date)}`}>
-    <div className="calendar-agenda-heading"><div><b>{formatDay(date)}</b><small>All selected calendars · ordered by start time</small></div><span>{entries.length} {entries.length === 1 ? 'event' : 'events'}</span></div>
-    {!entries.length ? <div className="calendar-agenda-empty"><ClockIcon size="var(--calendar-size-20)" /><Text size="sm" fw="var(--calendar-weight-medium)">No appointments on this day</Text><Text size="xs" c="dimmed">Choose another day or adjust the selected calendars and locations.</Text></div> : <ol className="calendar-agenda-list">{entries.map(({ event, resource, presentation }) => {
+  const allDay = allDayOccurrences?.filter(item => item.date === date && resources.some(resource => resource.id === item.resourceId)) ?? [], count = entries.length + allDay.length;
+  const label = civilDate ? calendarFormatCivilDate(date) : formatDay(date);
+  return <section className="calendar-agenda calendar-scroll" aria-label={`Appointment list, ${label}`}>
+    <div className="calendar-agenda-heading"><div><b>{label}</b><small>All selected calendars · {allDayOccurrences ? 'all-day, then ordered by start time' : 'ordered by start time'}</small></div><span>{count} {count === 1 ? 'event' : 'events'}</span></div>
+    {allDay.length > 0 && <section className="calendar-agenda-all-day" aria-label="All-day appointments"><CalendarAllDayEvents items={allDay} onMenu={onMenu}
+      resourceLabel={id => resources.find(resource => resource.id === id)!.name} /></section>}
+    {!count ? <div className="calendar-agenda-empty"><ClockIcon size="var(--calendar-size-20)" /><Text size="sm" fw="var(--calendar-weight-medium)">No appointments on this day</Text><Text size="xs" c="dimmed">Choose another day or adjust the selected calendars and locations.</Text></div> : <ol className="calendar-agenda-list">{entries.map(({ event, resource, presentation }) => {
       const color = eventColor(event, resource, presentation.colorBy), attention = attentionLabel(event);
       const variables = { '--event-color': `var(--calendar-color-${color}-6)`, '--event-tint': `var(--calendar-color-${color}-0)` } as CSSProperties;
       if (presentation.busyOnly) return <li key={event.id} className="calendar-agenda-row is-busy" data-calendar-busy style={variables}><time>{formatMinute(event.start)}<small>{formatMinute(event.end)}</small></time><div className="calendar-agenda-appointment"><b>Busy · other location</b><small>{resource.name}</small></div></li>;

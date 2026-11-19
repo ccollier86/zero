@@ -30,6 +30,8 @@ working on an application; do not assume this branch is available through update
 - [Facade and booking semantics](./facade.md): resources, grants, appointments,
   authenticated holds, locations/resource facets, appointment types/policies,
   bounded queries, live projections and uncertain outcomes.
+- [All-day appointments](./all-day.md): authored LocalDate intervals, explicit
+  kind conversion, frozen history, date queries/live views and migration limits.
 - [Lifecycle and required reasons](./lifecycle.md): optional richer outcomes,
   server-supplied transitions, private reasons and canonical cancellation.
 - [Visit modes and retained locations](./visits.md): optional location/version
@@ -116,7 +118,11 @@ cancellation releases reservations. The connected workspace uses native managed
 review/reason dialogs and shows effective outcomes. This is not yet clinical visit
 progress, lobby tracking, arbitrary state machines or automatic workflow delivery.
 
-Recurrence, all-day and floating dates, automatic working-hours coverage extension,
+Untyped all-day appointments now have explicit authored LocalDate intervals,
+atomic kind conversion, frozen accepted boundaries and indexed date queries/live
+views; see the all-day guide. Holds and blocks remain timed-only.
+
+Recurrence, floating timed dates, automatic working-hours coverage extension,
 public booking proofs/offers, participant invitations,
 effective-dated location eligibility,
 clinical visit/lobby/attention state, delivery channels, public self-booking and AI

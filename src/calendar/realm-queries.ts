@@ -1,6 +1,6 @@
 /** Authorized bounded projections; busy results never carry appointment IDs or titles. */
 import type { DatabaseReadQueryContext } from '../databases/database-realm';
-import type { CalendarActor, CalendarGrant } from './contracts';
+import type { CalendarActor, CalendarAppointmentPage, CalendarAppointmentView, CalendarGrant } from './contracts';
 import { CalendarError } from './error';
 import { appointmentView, calendarActor, calendarSelection, CALENDAR_LIMITS, grantId, hasCalendarRight, parseCalendarReceipt, resourceView,
   type CalendarAppointmentRow, type CalendarReceiptRow, type CalendarResourceRow } from './realm-model';
@@ -15,6 +15,8 @@ import { requireCalendarTypeManager } from './appointment-types-model';
 import { readCalendarAppointmentLifecycle, requireCalendarLifecycleManager } from './lifecycle-model';
 import { readCalendarAppointmentVisitSnapshot } from './visit-bindings';
 import { readCalendarResourceMembershipTable } from './appointment-resource-bindings';
+import { CALENDAR_APPOINTMENT_TIME_CURRENT, CALENDAR_APPOINTMENT_TIME_STATE, readCalendarCurrentAppointmentTime } from './appointment-time-bindings';
+import { calendarAppointmentDateWindow } from './appointment-date-query';
 
 function owner(context: DatabaseReadQueryContext, scopeId: string): void {
   const row = context.database.query<{ scope_id: string }>("SELECT scope_id FROM _calendar_owner WHERE id='application'").get();
@@ -45,6 +47,14 @@ function rightSql(actor: CalendarActor, alias: string, right: 'any' | 'details')
   if (actor.manageAll) return { sql: '1=1', params: [] as string[] };
   const grants = right === 'details' ? 'g.manage=1 OR g.details=1' : 'g.manage=1 OR g.details=1 OR g.busy=1 OR g.book=1';
   return { sql: `(${alias}.owner_id IS ? OR EXISTS(SELECT 1 FROM _calendar_grants g WHERE g.scope_id=${alias}.scope_id AND g.resource_id=${alias}.id AND g.user_id=? AND (${grants})))`, params: [actor.userId, actor.userId] };
+}
+/** The parent UTC projection and selected017 fact must agree on every detail view. */
+function readAppointmentView(context: DatabaseReadQueryContext, row: CalendarAppointmentRow, ids: string[]): CalendarAppointmentView {
+  const fact = readCalendarCurrentAppointmentTime(context, row);
+  const view = appointmentView(row, ids, readCalendarAppointmentTypeSnapshot(context, row.scope_id, row.id),
+    readCalendarAppointmentLifecycle(context, row.scope_id, row.id), readCalendarAppointmentVisitSnapshot(context, row.scope_id, row.id));
+  if (fact.kind === 'timed-v1') return view;
+  return { ...view, interval: { kind: fact.kind, startDate: fact.intent.startDate, endDate: fact.intent.endDate, timeZone: fact.intent.timeZone } };
 }
 export function listCalendarResources(context: DatabaseReadQueryContext, input: unknown) {
   const r = calendarRecord(input, ['actor', 'limit', 'after', 'locationIds', 'regions']), actor = calendarActor(r.actor), limit = calendarInteger(r.limit ?? 25, 1, CALENDAR_LIMITS.page);
@@ -99,13 +109,37 @@ export function queryCalendarAppointments(context: DatabaseReadQueryContext, inp
     AND EXISTS(SELECT 1 FROM ${membership} selected WHERE selected.scope_id=a.scope_id AND selected.appointment_id=a.id AND selected.resource_id IN (${placeholders}))
     AND NOT EXISTS(SELECT 1 FROM ${membership} rr JOIN calendar_resources resource ON resource.id=rr.resource_id AND resource.scope_id=rr.scope_id WHERE rr.scope_id=a.scope_id AND rr.appointment_id=a.id AND NOT ${right.sql})
     ORDER BY a.occupied_start_ms,a.id LIMIT ?`).all(r.actor.scopeId, calendarOverlapSearchStart(r.startMs), r.endMs, r.startMs, ...r.ids, ...right.params, r.limit + 1);
-  return { items: rows.slice(0, r.limit).map(row => appointmentView(row, resourceIds(context, r.actor.scopeId, row.id, membership),
-    readCalendarAppointmentTypeSnapshot(context, r.actor.scopeId, row.id), readCalendarAppointmentLifecycle(context, r.actor.scopeId, row.id), readCalendarAppointmentVisitSnapshot(context, r.actor.scopeId, row.id))), truncated: rows.length > r.limit };
+  return { items: rows.slice(0, r.limit).map(row => readAppointmentView(context, row, resourceIds(context, r.actor.scopeId, row.id, membership))), truncated: rows.length > r.limit };
+}
+/** Half-open authored Gregorian dates across zones; confirmed all-day appointments only. */
+export function queryCalendarAppointmentDates(context: DatabaseReadQueryContext, input: unknown): CalendarAppointmentPage {
+  const r = calendarRecord(input, ['actor', 'resourceIds', 'startDate', 'endDate', 'limit']), actor = calendarActor(r.actor);
+  const ids = calendarSelection(r.resourceIds), dates = calendarAppointmentDateWindow(r.startDate, r.endDate);
+  if (new Set(ids).size !== ids.length) throw new CalendarError('CALENDAR_INPUT_INVALID');
+  const limit = calendarInteger(r.limit ?? 100, 1, CALENDAR_LIMITS.page); owner(context, actor.scopeId);
+  for (const id of ids) resource(context, actor, id, 'details');
+  try {
+    if (context.database.query<{ version: number }>(`SELECT version FROM ${CALENDAR_APPOINTMENT_TIME_STATE} WHERE id='application'`).get()?.version !== 17) throw new CalendarError('CALENDAR_STATE_INVALID');
+  } catch { throw new CalendarError('CALENDAR_STATE_INVALID'); }
+  if (!ids.length) return { items: [], truncated: false };
+  const membership = readCalendarResourceMembershipTable(context), right = rightSql(actor, 'resource', 'details');
+  // Read only the current projection's bounded start-date window, never all
+  // retained time bindings. Current membership, including hidden co-resources,
+  // is authorized in SQL before LIMIT so truncation cannot disclose them.
+  const rows = context.database.query<CalendarAppointmentRow>(`SELECT a.* FROM ${CALENDAR_APPOINTMENT_TIME_CURRENT} t
+    JOIN calendar_appointments a ON a.scope_id=t.scope_id AND a.id=t.appointment_id
+    WHERE t.scope_id=? AND t.kind='all-day-local-v1' AND t.start_date>=? AND t.start_date<? AND t.end_date>?
+      AND a.status='confirmed'
+      AND EXISTS(SELECT 1 FROM ${membership} selected WHERE selected.scope_id=a.scope_id AND selected.appointment_id=a.id AND selected.resource_id IN (${ids.map(() => '?').join(',')}))
+      AND NOT EXISTS(SELECT 1 FROM ${membership} rr LEFT JOIN calendar_resources resource ON resource.id=rr.resource_id AND resource.scope_id=rr.scope_id
+        WHERE rr.scope_id=a.scope_id AND rr.appointment_id=a.id AND (resource.id IS NULL OR NOT ${right.sql}))
+    ORDER BY t.start_date,t.appointment_id LIMIT ?`).all(actor.scopeId, dates.lookbackStartDate, dates.endDate, dates.startDate, ...ids, ...right.params, limit + 1);
+  return { items: rows.slice(0, limit).map(row => readAppointmentView(context, row, resourceIds(context, actor.scopeId, row.id, membership))), truncated: rows.length > limit };
 }
 export function readCalendarAppointment(context: DatabaseReadQueryContext, input: unknown) {
   const r = calendarRecord(input, ['actor', 'id']), actor = calendarActor(r.actor); owner(context, actor.scopeId);
   const { row, ids } = appointment(context, actor, calendarKey(r.id), 'details');
-  return appointmentView(row, ids, readCalendarAppointmentTypeSnapshot(context, actor.scopeId, row.id), readCalendarAppointmentLifecycle(context, actor.scopeId, row.id), readCalendarAppointmentVisitSnapshot(context, actor.scopeId, row.id));
+  return readAppointmentView(context, row, ids);
 }
 export function readCalendarReceipt(context: DatabaseReadQueryContext, input: unknown) {
   const r = calendarRecord(input, ['actor', 'requestId']), actor = calendarActor(r.actor), requestId = calendarKey(r.requestId); owner(context, actor.scopeId);

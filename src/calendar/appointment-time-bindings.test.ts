@@ -1,6 +1,6 @@
-/** Preparatory017 native MEMORY only. No registration, physical fixtures or capability claim. */
+/** Registered017 native MEMORY only, retaining exact genuine016 upgrade/rollback proofs. */
 import { Database } from 'bun:sqlite';
-import { expect, test } from 'bun:test';
+import { expect, spyOn, test } from 'bun:test';
 import { defineDatabaseRealm, runDatabaseRealmCommand, runDatabaseRealmQuery, type DatabaseWriteCommandContext } from '../databases/database-realm';
 import type { DatabaseSerializableValue } from '../databases/database-operations';
 import { createDatabaseReadQuerySession, withDatabaseReadQuerySession } from '../databases/database-read-query-capability';
@@ -18,11 +18,17 @@ import { calendarIntent, calendarRevision, reservationId } from './realm-model';
 import { bindCalendarAppointmentType } from './appointment-type-bindings';
 import { appendCalendarAppointmentUpdateHistory } from './appointment-resource-bindings';
 import { calendarInteger, calendarRecord } from './validation';
+import { CalendarError, readCalendarRejection, type CalendarErrorCode } from './error';
+import { calendarRealm016 } from './test-support/calendar-realm-016';
 
 const actor = { scopeId: 'tenant:synthetic-all-day-metadata', userId: 'user', principal: 'session', manageAll: true, createOwn: true };
 const timed = { startAt: '2026-01-01T10:00:00.000Z', endAt: '2026-01-01T11:00:00.000Z', timeZone: 'UTC', bufferBeforeMinutes: 0, bufferAfterMinutes: 0 };
 const allDay = { kind: 'all-day-local-v1' as const, startDate: '2026-10-15', endDate: '2026-11-15', timeZone: 'America/New_York' };
-const migrations = [...calendarRealm.migrations, CALENDAR_APPOINTMENT_ALL_DAY_MIGRATION];
+const migrations = calendarRealm.migrations;
+function rejected(run: () => unknown, code: CalendarErrorCode) {
+  try { run(); throw new Error('Expected canonical rejection'); }
+  catch (error) { expect(error instanceof CalendarError ? error.code : readCalendarRejection(error)?.code).toBe(code); }
+}
 function testTimeCommand(context: DatabaseWriteCommandContext, input: unknown) {
   const r = calendarRecord(input, ['requestId', 'expectedRevision', 'interval', 'title', 'skipBinding', 'afterBinding', 'clearType', 'appendHistory', 'omitDateHistory']);
   const row = context.db.get('calendar_appointments', 'appointment')!, revision = calendarInteger(r.expectedRevision, 1);
@@ -47,41 +53,43 @@ function testTimeCommand(context: DatabaseWriteCommandContext, input: unknown) {
   });
 }
 const prepared = defineDatabaseRealm({ name: calendarRealm.name, version: 'synthetic-preparatory017', tables: calendarAppointmentAllDayTables(), migrations,
-  commands: { ...calendarRealm.commands, 'synthetic.time': testTimeCommand }, queries: {
-    'synthetic.readTime': context => readCalendarAppointmentTime(context, context.database.query<Row>('SELECT * FROM calendar_appointments WHERE id=?').get('appointment')!) as never } });
+  commands: { ...calendarRealm.commands, 'synthetic.time': testTimeCommand }, queries: { ...calendarRealm.queries,
+    'synthetic.readTime': (context, input) => readCalendarAppointmentTime(context, context.database.query<Row>('SELECT * FROM calendar_appointments WHERE id=?').get(String(calendarRecord(input).id ?? 'appointment'))!) as never } });
 function fixture() {
   const db = createReactiveDB({ mode: 'memory' }), raw = db.getRawDatabase();
   try {
     raw.run('PRAGMA temp_store=MEMORY'); raw.run('PRAGMA foreign_keys=ON');
-    for (const [name, table] of Object.entries(calendarRealm.tables)) db.defineTable(name, table);
+    for (const [name, table] of Object.entries(calendarRealm016.tables)) db.defineTable(name, table);
     const migrate = (registry: readonly Migration[] = migrations) => {
       const migrator = new Migrator({ database: raw, dbPath: ':memory:', migrations: [...registry], createBackups: false, log() {} });
       try { return migrator.run(); } finally { migrator.dispose(); }
     };
-    expect(migrate(calendarRealm.migrations)).toHaveLength(16);
+    expect(migrate(calendarRealm016.migrations)).toHaveLength(16);
     let upgraded = false;
-    const command = (name: string, body: Record<string, unknown> = {}): any => (runDatabaseRealmCommand(upgraded ? prepared : calendarRealm, db,
+    const command = (name: string, body: Record<string, unknown> = {}): any => (runDatabaseRealmCommand(upgraded ? prepared : calendarRealm016, db,
       name.startsWith('synthetic.') ? name : 'calendar.' + name,
       (name.startsWith('synthetic.') || name === 'owner.bind' ? body : { actor, ...body }) as DatabaseSerializableValue) as any).value;
     command('owner.bind', { scopeId: actor.scopeId, ownerId: 'synthetic-owner' });
     command('resource.create', { requestId: 'resource', id: 'resource', label: 'PRIVATE_RESOURCE', kind: 'person', ownerId: actor.userId, timeZone: 'UTC' });
     const booking = { requestId: 'create', id: 'appointment', title: 'PRIVATE_TITLE', resourceIds: ['resource'], ...timed }, accepted = command('appointment.create', booking);
     const upgrade = () => { const applied = migrate(); for (const [name, table] of Object.entries(calendarAppointmentAllDayTables())) db.defineTable(name, table); upgraded = true; return applied; };
-    const retained = () => JSON.stringify(Object.fromEntries(Object.entries(calendarRealm.tables).map(([name, table]) => [name,
+    const retained = () => JSON.stringify(Object.fromEntries(Object.entries(calendarRealm016.tables).map(([name, table]) => [name,
       raw.query(`SELECT ${Object.keys(table).map(column => `"${column}"`).join(',')} FROM ${name} ORDER BY id`).all()])));
     const definitions = () => raw.query("SELECT type,name,sql FROM sqlite_schema WHERE type IN ('table','index','trigger') AND name NOT LIKE 'sqlite_%' ORDER BY type,name").all();
-    const read = () => { const copy = Database.deserialize(raw.serialize(), { readonly: true, strict: true });
-      try { copy.run('PRAGMA temp_store=MEMORY'); return withDatabaseReadQuerySession(createDatabaseReadQuerySession(copy), context => runDatabaseRealmQuery(prepared, context, 'synthetic.readTime', {})) as any; }
+    const query = (name: string, input: Record<string, unknown>) => { const copy = Database.deserialize(raw.serialize(), { readonly: true, strict: true });
+      try { copy.run('PRAGMA temp_store=MEMORY'); return withDatabaseReadQuerySession(createDatabaseReadQuerySession(copy), context => runDatabaseRealmQuery(prepared, context, name, input as DatabaseSerializableValue)) as any; }
       finally { copy.close(); } };
-    return { db, raw, command, upgrade, migrate, retained, definitions, read, booking, accepted, close: () => db.dispose() };
+    const read = (id = 'appointment') => query('synthetic.readTime', { id });
+    return { db, raw, command, query, upgrade, migrate, retained, definitions, read, booking, accepted, close: () => db.dispose() };
   } catch (error) { db.dispose(); throw error; }
 }
 
-test('017 is unregistered, maps are additive and all original001–016 identities remain unchanged', () => {
-  const hashes = calendarRealm.migrations.map(hashMigration), original = hashSchemaSnapshot(snapshotDeclaredTables(calendarRealm.tables));
-  expect(calendarRealm.version).toBe('16'); expect(calendarRealm.migrations).toHaveLength(16);
-  expect(Object.keys(calendarRealm.tables)).not.toContain(STATE);
-  expect(Object.keys(calendarRealm.tables.calendar_appointments!)).not.toContain('time_kind');
+test('017 registration is additive and all original001–016 identities remain unchanged', () => {
+  const hashes = calendarRealm016.migrations.map(hashMigration), original = hashSchemaSnapshot(snapshotDeclaredTables(calendarRealm016.tables));
+  expect(calendarRealm.version).toBe('17'); expect(calendarRealm.migrations).toHaveLength(17);
+  expect(Object.keys(calendarRealm.tables)).toContain(STATE);
+  expect(Object.keys(calendarRealm.tables.calendar_appointments!)).toContain('time_kind');
+  expect(calendarRealm016.fingerprint).toBe('sha256:fcfd500b5352a27f6bc43d9122c1af8cdafc85680994f4191ee75903485179f8');
   expect(prepared.migrations.slice(0, 16).map(hashMigration)).toEqual(hashes);
   expect(hashes).toEqual([
     '7a486bf60585cb5e00f86077021d2d142dab9290774828c077abbf03d3aba795', '772ccecce42312e46519265f681aa023312592e4ca6bcfdfda605499dc3edd6f',
@@ -93,10 +101,193 @@ test('017 is unregistered, maps are additive and all original001–016 identitie
     '0fa8a49cbbbf0881608d6b1aafbb1900a218ac73a4b7ee95ac7367ef0c8ef448', 'bf3c1f6718bf15a8a0d1686d0ad3ef920d0477730faae5943d182861dcd5b945',
     '24ba28d0d72cc5b90ad5436c5483188bbcf9ee637fdf08ea7fe3990d5ab528b4', '0553be4d7a34a76f3e0c9335f056c7abaefab7fac910c127d503060ee061a2d8' ]);
   expect(original).toBe('a9de3c82718367f9dfb5db628706f7a2b2fda542d12fc27be8d2d589a8d1f2a4');
-  expect(hashSchemaSnapshot(snapshotDeclaredTables(calendarRealm.tables))).toBe(original);
+  expect(hashSchemaSnapshot(snapshotDeclaredTables(calendarRealm016.tables))).toBe(original);
   const tables = calendarAppointmentAllDayTables(); expect(Object.isFrozen(tables)).toBe(true);
-  for (const name of Object.keys(calendarRealm.tables)) { expect(Object.isFrozen(tables[name])).toBe(true); expect(tables[name]).not.toBe(calendarRealm.tables[name]); }
+  for (const name of Object.keys(calendarRealm016.tables)) { expect(Object.isFrozen(tables[name])).toBe(true); expect(tables[name]).not.toBe(calendarRealm016.tables[name]); }
   expect(Reflect.set(tables.calendar_resources!, 'label', 'INTEGER')).toBe(false);
+});
+
+test('canonical all-day creation freezes31 LocalDates, explicit timed creation stays timed, and exact replay precedes compilation', () => {
+  const f = fixture(), temporal = Object.getOwnPropertyDescriptor(globalThis, 'Temporal');
+  try {
+    f.upgrade();
+    const input = { requestId: 'native-all-day', id: 'all-day', title: 'PRIVATE_DATE_TITLE', resourceIds: ['resource'], interval: allDay, participants: [] };
+    const accepted = f.command('appointment.create', input), fact = f.read('all-day');
+    expect(accepted).toMatchObject({ operation: 'appointment.created', revision: 1, changed: true });
+    expect(fact).toMatchObject({ kind: 'all-day-local-v1', intent: allDay, interval: { dayCount: 31 } });
+    expect(fact.interval.endMs - fact.interval.startMs).toBe(31 * 86_400_000 + 3_600_000);
+    expect(f.db.list(CURRENT)).toEqual([expect.objectContaining({ appointment_id: 'all-day', kind: 'all-day-local-v1', start_date: allDay.startDate, end_date: allDay.endDate })]);
+    f.command('appointment.create', { requestId: 'explicit-timed', id: 'timed', title: 'PRIVATE_TIMED', resourceIds: ['resource'],
+      interval: { kind: 'timed-v1', ...timed, startAt: '2026-01-02T10:00:00.000Z', endAt: '2026-01-02T11:00:00.000Z' } });
+    expect(f.read('timed').kind).toBe('timed-v1'); expect(f.db.list(HISTORY)).toHaveLength(1);
+    Object.defineProperty(globalThis, 'Temporal', { configurable: true, value: undefined });
+    const before = f.raw.serialize(), seq = f.db.currentSeq;
+    expect(f.command('appointment.create', input)).toEqual(accepted);
+    rejected(() => f.command('appointment.create', { ...input, requestId: 'fresh-no-engine', id: 'no-engine' }), 'CALENDAR_TIME_RULES_UNAVAILABLE');
+    expect(f.raw.serialize()).toEqual(before); expect(f.db.currentSeq).toBe(seq);
+  } finally { if (temporal) Object.defineProperty(globalThis, 'Temporal', temporal); else Reflect.deleteProperty(globalThis, 'Temporal'); f.close(); }
+});
+
+test('canonical rich/title/participant/lifecycle/cancel paths retain accepted31-date facts without Temporal or current Intl', () => {
+  const f = fixture(), temporal = Object.getOwnPropertyDescriptor(globalThis, 'Temporal'), intl = Object.getOwnPropertyDescriptor(Intl, 'DateTimeFormat');
+  try {
+    f.upgrade();
+    const patch = { requestId: 'native-date-update', id: 'appointment', expectedRevision: 1, interval: allDay, participants: [] };
+    const accepted = f.command('appointment.update', patch), fact = f.read(), history = f.db.list(HISTORY), pointer = f.db.list(CURRENT);
+    expect(accepted.revision).toBe(2);
+    f.command('lifecycle.replace', { requestId: 'extended', expectedRevision: 1, extended: true, cancellationReason: 'optional', noShowReason: 'optional' });
+    Object.defineProperty(globalThis, 'Temporal', { configurable: true, value: undefined });
+    Object.defineProperty(Intl, 'DateTimeFormat', { configurable: true, value() { throw new Error('retained facts must not consult current zone rules'); } });
+    expect(f.command('appointment.update', patch)).toEqual(accepted);
+    expect(f.command('appointment.update', { requestId: 'same-dates', id: 'appointment', expectedRevision: 2, interval: allDay })).toMatchObject({ changed: false, revision: 2 });
+    f.command('appointment.update', { requestId: 'date-title', id: 'appointment', expectedRevision: 2, title: 'PRIVATE_RENAMED' });
+    f.command('appointment.participants', { requestId: 'date-participants', id: 'appointment', expectedRevision: 3, references: [{ kind: 'guardian-user', userId: 'participant' }] });
+    f.command('appointment.transition', { requestId: 'date-tentative', id: 'appointment', expectedRevision: 4, policyRevision: 2, status: 'tentative' });
+    if (intl) Object.defineProperty(Intl, 'DateTimeFormat', intl);
+    const beforeDates = f.raw.serialize(), beforeSeq = f.db.currentSeq;
+    rejected(() => f.command('appointment.update', { requestId: 'date-move', id: 'appointment', expectedRevision: 5,
+      interval: { ...allDay, startDate: '2026-10-16', endDate: '2026-11-16' } }), 'CALENDAR_TIME_RULES_UNAVAILABLE');
+    expect(f.raw.serialize()).toEqual(beforeDates); expect(f.db.currentSeq).toBe(beforeSeq);
+    f.command('appointment.cancel', { requestId: 'date-cancel', id: 'appointment', expectedRevision: 5, confirmed: true });
+    expect(f.db.get('calendar_appointments', 'appointment')).toMatchObject({ revision: 6, status: 'cancelled', time_kind: 'all-day-local-v1' });
+    expect(f.read()).toEqual(fact); expect(f.db.list(HISTORY)).toEqual(history); expect(f.db.list(CURRENT)).toEqual(pointer);
+    expect(f.db.list('_calendar_reservations').every(row => row.active === 0)).toBe(true);
+    expect(f.command('appointment.update', patch)).toEqual(accepted);
+    rejected(() => f.command('appointment.update', { requestId: 'terminal-date', id: 'appointment', expectedRevision: 6, title: 'PRIVATE_NO' }), 'CALENDAR_TRANSITION_INVALID');
+    expect(f.db.list('_calendar_appointment_update_history').map(row => JSON.parse(String(row.after_json)).interval)).toEqual([allDay, allDay]);
+  } finally { if (temporal) Object.defineProperty(globalThis, 'Temporal', temporal); else Reflect.deleteProperty(globalThis, 'Temporal'); if (intl) Object.defineProperty(Intl, 'DateTimeFormat', intl); f.close(); }
+});
+
+test('canonical conversion requires explicit nested intent; old timed receipts survive and later reschedule retains full time history', () => {
+  const f = fixture();
+  try {
+    f.upgrade();
+    const reschedule = { requestId: 'old-reschedule', id: 'appointment', expectedRevision: 1, ...timed,
+      startAt: '2026-01-02T10:00:00.000Z', endAt: '2026-01-02T11:00:00.000Z' };
+    const prior = f.command('appointment.reschedule', reschedule);
+    f.command('appointment.update', { requestId: 'date-convert', id: 'appointment', expectedRevision: 2, interval: allDay });
+    const before = f.raw.serialize(), seq = f.db.currentSeq;
+    rejected(() => f.command('appointment.reschedule', { ...reschedule, requestId: 'not-conversion', expectedRevision: 3 }), 'CALENDAR_INPUT_INVALID');
+    rejected(() => f.command('appointment.update', { requestId: 'flat-not-conversion', id: 'appointment', expectedRevision: 3, ...timed }), 'CALENDAR_INPUT_INVALID');
+    expect(f.raw.serialize()).toEqual(before); expect(f.db.currentSeq).toBe(seq);
+    expect(f.command('appointment.reschedule', reschedule)).toEqual(prior); expect(f.command('appointment.create', f.booking)).toEqual(f.accepted);
+    f.command('appointment.update', { requestId: 'back-to-timed', id: 'appointment', expectedRevision: 3, interval: { kind: 'timed-v1', ...timed } });
+    expect(f.db.list(CURRENT)).toEqual([expect.objectContaining({ kind: 'timed-v1', start_date: null, end_date: null })]);
+    f.command('appointment.reschedule', { ...reschedule, requestId: 'timed-again', expectedRevision: 4 });
+    expect(f.db.list(HISTORY).map(row => [row.appointment_revision, row.kind])).toEqual([[3, 'all-day-local-v1'], [4, 'timed-v1'], [5, 'timed-v1']]);
+    expect(f.read()).toMatchObject({ kind: 'timed-v1', interval: { startAt: reschedule.startAt, endAt: reschedule.endAt } });
+    expect(f.raw.query('PRAGMA foreign_key_check').all()).toEqual([]);
+  } finally { f.close(); }
+});
+
+test('canonical type clearing is explicit and minute type policy is never silently coerced for LocalDates', () => {
+  const f = fixture();
+  try {
+    f.upgrade(); f.command('type.create', { requestId: 'native-type', id: 'type', label: 'PRIVATE_TYPE', durationMinutes: 60, bufferBeforeMinutes: 0, bufferAfterMinutes: 0 });
+    f.command('appointment.update', { requestId: 'native-typed', id: 'appointment', expectedRevision: 1, appointmentType: { id: 'type', revision: 1 } });
+    const before = f.raw.serialize(), seq = f.db.currentSeq;
+    for (const [index, patch] of [{ interval: allDay }, { interval: allDay, appointmentType: { id: 'type', revision: 1 } }].entries()) {
+      rejected(() => f.command('appointment.update', { requestId: 'refuse-type-' + index, id: 'appointment', expectedRevision: 2, ...patch }), 'CALENDAR_TYPE_CONFLICT');
+    }
+    expect(f.raw.serialize()).toEqual(before); expect(f.db.currentSeq).toBe(seq);
+    f.command('resource.types', { requestId: 'required-types', id: 'resource', expectedRevision: 1, mode: 'required', typeIds: ['type'] });
+    rejected(() => f.command('appointment.update', { requestId: 'required-not-coerced', id: 'appointment', expectedRevision: 2, interval: allDay, appointmentType: null }), 'CALENDAR_TYPE_CONFLICT');
+    f.command('resource.types', { requestId: 'optional-types', id: 'resource', expectedRevision: 2, mode: 'optional', typeIds: ['type'] });
+    f.command('appointment.update', { requestId: 'clear-type-date', id: 'appointment', expectedRevision: 2, interval: allDay, appointmentType: null });
+    expect(f.read().kind).toBe('all-day-local-v1');
+    const accepted = f.raw.serialize(), acceptedSeq = f.db.currentSeq;
+    rejected(() => f.command('appointment.create', { requestId: 'null-create', id: 'null', resourceIds: ['resource'], title: 'PRIVATE', interval: allDay, appointmentType: null }), 'CALENDAR_INPUT_INVALID');
+    expect(f.raw.serialize()).toEqual(accepted); expect(f.db.currentSeq).toBe(acceptedSeq);
+  } finally { f.close(); }
+});
+
+test('canonical LocalDate admission shares UTC occupancy, half-open adjacency and full frozen resource availability', () => {
+  const f = fixture();
+  try {
+    f.upgrade(); const dates = { ...allDay, startDate: '2026-04-01', endDate: '2026-04-02', timeZone: 'UTC' };
+    f.command('resource.availability', { requestId: 'partial-day', id: 'resource', expectedRevision: 1, mode: 'windows', windows: [{ startAt: '2026-04-01T09:00:00.000Z', endAt: '2026-04-01T17:00:00.000Z' }] });
+    const create = { requestId: 'day', id: 'day', title: 'PRIVATE_DATE', resourceIds: ['resource'], interval: dates };
+    rejected(() => f.command('appointment.create', create), 'CALENDAR_AVAILABILITY_CONFLICT');
+    f.command('resource.availability', { requestId: 'whole-day', id: 'resource', expectedRevision: 2, mode: 'windows', windows: [{ startAt: '2026-04-01T00:00:00.000Z', endAt: '2026-04-03T00:00:00.000Z' }] });
+    f.command('appointment.create', create);
+    rejected(() => f.command('appointment.create', { requestId: 'timed-collision', id: 'collision', title: 'PRIVATE', resourceIds: ['resource'], ...timed,
+      startAt: '2026-04-01T12:00:00.000Z', endAt: '2026-04-01T13:00:00.000Z' }), 'CALENDAR_BOOKING_CONFLICT');
+    f.command('appointment.create', { ...create, requestId: 'adjacent', id: 'adjacent', interval: { ...dates, startDate: '2026-04-02', endDate: '2026-04-03' } });
+    expect(f.db.list(HISTORY)).toHaveLength(2);
+    for (const name of ['hold.acquire', 'block.create']) rejected(() => f.command(name, { requestId: 'unsupported-' + name, id: 'unsupported', resourceIds: ['resource'], title: 'PRIVATE', interval: dates }), 'CALENDAR_INPUT_INVALID');
+  } finally { f.close(); }
+});
+
+test('canonical late017 binding pressure rolls back create/update/resources/participant history and source receipt together', () => {
+  const f = fixture();
+  try {
+    f.upgrade(); f.db.createStrict('_calendar_usage', { id: 'appointmentTimeHistory', count: 100000 });
+    const before = f.raw.serialize(), seq = f.db.currentSeq;
+    for (const [name, input] of [
+      ['appointment.create', { requestId: 'full-create', id: 'full', resourceIds: ['resource'], title: 'PRIVATE', interval: allDay, participants: [] }],
+      ['appointment.update', { requestId: 'full-update', id: 'appointment', expectedRevision: 1, title: 'PRIVATE_UPDATED', interval: allDay, participants: [] }],
+    ] as const) {
+      rejected(() => f.command(name, input), 'CALENDAR_CAPACITY');
+      expect(f.raw.serialize()).toEqual(before); expect(f.db.currentSeq).toBe(seq);
+    }
+    expect(f.db.list(HISTORY)).toEqual([]); expect(f.db.list(CURRENT)).toEqual([]);
+  } finally { f.close(); }
+});
+
+test('canonical confirmed timed hold remains historical after explicit all-day conversion and cannot consume into an all-day target', () => {
+  const clock = spyOn(Date, 'now').mockReturnValue(Date.parse('2026-04-01T08:00:00.000Z')), f = fixture();
+  try {
+    f.upgrade();
+    const hold = { requestId: 'native-hold', id: 'hold', resourceIds: ['resource'], ...timed,
+      startAt: '2026-04-01T10:00:00.000Z', endAt: '2026-04-01T11:00:00.000Z', participants: [] };
+    const confirm = { requestId: 'native-confirm', id: 'hold', appointmentId: 'from-hold', expectedRevision: 1, title: 'PRIVATE_FROM_HOLD' };
+    f.command('hold.acquire', hold); const accepted = f.command('hold.confirm', confirm);
+    const original = f.query('calendar.hold', { actor, id: 'hold' });
+    expect(f.read('from-hold').kind).toBe('timed-v1');
+    f.command('appointment.update', { requestId: 'hold-to-date', id: 'from-hold', expectedRevision: 1,
+      interval: { ...allDay, startDate: '2026-04-01', endDate: '2026-04-02', timeZone: 'UTC' } });
+    expect(f.command('hold.confirm', confirm)).toEqual(accepted);
+    expect(f.query('calendar.hold', { actor, id: 'hold' })).toEqual(original);
+    expect(f.read('from-hold').kind).toBe('all-day-local-v1');
+    // This owned raw MEMORY attempt cannot bypass the fresh-consumption kind fence.
+    f.command('hold.acquire', { ...hold, requestId: 'other-hold', id: 'other-hold', startAt: '2026-04-02T10:00:00.000Z', endAt: '2026-04-02T11:00:00.000Z' });
+    const before = f.raw.serialize(), seq = f.db.currentSeq;
+    expect(() => f.raw.run("UPDATE calendar_holds SET status='confirmed',revision=2,appointment_id='from-hold' WHERE id='other-hold'")).toThrow();
+    expect(f.raw.serialize()).toEqual(before); expect(f.db.currentSeq).toBe(seq);
+    expect(f.db.get('calendar_holds', 'other-hold')!.status).toBe('held');
+  } finally { f.close(); clock.mockRestore(); }
+});
+
+test('canonical explicit intervals are mutually exclusive, closed and never default all-day fields or buffers', () => {
+  const f = fixture();
+  try {
+    f.upgrade(); const before = f.raw.serialize(), seq = f.db.currentSeq;
+    const create = { requestId: 'invalid-interval', id: 'invalid', title: 'PRIVATE', resourceIds: ['resource'] };
+    for (const extra of [
+      { interval: allDay, startAt: timed.startAt }, { interval: allDay, bufferBeforeMinutes: 0 },
+      { interval: { ...allDay, bufferAfterMinutes: 0 } }, { interval: { kind: 'all-day-local-v1', startDate: allDay.startDate, timeZone: 'UTC' } },
+      { interval: { ...allDay, startDate: '2026-02-30' } }, { interval: { ...allDay, endDate: '2026-11-16' } },
+      { interval: { kind: 'timed-v1', startAt: timed.startAt, endAt: timed.endAt, timeZone: timed.timeZone, bufferBeforeMinutes: 0 } },
+      { interval: { ...allDay, engine: { name: 'browser' } } },
+    ]) {
+      rejected(() => f.command('appointment.create', { ...create, ...extra }), 'CALENDAR_INPUT_INVALID');
+      rejected(() => f.command('appointment.update', { requestId: 'invalid-update', id: 'appointment', expectedRevision: 1, ...extra }), 'CALENDAR_INPUT_INVALID');
+    }
+    expect(f.raw.serialize()).toEqual(before); expect(f.db.currentSeq).toBe(seq);
+  } finally { f.close(); }
+});
+
+test('canonical four-digit LocalDates retain readable extended UTC boundary projections without changing date authority', () => {
+  const f = fixture();
+  try {
+    f.upgrade();
+    const interval = { kind: 'all-day-local-v1', startDate: '0000-01-01', endDate: '0000-01-02', timeZone: 'Etc/GMT-14' };
+    f.command('appointment.create', { requestId: 'boundary-utc', id: 'boundary', title: 'PRIVATE', resourceIds: ['resource'], interval });
+    expect(f.read('boundary')).toMatchObject({ kind: 'all-day-local-v1', intent: interval, interval: { startAt: '-000001-12-31T10:00:00.000Z', endAt: '0000-01-01T10:00:00.000Z' } });
+    f.command('appointment.update', { requestId: 'boundary-title', id: 'boundary', expectedRevision: 1, title: 'PRIVATE_BOUNDARY' });
+    expect(f.db.list(CURRENT)).toEqual([expect.objectContaining({ kind: 'all-day-local-v1', start_date: interval.startDate, end_date: interval.endDate })]);
+    expect(f.db.list(HISTORY)).toHaveLength(1);
+  } finally { f.close(); }
 });
 test('latest-map MEMORY predeclaration is admitted only as exact empty metadata, without faking fresh physical bootstrap', () => {
   const db = createReactiveDB({ mode: 'memory' });
@@ -126,7 +317,7 @@ test('late017 failure rolls backDDL/state/ledger and preserves a retryable popul
     const before = f.retained(), definitions = f.definitions(), seq = f.db.currentSeq, ledger = f.raw.query('SELECT * FROM _migrations ORDER BY version').all();
     const failing = { ...CALENDAR_APPOINTMENT_ALL_DAY_MIGRATION, up(database: Parameters<Migration['up']>[0]) {
       CALENDAR_APPOINTMENT_ALL_DAY_MIGRATION.up(database); throw new Error('late017'); } };
-    expect(() => f.migrate([...calendarRealm.migrations, failing])).toThrow('late017');
+    expect(() => f.migrate([...calendarRealm016.migrations, failing])).toThrow('late017');
     expect(f.retained()).toBe(before); expect(f.definitions()).toEqual(definitions); expect(f.db.currentSeq).toBe(seq);
     expect(f.raw.query('SELECT * FROM _migrations ORDER BY version').all()).toEqual(ledger);
     expect(f.upgrade()).toEqual(['017']);

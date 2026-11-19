@@ -14,9 +14,13 @@ import { bindCalendarAppointmentParticipants, calendarCurrentAppointmentParticip
 import { effectiveCalendarAppointmentStatus, isCalendarLifecycleTerminal } from './lifecycle-model';
 import { admitCalendarBookingCandidate } from './booking-admission';
 import { appendCalendarSemanticAudit } from './semantic-audit';
+import { normalizeCalendarAppointmentTimeIntent, type CalendarAppointmentTimeIntent } from './appointment-time-input';
+import { bindCalendarAppointmentTime, calendarCurrentAppointmentTime, calendarAppointmentTimeFields,
+  calendarAppointmentTimeHistoryFields, requireCalendarAppointmentTimeStorage, resolveCalendarAppointmentTimeIntent,
+  type CalendarAppointmentTimeFact } from './appointment-time-bindings';
 
 export const CALENDAR_APPOINTMENT_UPDATE_FIELDS = Object.freeze([
-  'title', 'resourceIds', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'appointmentType', 'visit', 'participants',
+  'title', 'resourceIds', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'appointmentType', 'visit', 'participants', 'interval',
 ] as const);
 const INTERVAL_FIELDS = ['startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes'] as const;
 function typeReference(value: unknown): CalendarAppointmentTypeReference {
@@ -31,7 +35,7 @@ function visitReference(value: unknown): CalendarVisitInput {
 }
 
 /** Server-only closed wire normalization. A complete explicit interval or no interval; omission never means clear/default. */
-export function normalizeCalendarAppointmentUpdate(input: unknown): Readonly<CalendarAppointmentUpdateInput> {
+export function normalizeCalendarAppointmentUpdate(input: unknown): Readonly<CalendarAppointmentUpdateInput & { readonly interval?: CalendarAppointmentTimeIntent }> {
   const r = calendarRecord(calendarValue(input), CALENDAR_APPOINTMENT_UPDATE_FIELDS);
   if (!Object.keys(r).length) throw new CalendarError('CALENDAR_INPUT_INVALID');
   const normalized: Record<string, unknown> = {};
@@ -42,7 +46,10 @@ export function normalizeCalendarAppointmentUpdate(input: unknown): Readonly<Cal
     if (new Set(ids).size !== ids.length) throw new CalendarError('CALENDAR_INPUT_INVALID');
     normalized.resourceIds = Object.freeze(ids.sort());
   }
-  if (INTERVAL_FIELDS.some(field => Object.hasOwn(r, field))) {
+  if (Object.hasOwn(r, 'interval')) {
+    if (INTERVAL_FIELDS.some(field => Object.hasOwn(r, field))) throw new CalendarError('CALENDAR_INPUT_INVALID');
+    normalized.interval = normalizeCalendarAppointmentTimeIntent(r.interval);
+  } else if (INTERVAL_FIELDS.some(field => Object.hasOwn(r, field))) {
     if (!INTERVAL_FIELDS.every(field => Object.hasOwn(r, field))) throw new CalendarError('CALENDAR_INPUT_INVALID');
     calendarInteger(r.bufferBeforeMinutes, 0, 1440); calendarInteger(r.bufferAfterMinutes, 0, 1440);
     const interval = normalizeCalendarTimedInterval(Object.fromEntries(INTERVAL_FIELDS.map(field => [field, r[field]])));
@@ -51,7 +58,7 @@ export function normalizeCalendarAppointmentUpdate(input: unknown): Readonly<Cal
   if (Object.hasOwn(r, 'appointmentType')) normalized.appointmentType = r.appointmentType === null ? null : typeReference(r.appointmentType);
   if (Object.hasOwn(r, 'visit')) normalized.visit = r.visit === null ? null : visitReference(r.visit);
   if (Object.hasOwn(r, 'participants')) normalized.participants = Object.freeze(calendarParticipantReferences(r.participants).map(ref => Object.freeze(ref)));
-  return Object.freeze(normalized) as Readonly<CalendarAppointmentUpdateInput>;
+  return Object.freeze(normalized) as Readonly<CalendarAppointmentUpdateInput & { readonly interval?: CalendarAppointmentTimeIntent }>;
 }
 
 function intervalFields(interval: CalendarTimedInterval) {
@@ -60,12 +67,12 @@ function intervalFields(interval: CalendarTimedInterval) {
 }
 function snapshot(title: string, resourceIds: readonly string[], interval: CalendarTimedInterval,
   appointmentType: CalendarAppointmentTypeReference | undefined, visit: CalendarVisitInput | undefined,
-  participants: ReturnType<typeof calendarCurrentAppointmentParticipants>) {
+  participants: ReturnType<typeof calendarCurrentAppointmentParticipants>, fact?: CalendarAppointmentTimeFact) {
   return { title, resourceIds, startAt: interval.startAt, endAt: interval.endAt, timeZone: interval.timeZone,
     bufferBeforeMinutes: interval.bufferBeforeMinutes, bufferAfterMinutes: interval.bufferAfterMinutes,
     appointmentType: appointmentType ? { id: appointmentType.id, revision: appointmentType.revision } : null,
     visit: visit?.mode === 'in-person' ? { mode: visit.mode, location: { id: visit.location.id, revision: visit.location.revision } } : visit ?? null,
-    participants };
+    participants, ...(fact ? calendarAppointmentTimeHistoryFields(fact) : {}) };
 }
 
 /** One canonical source decision. The trusted parent supplies fresh SYSTEM participant admission at the real commit fence. */
@@ -78,40 +85,46 @@ export function updateCalendarAppointment(context: DatabaseWriteCommandContext, 
     const patch = normalizeCalendarAppointmentUpdate(Object.fromEntries(CALENDAR_APPOINTMENT_UPDATE_FIELDS.filter(field => Object.hasOwn(r, field)).map(field => [field, r[field]])));
     if (Object.hasOwn(patch, 'participants')) requireCalendarParticipantManager(actor);
     // No base/catalog/default lookup participates in the new operation digest. Exact replay precedes fresh CAS/policy admission.
-    return calendarIntent(context, actor, r.requestId, ['appointment.update.v1', row.id, expectedRevision, patch], 'appointment', 'manage', requestId => {
+    return calendarIntent(context, actor, r.requestId, [Object.hasOwn(patch, 'interval') ? 'appointment.update.interval.v1' : 'appointment.update.v1', row.id, expectedRevision, patch], 'appointment', 'manage', requestId => {
       if (!calendarCurrentResourceMembership(context)) throw new CalendarError('CALENDAR_NOT_READY');
       calendarRevision(row, expectedRevision);
       if (isCalendarLifecycleTerminal(effectiveCalendarAppointmentStatus(context, row))) throw new CalendarError('CALENDAR_TRANSITION_INVALID');
       const currentType = calendarCurrentAppointmentType(context, actor.scopeId, row.id), currentVisit = calendarCurrentAppointmentVisit(context, actor.scopeId, row.id);
       const currentParticipants = calendarCurrentAppointmentParticipants(context, actor.scopeId, row.id);
-      const priorInterval = normalizeCalendarTimedInterval({ startAt: row.start_at, endAt: row.end_at, timeZone: row.time_zone,
-        bufferBeforeMinutes: row.buffer_before, bufferAfterMinutes: row.buffer_after });
-      const interval = Object.hasOwn(patch, 'startAt') ? normalizeCalendarTimedInterval({ startAt: patch.startAt, endAt: patch.endAt, timeZone: patch.timeZone,
-        bufferBeforeMinutes: patch.bufferBeforeMinutes, bufferAfterMinutes: patch.bufferAfterMinutes }) : priorInterval;
+      const priorFact = calendarCurrentAppointmentTime(context, row), priorInterval = priorFact.interval;
+      if (Object.hasOwn(patch, 'interval')) requireCalendarAppointmentTimeStorage(context);
+      if (priorFact.kind === 'all-day-local-v1' && Object.hasOwn(patch, 'startAt')) throw new CalendarError('CALENDAR_INPUT_INVALID');
+      const fact: CalendarAppointmentTimeFact = Object.hasOwn(patch, 'interval') ? resolveCalendarAppointmentTimeIntent(patch.interval, priorFact)
+        : Object.hasOwn(patch, 'startAt') ? { kind: 'timed-v1', interval: normalizeCalendarTimedInterval({ startAt: patch.startAt, endAt: patch.endAt, timeZone: patch.timeZone,
+          bufferBeforeMinutes: patch.bufferBeforeMinutes, bufferAfterMinutes: patch.bufferAfterMinutes }) } : priorFact;
+      const interval = fact.interval;
       const resourceIds = patch.resourceIds ? [...patch.resourceIds] : oldResources, added = resourceIds.filter(id => !oldResources.includes(id));
       const title = patch.title ?? row.title, type = Object.hasOwn(patch, 'appointmentType') ? patch.appointmentType ?? undefined : currentType;
+      if (fact.kind === 'all-day-local-v1' && (type || currentType && priorFact.kind !== fact.kind && patch.appointmentType !== null)) throw new CalendarError('CALENDAR_TYPE_CONFLICT');
       const visit = Object.hasOwn(patch, 'visit') ? patch.visit ?? undefined : currentVisit;
       const participants = Object.hasOwn(patch, 'participants') ? [...patch.participants!] : currentParticipants;
       const titleChanged = title !== row.title, resourcesChanged = calendarJson(resourceIds) !== calendarJson(oldResources);
       const occupancyChanged = interval.startMs !== row.start_ms || interval.endMs !== row.end_ms || interval.bufferBeforeMinutes !== row.buffer_before || interval.bufferAfterMinutes !== row.buffer_after;
       const timeZoneChanged = interval.timeZone !== row.time_zone, typeChanged = !sameCalendarAppointmentType(currentType, type), visitChanged = !sameCalendarVisit(currentVisit, visit);
+      const kindChanged = priorFact.kind !== fact.kind, authoredChanged = kindChanged || fact.kind === 'all-day-local-v1' && calendarJson(priorFact.intent) !== calendarJson(fact.intent);
       const participantsChanged = calendarJson(currentParticipants) !== calendarJson(participants);
-      if (!titleChanged && !resourcesChanged && !occupancyChanged && !timeZoneChanged && !typeChanged && !visitChanged && !participantsChanged) {
+      if (!titleChanged && !resourcesChanged && !occupancyChanged && !timeZoneChanged && !typeChanged && !visitChanged && !participantsChanged && !authoredChanged) {
         return { requestId, operation: 'appointment.updated' as const, id: row.id, revision: row.revision, changed: false };
       }
       // Complete old-manage / resulting-book admission precedes every selected catalog lookup.
       for (const id of resourceIds) {
         const resource = calendarResource(context, actor, id); requireCalendarRight(context, actor, resource, 'book');
-        if ((occupancyChanged || typeChanged || visitChanged || added.includes(id)) && !resource.active) throw new CalendarError('CALENDAR_FORBIDDEN');
+        if ((occupancyChanged || kindChanged || typeChanged || visitChanged || added.includes(id)) && !resource.active) throw new CalendarError('CALENDAR_FORBIDDEN');
       }
-      const admitType = occupancyChanged || typeChanged || added.length > 0, admitVisit = occupancyChanged || visitChanged || added.length > 0;
+      const admitType = occupancyChanged || kindChanged || typeChanged || added.length > 0, admitVisit = occupancyChanged || kindChanged || visitChanged || added.length > 0;
       admitCalendarBookingCandidate(context, actor.scopeId, { resourceIds, interval, appointmentType: type, visit },
-        { type: admitType, visit: admitVisit, availabilityResourceIds: occupancyChanged ? resourceIds : added,
-          occupancy: occupancyChanged || added.length ? { except: { kind: 'appointment', id: row.id } } : false });
-      const before = snapshot(row.title, oldResources, priorInterval, currentType, currentVisit, currentParticipants);
+        { type: admitType, visit: admitVisit, availabilityResourceIds: occupancyChanged || kindChanged ? resourceIds : added,
+          occupancy: occupancyChanged || kindChanged || added.length ? { except: { kind: 'appointment', id: row.id } } : false });
+      const before = snapshot(row.title, oldResources, priorInterval, currentType, currentVisit, currentParticipants, priorFact);
       const revision = nextCalendarRevision(row.revision);
       calendarBudget(context, 'appointmentUpdateHistory');
-      const change = context.db.update('calendar_appointments', row.id, { title, ...intervalFields(interval), revision });
+      const change = context.db.update('calendar_appointments', row.id, { title,
+        ...(row.time_kind === undefined ? intervalFields(interval) : calendarAppointmentTimeFields(fact)), revision });
       for (const id of oldResources.filter(id => !resourceIds.includes(id))) {
         if (!context.db.get('_calendar_reservations', reservationId(actor.scopeId, row.id, id))) throw new CalendarError('CALENDAR_STATE_INVALID');
         context.db.update('_calendar_reservations', reservationId(actor.scopeId, row.id, id), { active: 0 });
@@ -128,7 +141,8 @@ export function updateCalendarAppointment(context: DatabaseWriteCommandContext, 
       if (typeChanged) bindCalendarAppointmentType(context, actor.scopeId, row.id, revision, type);
       if (visitChanged) bindCalendarAppointmentVisit(context, actor.scopeId, row.id, revision, visit);
       if (participantsChanged) bindCalendarAppointmentParticipants(context, actor.scopeId, row.id, revision, participants);
-      appendCalendarAppointmentUpdateHistory(context, actor.scopeId, row.id, revision, before, snapshot(title, resourceIds, interval, type, visit, participants));
+      if (row.time_kind !== undefined) bindCalendarAppointmentTime(context, actor.scopeId, row.id, revision, fact);
+      appendCalendarAppointmentUpdateHistory(context, actor.scopeId, row.id, revision, before, snapshot(title, resourceIds, interval, type, visit, participants, fact));
       appendCalendarSemanticAudit(context, 'appointment.updated', change, { revision, resourceCount: resourceIds.length,
         titleChanged, resourcesChanged, occupancyChanged, timeZoneChanged, typeChanged, visitChanged, participantsChanged,
         ...(Object.hasOwn(patch, 'participants') ? { participantCount: participants.length } : {}) });

@@ -5,7 +5,7 @@ import { Migrator } from '../migrations/migrator';
 import { hashMigration, hashSchemaSnapshot, snapshotDeclaredTables } from '../migrations/schema-snapshot';
 import { createReactiveDB } from '../sync/reactive-db';
 import { jobSourceId } from '../jobs/source-model';
-import { calendarRealm } from './realm';
+import { calendarRealm016 as calendarRealm } from './test-support/calendar-realm-016';
 import { CALENDAR_APPOINTMENT_UPDATE_TABLES } from './realm-appointment-update-migration';
 import { CALENDAR_INTEGRATION_OWNERSHIP_TABLES } from './realm-integration-ownership-migration';
 import { CALENDAR_INTEGRATION_CONTROL_ADDITIONS, CALENDAR_INTEGRATION_CONTROL_TABLES } from './realm-integration-controls-migration';

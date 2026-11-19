@@ -11,7 +11,8 @@ import type { CalendarIntegrationPolicySpec } from './integration-model';
 import { CALENDAR_INTEGRATION_ADDITIONS, CALENDAR_INTEGRATION_TABLES } from './realm-integrations-migration';
 import { CALENDAR_INTEGRATION_OWNERSHIP_ADDITIONS, CALENDAR_INTEGRATION_OWNERSHIP_TABLES } from './realm-integration-ownership-migration';
 import { CALENDAR_INTEGRATION_OPERATOR_TABLES } from './realm-integration-operator-migration';
-import { calendarRealm } from './realm';
+// Preserve this recorded upgrade boundary through016; latest017 is qualified separately.
+import { calendarRealm016 as calendarRealm } from './test-support/calendar-realm-016';
 import { CALENDAR_APPOINTMENT_UPDATE_TABLES } from './realm-appointment-update-migration';
 import { calendarHash, calendarJson } from './validation';
 

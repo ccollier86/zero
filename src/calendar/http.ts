@@ -2,7 +2,7 @@
 import { t } from 'elysia';
 import { createServerExtensionApp, defineEndpoint, defineRouter, type AnyZeroEndpointDefinition } from '../frontend/server/server-extensions';
 import type { ZeroAppRuntime } from '../runtime/zero-app-runtime';
-import type { CalendarAppointmentInput, CalendarAppointmentUpdateInput, CalendarAvailabilityInput, CalendarBlockInput, CalendarBlockRescheduleInput,
+import type { CalendarAppointmentCreateInput, CalendarAppointmentUpdateInput, CalendarDateRangeQuery, CalendarAvailabilityInput, CalendarBlockInput, CalendarBlockRescheduleInput,
   CalendarAppointmentTypeInput, CalendarAppointmentTypeReplacement, CalendarAppointmentTypePageQuery, CalendarResourceTypesInput,
   CalendarLifecyclePolicyInput, CalendarAppointmentTransitionInput, CalendarCancellationOptions,
   CalendarControlOptions, CalendarGrant, CalendarHoldInput, CalendarHoldConfirmationInput, CalendarLocationInput, CalendarLocationPageQuery, CalendarLocationReplacement,
@@ -11,7 +11,8 @@ import { CalendarError } from './error';
 import { calendarRecord } from './validation';
 import { calendarAppointmentStream, calendarAvailabilityStream, calendarBlockStream, calendarHoldStream, calendarLocationStream, calendarResourceStream,
   calendarLocationDetailStream, calendarResourceLocationsStream, calendarTypeStream, calendarTypeDetailStream, calendarResourceTypesStream,
-  calendarLifecycleStream, calendarAppointmentTransitionsStream, calendarVisitLocationStream, calendarParticipantDirectoryStream, calendarParticipantsStream, calendarCapabilitiesStream, calendarAvailabilityPolicyStream } from './stream';
+  calendarLifecycleStream, calendarAppointmentTransitionsStream, calendarVisitLocationStream, calendarParticipantDirectoryStream, calendarParticipantsStream, calendarCapabilitiesStream, calendarAvailabilityPolicyStream,
+  calendarAppointmentDateStream } from './stream';
 
 const key = t.String({ minLength: 1, maxLength: 128 });
 // Query strings stay wire strings through composed native validators; convert
@@ -239,6 +240,23 @@ export async function createCalendarHttp(runtime: ZeroAppRuntime) {
         if (!zero.calendar) throw new CalendarError('CALENDAR_NOT_READY'); const r = calendarRecord(body, ['availability', 'options']);
         return zero.calendar.availability.replace(params.id, r.availability as CalendarAvailabilityInput, r.options as CalendarControlOptions);
       } }),
+      defineEndpoint({ method: 'POST', path: '/appointments/query-dates', body: t.Unknown(), async handler({ zero, body, request }) {
+        if (!zero.calendar) throw new CalendarError('CALENDAR_NOT_READY'); admitQueryKeys(request, []);
+        const r = calendarRecord(body, ['query']);
+        return zero.calendar.appointments.queryDates(r.query as CalendarDateRangeQuery);
+      } }),
+      defineEndpoint({ method: 'GET', path: '/appointments/dates/live', query: t.Object({
+        resourceIds: t.String({ maxLength: 2063 }), startDate: t.String({ minLength: 10, maxLength: 10 }),
+        endDate: t.String({ minLength: 10, maxLength: 10 }), limit: pageQuery.limit,
+      }, { additionalProperties: false }), async handler({ zero, query, request }) {
+        if (!zero.calendar) throw new CalendarError('CALENDAR_NOT_READY'); admitQueryKeys(request, ['resourceIds', 'startDate', 'endDate', 'limit']);
+        const filters: CalendarDateRangeQuery = { resourceIds: query.resourceIds === '' ? [] : query.resourceIds.split(','),
+          startDate: query.startDate, endDate: query.endDate, ...(query.limit === undefined ? {} : { limit: Number(query.limit) }) };
+        await zero.calendar.appointments.queryDates(filters);
+        return new Response(calendarAppointmentDateStream(zero.calendar, filters, request.signal), {
+          headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'private, no-store', 'X-Accel-Buffering': 'no' },
+        });
+      } }),
       ...(['appointments', 'busy', 'blocks', 'holds'] as const).map(kind => defineEndpoint({ method: 'POST', path: '/' + kind + '/query', body: t.Unknown(), async handler({ zero, body }) {
         if (!zero.calendar) throw new CalendarError('CALENDAR_NOT_READY'); const r = calendarRecord(body, ['query']);
         return zero.calendar[kind].query(r.query as CalendarRangeQuery);
@@ -294,9 +312,9 @@ export async function createCalendarHttp(runtime: ZeroAppRuntime) {
         const r = calendarRecord(body, ['transition', 'options']);
         return zero.calendar.appointments.transition(params.id, r.transition as CalendarAppointmentTransitionInput, r.options as CalendarControlOptions);
       } }),
-      defineEndpoint({ method: 'POST', path: '/appointments', body: t.Unknown(), async handler({ zero, body }) {
-        if (!zero.calendar) throw new CalendarError('CALENDAR_NOT_READY'); const r = calendarRecord(body, ['appointment', 'options']);
-        return zero.calendar.appointments.create(r.appointment as CalendarAppointmentInput, r.options as CalendarRequestOptions);
+      defineEndpoint({ method: 'POST', path: '/appointments', body: t.Unknown(), async handler({ zero, body, request }) {
+        if (!zero.calendar) throw new CalendarError('CALENDAR_NOT_READY'); admitQueryKeys(request, []); const r = calendarRecord(body, ['appointment', 'options']);
+        return zero.calendar.appointments.create(r.appointment as CalendarAppointmentCreateInput, r.options as CalendarRequestOptions);
       } }),
       defineEndpoint({ method: 'POST', path: '/appointments/:id/reschedule', params: t.Object({ id: key }), body: t.Unknown(), async handler({ zero, params, body }) {
         if (!zero.calendar) throw new CalendarError('CALENDAR_NOT_READY'); const r = calendarRecord(body, ['appointment', 'options']);

@@ -1,5 +1,5 @@
 /** One coalesced authorized page under backpressure. No permanent streams or raw change payloads. */
-import type { CalendarAppointmentTypePageQuery, CalendarLocationPageQuery, CalendarRangeQuery, CalendarResourcePageQuery, CalendarReadOptions, CalendarVisitLocationQuery, CalendarWatchOptions, CalendarWatchUpdate, ScopedCalendar, CalendarParticipantDirectoryQuery } from './contracts';
+import type { CalendarAppointmentTypePageQuery, CalendarDateRangeQuery, CalendarLocationPageQuery, CalendarRangeQuery, CalendarResourcePageQuery, CalendarReadOptions, CalendarVisitLocationQuery, CalendarWatchOptions, CalendarWatchUpdate, ScopedCalendar, CalendarParticipantDirectoryQuery } from './contracts';
 export function calendarCapabilitiesStream(calendar: ScopedCalendar, signal: AbortSignal): ReadableStream<Uint8Array> {
   return calendarSnapshotStream({ read: options => calendar.capabilities.get(options),
     watch: (listener, options) => calendar.capabilities.watch(listener, options) }, signal);
@@ -57,6 +57,10 @@ export function calendarResourceLocationsStream(calendar: ScopedCalendar, id: st
 export function calendarAppointmentStream(calendar: ScopedCalendar, query: CalendarRangeQuery, signal: AbortSignal): ReadableStream<Uint8Array> {
   return calendarSnapshotStream({ read: options => calendar.appointments.query(query, options),
     watch: (listener, options) => calendar.appointments.watch(query, listener, options) }, signal);
+}
+export function calendarAppointmentDateStream(calendar: ScopedCalendar, query: CalendarDateRangeQuery, signal: AbortSignal): ReadableStream<Uint8Array> {
+  return calendarSnapshotStream({ read: options => calendar.appointments.queryDates(query, options),
+    watch: (listener, options) => calendar.appointments.watchDates(query, listener, options) }, signal);
 }
 export function calendarBlockStream(calendar: ScopedCalendar, query: CalendarRangeQuery, signal: AbortSignal): ReadableStream<Uint8Array> {
   return calendarSnapshotStream({ read: options => calendar.blocks.query(query, options),

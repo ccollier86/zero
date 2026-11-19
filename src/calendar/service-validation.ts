@@ -1,10 +1,22 @@
 /** Admission limits match the immutable realm ceilings; configuration may narrow, never advertise more. */
 import type { ResolvedCalendarConfig } from './config';
-import type { CalendarAppointmentTypePageQuery, CalendarCommandReceipt, CalendarLocationPageQuery, CalendarRangeQuery, CalendarResourcePageQuery, CalendarVisitLocationQuery } from './contracts';
+import type { CalendarAppointmentTypePageQuery, CalendarCommandReceipt, CalendarDateRangeQuery, CalendarLocationPageQuery, CalendarRangeQuery, CalendarResourcePageQuery, CalendarVisitLocationQuery } from './contracts';
 import { CalendarError } from './error';
 import { normalizeCalendarInstant } from './time';
 import { calendarInteger, calendarKey, calendarRecord, calendarText, calendarValue } from './validation';
 import { normalizeCalendarAppointmentUpdate } from './appointment-update';
+import { normalizeCalendarAppointmentTimeIntent } from './appointment-time-input';
+import { calendarAppointmentDateWindow } from './appointment-date-query';
+import { calendarWorkingHoursDateOrdinal } from './working-hours-model';
+
+/** Structural intent admission only. Zone conversion belongs to fresh writer admission. */
+export function calendarExplicitAppointmentInterval(body: Record<string, unknown>): void {
+  if (!Object.hasOwn(body, 'interval')) return;
+  if (['startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes'].some(key => Object.hasOwn(body, key))) {
+    throw new CalendarError('CALENDAR_INPUT_INVALID');
+  }
+  body.interval = normalizeCalendarAppointmentTimeIntent(body.interval);
+}
 
 /** Atomic patch admission; omitted fields remain omitted before any await. */
 export function calendarAppointmentUpdateInput(input: unknown,
@@ -128,6 +140,20 @@ export function calendarRange(input: unknown, config: ResolvedCalendarConfig): C
   const startAt = normalizeCalendarInstant(r.startAt), endAt = normalizeCalendarInstant(r.endAt);
   calendarInteger(Date.parse(endAt) - Date.parse(startAt), 1, config.maxRangeDays * 86_400_000);
   return Object.freeze({ resourceIds: Object.freeze(resourceIds), startAt, endAt,
+    limit: calendarInteger(r.limit === undefined ? config.maxPageSize : r.limit, 1, config.maxPageSize) });
+}
+/** Date-labelled discovery is distinct from instant-range free/busy. */
+export function calendarDateRange(input: unknown, config: Pick<ResolvedCalendarConfig, 'maxResources' | 'maxPageSize' | 'maxRangeDays'>): CalendarDateRangeQuery {
+  const r = calendarRecord(input, ['resourceIds', 'startDate', 'endDate', 'limit']);
+  const ids = calendarValue(r.resourceIds);
+  if (!Array.isArray(ids) || ids.length > config.maxResources) throw new CalendarError('CALENDAR_INPUT_INVALID');
+  const resourceIds = ids.map(value => calendarKey(value)).sort();
+  if (new Set(resourceIds).size !== resourceIds.length) throw new CalendarError('CALENDAR_INPUT_INVALID');
+  const window = calendarAppointmentDateWindow(r.startDate, r.endDate);
+  if (calendarWorkingHoursDateOrdinal(window.endDate) - calendarWorkingHoursDateOrdinal(window.startDate) > config.maxRangeDays) {
+    throw new CalendarError('CALENDAR_INPUT_INVALID');
+  }
+  return Object.freeze({ resourceIds: Object.freeze(resourceIds), startDate: window.startDate, endDate: window.endDate,
     limit: calendarInteger(r.limit === undefined ? config.maxPageSize : r.limit, 1, config.maxPageSize) });
 }
 export function calendarReceipt(input: unknown, requestId: string, operation: string, id: string, expectedRevision?: number): CalendarCommandReceipt {

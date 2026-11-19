@@ -175,7 +175,7 @@ export function AppointmentModalContent({ event, isAddMode, selectedStartTime, s
               styles={{ input: { padding: 0, minHeight: 'var(--calendar-size-20)', height: 'var(--calendar-size-20)' } }}
               w="var(--calendar-size-80)"
             /></>}
-            {form ? <CalendarDateField value={form.value.date} onChange={date => form.onChange({ date })} /> : <Text size="xs" c="dimmed">Tue, Mar 19</Text>}
+            {form?.dateControl !== undefined ? form.dateControl : form ? <CalendarDateField value={form.value.date} onChange={date => form.onChange({ date })} /> : <Text size="xs" c="dimmed">Tue, Mar 19</Text>}
           </Group>
 
           {/* Recurrence */}

@@ -20,6 +20,81 @@ or data migration is authorized by these checks.
 
 ## November 18 finish-line review: cold admission and retained evidence
 
+### November 19 canonical017: all-day appointments, date queries and connected UI
+
+Actual realm 17 now registers the complete appointment-only LocalDate path:
+canonical nested create/update intent, retained time facts, sealed indexed current
+dates, date-native reads/watches, service/runtime/HTTP/SDK and the connected rich
+editor with day/week/month/agenda all-day presentation. Ordinary timed wire/digest
+families remain unchanged. Blocks and holds remain timed-only. This completes the
+LocalDate arm of F4, not independent override/effective eligibility, recurrence,
+booking, real reminder channels or the full management/clinical product.
+
+Current native pins:
+
+- Realm: `sha256:d31941943b5362c8437134cf2d319a527e3717f1d111fca40e495a7604244da0`.
+- Schema: `e864c6ca7e48e5f9df24b8094115b3f90b5c1e7982e4afae6392b22818901d63`.
+- 017 migration: `4af3fc3652beaedc35df0398b60e006c04bf4451ba437cc52ad5584592a043e6`.
+- Registry: 37 commands, 36 queries. Both genuine 016 realm fingerprints remain
+  historically admitted; 001–016 handlers, hashes and old registry provenance
+  remain unchanged. A dedicated genuine 016 test realm keeps historical upgrade
+  targets honest instead of relabelling old tests as 17 coverage.
+
+The combined checkpoint passed **347 tests, 4,285 assertions across 27 files** in
+142.84 seconds. It includes actual authenticated native HTTP→SDK→service→MEMORY
+round trips, date queries, canonical 17 writes/migration stages, historical realms,
+capabilities, earlier update/hold/participant/lifecycle/working-hours service paths,
+the integrated Calendar/Jobs coordinator and runtime, SDK codecs/retirement, hooks
+and connected UI/model/controller checks. This is not a browser or physical actor
+run. The test fixture explicitly simulates physical coordinator/transport/file
+probes while using real Guardian/service/native transactions.
+
+Separate focused evidence, overlapping rather than summed:
+
+- Canonical writers: 130 tests/1,395 assertions across eight files; final compiler/
+  writer/date set 55 tests/598 assertions. These include 31-date fall-back spans,
+  accepted reads/replay/title/participant/lifecycle/cancel without Temporal/current
+  Intl, explicit kind conversion/type clearing, required-type refusal, whole-span
+  availability/conflicts, quota rollback and confirmed-hold history after conversion.
+- Registration/provenance: 70 tests/1,347 assertions across five files. Retained
+  historical upgrade suites: 57 tests/9,347 assertions across 15 files. The final
+  native stage-only confirmation passed 20 tests/569 assertions.
+- Actual registered 17 HTTP/date integration: 17 tests/176 assertions across two
+  files. Its real SDK date SSE checks native commits, grant-loss withdrawal and
+  physical subscription cleanup; no listener/file/provider was opened. The final
+  test-only HTTP harness correction was rechecked: four tests/72 assertions.
+- UI/model/controller baseline: 128 tests/1,660 assertions across 12 files; final
+  resource-labelled agenda/render correction: three tests/49 assertions. Civil
+  navigation/formatting preserves 0000–9999, cross-zone authored dates, inclusive
+  human labels and exclusive API ends, with no fake midnight minute events.
+- SDK compatibility: 48 tests/277 assertions across four files. New direct codec
+  cases cover engine-independent captured views, zero-transport mixed/invalid
+  inputs, exact request identity, year 0000 and late-authority retirement.
+
+Initial SDK cases incorrectly expected Promise rejection for the existing SDK's
+synchronous input refusal; tests now assert that actual contract. Early combined
+typing exposed test literal/generic/constructor-double mistakes and one real
+editor serialization typing issue: conditional optional `interval` could not
+prove the exclusive public union. The editor now returns explicit interval versus
+omitted-interval branches; contracts were not widened. A later graph caught a
+stray unused HTTP fixture argument and a test helper incorrectly typed as the
+latest rather than generic realm. Both are test-only corrections; initial failures
+remain evidence, not relabelled passes. Final no-emit checking passed **517 roots,
+4,107 source files, zero diagnostics**. Documentation validation reports **908
+reachable pages/unique IDs, zero problems**. No full frozen-release sweep is claimed.
+
+The final public component entrance also exports the civil-date field, all-day
+cards and their props/occurrence types for application composition. After that
+export-only follow-up, the editor/render set passed 18 tests/468 assertions and
+the same 517-root no-emit graph again returned zero diagnostics.
+
+The source guide is [All-day appointments](./all-day.md). All owned MEMORY/read
+copies, native test runtimes, SDK streams, hook roots and overlays close through
+`finally`/test cleanup. No generated dependency/build/cache, physical fixture,
+browser preview, Docker resource or archive was created. Real browser/layout,
+file/WAL/HOT, actor/restart and installed Linux/package/updater qualification
+remain unexecuted; this branch is not a selected release or main merge.
+
 ### November 19 follow-up: bounded residency and original migration boundaries
 
 The private managed composition now selects catalog-driven bounded residency and

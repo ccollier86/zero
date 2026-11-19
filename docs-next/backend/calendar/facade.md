@@ -185,7 +185,7 @@ uncertainty stays unknown and requires reconciliation, never automatic replay.
 Terminal appointments reject new edits; history is not reopened by this API.
 
 The legacy `reschedule` and separate participant command remain supported with
-their existing identities. This rich edit does not enable recurrence, all-day,
+their existing identities. This rich edit does not enable recurrence,
 overbooking overrides, clinical progress, invitations or reminders. Those retain
 their explicit implementation/configuration gates.
 
@@ -532,8 +532,9 @@ async persistence callback to that synchronous local editor.
 
 Current scoped capabilities discover optional participant controls and configured
 range/resource/participant limits without allocating a calendar owner. These are
-presentation hints, never grants. The workspace bounds itself to two range
-streams and explicitly requests a shorter view or fewer calendars when narrowed
+presentation hints, never grants. The workspace bounds itself to two instant-range
+streams plus at most two authored-date streams when all-day support is available,
+and explicitly requests a shorter view or fewer calendars when narrowed
 server limits cannot cover the requested view. It never silently presents a
 partial schedule as complete. `participants={false}` opts out of these controls;
 `true` cannot override native permission/configuration.

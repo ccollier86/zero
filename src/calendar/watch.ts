@@ -1,12 +1,13 @@
 /** Commit-driven invalidation with bounded authority checks. Never publishes rows from a raw database subscription. */
 import { admitCalendarRequest, type CalendarAuthority } from './authority';
 import type { ResolvedCalendarConfig } from './config';
-import type { CalendarAppointmentTypePageQuery, CalendarLocationPageQuery, CalendarRangeQuery, CalendarResourcePageQuery, CalendarVisitLocationQuery, CalendarWatchOptions, CalendarWatchUpdate, CalendarParticipantDirectoryQuery } from './contracts';
+import type { CalendarAppointmentTypePageQuery, CalendarDateRangeQuery, CalendarLocationPageQuery, CalendarRangeQuery, CalendarResourcePageQuery, CalendarVisitLocationQuery, CalendarWatchOptions, CalendarWatchUpdate, CalendarParticipantDirectoryQuery } from './contracts';
 import type { CalendarServiceBroker } from './service';
 import { CalendarError } from './error';
 import { calendarRecord } from './validation';
 
 type CalendarWatchQuery = { queryName?: 'calendar.appointments'; query: CalendarRangeQuery }
+  | { queryName: 'calendar.appointmentsByDate'; query: CalendarDateRangeQuery }
   | { queryName: 'calendar.capabilities'; query: Record<string, never> }
   | { queryName: 'calendar.participantDirectory'; query: CalendarParticipantDirectoryQuery }
   | { queryName: 'calendar.participantsForAppointment' | 'calendar.participantsForHold'; query: { readonly id: string } }
@@ -29,7 +30,7 @@ export function watchCalendarPage<T>(input: {
 } & CalendarWatchQuery): () => void {
   const options = calendarRecord(input.options, ['signal', 'onError']);
   const queryName = input.queryName ?? 'calendar.appointments';
-  if (!['calendar.capabilities', 'calendar.appointments', 'calendar.blocks', 'calendar.holds', 'calendar.availability', 'calendar.availabilityPolicy', 'calendar.resources', 'calendar.locations', 'calendar.location', 'calendar.resourceLocations',
+  if (!['calendar.capabilities', 'calendar.appointments', 'calendar.appointmentsByDate', 'calendar.blocks', 'calendar.holds', 'calendar.availability', 'calendar.availabilityPolicy', 'calendar.resources', 'calendar.locations', 'calendar.location', 'calendar.resourceLocations',
     'calendar.types', 'calendar.type', 'calendar.resourceTypes', 'calendar.lifecycle', 'calendar.appointmentTransitions', 'calendar.visitLocations',
     'calendar.participantDirectory', 'calendar.participantsForAppointment', 'calendar.participantsForHold'].includes(queryName)) throw new CalendarError('CALENDAR_INPUT_INVALID');
   if (typeof input.listener !== 'function' || options.onError !== undefined && typeof options.onError !== 'function'

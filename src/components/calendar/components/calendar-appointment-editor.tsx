@@ -17,6 +17,8 @@ import { calendarVisitSelectionCurrent } from '../models/calendar-visit-model';
 import { calendarTransitionAuthorityDenied } from '../models/calendar-transition-model';
 import { calendarZonedParts, type CalendarPendingRequest } from '../models/calendar-workspace-model';
 import { isEnded } from '../models/appointment-presentation';
+import { calendarAddDates, calendarLocalDate } from '../models/calendar-local-date';
+import { CalendarCivilDateField } from './calendar-civil-date-field';
 import { CalendarAppointmentResourceFields } from './calendar-appointment-resource-fields';
 import { CalendarCoreTypeFields } from './calendar-core-type-fields';
 import { CalendarVisitFields } from './calendar-visit-fields';
@@ -32,6 +34,8 @@ export interface CalendarAppointmentEditorProps {
   readonly scopeKey: string;
   readonly readRevision?: string | number;
   readonly participants?: boolean;
+  /** Native capability, not a UI grant. Missing on older servers means unavailable. */
+  readonly allDayAppointments?: boolean;
   readonly maxResources?: number;
   readonly maxParticipants?: number;
   onAuthorityLost(): void;
@@ -62,6 +66,7 @@ export function CalendarAppointmentEditor(props: CalendarAppointmentEditorProps)
 function CurrentCalendarAppointmentEditor(props: CalendarAppointmentEditorProps & { readonly isOwnerCurrent: () => boolean }) {
   const { client, scopeKey, session, readRevision, resources, isOwnerCurrent } = props;
   const record = useRef(session.record ? { ...session.record, resourceIds: [...session.record.resourceIds],
+    ...(session.record.interval ? { interval: { ...session.record.interval } } : {}),
     ...(session.record.appointmentType ? { appointmentType: { ...session.record.appointmentType } } : {}),
     ...(session.record.lifecycle ? { lifecycle: { ...session.record.lifecycle } } : {}),
     ...(session.record.visit ? { visit: session.record.visit.mode === 'in-person'
@@ -73,6 +78,10 @@ function CurrentCalendarAppointmentEditor(props: CalendarAppointmentEditorProps 
   const alive = useRef(true); useLayoutEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const participantMode = useRef({ enabled: props.participants === true, retired: false }).current;
   if (participantMode.enabled !== (props.participants === true)) participantMode.retired = true;
+  const allDayMode = useRef({ enabled: props.allDayAppointments === true, retired: false }).current;
+  if (allDayMode.enabled !== (props.allDayAppointments === true)) allDayMode.retired = true;
+  const allDay = draft.intervalKind === 'all-day-local-v1';
+  const selectedType = draft.appointmentType === undefined ? record?.appointmentType : draft.appointmentType;
   const authority = useCalendarAppointment(record?.id ?? null, readRevision);
   const management = useCalendarAppointmentTransitions(record?.id ?? null, readRevision);
   const binding = useCalendarAppointmentParticipants(participantMode.enabled && !participantMode.retired ? record?.id ?? null : null, readRevision);
@@ -115,7 +124,8 @@ function CurrentCalendarAppointmentEditor(props: CalendarAppointmentEditorProps 
     accepted: bindingCurrent ? binding.value?.participants : undefined,
     acceptedStatus: record ? binding.status === 'ready' && !bindingCurrent ? 'loading' : binding.status : undefined,
     acceptedCode: binding.code, onRetryAccepted: binding.refresh });
-  const authorityLost = retired || readDenied || selection.denied || participantMode.retired || contextClient !== client
+  const authorityLost = retired || readDenied || selection.denied || participantMode.retired || allDayMode.retired
+    || (allDay || !!record?.interval) && !allDayMode.enabled || contextClient !== client
     || !calendarScopeReadable(client, scopeKey) || !isOwnerCurrent();
   currentAdmission.current = { authorityLost };
   const detailPending = !!record && (authority.status !== 'ready' || management.status !== 'ready' || !authority.value || !management.value);
@@ -131,7 +141,7 @@ function CurrentCalendarAppointmentEditor(props: CalendarAppointmentEditorProps 
   const newResourcesCurrent = draft.resourceIds.every(id => record?.resourceIds.includes(id) || resources.some(resource => resource.id === id && resource.active));
   const participantReady = !participantMode.enabled || selection.ready && (!record || participantBase !== null && bindingCurrent);
   let exactInterval = true;
-  try { if (record) {
+  try { if (record && !record.interval) {
     const from = calendarZonedParts(record.startAt, timeZone), to = calendarZonedParts(record.endAt, timeZone);
     exactInterval = from.date === to.date && from.offset === to.offset && from.second === 0 && to.second === 0
       && Date.parse(record.startAt) % 60000 === 0 && Date.parse(record.endAt) % 60000 === 0;
@@ -160,10 +170,17 @@ function CurrentCalendarAppointmentEditor(props: CalendarAppointmentEditorProps 
     if (phaseRef.current === 'editing') setValidationError(null);
   }
   function selectType(type: CalendarAppointmentTypeSnapshot | null) {
-    if (types.status !== 'ready' || latest.current.authorityLost) return;
+    if (types.status !== 'ready' || latest.current.authorityLost || draftRef.current.intervalKind === 'all-day-local-v1' && type !== null) return;
     const result = calendarCoreTypeDefaults({ ...draftRef.current, resourceId: draftRef.current.resourceIds[0] ?? '' }, type, timeZone);
     change(result.change);
     setValidationError(result.error ?? null);
+  }
+  function selectAllDay(next: boolean) {
+    const value = draftRef.current;
+    if (!allDayMode.enabled || allDayMode.retired || next && (value.appointmentType === undefined ? record?.appointmentType : value.appointmentType)) return;
+    let endDate = value.endDate;
+    if (next && !endDate && calendarLocalDate(value.date)) { try { endDate = calendarAddDates(value.date, 1); } catch { endDate = ''; } }
+    change({ intervalKind: next ? 'all-day-local-v1' : 'timed-v1', ...(next ? { endDate: endDate ?? '' } : {}) });
   }
   function typePage(next: boolean) {
     if (types.status !== 'ready' || latest.current.authorityLost || !['editing', 'submitting'].includes(phaseRef.current)) return;
@@ -217,20 +234,26 @@ function CurrentCalendarAppointmentEditor(props: CalendarAppointmentEditorProps 
               recurrence: 'none', location: 'unspecified', notes: '', reminder: null, sendReminder: false, status: record?.lifecycle?.status ?? record?.status ?? 'confirmed' },
               onChange: value => change({ ...(typeof value.title === 'string' ? { title: value.title } : {}), ...(typeof value.date === 'string' ? { date: value.date } : {}) }),
               submitDisabled: disabled, error,
-              timeControls: <><TimePicker label="Start time" value={draft.start} options={times} onChange={start => change({ start })} /><Text size="xs">→</Text>
-                <TimePicker label="End time" value={draft.end} options={times.filter(minute => minute > draft.start)} onChange={end => change({ end })} /></>,
+              timeControls: <Stack gap="xs">{allDayMode.enabled && <><Switch label="All-day appointment" checked={allDay} disabled={!editable || !!selectedType} onChange={selectAllDay} />
+                {!!selectedType && <Text size="xs" c="dimmed">Explicitly remove the selected appointment type below before choosing all-day. No type is cleared automatically.</Text>}</>}
+                {allDay ? <Group gap="xs"><CalendarCivilDateField label="All-day start date" value={draft.date} disabled={!editable} onChange={date => change({ date })} /><Text size="xs">→</Text>
+                  <CalendarCivilDateField label="All-day exclusive end date" value={draft.endDate ?? ''} disabled={!editable} onChange={endDate => change({ endDate })} />
+                  <Text size="xs" c="dimmed">End date is exclusive · 1–31 calendar days · zero buffers</Text></Group>
+                  : <Group gap="xs"><TimePicker label="Start time" value={draft.start} options={times} onChange={start => change({ start })} /><Text size="xs">→</Text>
+                    <TimePicker label="End time" value={draft.end} options={times.filter(minute => minute > draft.start)} onChange={end => change({ end })} /></Group>}</Stack>,
+              dateControl: allDay ? null : <CalendarCivilDateField value={draft.date} disabled={!editable} onChange={date => change({ date })} />,
               resourceControl: <CalendarAppointmentResourceFields value={draft.resourceIds} resources={resources} disabled={!editable} maxResources={props.maxResources}
                 onChange={resourceIds => change({ resourceIds })} />,
               attendeeControl: participantMode.enabled ? selection.fields : <Text size="xs" c="dimmed">Native account participants unavailable for this opening. Contact and guest invitations are unavailable.</Text>,
               appointmentTypeControl: <Stack gap="xs"><CalendarCoreTypeFields value={draft} types={types.value} status={types.status} acceptedType={acceptedType}
-                disabled={!editable} canGoBack={typeHistory.length > 0} onChange={selectType} onRetry={() => { setTypeCursor(null); setTypeHistory([]); types.refresh(); }}
+                disabled={!editable || allDay} canGoBack={typeHistory.length > 0} onChange={selectType} onRetry={() => { setTypeCursor(null); setTypeHistory([]); types.refresh(); }}
                 onPrevious={() => typePage(false)} onNext={() => typePage(true)} />
-                <Group gap="xs"><TextInput aria-label="Buffer before in minutes" label="Before · minutes" type="number" min={0} max={1440} step={1}
+                {allDay ? <Text size="xs" c="dimmed">All-day appointments are untyped with zero buffers. Switch explicitly to a timed appointment to select a type or buffers.</Text> : <Group gap="xs"><TextInput aria-label="Buffer before in minutes" label="Before · minutes" type="number" min={0} max={1440} step={1}
                   value={Number.isFinite(buffers.before) ? buffers.before : ''} readOnly={!!typeSelection.snapshot} disabled={!editable || types.status !== 'ready'}
                   onChange={event => change({ bufferBeforeMinutes: event.currentTarget.value === '' ? NaN : Number(event.currentTarget.value) })} />
                   <TextInput aria-label="Buffer after in minutes" label="After · minutes" type="number" min={0} max={1440} step={1}
                     value={Number.isFinite(buffers.after) ? buffers.after : ''} readOnly={!!typeSelection.snapshot} disabled={!editable || types.status !== 'ready'}
-                    onChange={event => change({ bufferAfterMinutes: event.currentTarget.value === '' ? NaN : Number(event.currentTarget.value) })} /></Group></Stack>,
+                    onChange={event => change({ bufferAfterMinutes: event.currentTarget.value === '' ? NaN : Number(event.currentTarget.value) })} /></Group>}</Stack>,
               locationControl: <CalendarVisitFields value={draft} locations={locations.value} status={locations.status} acceptedLocation={acceptedLocation}
                 disabled={!editable} canGoBack={locationHistory.length > 0} onChange={change} onRetry={locations.refresh}
                 onPrevious={() => locationPage(false)} onNext={() => locationPage(true)} />,

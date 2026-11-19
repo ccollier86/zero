@@ -9,7 +9,8 @@ import { hashMigration, hashSchemaSnapshot, snapshotDeclaredTables } from '../mi
 import { createReactiveDB } from '../sync/reactive-db';
 import type { CalendarActor, CalendarCommandReceipt } from './contracts';
 import { holdReservationId } from './holds-model';
-import { calendarRealm } from './realm';
+// Preserve this recorded upgrade boundary through016; latest017 is qualified separately.
+import { calendarRealm016 as calendarRealm } from './test-support/calendar-realm-016';
 import { CALENDAR_HOLD_TABLES, CALENDAR_LOCATION_TABLES } from './realm-schema';
 import { normalizeCalendarTimedInterval } from './time';
 import { calendarHash, calendarJson } from './validation';

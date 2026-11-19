@@ -16,7 +16,7 @@ test('scope capabilities discover current policies/limits without owner files, a
       maxResources: 3, maxPageSize: 12, maxRangeDays: 5 }, participantDirectory: unusedDirectory });
     try {
       const manager = f.session('manager', { manager: true }), member = f.session('member');
-      expect(await manager.api.capabilities.get()).toEqual({ timeZone: 'UTC', createOwn: true, manage: true, participants: true,
+      expect(await manager.api.capabilities.get()).toEqual({ timeZone: 'UTC', createOwn: true, manage: true, participants: true, allDayAppointments: true,
         limits: { maxRangeDays: 5, maxPageSize: 12, maxResources: 3, maxParticipants: 7 } });
       const limited = await member.api.capabilities.get(); expect(limited).toMatchObject({ manage: false, participants: false });
       expect(Object.isFrozen(limited)).toBe(true); expect(Object.isFrozen(limited.limits)).toBe(true);

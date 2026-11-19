@@ -3,7 +3,7 @@ import { expect, test } from 'bun:test';
 import { Migrator } from '../migrations/migrator';
 import { hashMigration, hashSchemaSnapshot, snapshotDeclaredTables } from '../migrations/schema-snapshot';
 import { createReactiveDB } from '../sync/reactive-db';
-import { calendarRealm } from './realm';
+import { calendarRealm016 as calendarRealm } from './test-support/calendar-realm-016';
 import { CALENDAR_APPOINTMENT_UPDATE_TABLES } from './realm-appointment-update-migration';
 import { CALENDAR_AVAILABILITY_POLICY_TABLES } from './realm-working-hours-migration';
 import { CALENDAR_INTEGRATION_ADDITIONS } from './realm-integrations-migration';

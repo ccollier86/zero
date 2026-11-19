@@ -6,7 +6,7 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { act, createElement, Fragment, isValidElement, type ReactElement, type ReactNode } from 'react';
 import type { Root } from 'react-dom/client';
-import type { CalendarAppointmentPage, CalendarAppointmentTransitions, CalendarAppointmentView, CalendarCapabilities, CalendarCommandReceipt,
+import type { CalendarAppointmentPage, CalendarAppointmentTransitions, CalendarAppointmentView, CalendarCapabilities, CalendarCommandReceipt, CalendarDateRangeQuery,
   CalendarControlOptions, CalendarParticipantDirectoryPage, CalendarParticipantsView, CalendarResourcePage, CalendarResourceView, CalendarWatchOptions } from '../../../calendar/contracts';
 import { ClientProvider } from '../../../frontend/client/client-context';
 import type { Client } from '../../../frontend/client/sdk';
@@ -171,31 +171,82 @@ test('a withdrawn calendar does not consume the configured selection limit when 
   expect(view.all().filter(value => value.type === Checkbox && value.props.checked).map(value => value.props.label)).toEqual([replacement.label]);
 });
 
+test('connected DATE watch renders authored all-day labels absent from the UTC page and opens the same rich atomic editor', async () => {
+  const accepted: CalendarAppointmentView = { ...record, title: 'Date-native Kiritimati', interval: { kind: 'all-day-local-v1', startDate: '2027-01-01', endDate: '2027-01-03', timeZone: 'Pacific/Kiritimati' },
+    startAt: '2026-12-31T10:00:00.000Z', endAt: '2027-01-02T10:00:00.000Z', timeZone: 'Pacific/Kiritimati', bufferBeforeMinutes: 0, bufferAfterMinutes: 0 };
+  const f = fixture({ ...capabilities, allDayAppointments: true }, accepted), view = await mountWorkspace(f, { initialDate: undefined, initialDateKey: '2027-01-01', displayTimeZone: 'Pacific/Honolulu' });
+  await chooseCalendar(view);
+  expect(f.dateQueries).toEqual([{ resourceIds: [resource.id], startDate: '2027-01-01', endDate: '2027-01-02' }]);
+  const schedule = view.find(value => value.type === CalendarSchedule);
+  expect(schedule.props.events).toEqual([]); expect(schedule.props.allDayOccurrences).toHaveLength(1);
+  expect(schedule.props.allDayOccurrences[0]).toMatchObject({ date: '2027-01-01', startDate: '2027-01-01', endDate: '2027-01-03' });
+  await act(async () => schedule.props.onMenu({ kind: 'event', eventId: schedule.props.allDayOccurrences[0].id }, undefined));
+  expect(textContent(body())).toContain('Jan 1, 2027 through Jan 2, 2027'); expect(textContent(body())).not.toContain('through Jan 3');
+  await clickBody('Edit appointment');
+  const editor = view.find(value => value.type === CalendarAppointmentEditor);
+  expect(editor.props.allDayAppointments).toBe(true); expect(editor.props.session.initial).toMatchObject({ intervalKind: 'all-day-local-v1', date: '2027-01-01', endDate: '2027-01-03' });
+  await act(async () => { bodyFind(value => value.props['aria-label'] === 'Appointment title').props.onChange({ currentTarget: { value: 'One LocalDate metadata edit' } });
+    bodyFind(value => value.type === CalendarParticipantFields).props.onChange([]); });
+  await act(async () => bodyFind(value => value.type === 'form').props.onSubmit({ preventDefault() {} }));
+  expect(f.writes).toHaveLength(1); expect(f.writes[0]!.input).toEqual({ title: 'One LocalDate metadata edit', participants: [] });
+});
+
+test('six-week month opens exactly two bounded DATE streams and missing capability opens none', async () => {
+  const f = fixture({ ...capabilities, allDayAppointments: true }), view = await mountWorkspace(f, { initialView: 'month' });
+  await chooseCalendar(view); expect(f.dateQueries).toEqual([
+    { resourceIds: [resource.id], startDate: '2026-10-26', endDate: '2026-11-26' },
+    { resourceIds: [resource.id], startDate: '2026-11-26', endDate: '2026-12-07' },
+  ]);
+  for (const root of roots) { await act(async () => root.unmount()); } roots.clear();
+  const older = fixture(), oldView = await mountWorkspace(older); await chooseCalendar(oldView);
+  expect(older.dateQueries).toEqual([]); expect(oldView.find(value => value.type === CalendarSchedule).props.allDayOccurrences).toBeUndefined();
+});
+
+test('DATE watch denial withdraws private UI and cannot replay a retained save', async () => {
+  const f = fixture({ ...capabilities, allDayAppointments: true }), view = await mountWorkspace(f); await chooseCalendar(view); await clickView(view, 'New appointment');
+  const retained = bodyFind(value => value.type === 'form').props.onSubmit;
+  await act(async () => f.dateRanges[0]!.options.onError?.(new CalendarReadError('CALENDAR_FORBIDDEN', 403, true)));
+  expect(view.all().some(value => value.type === CalendarSchedule)).toBe(false); expect(activeOpening()).toBeUndefined();
+  await act(async () => retained({ preventDefault() {} })); expect(f.writes).toEqual([]);
+});
+
+test('retiring all-day capability closes date streams and the open rich owner without silently converting its draft', async () => {
+  const f = fixture({ ...capabilities, allDayAppointments: true }), view = await mountWorkspace(f); await chooseCalendar(view); await clickView(view, 'New appointment');
+  await act(async () => bodyFind(value => value.props.label === 'All-day appointment').props.onChange(true));
+  const retained = bodyFind(value => value.type === 'form').props.onSubmit;
+  await act(async () => f.caps[0]!.resolve({ ...capabilities, allDayAppointments: false }));
+  expect(activeOpening()).toBeUndefined(); expect(f.dateRanges[0]!.removals).toBeGreaterThan(0);
+  await act(async () => retained({ preventDefault() {} })); expect(f.writes).toEqual([]);
+  expect(view.find(value => value.type === CalendarSchedule).props.allDayOccurrences).toBeUndefined();
+});
+
 interface Subscription<T> { resolve(value: T, update?: { invalidated?: boolean; reconnected?: boolean }): void; options: CalendarWatchOptions; removals: number }
 function watch<T>(entries: Subscription<T>[], resolve: Subscription<T>['resolve'], options: CalendarWatchOptions, initial: T) {
   const item = { resolve, options, removals: 0 }; entries.push(item); resolve(initial); return () => { item.removals++; };
 }
 function deferred<T>() { let resolve!: (value: T) => void, reject!: (error: unknown) => void;
   const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
-function fixture(initialCapabilities = capabilities) {
+function fixture(initialCapabilities = capabilities, acceptedRecord = record) {
   const caps: Subscription<CalendarCapabilities>[] = [], catalogs: Subscription<CalendarResourcePage>[] = [], ranges: Subscription<CalendarAppointmentPage>[] = [];
+  const dateRanges: Subscription<CalendarAppointmentPage>[] = [], dateQueries: CalendarDateRangeQuery[] = [];
   const bindings: Subscription<CalendarParticipantsView>[] = [], directories: Subscription<CalendarParticipantDirectoryPage>[] = [], transitions: Subscription<CalendarAppointmentTransitions>[] = [];
   const writes: { operation: 'appointment.participants-changed' | 'appointment.created' | 'appointment.updated'; input: unknown; control: CalendarControlOptions; pending: ReturnType<typeof deferred<CalendarCommandReceipt>> }[] = [];
-  const f = { caps, catalogs, ranges, bindings, directories, transitions, writes, receipt: null as CalendarCommandReceipt | null, receiptKeys: [] as string[] };
+  const f = { caps, catalogs, ranges, dateRanges, dateQueries, bindings, directories, transitions, writes, receipt: null as CalendarCommandReceipt | null, receiptKeys: [] as string[] };
   const client = { calendar: {
     capabilities: { watch(resolve: Subscription<CalendarCapabilities>['resolve'], options: CalendarWatchOptions) { return watch(caps, resolve, options, initialCapabilities); } },
     resources: { watch(_query: unknown, resolve: Subscription<CalendarResourcePage>['resolve'], options: CalendarWatchOptions) { return watch(catalogs, resolve, options, { items: [resource], truncated: false, nextAfter: null }); } },
     appointments: {
-      get: async () => record,
+      get: async () => acceptedRecord,
       update(_id: string, input: unknown, control: CalendarControlOptions) { const pending = deferred<CalendarCommandReceipt>(); writes.push({ operation: 'appointment.updated', input, control, pending }); return pending.promise; },
-      watch(_query: unknown, resolve: Subscription<CalendarAppointmentPage>['resolve'], options: CalendarWatchOptions) { return watch(ranges, resolve, options, { items: [record], truncated: false }); },
+      watch(_query: unknown, resolve: Subscription<CalendarAppointmentPage>['resolve'], options: CalendarWatchOptions) { return watch(ranges, resolve, options, { items: acceptedRecord.interval ? [] : [acceptedRecord], truncated: false }); },
+      watchDates(query: CalendarDateRangeQuery, resolve: Subscription<CalendarAppointmentPage>['resolve'], options: CalendarWatchOptions) { dateQueries.push(query); return watch(dateRanges, resolve, options, { items: acceptedRecord.interval ? [acceptedRecord] : [], truncated: false }); },
       watchTransitions(_id: string, resolve: Subscription<CalendarAppointmentTransitions>['resolve'], options: CalendarWatchOptions) { return watch(transitions, resolve, options, {
-        id: record.id, revision: record.revision, policyRevision: 1, status: 'confirmed', allowed: [],
+        id: acceptedRecord.id, revision: acceptedRecord.revision, policyRevision: 1, status: 'confirmed', allowed: [],
       }); },
       create(input: unknown, control: CalendarControlOptions) { const pending = deferred<CalendarCommandReceipt>(); writes.push({ operation: 'appointment.created', input, control, pending }); return pending.promise; },
     },
     participants: {
-      watchForAppointment(_id: string, resolve: Subscription<CalendarParticipantsView>['resolve'], options: CalendarWatchOptions) { return watch(bindings, resolve, options, { id: record.id, revision: record.revision, participants: [person] }); },
+      watchForAppointment(_id: string, resolve: Subscription<CalendarParticipantsView>['resolve'], options: CalendarWatchOptions) { return watch(bindings, resolve, options, { id: acceptedRecord.id, revision: acceptedRecord.revision, participants: [person] }); },
       watchDirectory(_query: unknown, resolve: Subscription<CalendarParticipantDirectoryPage>['resolve'], options: CalendarWatchOptions) { return watch(directories, resolve, options, { items: [person], truncated: false, nextAfter: null }); },
       replace(_id: string, input: unknown, control: CalendarControlOptions) { const pending = deferred<CalendarCommandReceipt>(); writes.push({ operation: 'appointment.participants-changed', input, control, pending }); return pending.promise; },
     },

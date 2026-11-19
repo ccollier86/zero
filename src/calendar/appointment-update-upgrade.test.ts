@@ -7,7 +7,7 @@ import { createDatabaseReadQuerySession, withDatabaseReadQuerySession } from '..
 import { Migrator } from '../migrations/migrator';
 import { hashMigration, hashSchemaSnapshot, snapshotDeclaredTables } from '../migrations/schema-snapshot';
 import { createReactiveDB } from '../sync/reactive-db';
-import { calendarRealm } from './realm';
+import { calendarRealm016 as calendarRealm } from './test-support/calendar-realm-016';
 import { CALENDAR_INTEGRATION_OPERATOR_TABLES } from './realm-integration-operator-migration';
 import { CALENDAR_APPOINTMENT_UPDATE_ADDITIONS } from './realm-appointment-update-migration';
 import { CALENDAR_APPOINTMENT_RESOURCE_CURRENT as CURRENT, CALENDAR_APPOINTMENT_RESOURCE_STATE as STATE, CALENDAR_APPOINTMENT_UPDATE_HISTORY as HISTORY } from './appointment-resource-bindings';

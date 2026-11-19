@@ -50,6 +50,13 @@ unavailable, not silently dropped. Exact-instant records that do not fit the
 existing grid remain accessible in a companion list. Server API and UI resource
 administration are different capabilities; optional setup navigation is app-owned.
 
+Untyped all-day appointments use their own authored-date query/watch and display
+lanes, not midnight timed events. The connected rich editor preserves accepted
+dates for metadata edits and requires explicit minute-type removal before kind
+conversion. Native civil date fields reuse Zero Calendar/Popover/Input. See the
+[all-day guide](../../../docs-next/backend/calendar/all-day.md) for exclusive-end
+semantics, API contracts and the separate physical/release qualification gates.
+
 Do not infer that the full integration plan, recurring appointments, working
 hours, invitations, reminders, public booking or clinical workflows are finished.
 No site-wide theme switch or automatic provider configuration occurs.
@@ -123,6 +130,7 @@ The lower-level pieces remain available for app-specific editor composition:
 | Pieces | Responsibility |
 | --- | --- |
 | `TimePicker`, `CalendarDateField`, `RepeatPicker` | Exact typed times; native Zero calendar picker; bounded recurrence preferences/preview |
+| `CalendarCivilDateField`, `CalendarAllDayEvents` | Date-native input and all-day cards, independently composable without minute-based geometry; public props and occurrence types are exported from the Calendar entrance |
 | `AttendeePicker`, `AppointmentTypePicker` | Supplied people/type choices, compact search, multiple invitees, manual email/phone guest formatting |
 | `AppointmentAppearancePicker` | Automatic/explicit category hue and independent attention reason |
 | `AppointmentWorkflowFields`, `VisitIcon`, `AppointmentStatusPopover` | Confirmation/outcome, optional clinical progress and explicit lobby/arrival state |

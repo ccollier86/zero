@@ -21,6 +21,7 @@ import { CalendarAppointmentResourceFields } from '../components/calendar-appoin
 import { CalendarParticipantFields } from '../components/calendar-participant-fields';
 import { CalendarCoreTypeFields } from '../components/calendar-core-type-fields';
 import { CalendarVisitFields } from '../components/calendar-visit-fields';
+import { CalendarCivilDateField } from '../components/calendar-civil-date-field';
 import { CalendarManagedForm } from '../components/calendar-surfaces';
 import { AppointmentModal, AppointmentModalContent, type AppointmentModalContentProps } from '../recovered/appointment-modal/components/appointment-modal/AppointmentModal';
 import type { CalendarPendingRequest } from './calendar-workspace-model';
@@ -183,10 +184,64 @@ test('content extraction keeps the local synchronous API/default control anatomy
   for (const name of ['Calendar / provider', 'Recurrence', 'Notes', 'Reminder', 'Location']) expect(nodes.some(value => value.props['aria-label'] === name)).toBe(true);
 });
 
+test('all-day is capability gated and a selected type must be explicitly cleared before the toggle can convert', async () => {
+  const f = fixture(), root = await mountEditor(f, false, false, true);
+  await title('Explicit all-day creation');
+  await act(async () => find(value => value.type === CalendarCoreTypeFields).props.onChange(type));
+  const blocked = field('All-day appointment'); expect(blocked.props.disabled).toBe(true);
+  await act(async () => blocked.props.onChange(true)); expect(field('All-day appointment').props.checked).toBe(false);
+  expect(content().props.form.timeControls).toBeDefined();
+  await act(async () => find(value => value.type === CalendarCoreTypeFields).props.onChange(null));
+  await act(async () => field('All-day appointment').props.onChange(true));
+  expect(field('All-day appointment').props.checked).toBe(true);
+  expect(elements(body()).filter(value => value.type === CalendarCivilDateField).map(value => value.props.label)).toEqual(['All-day start date', 'All-day exclusive end date']);
+  await submit(); expect(f.writes).toHaveLength(1); expect(f.writes[0]!.input).toEqual({ resourceIds: ['a', 'b'], title: 'Explicit all-day creation',
+    interval: { kind: 'all-day-local-v1', startDate: '2026-11-18', endDate: '2026-11-19', timeZone: 'UTC' } });
+  expect(f.writes[0]!.input).not.toHaveProperty('appointmentType'); expect(f.writes[0]!.input).not.toHaveProperty('startAt');
+  await act(async () => root.unmount()); roots.delete(root);
+  const older = fixture(); await mountEditor(older, false, false);
+  expect(elements(body()).some(value => value.props.label === 'All-day appointment')).toBe(false);
+});
+
+test('accepted all-day metadata uses one atomic update, and newer authored dates survive its older receipt', async () => {
+  const accepted: CalendarAppointmentView = { ...record, interval: { kind: 'all-day-local-v1', startDate: '2026-11-01', endDate: '2026-12-02', timeZone: 'UTC' },
+    startAt: '2026-11-01T00:00:00.000Z', endAt: '2026-12-02T00:00:00.000Z', bufferBeforeMinutes: 0, bufferAfterMinutes: 0 };
+  const f = fixture(accepted); await mountEditor(f, true, true, true);
+  expect(opening().systemState?.dirty).toBe(false); expect(submitButton().props.disabled).toBe(true);
+  await title('All-day metadata');
+  await act(async () => { find(value => value.type === CalendarAppointmentResourceFields).props.onChange(['a', 'c']); find(value => value.type === CalendarParticipantFields).props.onChange([]); });
+  await submit(); expect(f.writes[0]!.input).toEqual({ title: 'All-day metadata', resourceIds: ['a', 'c'], participants: [] });
+  await act(async () => find(value => value.type === CalendarCivilDateField && value.props.label === 'All-day exclusive end date').props.onChange('2026-12-01'));
+  await accept(f); expect(f.closed).toBe(0); expect(f.accepted).toHaveLength(1);
+  expect(find(value => value.type === CalendarCivilDateField && value.props.label === 'All-day exclusive end date').props.value).toBe('2026-12-01');
+  expect(submitButton().props.disabled).toBe(true); expect(f.writes).toHaveLength(1);
+});
+
+test('all-day capability retirement withdraws the draft and fences retained callbacks without converting or resending', async () => {
+  const f = fixture(), root = await mountEditor(f, false, false, true); await title('Retired all-day draft');
+  await act(async () => field('All-day appointment').props.onChange(true));
+  const retained = find(value => value.type === 'form').props.onSubmit, context = nativeContext();
+  await act(async () => root.updateProps({ allDayAppointments: false }));
+  expect(context.signal.aborted).toBe(true); expect(f.lost).toBeGreaterThan(0);
+  await act(async () => { retained({ preventDefault() {} }); root.updateProps({ allDayAppointments: true }); });
+  expect(modalStore.getSnapshot().context.modals).toEqual([]); expect(f.writes).toEqual([]);
+});
+
+test('an unknown all-day write reconciles only its original identity and never converts or resends the authored dates', async () => {
+  const f = fixture(); await mountEditor(f, false, false, true); await title('Uncertain LocalDates');
+  await act(async () => field('All-day appointment').props.onChange(true));
+  await submit(); const write = f.writes[0]!;
+  expect(write.input.interval).toEqual({ kind: 'all-day-local-v1', startDate: '2026-11-18', endDate: '2026-11-19', timeZone: 'UTC' });
+  await act(async () => write.pending.reject(new CalendarMutationError(write.control.idempotencyKey, 'unknown', 'CALENDAR_OUTCOME_UNKNOWN', 503)));
+  await submit(); expect(f.writes).toHaveLength(1);
+  await click('Reconcile original request'); expect(f.receiptKeys).toEqual([write.control.idempotencyKey]); expect(f.accepted).toEqual([]);
+  f.receipt = receiptFor(write); await click('Reconcile original request'); expect(f.accepted).toHaveLength(1); expect(f.writes).toHaveLength(1); expect(f.closed).toBe(1);
+});
+
 interface Subscription<T> { resolve(value: T): void; options: CalendarWatchOptions }
 interface Write { operation: CalendarCommandReceipt['operation']; input: any; control: CalendarControlOptions | CalendarRequestOptions; pending: ReturnType<typeof deferred<CalendarCommandReceipt>> }
 function deferred<T>() { let resolve!: (value: T) => void, reject!: (error: unknown) => void; const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
-function fixture() {
+function fixture(acceptedRecord = record) {
   const observers = new Set<() => void>(), subscribe = (listener: () => void) => { observers.add(listener); return () => { observers.delete(listener); }; };
   const auth = { authorizationScopeKey: 'synthetic', user: { userId: 'synthetic-user' }, activeTenant: { tenantId: 'synthetic-tenant' }, isLoading: false,
     isRestoring: false, isAuthenticated: true, authorizationState: { status: 'ready' }, sessionTransition: { phase: 'idle', revision: 0 }, subscribe, subscribeAuthorization: subscribe };
@@ -195,23 +250,25 @@ function fixture() {
     receiptKeys: [] as string[], receipt: null as CalendarCommandReceipt | null, closed: 0, lost: 0, notify() { for (const listener of observers) listener(); } };
   function watch<T>(list: Subscription<T>[], resolve: (value: T) => void, options: CalendarWatchOptions, initial: T) { list.push({ resolve, options }); resolve(initial); return () => {}; }
   function write(operation: Write['operation'], input: unknown, control: Write['control']) { const pending = deferred<CalendarCommandReceipt>(); f.writes.push({ operation, input, control, pending }); return pending.promise; }
-  const client = { auth, calendar: { appointments: { get: async () => record,
+  const client = { auth, calendar: { appointments: { get: async () => acceptedRecord,
     watchTransitions(_id: string, resolve: (value: CalendarAppointmentTransitions) => void, options: CalendarWatchOptions) {
-      return watch([], resolve, options, { id: record.id, revision: record.revision, policyRevision: 1, status: 'confirmed', allowed: [] }); },
+      return watch([], resolve, options, { id: acceptedRecord.id, revision: acceptedRecord.revision, policyRevision: 1, status: 'confirmed', allowed: [] }); },
     update(_id: string, input: unknown, control: CalendarControlOptions) { return write('appointment.updated', input, control); },
     create(input: unknown, control: CalendarRequestOptions) { return write('appointment.created', input, control); },
     reschedule() { throw new Error('No chained reschedule'); } },
     types: { watch(_query: unknown, resolve: (value: CalendarAppointmentTypePage) => void, options: CalendarWatchOptions) { return watch(f.types, resolve, options, { items: [type], nextAfter: null, truncated: false }); } },
     locations: { watchForVisit(_query: unknown, resolve: (value: CalendarLocationPage) => void) { resolve({ items: [], truncated: false, nextAfter: null }); return () => {}; } },
     participants: { watchDirectory(_query: unknown, resolve: (value: CalendarParticipantDirectoryPage) => void, options: CalendarWatchOptions) { return watch(f.directories, resolve, options, { items: [person], nextAfter: null, truncated: false }); },
-      watchForAppointment(_id: string, resolve: (value: CalendarParticipantsView) => void, options: CalendarWatchOptions) { return watch(f.bindings, resolve, options, { id: record.id, revision: record.revision, participants: [{ ref: oldRef, availability: 'unavailable' }] }); },
+      watchForAppointment(_id: string, resolve: (value: CalendarParticipantsView) => void, options: CalendarWatchOptions) { return watch(f.bindings, resolve, options, { id: acceptedRecord.id, revision: acceptedRecord.revision, participants: [{ ref: oldRef, availability: 'unavailable' }] }); },
       replace() { throw new Error('No chained participant save'); } }, receipts: { async get(key: string) { f.receiptKeys.push(key); return f.receipt; } } } } as unknown as Client;
-  return Object.assign(f, { client });
+  return Object.assign(f, { client, acceptedRecord });
 }
 type Fixture = ReturnType<typeof fixture>;
-async function mountEditor(f: Fixture, participants = true, existing = true) {
-  let props: Omit<CalendarAppointmentEditorProps, 'scopeKey'> = { client: f.client, resources, participants,
-    session: { key: 1, ...(existing ? { record } : {}), timeZone: 'UTC', initial: { resourceIds: ['a', 'b'], title: existing ? record.title : '', date: '2026-11-18', start: 607, end: 667,
+async function mountEditor(f: Fixture, participants = true, existing = true, allDayAppointments = false) {
+  const record = f.acceptedRecord;
+  let props: Omit<CalendarAppointmentEditorProps, 'scopeKey'> = { client: f.client, resources, participants, allDayAppointments,
+    session: { key: 1, ...(existing ? { record } : {}), timeZone: 'UTC', initial: { resourceIds: ['a', 'b'], title: existing ? record.title : '', date: existing && record.interval ? record.interval.startDate : '2026-11-18', start: 607, end: 667,
+      ...(existing && record.interval ? { intervalKind: 'all-day-local-v1', endDate: record.interval.endDate } : {}),
       visitMode: existing ? 'phone' : 'unspecified', bufferBeforeMinutes: 3, bufferAfterMinutes: 7 } },
     onUnknown: value => f.unknown.push(value), onAccepted: value => f.accepted.push(value), onRejected: value => f.rejected.push(value), onClose: () => { f.closed++; }, onAuthorityLost: () => { f.lost++; } };
   function Scoped() { const boundary = useAuthorizationScopeBoundary(); return boundary.ready ? createElement(CalendarAppointmentEditor, { ...props, scopeKey: boundary.key }) : null; }

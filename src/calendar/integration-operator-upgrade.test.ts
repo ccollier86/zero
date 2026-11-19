@@ -2,7 +2,7 @@
 import { expect, test } from 'bun:test';
 import { Migrator } from '../migrations/migrator';
 import { hashMigration, hashSchemaSnapshot, snapshotDeclaredTables } from '../migrations/schema-snapshot';
-import { calendarRealm } from './realm';
+import { calendarRealm016 as calendarRealm } from './test-support/calendar-realm-016';
 import { CALENDAR_APPOINTMENT_UPDATE_TABLES } from './realm-appointment-update-migration';
 import { CALENDAR_INTEGRATION_INSPECTION_TABLES } from './realm-integration-inspection-migration';
 import { CALENDAR_INTEGRATION_OPERATOR_ADDITIONS, CALENDAR_INTEGRATION_OPERATOR_TABLES } from './realm-integration-operator-migration';

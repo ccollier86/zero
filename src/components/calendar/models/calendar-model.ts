@@ -4,6 +4,7 @@ import { cloneRepeat, repeatError, sameRepeat } from './recurrence-model';
 import { appointmentTypes, suggestedTitle } from './appointment-types';
 import { dateKey, isDay, parseDay } from './calendar-date';
 import { appearanceOf, presentationError, statusOptions, visitOf } from './appointment-presentation';
+import { calendarFormatCivilDate, calendarLocalDate } from './calendar-local-date';
 export { dateKey, isDay, parseDay } from './calendar-date';
 import { DAY_END, DAY_START, type CalendarResource, type EventDraft, type ScheduleEvent, type SlotTarget } from '../types';
 
@@ -27,8 +28,8 @@ export function shiftCalendarDate(date: Date, view: 'day' | 'week' | 'month' | '
   return next;
 }
 export function formatDay(value: string, short = false): string {
-  if (!isDay(value)) return 'Choose a date';
-  return new Intl.DateTimeFormat('en-US', { weekday: short ? 'short' : 'long', month: 'short', day: 'numeric' }).format(parseDay(value));
+  if (!calendarLocalDate(value)) return 'Choose a date';
+  return calendarFormatCivilDate(value, { weekday: short ? 'short' : 'long', month: 'short', day: 'numeric' });
 }
 export function formatMinute(minute: number): string {
   const hour = Math.floor(minute / 60), rest = minute % 60;

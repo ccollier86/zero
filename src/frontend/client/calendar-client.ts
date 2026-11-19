@@ -1,5 +1,5 @@
 /** Browser-safe scoped calendar commands. The SDK retires this entire transport on every authority replacement. */
-import type { CalendarAppointmentInput, CalendarAppointmentUpdateInput, CalendarAppointmentPage, CalendarAppointmentView, CalendarBusyPage, CalendarCommandReceipt, CalendarCapabilities,
+import type { CalendarAppointmentCreateInput, CalendarAppointmentIntervalInput, CalendarAllDayAppointmentInterval, CalendarDateRangeQuery, CalendarAppointmentUpdateInput, CalendarAppointmentPage, CalendarAppointmentView, CalendarBusyPage, CalendarCommandReceipt, CalendarCapabilities,
   CalendarAppointmentStatus, CalendarAppointmentLifecycle, CalendarAppointmentTransitionInput, CalendarAppointmentTransitions,
   CalendarLifecyclePolicyInput, CalendarLifecyclePolicy, CalendarCancellationOptions,
   CalendarAvailabilityInput, CalendarAvailabilityView, CalendarAvailabilityWindow, CalendarAvailabilityPolicyInput, CalendarAvailabilityPolicyView, CalendarBlockInput, CalendarBlockPage, CalendarBlockRescheduleInput, CalendarBlockView,
@@ -313,13 +313,17 @@ export function createCalendarClient(fetch: <T = unknown>(path: string, init?: F
     }),
     appointments: Object.freeze({
       query(supplied: CalendarRangeQuery, readOptions?: CalendarReadOptions) { return read('/appointments/query', appointmentPage, 'POST', { query: range(supplied) }, readSignal(readOptions)); },
+      queryDates(supplied: CalendarDateRangeQuery, readOptions?: CalendarReadOptions) {
+        const query = dateRange(supplied);
+        return read('/appointments/query-dates', value => appointmentDatePage(value, query), 'POST', { query }, readSignal(readOptions));
+      },
       get(id: string, readOptions?: CalendarReadOptions) {
         const targetId = requestKey(id);
         return read('/appointments/' + encodeURIComponent(targetId), value => {
           const accepted = appointmentView(value); if (accepted.id !== targetId) throw invalid(); return accepted;
         }, 'GET', undefined, readSignal(readOptions));
       },
-      create(input: CalendarAppointmentInput, supplied: CalendarRequestOptions) {
+      create(input: CalendarAppointmentCreateInput, supplied: CalendarRequestOptions) {
         const r = appointmentInput(input, true); return mutation('/appointments', { appointment: r, options: options(supplied) }, supplied, 'appointment.created');
       },
       update(id: string, input: CalendarAppointmentUpdateInput, supplied: CalendarControlOptions) {
@@ -352,6 +356,11 @@ export function createCalendarClient(fetch: <T = unknown>(path: string, init?: F
       },
       watch(query: CalendarRangeQuery, listener: (page: CalendarAppointmentPage, update?: CalendarWatchUpdate) => void, supplied: CalendarWatchOptions = {}) {
         return watchRange('appointments', query, appointmentPage, listener, supplied);
+      },
+      watchDates(suppliedQuery: CalendarDateRangeQuery, listener: (page: CalendarAppointmentPage, update?: CalendarWatchUpdate) => void, supplied: CalendarWatchOptions = {}) {
+        const query = dateRange(suppliedQuery), params = new URLSearchParams({ resourceIds: query.resourceIds.join(','), startDate: query.startDate, endDate: query.endDate });
+        if (query.limit !== undefined) params.set('limit', String(query.limit));
+        return watch('/appointments/dates/live?' + params, value => appointmentDatePage(value, query), listener, supplied);
       },
     }),
     busy: Object.freeze({ query(query: CalendarRangeQuery, readOptions?: CalendarReadOptions) { return read('/busy/query', busyPage, 'POST', { query: range(query) }, readSignal(readOptions)); } }),
@@ -554,11 +563,13 @@ function resourceLocationsView(value: unknown): CalendarResourceLocationsView {
   return Object.freeze({ resourceId: r.resourceId as string, resourceRevision: r.resourceRevision as number, locationIds: Object.freeze(locationIds) });
 }
 function capabilityView(value: unknown): CalendarCapabilities {
-  const r = record(value, ['timeZone', 'createOwn', 'manage', 'participants', 'limits']), limits = record(r.limits, ['maxRangeDays', 'maxPageSize', 'maxResources', 'maxParticipants']);
-  if (Object.keys(r).length !== 5 || Object.keys(limits).length !== 4 || typeof r.createOwn !== 'boolean'
+  const r = record(value, ['timeZone', 'createOwn', 'manage', 'participants', 'limits', 'allDayAppointments']), limits = record(r.limits, ['maxRangeDays', 'maxPageSize', 'maxResources', 'maxParticipants']);
+  if (Object.keys(r).length !== 5 + (Object.hasOwn(r, 'allDayAppointments') ? 1 : 0) || Object.keys(limits).length !== 4 || typeof r.createOwn !== 'boolean'
+    || Object.hasOwn(r, 'allDayAppointments') && typeof r.allDayAppointments !== 'boolean'
     || typeof r.manage !== 'boolean' || typeof r.participants !== 'boolean' || r.participants && !r.manage) throw invalid();
   zone(r.timeZone);
   return Object.freeze({ timeZone: r.timeZone as string, createOwn: r.createOwn, manage: r.manage, participants: r.participants,
+    ...(Object.hasOwn(r, 'allDayAppointments') ? { allDayAppointments: r.allDayAppointments as boolean } : {}),
     limits: Object.freeze({ maxRangeDays: integer(limits.maxRangeDays, 1, 31), maxPageSize: integer(limits.maxPageSize, 1, 100),
       maxResources: integer(limits.maxResources, 1, 16), maxParticipants: integer(limits.maxParticipants, 1, 100) }) });
 }
@@ -607,25 +618,36 @@ function participantBindings(value: unknown, id: string): CalendarParticipantsVi
   return Object.freeze({ id, revision: integer(r.revision, 1), participants: Object.freeze(participants) });
 }
 function appointmentInput(value: unknown, create: boolean): Record<string, unknown> {
-  const r = record(value, ['startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'appointmentType', 'visit', ...(create ? ['resourceIds', 'title', 'participants'] : [])]);
+  const r = record(value, ['startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'appointmentType', 'visit', ...(create ? ['resourceIds', 'title', 'participants', 'interval'] : [])]);
   const participants = Object.hasOwn(r, 'participants') ? participantReferences(r.participants) : undefined;
   const resourceIds = create ? ids(r.resourceIds) : undefined;
   if (create) identifier(r.title, 512);
-  instant(r.startAt); instant(r.endAt);
-  const duration = Date.parse(String(r.endAt)) - Date.parse(String(r.startAt));
-  if (duration <= 0 || duration > 31 * 86400_000) throw invalid(); zone(r.timeZone);
-  for (const key of ['bufferBeforeMinutes', 'bufferAfterMinutes']) if (!create || r[key] !== undefined) integer(r[key], 0, 1440);
+  let explicit: CalendarAppointmentIntervalInput | undefined;
+  if (Object.hasOwn(r, 'interval')) {
+    if (['startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes'].some(key => Object.hasOwn(r, key))) throw invalid();
+    explicit = appointmentIntervalIntent(r.interval);
+  } else {
+    instant(r.startAt); instant(r.endAt);
+    const duration = Date.parse(String(r.endAt)) - Date.parse(String(r.startAt));
+    if (duration <= 0 || duration > 31 * 86400_000) throw invalid(); zone(r.timeZone);
+    for (const key of ['bufferBeforeMinutes', 'bufferAfterMinutes']) if (!create || r[key] !== undefined) integer(r[key], 0, 1440);
+  }
   const appointmentType = Object.hasOwn(r, 'appointmentType') ? r.appointmentType === null && !create ? null : typeReference(r.appointmentType) : undefined;
   const visit = Object.hasOwn(r, 'visit') ? r.visit === null && !create ? null : visitInput(r.visit) : undefined;
-  return { ...r, ...(participants === undefined ? {} : { participants }), ...(resourceIds === undefined ? {} : { resourceIds }), ...(appointmentType === undefined ? {} : { appointmentType }), ...(visit === undefined ? {} : { visit }) };
+  if (explicit?.kind === 'all-day-local-v1' && appointmentType) throw invalid();
+  return { ...r, ...(explicit ? { interval: explicit } : {}), ...(participants === undefined ? {} : { participants }), ...(resourceIds === undefined ? {} : { resourceIds }), ...(appointmentType === undefined ? {} : { appointmentType }), ...(visit === undefined ? {} : { visit }) };
 }
 /** Browser-side mirror of the server's closed atomic patch, without server imports. */
 function appointmentUpdateInput(value: unknown): Record<string, unknown> {
   const group = ['startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes'];
-  const r = { ...record(value, ['title', 'resourceIds', ...group, 'appointmentType', 'visit', 'participants']) };
+  const r = { ...record(value, ['title', 'resourceIds', ...group, 'appointmentType', 'visit', 'participants', 'interval']) };
   if (Object.keys(r).length === 0 || Object.values(r).some(field => field === undefined)) throw invalid();
   if (Object.hasOwn(r, 'title')) r.title = identifier(r.title, 512);
   if (Object.hasOwn(r, 'resourceIds')) r.resourceIds = Object.freeze(ids(r.resourceIds).sort());
+  if (Object.hasOwn(r, 'interval')) {
+    if (group.some(field => Object.hasOwn(r, field))) throw invalid();
+    r.interval = appointmentIntervalIntent(r.interval);
+  }
   if (group.some(field => Object.hasOwn(r, field))) {
     if (group.some(field => !Object.hasOwn(r, field))) throw invalid();
     interval(r.startAt, r.endAt); zone(r.timeZone);
@@ -694,6 +716,39 @@ function range(value: unknown): Record<string, unknown> {
   if (Date.parse(String(r.endAt)) - Date.parse(String(r.startAt)) > 31 * 86400_000) throw invalid();
   if (r.limit !== undefined) integer(r.limit, 1, 100); return { ...r, resourceIds };
 }
+/** ISO date parsing is UTC and round-tripped; no host calendar or timezone lookup. */
+function localDateOrdinal(value: unknown): number {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) throw invalid();
+  const epoch = Date.parse(value + 'T00:00:00.000Z');
+  if (!Number.isSafeInteger(epoch) || new Date(epoch).toISOString().slice(0, 10) !== value) throw invalid();
+  return epoch / 86400_000;
+}
+function authoredZone(value: unknown): string {
+  const token = identifier(value, 128);
+  if (token.trim() !== token || /^[+-]/.test(token)) throw invalid();
+  return token;
+}
+function appointmentIntervalIntent(value: unknown): CalendarAppointmentIntervalInput {
+  const input = record(value, ['kind', 'startDate', 'endDate', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes']);
+  const timeZone = authoredZone(input.timeZone);
+  if (input.kind === 'all-day-local-v1') {
+    const r = record(input, ['kind', 'startDate', 'endDate', 'timeZone']);
+    if (Object.keys(r).length !== 4) throw invalid();
+    integer(localDateOrdinal(r.endDate) - localDateOrdinal(r.startDate), 1, 31);
+    return Object.freeze({ kind: 'all-day-local-v1', startDate: r.startDate as string, endDate: r.endDate as string, timeZone });
+  }
+  const r = record(input, ['kind', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes']);
+  if (r.kind !== 'timed-v1' || Object.keys(r).length !== 6) throw invalid();
+  interval(r.startAt, r.endAt);
+  return Object.freeze({ kind: 'timed-v1', startAt: r.startAt as string, endAt: r.endAt as string, timeZone,
+    bufferBeforeMinutes: integer(r.bufferBeforeMinutes, 0, 1440), bufferAfterMinutes: integer(r.bufferAfterMinutes, 0, 1440) });
+}
+function dateRange(value: unknown): CalendarDateRangeQuery {
+  const r = record(value, ['resourceIds', 'startDate', 'endDate', 'limit']), resourceIds = ids(r.resourceIds, true).sort();
+  integer(localDateOrdinal(r.endDate) - localDateOrdinal(r.startDate), 1, 31);
+  return Object.freeze({ resourceIds: Object.freeze(resourceIds), startDate: r.startDate as string, endDate: r.endDate as string,
+    ...(r.limit === undefined ? {} : { limit: integer(r.limit, 1, 100) }) });
+}
 function resourcePage(value: unknown, query: CalendarLocationPageQuery): CalendarResourcePage {
   const r = record(value, ['items', 'truncated', 'nextAfter']);
   if (typeof r.truncated !== 'boolean') throw invalid();
@@ -717,16 +772,24 @@ function resourceView(value: unknown): CalendarResourceView {
   return Object.freeze(r) as unknown as CalendarResourceView;
 }
 function appointmentView(value: unknown): CalendarAppointmentView {
-  const r = record(value, ['id', 'revision', 'resourceIds', 'title', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'status', 'createdBy', 'appointmentType', 'lifecycle', 'visit']);
-  if (Object.keys(r).length !== 11 + (Object.hasOwn(r, 'appointmentType') ? 1 : 0) + (Object.hasOwn(r, 'lifecycle') ? 1 : 0) + (Object.hasOwn(r, 'visit') ? 1 : 0)
+  const r = record(value, ['id', 'revision', 'resourceIds', 'title', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'status', 'createdBy', 'appointmentType', 'lifecycle', 'visit', 'interval']);
+  if (Object.keys(r).length !== 11 + (Object.hasOwn(r, 'interval') ? 1 : 0) + (Object.hasOwn(r, 'appointmentType') ? 1 : 0) + (Object.hasOwn(r, 'lifecycle') ? 1 : 0) + (Object.hasOwn(r, 'visit') ? 1 : 0)
     || r.status !== 'confirmed' && r.status !== 'cancelled') throw invalid();
   requestKey(r.id); integer(r.revision, 1); const resourceIds = ids(r.resourceIds); identifier(r.title, 512); requestKey(r.createdBy);
-  instant(r.startAt); instant(r.endAt); if (Date.parse(String(r.endAt)) <= Date.parse(String(r.startAt))) throw invalid(); zone(r.timeZone);
+  instant(r.startAt); instant(r.endAt); if (Date.parse(String(r.endAt)) <= Date.parse(String(r.startAt))) throw invalid();
+  let allDay: CalendarAllDayAppointmentInterval | undefined;
+  if (Object.hasOwn(r, 'interval')) {
+    const intent = appointmentIntervalIntent(r.interval);
+    if (intent.kind !== 'all-day-local-v1' || r.bufferBeforeMinutes !== 0 || r.bufferAfterMinutes !== 0
+      || Object.hasOwn(r, 'appointmentType') || Date.parse(String(r.endAt)) - Date.parse(String(r.startAt)) > 33 * 86400_000) throw invalid();
+    allDay = intent; authoredZone(r.timeZone);
+  } else zone(r.timeZone);
   integer(r.bufferBeforeMinutes, 0, 1440); integer(r.bufferAfterMinutes, 0, 1440);
   const binding = bookingTypeSnapshot(r);
   const lifecycle = Object.hasOwn(r, 'lifecycle') ? { lifecycle: appointmentLifecycle(r.lifecycle, r) } : {};
   const visit = Object.hasOwn(r, 'visit') ? { visit: visitSnapshot(r.visit) } : {};
-  return Object.freeze({ ...r, resourceIds: Object.freeze(resourceIds), ...binding, ...lifecycle, ...visit }) as unknown as CalendarAppointmentView;
+  return Object.freeze({ ...r, resourceIds: Object.freeze(resourceIds), ...binding, ...lifecycle, ...visit,
+    ...(allDay ? { interval: allDay } : {}) }) as unknown as CalendarAppointmentView;
 }
 function blockView(value: unknown): CalendarBlockView {
   const r = record(value, ['id', 'revision', 'resourceIds', 'title', 'startAt', 'endAt', 'timeZone', 'status', 'createdBy']);
@@ -775,6 +838,19 @@ function appointmentPage(value: unknown): CalendarAppointmentPage {
   if (typeof r.truncated !== 'boolean') throw invalid();
   const items = values(r.items, 100).map(appointmentView); unique(items.map(item => item.id));
   return Object.freeze({ items: Object.freeze(items), truncated: r.truncated });
+}
+function appointmentDatePage(value: unknown, query: CalendarDateRangeQuery): CalendarAppointmentPage {
+  const page = appointmentPage(value);
+  if (page.items.length > (query.limit ?? 100)) throw invalid();
+  let previous: CalendarAppointmentView | undefined;
+  for (const item of page.items) {
+    if (item.status !== 'confirmed' || !item.interval || item.interval.startDate >= query.endDate || item.interval.endDate <= query.startDate
+      || !item.resourceIds.some(id => query.resourceIds.includes(id))) throw invalid();
+    if (previous && (previous.interval!.startDate > item.interval.startDate
+      || previous.interval!.startDate === item.interval.startDate && previous.id >= item.id)) throw invalid();
+    previous = item;
+  }
+  return page;
 }
 function busyPage(value: unknown): CalendarBusyPage {
   const r = record(value, ['items', 'truncated']);

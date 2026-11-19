@@ -17,7 +17,7 @@ maturity: experimental
 
 This documents **unreleased feature-branch source**. The selected Zero 2.11.0
 archive and the approved hosted local-state demo are unchanged. The source UI
-now composes real one-off booking, types, visits, lifecycle and account participants;
+now composes real timed/all-day one-off booking, types, visits, lifecycle and account participants;
 it is not a completed recurring/clinical/public scheduling product.
 
 ```tsx
@@ -32,6 +32,23 @@ workspace neither installs providers nor changes data topology or site themes.
 Its calendar/resource catalog, appointments and overlays use the current admitted
 Guardian scope; browser-auth replacement retires their subscriptions and owners.
 
+## Authored all-day dates
+
+Supporting servers advertise `allDayAppointments: true`; older servers omit it.
+The connected rich editor exposes untyped all-day mode only with that capability,
+and requires explicit removal of an existing minute-based type. Both modes use
+the same atomic save/expected-revision/unknown-outcome owner. Metadata-only edits
+omit interval intent rather than recomputing accepted dates under a new engine.
+
+Date-only watches use `useCalendarAppointmentDates` separately from timed watches.
+The workspace merges logical revisions and renders dedicated day/week all-day
+lanes, month chips and labelled agenda entries. Authored dates do not shift into
+the display timezone; human spans show the inclusive last occupied date while
+the API retains its exclusive end. Native civil fields reuse Calendar/Popover/
+Input, with year0000–9999 handling independent of host-local Date normalization.
+`initialDateKey` can supply an explicit civil selection; it is exclusive with
+`initialDate`. See [all-day contracts](../../backend/calendar/all-day.md).
+
 ## Discover, don't duplicate, server policy
 
 `client.calendar.capabilities.get()` and `.watch(listener, options?)`, plus
@@ -40,7 +57,7 @@ Guardian scope; browser-auth replacement retires their subscriptions and owners.
 ```ts
 {
   timeZone,
-  createOwn, manage, participants,
+  createOwn, manage, participants, allDayAppointments,
   limits: { maxRangeDays, maxPageSize, maxResources, maxParticipants }
 }
 ```
@@ -57,7 +74,8 @@ respects the server's selected-resource and participant ceilings; selector page
 size stays server-configured. Read ranges use unambiguous display-zone midnight
 bounds when available and split a 25-hour day correctly rather than guessing the
 host timezone. Unusual missing/ambiguous midnights keep a conservative superset.
-The workspace uses at most two range streams. A longer view exceeding narrowed
+The workspace uses at most two instant-range streams plus two authored-date
+streams for all-day appointments. A longer view exceeding narrowed
 server limits shows an explicit shorter-view/fewer-calendars state, never a false
 complete partial schedule or dozens of streams. Direct facade callers may compose
 additional separately bounded reads.

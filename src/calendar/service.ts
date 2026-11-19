@@ -9,7 +9,7 @@ import type { ResolvedCalendarConfig } from './config';
 import { calendarLocationIds, calendarLocationInput, calendarPageQuery, calendarResourcePageQuery, calendarRange, calendarReceipt,
   calendarAppointmentTypePageQuery, calendarAppointmentTypeInput, calendarTypeReference, calendarResourceTypesInput,
   calendarLifecyclePolicyInput, calendarAppointmentTransitionInput, calendarLifecycleReason, calendarVisitInput, calendarVisitLocationQuery,
-  calendarAppointmentUpdateInput } from './service-validation';
+  calendarAppointmentUpdateInput, calendarDateRange, calendarExplicitAppointmentInterval } from './service-validation';
 import { watchCalendarPage } from './watch';
 import type { CalendarParticipantDirectory } from './participants-directory';
 import { calendarParticipantBroker, calendarParticipantCommitGuard, calendarParticipantQuery } from './participants-service';
@@ -191,6 +191,7 @@ export class CalendarService {
       }),
       appointments: Object.freeze({
         query: (query, options) => this.read(request, 'appointments', () => calendarRange(query, this.config), options),
+        queryDates: (query, options) => this.read(request, 'appointmentsByDate', () => calendarDateRange(query, this.config), options),
         get: (id, options) => this.read(request, 'appointment', () => ({ id: calendarKey(id) }), options),
         create: createAppointment,
         update: (id, input, options) => this.write(request, 'appointment.update', input, options, id),
@@ -208,6 +209,11 @@ export class CalendarService {
           this.ready();
           return watchCalendarPage({ request, broker: this.broker, config: this.config, closing: this.signal,
             query: detached, listener, options, track: task => this.track(task) });
+        },
+        watchDates: (query, listener, options: CalendarWatchOptions = {}) => {
+          const detached = calendarDateRange(query, this.config); this.ready();
+          return watchCalendarPage({ request, broker: this.broker, config: this.config, closing: this.signal,
+            queryName: 'calendar.appointmentsByDate', query: detached, listener, options, track: task => this.track(task) });
         },
       }),
       busy: Object.freeze({ query: (query, options) => this.read(request, 'busy', () => calendarRange(query, this.config), options) }),
@@ -274,10 +280,11 @@ export class CalendarService {
         : operation === 'block.reschedule' ? ['startAt', 'endAt', 'timeZone']
         : operation === 'block.create' ? ['resourceIds', 'title', 'startAt', 'endAt', 'timeZone']
         : operation === 'appointment.reschedule' ? ['startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'appointmentType', 'visit']
-        : ['resourceIds', 'title', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'appointmentType', 'visit', 'participants'];
+        : ['resourceIds', 'title', 'startAt', 'endAt', 'timeZone', 'bufferBeforeMinutes', 'bufferAfterMinutes', 'appointmentType', 'visit', 'participants', 'interval'];
       // Detach before the first await; authored mutation cannot alter an admitted command.
       const body = calendarValue(calendarRecord(input, fields)) as Record<string, unknown>;
       if (operation === 'appointment.update') Object.assign(body, calendarAppointmentUpdateInput(body, this.config));
+      if (operation === 'appointment.create') calendarExplicitAppointmentInterval(body);
       for (const field of ['participants', 'references'] as const) if (Object.hasOwn(body, field)) {
         body[field] = calendarParticipantReferences(body[field]);
         if ((body[field] as unknown[]).length > this.config.maxParticipants) throw new CalendarError('CALENDAR_INPUT_INVALID');

@@ -5,6 +5,8 @@
 .calendar-date-field [data-slot=input] { min-height: var(--calendar-size-20); height: var(--calendar-size-24); padding: 0 var(--calendar-size-2); background: transparent; border: 0; box-shadow: none; color: var(--calendar-muted); font-family: var(--calendar-font); font-size: var(--calendar-font-size-xs); }
 .calendar-date-field [data-slot=date-picker-trigger] { width: var(--calendar-size-24); height: var(--calendar-size-24); min-height: var(--calendar-size-24); padding: var(--calendar-size-4); border: 0; box-shadow: none; color: var(--calendar-muted); background: transparent; border-radius: var(--calendar-radius-sm); }
 .calendar-date-field [data-slot=date-picker-trigger] svg { width: var(--calendar-size-13); height: var(--calendar-size-13); }
+.calendar-civil-date-field { flex-wrap: nowrap; min-width: 0; }
+.calendar-civil-date-field > :first-child { min-width: 0; width: var(--calendar-size-120); }
 @media (max-width: 600px) {
   .calendar-editor-time-row { display: grid !important; grid-template-columns: var(--calendar-size-14) minmax(0, 1fr) var(--calendar-size-12) minmax(0, 1fr); }
   .calendar-editor-time-row .calendar-date-field { grid-column: 2 / -1; width: 100%; }

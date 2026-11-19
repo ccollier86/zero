@@ -1,6 +1,6 @@
 /** Pure in-memory adapter and receipt-fence tests; no browser, runtime store or generated fixture. */
 import { expect, test } from 'bun:test';
-import { calendarCoreDraftInterval, CalendarDraftReceiptFence, CalendarPendingRequestLedger, calendarDisplayDays, calendarWallTimeCandidates, calendarWorkspaceQueries, projectCalendarAppointments } from './calendar-workspace-model';
+import { calendarCoreDraftInterval, CalendarDraftReceiptFence, CalendarPendingRequestLedger, calendarDisplayDays, calendarWallTimeCandidates, calendarWorkspaceQueries, projectCalendarAppointments, calendarZonedParts } from './calendar-workspace-model';
 import type { CalendarAppointmentView, CalendarCommandReceipt } from '../../../calendar/contracts';
 const record: CalendarAppointmentView = { id: 'appointment-a', revision: 1, resourceIds: ['resource-a', 'room-a'], title: 'Synthetic appointment',
   startAt: '2026-11-16T15:00:00.000Z', endAt: '2026-11-16T16:00:00.000Z', timeZone: 'America/New_York', bufferBeforeMinutes: 0,
@@ -11,6 +11,11 @@ test('month view uses two bounded contiguous authoritative ranges and preserves 
   expect(days).toHaveLength(42); expect(queries).toHaveLength(2); expect(queries[0]!.endAt).toBe(queries[1]!.startAt);
   for (const query of queries) expect(Date.parse(query.endAt) - Date.parse(query.startAt)).toBeLessThanOrEqual(31 * 86400_000);
   expect(calendarWorkspaceQueries(days, [])).toEqual([]);
+});
+test('managed timed display helpers preserve four-digit early years alongside date-native watches', () => {
+  expect(calendarZonedParts('0000-02-29T12:00:00.000Z', 'UTC').date).toBe('0000-02-29');
+  expect(calendarZonedParts('0099-12-31T12:00:00.000Z', 'UTC').date).toBe('0099-12-31');
+  expect(calendarWorkspaceQueries(['0000-01-01'], ['resource-a'], 31, 'UTC')).toEqual([{ resourceIds: ['resource-a'], startAt: '0000-01-01T00:00:00.000Z', endAt: '0000-01-02T00:00:00.000Z' }]);
 });
 test('native range limits produce exact zoned bounds and split a 25-hour day rather than guessing host midnight', () => {
   const ordinary = calendarWorkspaceQueries(['2026-11-16'], ['resource-a'], 1, 'America/New_York');

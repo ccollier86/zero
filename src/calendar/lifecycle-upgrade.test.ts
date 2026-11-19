@@ -11,7 +11,8 @@ import type { CalendarActor, CalendarCommandReceipt } from './contracts';
 import { blockReservationId } from './blocks-model';
 import { holdReservationId } from './holds-model';
 import { calendarLocationCurrentId } from './locations-model';
-import { calendarRealm } from './realm';
+// Preserve this recorded upgrade boundary through016; latest017 is qualified separately.
+import { calendarRealm016 as calendarRealm } from './test-support/calendar-realm-016';
 import { CALENDAR_APPOINTMENT_UPDATE_TABLES } from './realm-appointment-update-migration';
 import { grantId, reservationId } from './realm-model';
 import { CALENDAR_LIFECYCLE_TABLES } from './realm-lifecycle-migration';

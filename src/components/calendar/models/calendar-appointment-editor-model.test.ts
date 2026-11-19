@@ -54,6 +54,36 @@ test('sets cannot collapse implicitly, exceed configured caps, duplicate ids or 
   expect(shape({ ...initial, participants: [participant, { kind: 'guardian-user', userId: 'second' }] }, { maxParticipants: 1 })).toHaveProperty('error');
 });
 
+test('all-day metadata and participant/resource changes retain the accepted tuple without wall-time or timezone recomputation', () => {
+  const accepted = { ...record, appointmentType: undefined, interval: { kind: 'all-day-local-v1' as const, startDate: '0000-02-28', endDate: '0000-03-01', timeZone: 'RETAINED_ZONE_NOT_RECOMPILED' },
+    startAt: '0000-02-28T00:00:00.000Z', endAt: '0000-03-01T00:00:00.000Z', timeZone: 'RETAINED_ZONE_NOT_RECOMPILED', bufferBeforeMinutes: 0, bufferAfterMinutes: 0 };
+  const draft: CalendarAppointmentDraft = { ...initial, title: 'New title', date: accepted.interval.startDate, endDate: accepted.interval.endDate,
+    intervalKind: 'all-day-local-v1', start: NaN, end: NaN, resourceIds: ['b', 'c'], participants: [] };
+  expect(shape(draft, { record: accepted, timeZone: accepted.timeZone, types: null })).toEqual({ kind: 'update', input: { title: 'New title', resourceIds: ['b', 'c'], participants: [] } });
+  expect(shape({ ...draft, endDate: '0000-03-02' }, { record: accepted, timeZone: accepted.timeZone, types: null })).toHaveProperty('input.interval', { ...accepted.interval, endDate: '0000-03-02' });
+});
+
+test('all-day conversion requires an explicit type clear and nested intent; fresh create omits null type and timed fields', () => {
+  const draft: CalendarAppointmentDraft = { ...initial, intervalKind: 'all-day-local-v1', endDate: '2026-11-20' };
+  expect(shape(draft)).toHaveProperty('error');
+  expect(shape({ ...draft, appointmentType: null })).toEqual({ kind: 'update', input: { interval: { kind: 'all-day-local-v1', startDate: '2026-11-18', endDate: '2026-11-20', timeZone: 'UTC' }, appointmentType: null } });
+  const create = shape({ ...draft, appointmentType: null }, { record: undefined });
+  expect(create).toHaveProperty('kind', 'create');
+  if ('input' in create) { expect(create.input).not.toHaveProperty('appointmentType'); expect(create.input).not.toHaveProperty('startAt'); expect(create.input).not.toHaveProperty('bufferBeforeMinutes'); }
+  expect(shape({ ...draft, appointmentType: null, endDate: '2026-11-18' })).toHaveProperty('error');
+  expect(shape({ ...draft, appointmentType: null, endDate: '2026-12-20' })).toHaveProperty('error');
+});
+
+test('conversion back to timed is explicit with both buffers, while a genuinely unchanged all-day draft remains clean', () => {
+  const accepted = { ...record, appointmentType: undefined, interval: { kind: 'all-day-local-v1' as const, startDate: '2026-11-18', endDate: '2026-11-20', timeZone: 'UTC' }, bufferBeforeMinutes: 0, bufferAfterMinutes: 0 };
+  const draft: CalendarAppointmentDraft = { ...initial, intervalKind: 'all-day-local-v1', endDate: '2026-11-20' };
+  expect(calendarAppointmentDraftChanged(draft, draft, accepted)).toBe(false);
+  expect(calendarAppointmentDraftChanged({ ...draft, start: 1, end: 2 }, draft, accepted)).toBe(false);
+  const conversion = shape({ ...draft, intervalKind: 'timed-v1', bufferBeforeMinutes: 4, bufferAfterMinutes: 5 }, { record: accepted });
+  expect(conversion).toHaveProperty('input.interval', { kind: 'timed-v1', startAt: '2026-11-18T10:07:00.000Z', endAt: '2026-11-18T11:07:00.000Z', timeZone: 'UTC', bufferBeforeMinutes: 4, bufferAfterMinutes: 5 });
+  if ('input' in conversion) expect(conversion.input).not.toHaveProperty('startAt');
+});
+
 test('meaningful dirty state includes complete resource/participant sets and reverts cleanly without label dirtiness', () => {
   expect(calendarAppointmentDraftChanged(initial, initial, record)).toBe(false);
   expect(calendarAppointmentDraftChanged({ ...initial, resourceIds: ['b', 'a'] }, initial, record)).toBe(false);

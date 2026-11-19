@@ -15,6 +15,8 @@ export interface CalendarHeaderProps {
   onToday: () => void;
   onViewChange: (view: CalendarViewMode) => void;
   providerSwitcher?: ReactNode;
+  /** Managed civil-date consumers supply a zone-independent title; local previews retain CalendarTitle. */
+  title?: ReactNode;
 }
 
 /**
@@ -28,6 +30,7 @@ export function CalendarHeader({
   onToday,
   onViewChange,
   providerSwitcher,
+  title,
 }: CalendarHeaderProps) {
   return (
     <Group justify="space-between" mb="md" className="calendar-toolbar">
@@ -43,7 +46,7 @@ export function CalendarHeader({
             <IconChevronRight size="var(--calendar-size-16)" />
           </Button>
         </Button.Group>
-        <CalendarTitle date={date} viewMode={viewMode} />
+        {title ?? <CalendarTitle date={date} viewMode={viewMode} />}
       </Group>
       <Group gap="xs">{providerSwitcher}<CalendarViewToggle value={viewMode} onChange={onViewChange} /></Group>
     </Group>

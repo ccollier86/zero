@@ -16,10 +16,10 @@ import type { CalendarIntegrationInspection } from '../integration-inspection-mo
 
 export const calendarInspectionHistoricalRealm = defineDatabaseRealm({ name: calendarRealm.name, version: '13', tables: CALENDAR_INTEGRATION_QUEUE_TABLES,
   migrations: calendarRealm.migrations.slice(0, 13), commands: Object.fromEntries(Object.entries(calendarRealm.commands).filter(([name]) => name !== 'calendar.appointment.update' && !name.startsWith('calendar.integration.operator.'))),
-  queries: Object.fromEntries(Object.entries(calendarRealm.queries).filter(([name]) => name !== 'calendar.integration.inspection' && !name.startsWith('calendar.integration.operator.'))) });
+  queries: Object.fromEntries(Object.entries(calendarRealm.queries).filter(([name]) => name !== 'calendar.appointmentsByDate' && name !== 'calendar.integration.inspection' && !name.startsWith('calendar.integration.operator.'))) });
 export const calendarOperatorHistoricalRealm = defineDatabaseRealm({ name: calendarRealm.name, version: '14', tables: CALENDAR_INTEGRATION_INSPECTION_TABLES,
   migrations: calendarRealm.migrations.slice(0, 14), commands: calendarInspectionHistoricalRealm.commands,
-  queries: Object.fromEntries(Object.entries(calendarRealm.queries).filter(([name]) => !name.startsWith('calendar.integration.operator.'))) });
+  queries: Object.fromEntries(Object.entries(calendarRealm.queries).filter(([name]) => name !== 'calendar.appointmentsByDate' && !name.startsWith('calendar.integration.operator.'))) });
 
 export function calendarInspectionFixture(options: { historical?: boolean | '014'; bind?: boolean; scopeId?: string } = {}) {
   const db = createReactiveDB({ mode: 'memory' }), raw = db.getRawDatabase(), now = 1_900_000_000_000, clock = spyOn(Date, 'now').mockReturnValue(now);
