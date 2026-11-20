@@ -1,6 +1,6 @@
 /** Public wire-shape validation only; capabilities are not proof of current authority or worker health. */
 import { expect, test } from 'bun:test';
-import { assertMessagingCapabilities, assertMessagingContact, assertMessagingConversation, assertMessagingPage, assertMessagingSupportInbox, assertMessagingSupportQueueItem } from './messaging-response';
+import { assertMessagingCapabilities, assertMessagingContact, assertMessagingConversation, assertMessagingDirectoryEntry, assertMessagingPage, assertMessagingSupportInbox, assertMessagingSupportQueueItem } from './messaging-response';
 
 const legacy = { enabled: true, directory: 'everyone', canSupport: false,
   maxMessageLength: 20000, maxParticipants: 100, maxUploadBytes: 16 * 1024 * 1024 };
@@ -45,5 +45,25 @@ test('optional participant/contact display validates avatar URLs even without a 
   for (const display of [{ avatarUrl: 'javascript:alert(1)' }, { avatarUrl: 'data:text/html,synthetic' }, { name: null }, { name: 'x'.repeat(242) }]) {
     expect(() => assertMessagingContact({ ...contact, ...display })).toThrow('Invalid messaging response.');
     expect(() => assertMessagingConversation({ ...conversation, participants: [{ ...member, ...display }] })).toThrow('Invalid messaging response.');
+  }
+});
+
+test('private photo metadata is revisioned and exact-path validated on every admitted identity shape', () => {
+  const id = 'ava_11111111-1111-4111-8111-111111111111';
+  const asset = { id, width: 64, height: 64, byteLength: 12, mimeType: 'image/webp', deliveryPath: `/auth/profile/avatar/assets/${id}` };
+  const contact = { id: 'contact', userId: 'peer', direction: 'incoming', state: 'accepted', revision: 1, updatedAt: 1 };
+  const conversation = { id: 'conversation', kind: 'direct', title: '', revision: 1, createdAt: 1, updatedAt: 1, archived: false, owner: 'human', ownerId: null,
+    ownerEpoch: 1, unreadCount: 0, lastMessage: null };
+  const member = { id: 'peer', kind: 'user', role: 'member', joinedAt: 1 };
+  const validators = [
+    (privateAvatar: unknown) => assertMessagingDirectoryEntry({ id: 'peer', name: 'Peer', avatarUrl: null, privateAvatar }),
+    (privateAvatar: unknown) => assertMessagingContact({ ...contact, privateAvatar }),
+    (privateAvatar: unknown) => assertMessagingConversation({ ...conversation, participants: [{ ...member, privateAvatar }] }),
+  ];
+  for (const validate of validators) {
+    for (const value of [undefined, null, { revision: 1, asset }, { revision: 2, asset: null }]) expect(() => validate(value)).not.toThrow();
+    for (const value of [{ revision: 0, asset }, { revision: 1.1, asset }, { revision: Number.MAX_SAFE_INTEGER, asset }, { revision: 1 },
+      { revision: 1, asset, providerUrl: 'https://synthetic.invalid/private' }, { revision: 1, asset: { ...asset, deliveryPath: '//synthetic.invalid/image' } },
+      { revision: 1, asset: { ...asset, deliveryPath: '/auth/profile/avatar/assets/another' } }]) expect(() => validate(value)).toThrow('Invalid messaging response.');
   }
 });

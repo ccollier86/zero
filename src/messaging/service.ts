@@ -1,5 +1,6 @@
 /** Guardian-bound messaging facade. Mints actors and job policy; delegates closed transactions to private Fabric workers. */
-import { AuthError } from '../auth/types';
+import { AuthError, type AuthContext } from '../auth/types';
+import type { UserAvatarPresentation } from '../auth/auth-user-avatar-types';
 import type { RequestAuthorizationAccess } from '../auth/authorization-access';
 import { serviceDataScopeKey, type ServiceDataScope } from '../auth/service-data-scope';
 import type { LoggingRuntime } from '../logging/logging-runtime';
@@ -42,7 +43,9 @@ export interface MessagingDirectory {
   inboxStaffRecipient?(scope: ServiceDataScope, userId: string, inboxId: string): boolean;
   inboxRecipient?(scope: ServiceDataScope, userId: string, inboxId: string): boolean;
 }
-export interface MessagingDependencies { readonly runtime: MessagingRuntime; readonly config: ResolvedMessagingConfig; readonly directory: MessagingDirectory; readonly attachments: MessagingAttachmentService; readonly logging?: LoggingRuntime; readonly jobs?: { wake(scope: ServiceDataScope): void }; readonly groups?: { ensure(scope: ServiceDataScope): Promise<void> }; readonly getEphemeral?: () => import('../sync/ephemeral-channel').EphemeralChannel | null; readonly relationships?: MessagingRelationshipReader }
+export interface MessagingDependencies { readonly runtime: MessagingRuntime; readonly config: ResolvedMessagingConfig; readonly directory: MessagingDirectory; readonly attachments: MessagingAttachmentService; readonly logging?: LoggingRuntime; readonly jobs?: { wake(scope: ServiceDataScope): void }; readonly groups?: { ensure(scope: ServiceDataScope): Promise<void> }; readonly getEphemeral?: () => import('../sync/ephemeral-channel').EphemeralChannel | null; readonly relationships?: MessagingRelationshipReader;
+  /** Optional Guardian composition, evaluated only after ordinary messaging identity admission. */
+  readonly privateAvatar?: (auth: AuthContext, subjectId: string) => UserAvatarPresentation | null }
 export const ZERO_MESSAGING = createZeroRuntimeServiceKey<MessagingService>('Managed messaging service');
 /** Request-local closures retain no ambient mutable user, selected organization or native upload grants. */
 export class MessagingService {
@@ -122,7 +125,15 @@ export class MessagingService {
         this.deps.jobs?.wake(scope); return value;
       }, error => { if (error?.code === 'DATABASE_OUTCOME_UNKNOWN') this.deps.jobs?.wake(scope); throw error; });
     };
-    const decorate = (rows: readonly ConversationRecord[]) => directMessagingDisplay(rows, ids => this.deps.directory.resolve?.(scope, ids) ?? []).map(row => {
+    const privateAvatar = (id: string): UserAvatarPresentation | null | undefined => {
+      if (!this.deps.privateAvatar) return undefined;
+      // An optional photo may fail closed without turning a readable chat into
+      // a failure. The actor/final fences still reject lost chat authority.
+      try { return this.deps.privateAvatar(authority.access.requireUser(), id); } catch { return null; }
+    };
+    const people = (ids: readonly string[]) => (this.deps.directory.resolve?.(scope, ids) ?? []).map(row => ({ ...row,
+      ...(this.deps.privateAvatar ? { privateAvatar: privateAvatar(row.id) ?? null } : {}) }));
+    const decorate = (rows: readonly ConversationRecord[]) => directMessagingDisplay(rows, people).map(row => {
       const assistant = row.assistantId ? this.deps.config.assistants[row.assistantId] : undefined;
       const inbox = row.inboxId ? this.deps.config.supportInboxes?.[row.inboxId] : undefined;
       return { ...row, ...(assistant ? { assistantName: assistant.name } : {}), ...(inbox ? { inboxTitle: inbox.title } : {}) };
@@ -198,7 +209,9 @@ export class MessagingService {
       },
       directory: (query = {}, options) => audit('directory', null, async () => { const captured = actor(), check = final(captured); check(); options?.signal?.throwIfAborted();
         peer(); const page = this.deps.directory.list(scope, captured.id, query, this.deps.config.portal === true,
-          captured.directEpochs ? Object.keys(captured.directEpochs) : undefined); check(); return page; }),
+          captured.directEpochs ? Object.keys(captured.directEpochs) : undefined);
+        check(); const result = { ...page, items: page.items.map(row => ({ ...row,
+          ...(this.deps.privateAvatar ? { privateAvatar: privateAvatar(row.id) ?? null } : {}) })) }; check(); return result; }),
       receipt: (requestId, options) => read('messaging.receipt', { requestId: messagingId(requestId) }, options?.signal),
       conversations: {
         list: (query = {}, options) => audit('conversations', null, async () => {
@@ -209,11 +222,12 @@ export class MessagingService {
         people: (id, options) => audit('directory', messagingId(id), async () => {
           const captured = actor(), check = final(captured), record = await conversation(id, options?.signal);
           check(); options?.signal?.throwIfAborted();
-          const users = new Map(this.deps.directory.resolve?.(scope, record.participants.filter(row => row.kind === 'user').map(row => row.id)).map(row => [row.id, row]) ?? []);
+          const users = new Map(people(record.participants.filter(row => row.kind === 'user').map(row => row.id)).map(row => [row.id, row]));
           const items = record.participants.map(member => ({ id: member.id, kind: member.kind,
             name: member.kind === 'user' ? users.get(member.id)?.name ?? 'Member' : member.kind === 'external' ? 'Visitor'
               : this.deps.config.assistants[member.id.slice('assistant:'.length)]?.name ?? 'Assistant',
-            avatarUrl: member.kind === 'user' ? users.get(member.id)?.avatarUrl ?? null : null }));
+            avatarUrl: member.kind === 'user' ? users.get(member.id)?.avatarUrl ?? null : null,
+            ...(this.deps.privateAvatar ? { privateAvatar: member.kind === 'user' ? users.get(member.id)?.privateAvatar ?? null : null } : {}) }));
           check(); return { items, hasMore: false, nextCursor: null };
         }),
         create: (input, options) => {
@@ -265,10 +279,11 @@ export class MessagingService {
         if (captured.directEpochs) return { items: [], hasMore: false, nextCursor: null };
         const page = await read<MessagingPage<MessagingContact>>('messaging.contacts', { query }, opts?.signal);
         check(); const visible = this.deps.config.portal ? page.items.filter(row => this.deps.directory.notificationRecipient(scope, row.userId, true)) : page.items;
-        const names = new Map(this.deps.directory.resolve?.(scope, visible.map(row => row.userId)).map(row => [row.id, row]) ?? []);
+        const names = new Map(people(visible.map(row => row.userId)).map(row => [row.id, row]));
         // Keep the source cursor even when this bounded page masks every old
         // non-operator relationship, so the next admitted page remains reachable.
-        const result = { ...page, items: visible.map(row => ({ ...row, name: names.get(row.userId)?.name ?? 'Member', avatarUrl: names.get(row.userId)?.avatarUrl ?? null })) }; check(); return result;
+        const result = { ...page, items: visible.map(row => ({ ...row, name: names.get(row.userId)?.name ?? 'Member', avatarUrl: names.get(row.userId)?.avatarUrl ?? null,
+          ...(this.deps.privateAvatar ? { privateAvatar: names.get(row.userId)?.privateAvatar ?? null } : {}) })) }; check(); return result;
       }), request: (userId, opts) => contact('request', userId, opts),
         respond: (userId, revision, accept, opts) => { if (typeof accept !== 'boolean') messagingFail('MESSAGING_INPUT_INVALID', 422); return contact(accept ? 'accept' : 'decline', userId, opts, revision); },
         block: (userId, opts) => contact('block', userId, opts), unblock: (userId, opts) => contact('unblock', userId, opts) },

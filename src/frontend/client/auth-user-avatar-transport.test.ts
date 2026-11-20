@@ -2,7 +2,7 @@
 import { afterEach, expect, test } from 'bun:test';
 import { AuthClient } from './auth-client';
 import { AuthUserAvatarTransport, type UserAvatarRequestScope } from './auth-user-avatar-transport';
-import { isUserAvatarAsset, isUserAvatarCapabilities, isUserAvatarSnapshot, isUserAvatarStage, isUserPublicAvatarAsset } from './auth-user-avatar-parser';
+import { isUserAvatarAsset, isUserAvatarCapabilities, isUserAvatarDirectoryEntry, isUserAvatarPresentation, isUserAvatarSnapshot, isUserAvatarStage, isUserPublicAvatarAsset } from './auth-user-avatar-parser';
 import type { UserAvatarAsset, UserAvatarSnapshot, UserAvatarStage } from '../../auth/auth-user-avatar-types';
 import { normalizeAuthUserAvatar } from '../../auth/auth-config-user-avatar';
 import { configureFrontendObservability, type FrontendObservabilityEvent } from './observability';
@@ -202,6 +202,23 @@ test('explicit cancel/remove/directory reuse captured authority and expected rev
   const allocated = await owner.transport.stage(1); await owner.transport.cancel(allocated); await owner.transport.remove(2);
   expect(await owner.transport.directory('peer')).toEqual({ userId: 'peer', displayName: 'Peer', asset: null });
   expect(calls[1]!.init?.method).toBe('DELETE'); expect(JSON.parse(String(calls[2]!.init?.body))).toEqual({ expectedRevision: 2 });
+});
+test('directory revision is strictly additive for legacy replies and private presentations require an exact current revision', async () => {
+  const entry = { userId: 'peer', displayName: 'Peer', asset: asset() };
+  expect(isUserAvatarDirectoryEntry(entry)).toBe(true);
+  expect(isUserAvatarDirectoryEntry({ ...entry, revision: 2 })).toBe(true);
+  for (const revision of [null, 0, -1, '2', [2], Number.MAX_SAFE_INTEGER, Infinity]) {
+    expect(isUserAvatarDirectoryEntry({ ...entry, revision })).toBe(false);
+    expect(isUserAvatarPresentation({ revision, asset: asset() })).toBe(false);
+  }
+  expect(isUserAvatarPresentation({ revision: 2, asset: asset() })).toBe(true);
+  expect(isUserAvatarPresentation({ revision: 3, asset: null })).toBe(true);
+  expect(isUserAvatarPresentation({ asset: asset() })).toBe(false);
+  expect(isUserAvatarPresentation({ revision: 2, asset: asset(), userId: 'peer' })).toBe(false);
+  const owner = api(async () => Response.json({ ...entry, revision: 2 }));
+  expect((await owner.transport.directory('peer')).revision).toBe(2);
+  const invalid = api(async () => Response.json({ ...entry, revision: '2' }));
+  await expect(invalid.transport.directory('peer')).rejects.toMatchObject({ code: 'AUTH_AVATAR_RESPONSE_INVALID' });
 });
 test('real AuthClient facade will not continue an allocated stage after a new browser family logs in', async () => {
   const user = (userId: string) => ({ userId, username: userId, email: `${userId}@example.test`, firstName: null, lastName: null,

@@ -30,6 +30,7 @@ export interface DoctorGuardianProfileFeatures {
   readonly presenceEnabled: boolean;
   readonly pinnedPresence: boolean;
   readonly phoneAdapterId: string | null;
+  readonly avatarReadPolicy?: Readonly<{ id: string; version: string }>;
   readonly blog?: ResolvedBlogConfig;
   readonly blogContent?: ResolvedBlogContentConfig;
 }
@@ -66,6 +67,9 @@ export function checkGuardianProfileFeatureConfiguration(resolved: ResolvedConfi
   }
   return Object.freeze({ profile, presenceEnabled, pinnedPresence: presenceEnabled && !physicalTenants,
     phoneAdapterId: resolved.auth.phoneVerificationAdapter?.id ?? null,
+    ...(resolved.auth.userAvatarReadPolicy ? { avatarReadPolicy: {
+      id: resolved.auth.userAvatarReadPolicy.id, version: resolved.auth.userAvatarReadPolicy.version,
+    } } : {}),
     ...(resolved.blog.enabled ? { blog: resolved.blog } : {}),
     ...(resolved.blog.enabled && resolved.blogContent ? { blogContent: resolved.blogContent } : {}) });
 }
@@ -76,7 +80,7 @@ export function checkGuardianProfileFeatureState(database: Database, features: D
   const db = readonlyAdapter(database), profile = features.profile;
   if (profile.enabled) {
     if (reportSchema(inspectUserProfileSchema(db), 'profile', '039', 'auth.userProfile', 'user-profiles.md', findings)) {
-      checkUserProfilePolicy(db, profile, features.phoneAdapterId, findings);
+      checkUserProfilePolicy(db, profile, features.phoneAdapterId, findings, features.avatarReadPolicy);
     }
     if (profile.contacts.enabled) reportSchema(inspectUserContactSchema(db), 'contacts', '041',
       'auth.userProfile.contacts', 'contacts.md', findings);
@@ -183,7 +187,8 @@ function checkCompletionPolicy(database: Database, profile: ResolvedAuthUserProf
   }
 }
 function checkUserProfilePolicy(db: Pick<ReactiveDB, 'prepare'>, profile: ResolvedAuthUserProfileConfig,
-  phoneAdapterId: string | null, findings: PlatformDoctorFindingSink): void {
+  phoneAdapterId: string | null, findings: PlatformDoctorFindingSink,
+  avatarReadPolicy?: Readonly<{ id: string; version: string }>): void {
   let row;
   try { row = inspectInstalledUserProfilePolicy(db); }
   catch {
@@ -192,7 +197,7 @@ function checkUserProfilePolicy(db: Pick<ReactiveDB, 'prepare'>, profile: Resolv
       hint: 'Resolve the private state invariant through reviewed recovery. Doctor does not install or replace policy generations.',
       docs: `${GUARDIAN_DOCS}/user-profiles.md` }); return;
   }
-  if (!row || row.policy_fingerprint !== userProfilePolicyFingerprint(profile, phoneAdapterId)) {
+  if (!row || row.policy_fingerprint !== userProfilePolicyFingerprint(profile, phoneAdapterId, avatarReadPolicy ?? null)) {
     addFinding(findings, { severity: 'warning', code: 'auth.user_profile.profile.policy_pending', path: 'auth.userProfile',
       message: 'The desired user-profile policy has not been reconciled by the current Guardian runtime.',
       hint: 'Start/recompose Guardian normally under the declared policy. Only bootstrap installs its generation; Doctor never adopts policy or revives old runtimes.',

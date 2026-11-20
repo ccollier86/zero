@@ -23,6 +23,7 @@ import { createMessagingVisitorRoutes } from '../../messaging/visitor-routes';
 import { ZERO_SYNC_EPHEMERAL_CHANNEL } from '../../runtime/service-keys';
 import { ZERO_SYNC_DB } from '../../runtime/service-keys';
 import { readMessagingRelationships, relationshipNoticeRecipients } from '../../messaging/relationship-policy';
+import { observeMessagingPresentationCommits, observeMessagingSystemPresentation } from '../../messaging/presentation-invalidation';
 export async function mountManagedMessaging(input: { app: Elysia; runtime: ZeroAppRuntime; systemDB: ReactiveDB; config: ResolvedConfig; authorization: AuthMiddlewareAuthorizationOptions; startAuth(): Promise<void> }): Promise<void> {
   const { app, runtime, systemDB, config, authorization } = input;
   if (!config.messaging || config.auth === false) return;
@@ -40,7 +41,7 @@ export async function mountManagedMessaging(input: { app: Elysia; runtime: ZeroA
     kernel: runtime.require(ZERO_AUTHORIZATION_KERNEL), roles: runtime.get(ZERO_AUTHORIZATION_ROLE_SERVICE) ?? null,
     assertCurrent: () => runtime.require(ZERO_AUTH_TOKEN_SERVICE).assertCurrentProfile() });
   const policy = config.messaging.relationships;
-  const appDb = policy ? runtime.require(ZERO_SYNC_DB) : null;
+  const appDb = policy || config.auth.userAvatarReadPolicy ? runtime.require(ZERO_SYNC_DB) : null;
   const maxParticipants = config.messaging.maxParticipants;
   const relationships = policy && appDb ? (scope: ServiceDataScope) => readMessagingRelationships(policy, {
     scope, db: { get: appDb.get.bind(appDb), query: appDb.query.bind(appDb) },
@@ -68,12 +69,26 @@ export async function mountManagedMessaging(input: { app: Elysia; runtime: ZeroA
     failed: () => { try { emitPlatformCodeTo(runtime.require(ZERO_OBSERVABILITY_RUNTIME), OBS_CODES.MESSAGING_OPERATION_REJECTED,
       { metadata: { operation: 'messaging.group.reconcile', failureCode: 'MESSAGING_GROUP_RECONCILIATION_REQUIRED' } }); } catch { /* No property values or identities in failure diagnostics. */ } } });
   runtime.addCleanup(() => groups.close());
-  if (appDb) runtime.addCleanup(appDb.onCommit(() => { groups.relationshipChanged(); content.relationshipsChanged(); }));
+  if (appDb) runtime.addCleanup(observeMessagingPresentationCommits(appDb, () => {
+    if (policy) { groups.relationshipChanged(); content.relationshipsChanged(); }
+    else content.presentationChanged(); // Peer-photo audiences can depend on app facts independently of DM/group policy.
+  }));
+  // Guardian's private authority clock and tracked profile CAS are narrow
+  // payload-free hints. Audit/outbox/storage work must not wake every chat.
+  runtime.addCleanup(observeMessagingSystemPresentation(systemDB, {
+    authority: () => content.relationshipsChanged(), presentation: () => content.presentationChanged(),
+  }));
   const jobs = config.workflows !== false ? new MessagingJobs({ system: systemDB, runtime: content, config: config.messaging, directory,
     ai: runtime.get(ZERO_AI_SERVICE) ?? null, logging: logging ?? null, notifications: config.messaging.notifications ? runtime.require(ZERO_NOTIFICATION_SERVICE) : runtime.get(ZERO_NOTIFICATION_SERVICE) ?? null,
     dispatchFailed: () => { try { emitPlatformCodeTo(runtime.require(ZERO_OBSERVABILITY_RUNTIME), OBS_CODES.MESSAGING_JOB_DISPATCH_RETRY); } catch { /* Durable work retains its original identity. */ } } }) : null;
   if (jobs) { runtime.set(ZERO_MESSAGING_JOBS, jobs); runtime.addCleanup(async () => { runtime.clear(ZERO_MESSAGING_JOBS, jobs); await jobs.close(); }); }
   const service = new MessagingService({ runtime: content, config: config.messaging, directory, attachments, groups, getEphemeral: () => runtime.get(ZERO_SYNC_EPHEMERAL_CHANNEL) ?? null,
+    privateAvatar: (auth, id) => {
+      const avatars = runtime.get(ZERO_GUARDIAN_AVATARS);
+      if (avatars?.capabilities().state !== 'ready') return null;
+      try { const entry = avatars.directory(auth, id); return { revision: entry.revision, asset: entry.asset }; }
+      catch { return null; } // Optional photos fail closed; messaging admission remains authoritative.
+    },
     ...(relationships ? { relationships } : {}), ...(logging ? { logging } : {}), ...(jobs ? { jobs } : {}) });
   runtime.set(ZERO_MESSAGING, service); runtime.addCleanup(() => { runtime.clear(ZERO_MESSAGING, service); });
   app.use(createMessagingVisitorRoutes(() => runtime.get(ZERO_MESSAGING) ?? null));

@@ -94,6 +94,11 @@ export class MessagingRuntime {
   relationshipsChanged(): void {
     if (this.state !== 'ready') return;
     try { this.options.onMembershipChanged?.(); } catch { /* The next publish and delivery still reauthorize. */ }
+    this.presentationChanged();
+  }
+  /** Cosmetic Guardian updates refresh admitted projections without waking membership/typing revalidation. */
+  presentationChanged(): void {
+    if (this.state !== 'ready') return;
     for (const entries of this.listeners.values()) for (const entry of entries) {
       try { entry.listener(); } catch { /* Advisory only. */ }
     }

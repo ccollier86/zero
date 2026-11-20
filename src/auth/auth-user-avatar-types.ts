@@ -1,4 +1,6 @@
 /** Global avatar identity and presentation policy; image possession is not authorization. */
+export type { AuthUserAvatarReadContext, AuthUserAvatarReadPolicy } from './auth-user-avatar-read-policy';
+
 export interface AuthUserAvatarConfig {
   enabled?: boolean;
   /** Permit explicit publication; existing photos are never made public implicitly. */
@@ -45,6 +47,18 @@ export interface UserAvatarSnapshot {
   /** Separately admitted public representation, never the private delivery URL. */
   publicAsset?: UserPublicAvatarAsset | null;
   capabilities: UserAvatarCapabilities;
+}
+export interface UserAvatarDirectoryEntry {
+  userId: string;
+  displayName: string;
+  /** Current shared profile revision, including photo replacement and removal. */
+  revision: number;
+  asset: UserAvatarAsset | null;
+}
+/** Admitted private metadata for native presentation; bytes still require live authorization. */
+export interface UserAvatarPresentation {
+  revision: number;
+  asset: UserAvatarAsset | null;
 }
 export interface UserPublicAvatarAsset {
   id: string; width: number; height: number; byteLength: number;

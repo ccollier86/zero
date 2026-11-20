@@ -4,6 +4,8 @@ export { useUserProfile } from '../../client/user-profile-hooks';
 export { useUserContacts } from '../../client/user-contact-hooks';
 export type { UseUserContactsOptions, UseUserContactsResult } from '../../client/user-contact-hooks';
 export { useUserAvatar } from '../../client/user-avatar-hooks';
+export { useUserAvatarPresentation } from '../../client/user-avatar-presentation';
+export type { AuthUserAvatarDirectoryEntry } from '../../client/auth-user-avatar-parser';
 export type { UseUserAvatarOptions, UseUserAvatarResult } from '../../client/user-avatar-hooks';
 export { useGuardianPresence, useAvatarPresence } from '../../client/guardian-presence-hooks';
 export type { GuardianPresenceClient, GuardianPresenceClientSnapshot } from '../../client/guardian-presence-client';

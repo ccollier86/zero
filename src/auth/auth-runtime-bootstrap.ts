@@ -229,7 +229,7 @@ export async function bootstrapAuthRuntimeServices(
   // writer commit, so an older issuer cannot slip between two policy adoptions.
   const userProfilePolicy = services.userStore.transaction(() => {
     const policy = reconcileUserProfilePolicy(config.db, services.userStore!, userProfileConfig,
-      config.phoneVerificationAdapter?.id ?? null, emitCode);
+      config.phoneVerificationAdapter?.id ?? null, emitCode, config.userAvatarReadPolicy ?? null);
     reconcileProfileCompletionPolicy(config.db, services.userStore!, userProfileConfig, emitCode);
     return policy;
   });

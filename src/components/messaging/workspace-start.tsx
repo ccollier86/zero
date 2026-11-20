@@ -10,6 +10,7 @@ import type { MessagingAssistant, MessagingContact, MessagingDirectoryEntry } fr
 import type { MessagingWorkspaceController } from './messaging-workspace-controller';
 import type { MessagingWorkspaceState } from './workspace-state';
 import { MessagingAvatar } from './messaging-avatar';
+import { MessagingPrivateAvatar } from './messaging-private-avatar';
 import type { AvatarGroupShape } from '../avatar-group/avatar-group-types';
 import { WorkspacePortalStart } from './workspace-portal-start';
 import { WorkspaceSupportStart } from './workspace-support-start';
@@ -24,11 +25,20 @@ function WorkspacePeerStart({ controller, state, shape }: { controller: Messagin
   const [container, setContainer] = useState<HTMLDivElement | null>(null), [error, setError] = useState<string | null>(null), [loading, setLoading] = useState(false);
   const locked = !!state.command && state.command.phase !== 'rejected';
   useEffect(() => {
-    if (!open) return; const abort = new AbortController(); setLoading(true); setError(null);
-    const timer = setTimeout(() => { void controller.source.directory({ search: query, after, limit: 50 }, { signal: abort.signal }).then(page => {
+    if (!open) return; const abort = new AbortController(); let stop: (() => void) | undefined;
+    setLoading(true); setError(null); setPeople([]);
+    const receive = (page: { items: readonly MessagingDirectoryEntry[]; nextCursor: string | null }) => {
       if (abort.signal.aborted || !controller.current()) return; setPeople(page.items); setCursor(page.nextCursor); setLoading(false);
-    }).catch(() => { if (!abort.signal.aborted && controller.current()) { setLoading(false); setError('The current directory could not be loaded.'); } }); }, 180);
-    return () => { clearTimeout(timer); abort.abort(); };
+    };
+    const failed = () => { if (!abort.signal.aborted && controller.current()) { setPeople([]); setLoading(false); setError('The current directory could not be loaded.'); } };
+    const timer = setTimeout(() => {
+      if (abort.signal.aborted || !controller.current()) return;
+      try {
+        if (controller.source.watchDirectory) stop = controller.source.watchDirectory(receive, { signal: abort.signal, query: { search: query, after, limit: 50 }, onError: failed });
+        else void controller.source.directory({ search: query, after, limit: 50 }, { signal: abort.signal }).then(receive).catch(failed);
+      } catch { failed(); }
+    }, 180);
+    return () => { clearTimeout(timer); abort.abort(); stop?.(); };
   }, [controller, open, query, after]);
   useEffect(() => {
     if (!open) return; const abort = new AbortController();
@@ -59,7 +69,8 @@ function WorkspacePeerStart({ controller, state, shape }: { controller: Messagin
             if (state.capabilities?.directOnly) return [person.id];
             return value.length < (state.capabilities?.maxParticipants ?? 100) - 1 ? [...value, person.id] : value;
           })}>
-          <MessagingAvatar participant={{ id: person.id, label: person.name, kind: 'user', avatarShape: shape }} /><span>{person.name}</span></button>
+          <MessagingAvatar participant={{ id: person.id, label: person.name, kind: 'user', avatarShape: shape,
+            avatar: <MessagingPrivateAvatar userId={person.id} label={person.name} privateAvatar={person.privateAvatar} avatarUrl={person.avatarUrl} /> }} /><span>{person.name}</span></button>
           {state.capabilities?.directory === 'contacts' && !accepted(person.id) && <Button size="xs" variant="ghost" disabled={locked || contacts.some(row => row.userId === person.id && row.state === 'pending')}
             onClick={() => { void controller.requestContact(person.id); }}>{contacts.some(row => row.userId === person.id && row.state === 'pending') ? 'Pending' : 'Request contact'}</Button>}
         </div>)}

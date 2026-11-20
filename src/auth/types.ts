@@ -753,6 +753,8 @@ export interface NormalizedAuthBehaviorConfig extends ResolvedAuthBehaviorConfig
  * Configuration for createAuthPlugin().
  */
 export interface AuthPluginConfig extends AuthBehaviorConfig {
+  /** Trusted synchronous peer-photo restriction, separate from public avatar configuration. */
+  userAvatarReadPolicy?: import('./auth-user-avatar-read-policy').AuthUserAvatarReadPolicy;
   /** Trusted optional phone possession verifier; never public/declarative credentials. */
   phoneVerificationAdapter?: PhoneVerificationAdapter;
   /** Shared ReactiveDB instance — auth defines its tables here */

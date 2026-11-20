@@ -276,11 +276,15 @@ function appAuthBehaviorConfig(
   config: AuthBehaviorConfig & {
     accessTokenTTL?: string;
     refreshTokenTTL?: string;
+    phoneVerificationAdapter?: import('../../auth/auth-user-contact-types').PhoneVerificationAdapter;
+    userAvatarReadPolicy?: import('../../auth/auth-user-avatar-read-policy').AuthUserAvatarReadPolicy;
   },
 ): AuthBehaviorConfig {
   const {
     accessTokenTTL: _accessTokenTTL,
     refreshTokenTTL: _refreshTokenTTL,
+    phoneVerificationAdapter: _phoneVerificationAdapter,
+    userAvatarReadPolicy: _userAvatarReadPolicy,
     ...behavior
   } = config;
   return behavior;

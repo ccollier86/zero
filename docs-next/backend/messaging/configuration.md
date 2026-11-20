@@ -60,6 +60,38 @@ snapshots; changing the lower bound or staff/public timeline invalidates the
 workspace's old cached view even if a remove/rejoin was coalesced. This is
 metadata over existing canonical membership, not a new migration or grant.
 
+### Candidate Private Profile Photos
+
+The `fix/private-chat-avatar-authorization` source candidate adds an optional
+`privateAvatar` to directory entries, admitted people, contacts and conversation
+participants. It is `{ revision, asset }` or null; `asset: null` records a photo
+removal, while null withdraws unavailable/denied private presentation. The
+descriptor is not a delivery capability or a new membership grant.
+
+Enable private Guardian avatars as usual. Applications with restricted photo
+audiences must also supply the runtime-only
+[`auth.userAvatarReadPolicy`](../guardian/avatars.md#candidate-viewer-to-subject-private-read-policy)
+to narrow both Guardian directory and byte reads. Messaging admission is checked
+before projecting a person's photo, but it is not a replacement for that policy:
+without it, Guardian retains its legacy peer-read rules. A permitted group
+housemate need not be a permitted DM target, and a staff roster must have its
+own explicit photo audience.
+
+The native client supplies `watchDirectory(listener, { query, signal,
+onError, onConnection })` and `watchPeople(conversationId, listener, options)`.
+Their full admitted snapshots carry current photo revisions independently of
+conversation revision. The managed workspace uses these to replace/remove
+mounted photos after live avatar or relationship changes. A native projection
+does not expose private SYSTEM tables or let the browser supply authority.
+Owned subscriptions must stop on departure and authorization retirement;
+custom/anonymous facades may omit these additive watchers.
+
+These are unqualified source additions, not a statement about the selected
+`2.11.0` archive. Update client and server from the same qualified committed
+archive and complete the
+[private-photo release gates](../../_work/private-chat-avatars-qualification.md)
+before application cutover.
+
 The browser facade adds `watchContacts(listener, options)` alongside conversation
 and message watches. It uses the same native, current-scope no-store projection,
 bounded keyset page and owned cancellation; apps need not invent contact row

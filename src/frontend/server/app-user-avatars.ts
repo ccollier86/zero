@@ -8,9 +8,12 @@ import { AuthUserAvatarService, ZERO_GUARDIAN_AVATARS } from '../../auth/auth-us
 import { createAuthUserAvatarPlugin } from '../../auth/auth-user-avatar.plugin';
 import { createAuthPlatformCodeEmitter } from '../../auth/auth-observability';
 import { AuthError } from '../../auth/types';
+import { snapshotAuthUserAvatarReadPolicy, type AuthUserAvatarReadPolicy } from '../../auth/auth-user-avatar-read-policy';
+import { managedUserAvatarReadContext } from './app-user-avatar-read-policy';
 
 export function composeManagedUserAvatars(runtime: ZeroAppRuntime, db: ReactiveDB,
-  policy: NormalizedAuthBehaviorConfig['userProfile'], installAllowed: boolean) {
+  policy: NormalizedAuthBehaviorConfig['userProfile'], installAllowed: boolean, readPolicyInput?: AuthUserAvatarReadPolicy) {
+  const readPolicy = snapshotAuthUserAvatarReadPolicy(readPolicyInput);
   let current: AuthUserAvatarService | null = null;
   const plugin = createAuthUserAvatarPlugin({ getService: () => current, getTokenService: () => runtime.get(ZERO_AUTH_TOKEN_SERVICE) });
   return { plugin,
@@ -24,6 +27,7 @@ export function composeManagedUserAvatars(runtime: ZeroAppRuntime, db: ReactiveD
       audit: runtime.require(ZERO_AUTH_AUDIT_SERVICE),
       tokens: runtime.require(ZERO_AUTH_TOKEN_SERVICE), tenancy: runtime.get(ZERO_AUTH_TENANCY_SERVICE),
       policy: { ...policy.avatars, enabled: policy.enabled && policy.avatars.enabled }, installAllowed,
+      ...(readPolicy ? { readPolicy, readPolicyContext: (auth, subjectId, guard) => managedUserAvatarReadContext(runtime, auth, subjectId, guard) } : {}),
       emitCode: createAuthPlatformCodeEmitter(runtime) });
     current = created; runtime.set(ZERO_GUARDIAN_AVATARS, created);
     runtime.addCleanup(async () => {

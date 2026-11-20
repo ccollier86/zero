@@ -20,6 +20,7 @@ export function authPublicPathFindings(
       accessTokenTTL: _accessTokenTTL,
       refreshTokenTTL: _refreshTokenTTL,
       phoneVerificationAdapter: _phoneVerificationAdapter,
+      userAvatarReadPolicy: _userAvatarReadPolicy,
       ...behavior
     } = resolved.auth;
     auth = resolveAuthBehaviorConfig(behavior);

@@ -1,6 +1,6 @@
 /** Synthetic cookie transport only; never a real capability, identity or provider. */
 import { expect, test } from 'bun:test';
-import { createSupportChatClient } from './visitor-client';
+import { createSupportChatClient, supportWorkspaceSource } from './visitor-client';
 
 const metadata = () => ({ sessionId: 'session-one', userId: 'visitor-one', conversationId: 'chat-one', csrf: 'a'.repeat(64), expiresAt: Date.now() + 60000 });
 const transport = (handler: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>): typeof fetch =>
@@ -10,6 +10,8 @@ test('one throwing retirement observer cannot retain other views or permit anoth
   let calls = 0, notified = 0;
   const client = await createSupportChatClient('website', { resumeOnly: true,
     transport: transport(async () => { calls++; return Response.json(metadata()); }) });
+  expect(supportWorkspaceSource(client).watchPeople).toBeUndefined();
+  expect(supportWorkspaceSource(client).watchDirectory).toBeUndefined();
   client.subscribe(() => { throw new Error('Synthetic consumer failure'); });
   client.subscribe(() => { notified++; });
   expect(() => client.clear()).not.toThrow();

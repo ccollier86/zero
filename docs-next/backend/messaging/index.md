@@ -71,6 +71,15 @@ with real AppProvider/SDK browser checks, not just a styled mock. Its
 [focused review](../../_work/messaging-workspace-review.md) distinguishes source
 browser, package-import and remaining installed deployment evidence.
 
+The `fix/private-chat-avatar-authorization` source candidate additionally
+supports [viewer-scoped private Guardian photos](../guardian/avatars.md#candidate-viewer-to-subject-private-read-policy)
+in the native picker, roster, headers, conversation previews and messages.
+Private bytes still require live Guardian policy; no public publication is
+needed. Directory/people watches refresh photo revision/removal independently
+of the conversation revision. These changes remain subject to the
+[exact-archive browser/Linux/updater gates](../../_work/private-chat-avatars-qualification.md)
+and are not implied by an older installed version string.
+
 The [scope correction](../../_work/messaging-configuration-correction.md) removes
 the support-only AI assumption. Named internal assistants now have independent
 identities, Guardian policies and conversations; support need not be enabled.

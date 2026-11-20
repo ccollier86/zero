@@ -4,6 +4,28 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+### Private native messaging photos — separate source candidate
+
+- Add optional runtime-only `auth.userAvatarReadPolicy` with explicit identity
+  and version. Current application relationships/Guardian permission checks
+  narrow private peer metadata and byte delivery; they cannot bypass session,
+  account, selected organization, native consent or current-photo fences.
+- Project revisioned private photos into already-admitted native chat directory,
+  participants, contacts and previews. The workspace uses authenticated delivery
+  and per-mount temporary URLs rather than requiring public publication.
+- Refresh peer presentation independently of conversation revisions; retire
+  removed, denied and replaced photos, abort late reads and release temporary
+  URLs on current-account/scope replacement. Keep anonymous support and custom
+  sources compatible with their prior optional presentation behavior.
+- Preserve legacy peer-read behavior when no policy is configured. Applications
+  with restricted audiences must supply their canonical relationship policy;
+  the framework does not invent house, department or staff-roster rules.
+
+This candidate is independent of Calendar. It adds no database migration or
+dependency and does not change existing photo identities. It is not yet a
+selected qualified updater archive; see the private-photo qualification and
+release handoff documents for source evidence and remaining gates.
+
 ## 2.11.0 - 2026-11-16
 
 Integrated local workers and optional durable schedules, with Guardian/Fabric/

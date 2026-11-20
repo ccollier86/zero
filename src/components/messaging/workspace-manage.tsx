@@ -9,6 +9,8 @@ import { modals } from '../../modals';
 import type { MessagingWorkspaceController } from './messaging-workspace-controller';
 import type { MessagingWorkspaceState } from './workspace-state';
 import type { MessagingDirectoryEntry } from '../../messaging/contracts';
+import { MessagingAvatar } from './messaging-avatar';
+import { MessagingPrivateAvatar } from './messaging-private-avatar';
 export function WorkspaceManage({ controller, state }: { controller: MessagingWorkspaceController; state: MessagingWorkspaceState }) {
   const conversation = state.conversation!;
   const [open, setOpen] = useState(false), [edit, setEdit] = useState<{ id: string; value: string } | null>(null), [query, setQuery] = useState('');
@@ -18,9 +20,17 @@ export function WorkspaceManage({ controller, state }: { controller: MessagingWo
   const title = edit?.id === conversation.id ? edit.value : conversation.title;
   useEffect(() => {
     if (!open || !owner || configured || conversation.kind !== 'group') return;
-    const abort = new AbortController(), timer = setTimeout(() => { void controller.source.directory({ search: query, limit: 50 }, { signal: abort.signal })
-      .then(page => { if (!abort.signal.aborted && controller.current()) setPeople(page.items); }).catch(() => { if (!abort.signal.aborted && controller.current()) setPeople([]); }); }, 180);
-    return () => { clearTimeout(timer); abort.abort(); };
+    const abort = new AbortController(); let stop: (() => void) | undefined; setPeople([]);
+    const receive = (page: { items: readonly MessagingDirectoryEntry[] }) => { if (!abort.signal.aborted && controller.current()) setPeople(page.items); };
+    const failed = () => { if (!abort.signal.aborted && controller.current()) setPeople([]); };
+    const timer = setTimeout(() => {
+      if (abort.signal.aborted || !controller.current()) return;
+      try {
+        if (controller.source.watchDirectory) stop = controller.source.watchDirectory(receive, { signal: abort.signal, query: { search: query, limit: 50 }, onError: failed });
+        else void controller.source.directory({ search: query, limit: 50 }, { signal: abort.signal }).then(receive).catch(failed);
+      } catch { failed(); }
+    }, 180);
+    return () => { clearTimeout(timer); abort.abort(); stop?.(); };
   }, [controller, open, owner, configured, conversation.id, conversation.kind, query]);
   const destructive = async (action: 'archive' | 'remove' | 'transfer', value: string | undefined, label: string, trigger: HTMLElement) => {
     const id = conversation.id;
@@ -45,15 +55,20 @@ export function WorkspaceManage({ controller, state }: { controller: MessagingWo
         <Button size="sm" variant="ghost" disabled={busy || conversation.archived || conversation.owner !== 'human' || conversation.ownerId !== controller.userId} onClick={() => { void controller.manage('hand-back', 'triage'); }}>Return to triage</Button>
         {conversation.assistantId && <Button size="sm" variant="ghost" disabled={busy || conversation.archived || conversation.owner !== 'human' || conversation.ownerId !== controller.userId} onClick={() => { void controller.manage('hand-back', 'assistant'); }}>Return to assistant</Button>}</div>}
       <h4>Participants</h4><ScrollArea className="zero-messaging-start-scroll" style={{ height: Math.min(240, conversation.participants.length * 56) }}><div>{conversation.participants.map(member => {
-        const name = state.people[member.id]?.name ?? member.name ?? (member.kind === 'assistant' ? 'Assistant' : 'Member');
-        return <div key={member.id} className="zero-messaging-member-row" data-participant-id={member.id}><span>{name}<small>{member.role}</small></span>
+        const profile = state.people[member.id] ?? member;
+        const name = profile.name ?? (member.kind === 'assistant' ? 'Assistant' : 'Member');
+        return <div key={member.id} className="zero-messaging-member-row" data-participant-id={member.id}>
+          <MessagingAvatar participant={{ id: member.id, kind: member.kind, label: name,
+            avatar: <MessagingPrivateAvatar userId={member.id} label={name} privateAvatar={profile.privateAvatar} avatarUrl={profile.avatarUrl} /> }} />
+          <span>{name}<small>{member.role}</small></span>
           {owner && !configured && conversation.kind === 'group' && member.role === 'member' && member.kind === 'user' && <div><Button size="xs" variant="ghost" disabled={busy} onClick={event => { void destructive('transfer', member.id, 'Transfer ownership', event.currentTarget); }}>Make owner</Button>
             {conversation.kind === 'group' && <Button size="xs" variant="ghost" disabled={busy} onClick={event => { void destructive('remove', member.id, 'Remove participant', event.currentTarget); }}>Remove</Button>}</div>}
         </div>;
       })}</div></ScrollArea>
       {!configured && owner && conversation.kind === 'group' && <><Input aria-label="Find participant to add" value={query} placeholder="Find a person to add…" onChange={event => setQuery(event.target.value)} disabled={busy} />
         <div className="zero-messaging-add-list">{people.filter(person => !conversation.participants.some(row => row.id === person.id)).map(person => <Button size="sm" variant="ghost" key={person.id} disabled={busy}
-          onClick={() => { void controller.manage('add', person.id); }}>Add {person.name}</Button>)}</div></>}
+          onClick={() => { void controller.manage('add', person.id); }}><MessagingAvatar participant={{ id: person.id, kind: 'user', label: person.name,
+            avatar: <MessagingPrivateAvatar userId={person.id} label={person.name} privateAvatar={person.privateAvatar} avatarUrl={person.avatarUrl} /> }} />Add {person.name}</Button>)}</div></>}
       {!configured && conversation.kind === 'group' && own && own.role !== 'owner' && own.role !== 'staff' && <Button size="sm" variant="ghost" disabled={busy} onClick={event => { void destructive('remove', controller.userId, 'Leave conversation', event.currentTarget); }}>Leave conversation</Button>}
       {owner && !configured && conversation.kind === 'group' && <p className="zero-messaging-workspace-hint">Transfer ownership to another member before leaving.</p>}
       {state.command?.error && <p role="alert" className="zero-messaging-workspace-notice">{state.command.error}</p>}

@@ -37,6 +37,15 @@ describe('Doctor auth public-path checks', () => {
       .toEqual([]);
   });
 
+  test('runtime peer-photo policy neither erases public-path findings nor executes during Doctor checks', () => {
+    let calls = 0;
+    const userAvatarReadPolicy = { id: 'synthetic-photo-policy', version: '1', authorize() { calls++; return false; } };
+    const expected = authPublicPathFindings(resolved({ userProfile: { avatars: true } }));
+    expect(expected.map(finding => finding.code)).toContain('auth.login_path.not_public');
+    expect(authPublicPathFindings(resolved({ userProfile: { avatars: true }, userAvatarReadPolicy }))).toEqual(expected);
+    expect(calls).toBe(0);
+  });
+
   test('leaves invalid behavior reporting to the owning config check', () => {
     const config = { ...resolved(), auth: { audit: { retentionDays: 0 } } };
     expect(authPublicPathFindings(config)).toEqual([]);

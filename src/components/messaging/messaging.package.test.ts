@@ -41,6 +41,7 @@ test('messaging installs from an archive, SSR-renders its real hook and browser-
     for (const file of [
       'src/components/messaging/index.ts', 'src/components/messaging/messaging.css', 'src/components/messaging/use-conversation-typing.ts',
       'src/components/messaging/use-messaging-presence.ts', 'src/components/messaging/messaging-avatar.tsx',
+      'src/components/messaging/messaging-private-avatar.tsx', 'src/frontend/client/user-avatar-presentation.ts',
       'src/components/messaging/messaging-workspace.tsx', 'src/components/messaging/messaging-workspace-controller.ts',
       'src/components/messaging/use-messaging-workspace.ts', 'src/components/messaging/workspace-send.ts', 'src/components/messaging/workspace-message-actions.tsx',
       'src/frontend/client/messaging-watch.ts', 'src/messaging/client-contracts.ts', 'src/messaging/live-error.ts',

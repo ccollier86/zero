@@ -34,6 +34,7 @@ import { createAuthUserProfilePlugin } from './auth-user-profile.plugin';
 import { createAuthUserContactPlugin } from './auth-user-contact.plugin';
 import { createAuthUserProfileCompletionPlugin } from './auth-user-profile-completion.plugin';
 import { ZERO_GUARDIAN_AVATARS } from './auth-user-avatar-service';
+import { snapshotAuthUserAvatarReadPolicy } from './auth-user-avatar-read-policy';
 import { createAuthTenantAdministrationPlugin } from './auth-tenant-administration.plugin';
 import { createAuthPlatformAdministrationPlugin } from './auth-platform-administration.plugin';
 import { createAuthTenantOnboardingPlugin } from './auth-tenant-onboarding.plugin';
@@ -69,6 +70,7 @@ export {
 
 /** Create the root auth plugin mounted at `/auth`. */
 export function createAuthPlugin(config: AuthPluginConfig) {
+  config = { ...config, userAvatarReadPolicy: snapshotAuthUserAvatarReadPolicy(config.userAvatarReadPolicy) };
   const authConfig = resolveAuthBehaviorConfig(authBehaviorConfig(config));
   const nativeRuntime = resolveNativeRuntimeConfig(config, authConfig);
   const runtime = createAuthRuntime(config, authConfig);
@@ -500,6 +502,7 @@ function authBehaviorConfig(config: AuthPluginConfig): AuthBehaviorConfig {
     profileCompletionSchemaInstallAllowed: _profileCompletionSchemaInstallAllowed,
     presenceSchemaInstallAllowed: _presenceSchemaInstallAllowed,
     phoneVerificationAdapter: _phoneVerificationAdapter,
+    userAvatarReadPolicy: _userAvatarReadPolicy,
     ...behavior
   } = config;
   return behavior;

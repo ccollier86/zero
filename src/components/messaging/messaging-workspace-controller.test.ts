@@ -3,6 +3,8 @@ import { MessagingWorkspaceController } from './messaging-workspace-controller';
 import { workspaceConversation, workspaceFixture, workspaceMessage } from './workspace.test-fixtures';
 import { MessagingLiveError } from '../../messaging/live-error';
 import { FetchError } from '../../frontend/client/sdk';
+import type { MessagingPerson, MessagingPage } from '../../messaging/contracts';
+import type { MessagingWatchOptions } from '../../messaging/client-contracts';
 const flush = () => new Promise(resolve => setTimeout(resolve, 0));
 
 test.each([
@@ -106,4 +108,73 @@ test('list outages are visible without erasing retained data, and explicit post-
     await owner.retry(); await flush(); expect(owner.getSnapshot().status).toBe('ready'); expect(owner.getSnapshot().messages).toHaveLength(2);
     f.messages.push(workspaceMessage(3)); f.emit(); expect(owner.getSnapshot().messages.at(-1)?.sequence).toBe(3);
   } finally { owner.dispose(); }
+});
+
+test('people snapshots replace and withdraw private photos without a conversation revision change, and retire with selection', async () => {
+  const f = workspaceFixture(1), watches: Array<{ id: string; listener: (page: MessagingPage<MessagingPerson>) => void; options: MessagingWatchOptions<never> }> = [], stopped: string[] = [];
+  const photo = (revision: number): MessagingPerson => ({ id: 'peer', kind: 'user', name: 'Peer', avatarUrl: null, privateAvatar: { revision, asset: null } });
+  f.source.conversations.people = async () => ({ items: [photo(1)], hasMore: false, nextCursor: null });
+  f.source.watchPeople = (id, listener, options = {}) => { watches.push({ id, listener, options }); return () => { stopped.push(id); }; };
+  const owner = new MessagingWorkspaceController(f.source, 'me');
+  const emit = (items: readonly MessagingPerson[]) => watches.at(-1)!.listener({ items, hasMore: false, nextCursor: null });
+  try {
+    await owner.start(); await owner.select('one');
+    const revision = owner.getSnapshot().conversation!.revision;
+    emit([photo(2)]); expect(owner.getSnapshot().people.peer?.privateAvatar?.revision).toBe(2);
+    expect(owner.getSnapshot().conversation!.revision).toBe(revision);
+    expect(owner.getSnapshot().conversation!.participants.find(row => row.id === 'peer')?.privateAvatar?.revision).toBe(2);
+    emit([{ ...photo(2), privateAvatar: null }]); expect(owner.getSnapshot().people.peer?.privateAvatar).toBeNull();
+    emit([]); expect(owner.getSnapshot().people.peer?.privateAvatar).toBeNull();
+    const old = watches[0]!; await owner.select('two');
+    expect(old.options.signal?.aborted).toBe(true); expect(stopped).toContain('one');
+    old.listener({ items: [photo(99)], hasMore: false, nextCursor: null });
+    expect(owner.getSnapshot().people.peer?.privateAvatar?.revision).toBe(1);
+    watches.at(-1)!.options.onError?.(new MessagingLiveError('MESSAGING_LIVE_INVALIDATED', false));
+    expect(owner.getSnapshot().people).toEqual({}); expect(owner.getSnapshot().conversation).toBeNull();
+    old.listener({ items: [photo(99)], hasMore: false, nextCursor: null }); expect(owner.getSnapshot().people).toEqual({});
+  } finally { owner.dispose(); }
+  expect(stopped).toContain('two');
+});
+
+test('an older in-flight selected refresh cannot overwrite a newer authoritative people snapshot', async () => {
+  const f = workspaceFixture(1), pending = Promise.withResolvers<MessagingPage<MessagingPerson>>();
+  let listener: ((page: MessagingPage<MessagingPerson>) => void) | undefined;
+  f.source.watchPeople = (_id, receive) => { listener = receive; return () => {}; };
+  const owner = new MessagingWorkspaceController(f.source, 'me');
+  try {
+    await owner.start(); await owner.select('one');
+    f.source.conversations.people = () => pending.promise;
+    const changed = { ...workspaceConversation(), participants: workspaceConversation().participants.map(row => row.id === 'peer' ? { ...row, role: 'owner' as const } : row) };
+    [...f.listWatchers][0]!.listener({ items: [changed], hasMore: false, nextCursor: null }); await flush();
+    listener!({ items: [{ id: 'peer', kind: 'user', name: 'Peer', avatarUrl: null, privateAvatar: { revision: 3, asset: null } }], hasMore: false, nextCursor: null });
+    pending.resolve({ items: [{ id: 'peer', kind: 'user', name: 'Peer', avatarUrl: null, privateAvatar: { revision: 2, asset: null } }], hasMore: false, nextCursor: null }); await flush();
+    expect(owner.getSnapshot().people.peer?.privateAvatar?.revision).toBe(3);
+  } finally { pending.resolve({ items: [], hasMore: false, nextCursor: null }); owner.dispose(); }
+});
+
+test('a late refresh and list frame cannot restore private previews after selected people admission is withdrawn', async () => {
+  const f = workspaceFixture(1), pending = Promise.withResolvers<MessagingPage<MessagingPerson>>();
+  let onError: ((error: unknown) => void) | undefined;
+  f.source.watchPeople = (_id, _receive, options = {}) => { onError = options.onError; return () => {}; };
+  const owner = new MessagingWorkspaceController(f.source, 'me');
+  try {
+    await owner.start(); await owner.select('one');
+    f.source.conversations.people = () => pending.promise;
+    const changed = { ...workspaceConversation(), participants: workspaceConversation().participants.map(row => row.id === 'peer' ? { ...row, role: 'owner' as const } : row) };
+    const list = [...f.listWatchers][0]!;
+    list.listener({ items: [changed], hasMore: false, nextCursor: null }); await flush();
+    onError!(new MessagingLiveError('MESSAGING_LIVE_INVALIDATED', false));
+    pending.resolve({ items: [{ id: 'peer', kind: 'user', name: 'Peer', avatarUrl: null, privateAvatar: { revision: 99, asset: null } }], hasMore: false, nextCursor: null }); await flush();
+    list.listener({ items: [changed], hasMore: false, nextCursor: null });
+    expect(owner.getSnapshot().people).toEqual({}); expect(owner.getSnapshot().conversation).toBeNull(); expect(owner.getSnapshot().conversations).toEqual([]);
+  } finally { pending.resolve({ items: [], hasMore: false, nextCursor: null }); owner.dispose(); }
+});
+
+test('synchronous optional people-watch withdrawal cannot start a retired transcript subscription', async () => {
+  const f = workspaceFixture(1), owner = new MessagingWorkspaceController(f.source, 'me');
+  f.source.watchPeople = (_id, _receive, options = {}) => {
+    options.onError?.(new MessagingLiveError('MESSAGING_LIVE_INVALIDATED', false)); return () => {};
+  };
+  try { await owner.start(); await owner.select('one'); expect(owner.getSnapshot().conversation).toBeNull(); expect(f.watchers.size).toBe(0); }
+  finally { owner.dispose(); }
 });

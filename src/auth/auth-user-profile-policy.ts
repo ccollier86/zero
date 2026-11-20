@@ -14,11 +14,14 @@ export interface InstalledUserProfilePolicy {
 
 /** Functions/provider secrets are deliberately excluded; adapter identity is an explicit boundary. */
 export function userProfilePolicyFingerprint(config: ResolvedAuthUserProfileConfig,
-  phoneAdapterId: string | null = null): string {
+  phoneAdapterId: string | null = null,
+  avatarReadPolicy: Readonly<{ id: string; version: string }> | null = null): string {
   const hash = new Bun.CryptoHasher('sha256');
   hash.update(JSON.stringify({ enabled: config.enabled, usernameMode: config.usernameMode,
     fields: config.fields, regional: config.regional, contacts: config.contacts,
-    avatars: config.avatars, completion: config.completion, phoneAdapterId }));
+    avatars: config.avatars, completion: config.completion, phoneAdapterId,
+    // Omission preserves the exact pre-extension fingerprint for unchanged apps.
+    ...(avatarReadPolicy ? { avatarReadPolicy: { id: avatarReadPolicy.id, version: avatarReadPolicy.version } } : {}) }));
   return hash.digest('hex');
 }
 
@@ -36,8 +39,9 @@ export function inspectInstalledUserProfilePolicy(db: Pick<ReactiveDB, 'prepare'
 /** Called only by AuthRuntime bootstrap, after core Guardian reconciliation. No configuration DDL. */
 export function reconcileUserProfilePolicy(db: ReactiveDB, users: UserStore,
   config: ResolvedAuthUserProfileConfig, phoneAdapterId: string | null = null,
-  emitCode?: AuthPlatformCodeEmitter): { readonly assertCurrent: () => void } {
-  const fingerprint = userProfilePolicyFingerprint(config, phoneAdapterId);
+  emitCode?: AuthPlatformCodeEmitter,
+  avatarReadPolicy: Readonly<{ id: string; version: string }> | null = null): { readonly assertCurrent: () => void } {
+  const fingerprint = userProfilePolicyFingerprint(config, phoneAdapterId, avatarReadPolicy);
   let captured: InstalledUserProfilePolicy | null = null;
   if (inspectUserProfileSchema(db) === 'ready') {
     captured = users.transaction(() => {
