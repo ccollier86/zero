@@ -4,8 +4,14 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
-### Private native messaging photos — separate source candidate
+## 2.11.1 - 2026-11-20
 
+### Private native messaging photos
+
+- Add synchronous application-owned messaging relationships for current direct
+  recipients and managed house/team groups, with admission epochs that fence
+  prior-conversation history, files, typing and notification audiences after
+  transfer or readmission. Ordinary everyone/contact defaults stay unchanged.
 - Add optional runtime-only `auth.userAvatarReadPolicy` with explicit identity
   and version. Current application relationships/Guardian permission checks
   narrow private peer metadata and byte delivery; they cannot bypass session,
@@ -21,10 +27,12 @@ All notable Zero Platform changes are tracked here.
   with restricted audiences must supply their canonical relationship policy;
   the framework does not invent house, department or staff-roster rules.
 
-This candidate is independent of Calendar. It adds no database migration or
-dependency and does not change existing photo identities. It is not yet a
-selected qualified updater archive; see the private-photo qualification and
-release handoff documents for source evidence and remaining gates.
+This patch is independent of Calendar. It adds no database migration or
+dependency and does not change existing photo identities. Use the exact
+committed-main source/local archive and SHA-256 recorded in the external
+release qualification receipt and selected by `zero-release`. The version
+heading alone does not identify qualified archive bytes, imply npm publication
+or authorize an application deployment.
 
 ## 2.11.0 - 2026-11-16
 

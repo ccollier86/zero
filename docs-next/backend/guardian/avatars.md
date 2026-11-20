@@ -8,7 +8,7 @@ visibility: internal
 system: guardian
 feature: private-avatar-media
 maturity: supported
-applies_to: ["2.6.0"]
+applies_to: ["2.11.1 source/local contract; verify committed archive and external release qualification receipt"]
 modes: [single-simple, single-advanced, multi-simple, multi-advanced, native]
 reviewed_against:
   package: "@zero/framework"
@@ -28,12 +28,13 @@ an arbitrary user-supplied URL. Managed composition reuses Storage for byte
 transport and durable blob handling, while Guardian owns receipt identity,
 account authority and the final profile revision.
 
-The versioned peer-read policy and private native-chat presentation described
-below are additions in the `fix/private-chat-avatar-authorization` source
-candidate. They are not a claim that the selected `2.11.0` archive contains
-them or that release/browser/deployment qualification is complete. Follow the
-[candidate qualification gates](../../_work/private-chat-avatars-qualification.md)
-and identify installed support by committed archive identity.
+Zero 2.11.1 adds the versioned peer-read policy and native private-chat
+presentation described below; a 2.11.0 archive does not contain these additions.
+Identify installed support by the committed archive and SHA-256, not just its
+package version. The [qualification record](../../_work/private-chat-avatars-qualification.md)
+separates validated source/browser checks from receipt-bound exact-archive,
+Linux and updater results. Neither this reference nor its version label
+substitutes for that release evidence or application-specific acceptance.
 
 ## Configuration And Provisioning
 
@@ -116,10 +117,10 @@ error requires the current runtime, not a forced retry against the old instance.
 
 ## Accepted Changes Across Mounted Consumers
 
-The additive fix on `fix/avatar-consumer-reactivity` is not included in the
-released 2.9.0 archive. It connects acknowledged avatar commands to independent
-mounted consumers of the same SDK client; it does not change the database
-schema or weaken private delivery.
+A validated avatar command notifies independent mounted consumers of the same
+SDK client; it does not change the database schema or weaken private delivery.
+Older archives may lack this additive reactivity; identify the installed
+framework by its committed archive rather than copying hooks into an app.
 
 `useUserAvatar()` observes accepted `finalize`, `replace`, `remove`, `publish`
 and `withdraw` results automatically. An editor and a persistent sidebar can
@@ -150,7 +151,7 @@ bytes.
 This own-account subscription is same-client command propagation, not a new
 cross-tab or cross-device event bus. Changes made through another SDK instance
 still need an authenticated `refresh()`/`get()` in an ordinary own-profile
-consumer. The source candidate's native messaging watches separately refresh
+consumer. The 2.11.1 native messaging watches separately refresh
 admitted peer presentation from current server state; they do not broadcast an
 own-avatar command to other clients. No generic Sync access to private SYSTEM
 avatar tables is introduced. Each hook continues owning and revoking its own
@@ -175,7 +176,7 @@ other organizations are not a global address book. Single-mode web callers see
 active account identities. Native directory access is self-only and respects
 profile/read/write scopes. API keys cannot use private avatar reads or edits.
 
-### Candidate: Viewer-To-Subject Private Read Policy
+### Viewer-To-Subject Private Read Policy
 
 Add `userAvatarReadPolicy` to the server's runtime `auth` configuration alongside
 `userProfile`, not inside the serializable `userProfile.avatars` options:
@@ -256,7 +257,7 @@ it by reverting the local configuration or retrying an old request. This is a
 runtime configuration hook, not a persisted callback or a public auth-config
 field; it must remain outside browser/shared schema modules.
 
-### Candidate: Native Messaging Private Presentation
+### Native Messaging Private Presentation
 
 Native messaging projects an optional `privateAvatar` alongside existing names
 and public `avatarUrl`. Its value is either `{ revision, asset }` or `null`.
@@ -298,9 +299,10 @@ application whose profile photos must remain private.
 
 ## Optional Public Avatar Publication
 
-The `feature/blog-foundation` preview adds optional public photos. This section
-is a new branch contract; the older private-avatar baseline above alone does
-not identify an archive containing it. See the [candidate qualification](../../_work/audits/blog-author-foundation.md).
+Public photos are a separate explicit owner opt-in, not a prerequisite for
+private native chat. Older private-avatar baselines do not identify an archive
+containing publication support. See the [author-foundation qualification](../../_work/audits/blog-author-foundation.md)
+and verify the installed archive before using this contract.
 
 Add `publicAccess: true` to the existing `auth.userProfile.avatars` object.
 The default is false; `avatars: true` alone still means private media. SYSTEM

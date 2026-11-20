@@ -8,7 +8,7 @@ visibility: internal
 system: messaging
 feature: native-messaging
 maturity: experimental
-applies_to: ["2.7.0 source/local package; identify installed support by commit/archive hash"]
+applies_to: ["2.11.1 source/local contract; verify committed archive and external release qualification receipt"]
 ---
 
 # Messaging
@@ -71,8 +71,8 @@ with real AppProvider/SDK browser checks, not just a styled mock. Its
 [focused review](../../_work/messaging-workspace-review.md) distinguishes source
 browser, package-import and remaining installed deployment evidence.
 
-The `fix/private-chat-avatar-authorization` source candidate additionally
-supports [viewer-scoped private Guardian photos](../guardian/avatars.md#candidate-viewer-to-subject-private-read-policy)
+Zero 2.11.1 additionally
+supports [viewer-scoped private Guardian photos](../guardian/avatars.md#viewer-to-subject-private-read-policy)
 in the native picker, roster, headers, conversation previews and messages.
 Private bytes still require live Guardian policy; no public publication is
 needed. Directory/people watches refresh photo revision/removal independently

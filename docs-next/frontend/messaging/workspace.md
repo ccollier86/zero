@@ -8,7 +8,7 @@ visibility: internal
 system: messaging
 feature: managed-workspace
 maturity: experimental
-applies_to: ["2.7.0 native messaging workspace; identify installed support by release commit/archive hash"]
+applies_to: ["2.11.1 source/local contract; verify committed archive and external release qualification receipt"]
 ---
 
 # Native Messaging Workspace
@@ -72,12 +72,12 @@ The proposed [single AppShell management view](../../_work/messaging-administrat
 is separate planned work; rendering the current workspace does not provide
 administrative group policies or grant transcript access to administrators.
 
-### Candidate Private Avatar Lifecycle
+### Private Avatar Lifecycle
 
-The `fix/private-chat-avatar-authorization` source candidate lets this same
+Zero 2.11.1 lets this same
 workspace display private Guardian photos without a `participantFor` override
 or a second auth client. Configure the server-side
-[viewer-to-subject read policy](../../backend/guardian/avatars.md#candidate-viewer-to-subject-private-read-policy)
+[viewer-to-subject read policy](../../backend/guardian/avatars.md#viewer-to-subject-private-read-policy)
 for an application whose photo audience is narrower than Guardian's legacy
 active-account/organization directory. Photo admission and DM initiation remain
 separate: a current housemate can have a group photo without becoming a direct
@@ -105,11 +105,12 @@ External/custom facades may omit `privateAvatar`, `watchDirectory` and
 `watchPeople`; the previous public-photo/one-shot behavior remains available.
 Anonymous support identities do not borrow a surrounding Guardian session.
 
-This section describes source behavior, not an approved installed release.
-Complete the [candidate qualification](../../_work/private-chat-avatars-qualification.md)
-before relying on it in an application; real native browser delivery,
-cross-session replacement/removal and account-switch checks remain separate
-from no-file React ownership tests.
+This is the 2.11.1 native contract. Check the
+[release qualification record](../../_work/private-chat-avatars-qualification.md)
+and its external receipt before adopting a particular archive. Real native
+browser delivery, cross-session replacement/removal and account-switch checks
+are separate evidence from no-file React ownership tests; a version string or
+API reference does not prove the exact archive's Linux/updater qualification.
 
 ### Existing Workspace Behavior
 

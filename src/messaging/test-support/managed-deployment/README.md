@@ -21,6 +21,16 @@ source-to-bundle migration/fingerprint continuity, actual private bytes, exact
 send replay, two simultaneous held AI calls, a foreground write during those
 calls, private writer SIGKILL, main-process SIGKILL/restart, and an interrupted
 invocation retained for manual review without automatic provider resend.
+It also prepares a real private avatar through the source profile upload flow,
+reads it through the official bundle before and after crash recovery, and
+requires the bundled host-native image payload to decode replacement uploads.
+Replacement/removal retire old asset URLs. A separate application-plane photo
+audience can then end while the chat remains admitted: both the directory and a
+copied private image URL are denied before and after a third, graceful restart,
+while own-account delivery remains available. All private responses retain the
+no-store, same-origin and nosniff protections. Signed-out and unrelated active
+accounts are checked separately. The fixture-only audience endpoints require
+Guardian platform-admin admission; they are not a production API recipe.
 The five-second write ceiling is a nonblocking acceptance bound, not a production
 throughput/latency benchmark. Recovery retries in this fixture are explicit and
 retain the original key; they are not hidden production retries.
@@ -30,6 +40,8 @@ After main-process SIGKILL the fixture waits 31 seconds for Torrent's normal
 the fixture never clears it or takes ownership early. Production supervision
 must likewise allow bounded startup retry/backoff after an ungraceful death.
 Graceful shutdown releases the exact generation without this crash grace.
+The additional photo-policy restart is graceful and does not use or bypass the
+hard-crash lease wait.
 
 SDK-only fixture identities have no AppProvider collector. The runner therefore
 copies the existing tested audit-heartbeat helper from the exact installed

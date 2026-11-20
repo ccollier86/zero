@@ -2,10 +2,19 @@
 
 ## Status and isolation
 
-This is the `fix/private-chat-avatar-authorization` source candidate, not a
-qualified archive or a production/application acceptance claim. Normal
-`zero-update` has **not** selected this candidate. Do not use a source checkout
-or copy individual installed package files as a substitute for release.
+This is the standalone Zero 2.11.1 private-photo patch developed on
+`fix/private-chat-avatar-authorization`. Source documentation is frozen before
+exact-archive qualification; it does not predict a publication outcome. The
+release coordinator records the actual final commit, archive path/SHA-256,
+installed-package/Linux/updater results and main/tag/normal selection result in:
+
+`/Volumes/code-bank/artifacts/zero-platform/diagnostics/private-chat-avatars-release/qualification.json`
+
+Use that receipt and `zero-release --status`, not this version heading, to
+identify the package actually selected for normal updates. Publication occurs
+only after the required real gates pass. Do not use a source checkout or copy
+individual installed package files as a substitute for release. An application
+update/deployment remains a separately approved action.
 
 The source starts at main `4d2eb26034783cb77622a249c0cc57f48760331e`
 (Zero 2.11.0), plus standalone messaging relationship correction
@@ -22,7 +31,7 @@ Private Guardian lookup meanwhile used its legacy application/organization
 peer ceiling, not an application's live house/conversation/staff relationship.
 Fixing only the image component would not have protected a copied private URL.
 
-The candidate adds a versioned runtime policy at the trusted Guardian boundary,
+The patch adds a versioned runtime policy at the trusted Guardian boundary,
 enforces it for both metadata and every private byte-delivery fence, and
 projects admitted private metadata into the existing native messaging facade.
 Self editing/delivery and native consent remain unchanged. Photo authorization
@@ -73,21 +82,31 @@ policy preserves the exact legacy profile-policy fingerprint and peer behavior.
 
 ## Documentation and qualification
 
-- [Guardian policy and private delivery](../backend/guardian/avatars.md#candidate-viewer-to-subject-private-read-policy).
-- [Native messaging configuration](../backend/messaging/configuration.md#candidate-private-profile-photos).
+- [Guardian policy and private delivery](../backend/guardian/avatars.md#viewer-to-subject-private-read-policy).
+- [Native messaging configuration](../backend/messaging/configuration.md#private-profile-photos).
 - [Workspace presentation](../frontend/messaging/workspace.md).
-- [Focused evidence and remaining release gates](./private-chat-avatars-qualification.md).
+- [Validated source evidence and external release receipt](./private-chat-avatars-qualification.md).
 - [Normal release procedure](../../docs/releasing.md).
 
 The recorded external filesystem integrity hold still makes `dev-storage
 status`, `dev-storage check` and `dev-storage run` return exit 3. It is an
-integrity hold, not an inferred lack-of-space problem. No hold has been removed
-or bypassed. Source/cache-off memory diagnostics do not qualify a package.
+integrity hold, not an inferred lack-of-space problem or a successful repair.
+The release owner has now explicitly authorized this 2.11.1 external-only
+release task to proceed despite the recorded hold. See the
+[scoped storage exception](./private-chat-avatars-qualification.md#explicit-storage-exception-for-this-release-task)
+for its limits. No global guard, maintenance service or policy is changed.
+Record actual storage check failures and stop on real I/O/device/corruption
+errors. Source/cache-off memory diagnostics alone still do not qualify a package.
 
-After verified storage recovery, qualify one exact clean committed tree using
-its own frozen dependencies, required inventory and public source checks,
+Under that explicit task-specific exception, qualify one exact clean committed
+tree using its own frozen dependencies, required inventory and public source checks,
 exact-archive consumer/browser checks, official bundled Linux/amd64 managed
 Guardian/Storage/messaging checks and normal updater preservation proof.
-Record the commit, archive path and SHA-256, then use the existing reviewed
-release/main selection procedure. Do not main-merge and trigger its release
-hook before those gates pass, and do not deploy an application in this repair.
+The independently installed source group, normal TypeScript check, native
+managed retained-restart fixture, decoded-pixel Chromium fixture and dependency
+audit have completed; their actual counts are in the linked qualification
+record. They are not an assertion that the archive/Linux/updater gates passed.
+Record the final commit, archive path/SHA-256 and those gate results in the
+external receipt, then use the existing reviewed release/main selection
+procedure. Do not main-merge and trigger its release hook before the required
+gates pass, and do not deploy an application in this repair.

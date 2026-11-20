@@ -1,11 +1,68 @@
 # Private chat avatar qualification
 
-This source candidate adds viewer-to-subject private avatar policy and native
-messaging presentation. It is not an approved release, installed-application
-cutover, browser qualification or deployment claim. The unrelated Calendar
-work is outside this candidate.
+Zero 2.11.1 adds viewer-to-subject private avatar policy and native messaging
+presentation. This source document describes the contract and evidence known
+at the release freeze; it is not a live publication-status database. The
+unrelated Calendar work and any application deployment are outside this patch.
 
-## Focused source evidence
+## Exact archive and publication receipt
+
+The release coordinator records the final source commit, archive path, SHA-256,
+actual installed-package/Linux/updater gate results, main/tag/remotes, cleanup
+and normal selection result in this external receipt:
+
+`/Volumes/code-bank/artifacts/zero-platform/diagnostics/private-chat-avatars-release/qualification.json`
+
+Those fields are filled only from completed real gates, not copied from the
+version heading or inferred from these API docs. This document deliberately
+does not predict their results or invent a final commit/archive hash before
+the frozen tree is committed and packaged. A missing, unexecuted or failed
+required gate is not release approval. Normal main merge, tag and saved archive
+selection remain gated on the actual qualification results. Application
+adoption additionally requires its own isolated acceptance and approval.
+
+## Explicit storage exception for this release task
+
+On November 20, 2026, after being told that the recorded filesystem integrity
+hold prevented main/package release work, the release owner explicitly directed
+the agent to proceed despite that hold and get the main package ready. This is
+a task-specific authorization for the 2.11.1 external-only release workflow,
+not evidence that the filesystem was repaired or that storage checks passed.
+
+Keep the existing hold, maintenance service, checks and global storage policy
+intact. Record actual `dev-storage status`/`check` results before and after
+generated phases. Use only the existing managed external project/cache/build/
+scratch/artifact roots, immediate exact-owned cleanup and bounded evidence;
+do not fall back internally. Stop on actual I/O/device/corruption faults rather
+than treating this exception as permission to conceal them. This does not waive
+release assertions, privacy checks, exact-archive identity or application
+cutover approval. The release coordinator owns generated phase admission and
+records their real results as they complete.
+
+## Independently installed source and native fixture evidence
+
+On November 20, 2026 the release coordinator recorded these completed gates
+with the worktree's own frozen dependencies under Bun 1.4.4, not the borrowed
+dependency map used in the earlier diagnostic phase:
+
+- Frozen dependency installation succeeded with 556 packages.
+- Normal full-project TypeScript check completed with zero diagnostics.
+- The focused source group passed 95 tests across 14 files, zero failures and
+  781 assertions in 19.62 seconds.
+- `src/messaging/managed-avatar.integration.test.ts` passed its real managed
+  file/HTTP/Storage/actor case: one test, 49 assertions and a 30.03-second
+  process, including retained restart.
+- `src/components/messaging/messaging-private-avatar.browser.test.ts` passed
+  its real Chromium/native case: one test and 12 assertions in 35.42 seconds.
+  It verified decoded image pixels, not just the presence of image elements.
+- Dependency audit inspected 645 packages and reported zero vulnerabilities.
+
+These are source-tree and physical native/browser fixture facts. They do not
+stand in for the exact committed archive's installed consumer, official bundled
+Linux/amd64 restart proof or normal updater preservation proof. The external
+receipt binds those later results and cleanup to the actual archive bytes.
+
+## Earlier cache-off source diagnostics
 
 On November 20, 2026 the coordinated cache-off Bun 1.4.4 source diagnostic
 passed **95 tests across 14 files, 0 failures, 781 assertions** in 15.14 seconds.
@@ -68,9 +125,11 @@ The focused no-file checks belong in:
 
 Shared development dependencies may support explicitly admitted source
 diagnostics only. They cannot establish frozen release qualification. The
-storage integrity hold blocks new physical fixtures, dependency installs,
-browser builds, packaging and deployment runs until it is resolved. Do not
-bypass the hold or reinterpret unexecuted tests as successful evidence.
+recorded storage hold remains active. Physical fixture, install, browser-build
+and packaging work for this release can proceed only under the explicit
+task-specific exception above; do not alter the guard or reinterpret its
+failure as a healthy-storage result. Unexecuted tests are not successful
+evidence, and this release task does not authorize an application deployment.
 
 ## Required release and application gates
 
@@ -85,7 +144,8 @@ exact committed archive. Verify public exports/types, packaged source, SSR and
 the browser dependency boundary. This consumer has no installed backend and is
 not Linux, stable-selection or updater qualification.
 
-Extend the managed house fixture and native installed browser fixture with a
+For exact-archive/application acceptance, use the physical managed and native
+browser fixtures to exercise a
 resident, a same-house resident excluded from direct-message targets, and an
 assigned staff member. Upload through the normal profile flow. Check decoded
 private photos in the contact picker, participant roster, header, conversation

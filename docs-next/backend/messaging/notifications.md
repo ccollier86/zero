@@ -8,17 +8,19 @@ visibility: internal
 system: messaging
 feature: native-notifications
 maturity: experimental
-applies_to: ["2.6.0 native messaging notifications; verify the selected commit/archive hash"]
+applies_to: ["2.11.1 source/local contract; verify committed archive and external release qualification receipt"]
 ---
 
 # Native Messaging Notifications
 
 [Messaging](./index.md) · [Durable review](./review.md) · [Implementation and qualification](../../_work/messaging-backend-implementation.md)
 
-This development branch connects accepted messages to Zero's native notification
-service. It is not external email, a Messenger delivery receipt, or a claim that
-the complete messaging product has shipped. Older same-version archives do not
-contain this capability.
+Accepted messages can use Zero's native notification service. It is not external
+email, a Messenger delivery receipt or proof of human attention. Older archives
+may lack this capability; verify installed commit/archive identity. The 2.11.1
+application-relationship and external delivery-fence additions use the
+[release qualification record](../../_work/private-chat-avatars-qualification.md)
+and its external receipt for exact archive and updater evidence.
 
 ## Enable The Native Effect
 
