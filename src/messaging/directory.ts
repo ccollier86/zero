@@ -8,11 +8,15 @@ import type { MessagingDirectoryEntry, MessagingPage } from './contracts';
 import { messagingFail, messagingId, messagingInteger, messagingRecord, messagingText } from './validation';
 import { AuthError } from '../auth/types';
 import { MESSAGING_DIRECTORY_ELIGIBLE } from './directory-eligibility';
+import type { MessagingRelationshipNotice } from './relationship-policy';
 
-interface DirectoryDependencies { readonly db: ReactiveDB; readonly users: UserStore; readonly tenancy: TenancyService | null; readonly portal?: boolean; publicAvatar(userId: string): string | null; supportRecipient?(scope: ServiceDataScope, userId: string): boolean; supportEntryRecipient?(scope: ServiceDataScope, userId: string, entryId: string): boolean; inboxStaffRecipient?(scope: ServiceDataScope, userId: string, inboxId: string): boolean; inboxRecipient?(scope: ServiceDataScope, userId: string, inboxId: string): boolean; assistantRecipient?(scope: ServiceDataScope, userId: string, assistantId: string): boolean; groupRecipient?(scope: ServiceDataScope, userId: string, groupId: string): boolean }
+interface DirectoryDependencies { readonly db: ReactiveDB; readonly users: UserStore; readonly tenancy: TenancyService | null; readonly portal?: boolean; publicAvatar(userId: string): string | null; supportRecipient?(scope: ServiceDataScope, userId: string): boolean; supportEntryRecipient?(scope: ServiceDataScope, userId: string, entryId: string): boolean; inboxStaffRecipient?(scope: ServiceDataScope, userId: string, inboxId: string): boolean; inboxRecipient?(scope: ServiceDataScope, userId: string, inboxId: string): boolean; assistantRecipient?(scope: ServiceDataScope, userId: string, assistantId: string): boolean; groupRecipient?(scope: ServiceDataScope, userId: string, groupId: string): boolean; relationshipRecipients?(scope: ServiceDataScope, notice: MessagingRelationshipNotice): ReadonlySet<string> }
 /** The server owns Guardian relationships and published avatar descriptors; caller-selected identity metadata is ignored. */
 export class ManagedMessagingDirectory implements MessagingDirectory {
-  constructor(private readonly deps: DirectoryDependencies) {}
+  readonly relationshipRecipients?: DirectoryDependencies['relationshipRecipients'];
+  constructor(private readonly deps: DirectoryDependencies) {
+    this.relationshipRecipients = deps.relationshipRecipients;
+  }
   /** Exact canonical member IDs avoid scanning every account to label a conversation. */
   resolve(scope: ServiceDataScope, userIds: readonly string[]): readonly MessagingDirectoryEntry[] {
     this.assertScope(scope);
@@ -65,11 +69,15 @@ export class ManagedMessagingDirectory implements MessagingDirectory {
     const rows = this.deps.db.prepare(`SELECT u.user_id FROM users u WHERE ${MESSAGING_DIRECTORY_ELIGIBLE} AND u.user_id>?` + tenant + ' ORDER BY u.user_id LIMIT ?').all(...values, maximum + 1) as { user_id: string }[];
     return { ids: rows.slice(0, maximum).map(row => row.user_id), hasMore: rows.length > maximum };
   }
-  list(scope: ServiceDataScope, actorId: string, query: { after?: string; limit?: number; search?: string }, staffOnly = false): MessagingPage<MessagingDirectoryEntry> {
+  list(scope: ServiceDataScope, actorId: string, query: { after?: string; limit?: number; search?: string }, staffOnly = false, directPeers?: readonly string[]): MessagingPage<MessagingDirectoryEntry> {
     const q = messagingRecord(query, ['after', 'limit', 'search']), limit = messagingInteger(q.limit ?? 25, 1, 50);
     const where = [MESSAGING_DIRECTORY_ELIGIBLE, 'u.user_id<>?', 'u.user_id>?'], values: (string | number)[] = [actorId, q.after === undefined ? '' : messagingId(q.after)];
     if (scope.tenantId !== null) {
       where.push("EXISTS(SELECT 1 FROM _auth_tenant_memberships m JOIN _auth_tenants t ON t.tenant_id=m.tenant_id WHERE m.user_id=u.user_id AND m.tenant_id=? AND m.status='active' AND t.status='active')"); values.push(scope.tenantId);
+    }
+    if (directPeers) {
+      where.push('u.user_id IN (SELECT value FROM json_each(?))');
+      values.push(JSON.stringify(directPeers));
     }
     if (q.search !== undefined) {
       const search = messagingText(q.search, 100, true).trim().replace(/[\\%_]/g, value => '\\' + value);

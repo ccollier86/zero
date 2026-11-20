@@ -41,6 +41,14 @@ or control characters, and be at most 400 characters. The effect appends
 this setting does not itself create a managed workspace or public portal.
 Disabling generation does not discard retained jobs or receipts.
 
+A trusted application may supply `notifications.onAccepted(notice, delivery)`
+to deliver a generic alert through its own channel. It receives the IDs admitted
+by the fresh native receipt after the messaging job completes. The callback
+receives no transcript. Use `delivery.signal` for cancellation and call
+`delivery.isCurrentRecipient(userId)` immediately before sending. Notice
+replays do not invoke the hook again. The callback is best effort and a
+delivery failure cannot change the accepted native notice.
+
 Only accepted public messages queue these effects. Staff notes never create a
 public-message notification. The sender is excluded, external contacts are not
 invented as native user accounts, and global staff authority does not broadcast

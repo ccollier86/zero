@@ -34,11 +34,12 @@ function query(handler: (context: Parameters<DatabaseReadQueryHandler>[0], input
   };
 }
 export const messagingRealm = defineDatabaseRealm({
-  name: 'zero-messaging', version: '10', tables: { ...MESSAGING_TABLES, ...MESSAGING_ATTACHMENT_TABLES, ...MESSAGING_JOB_TABLES, ...MESSAGING_REVIEW_TABLES, ...MESSAGING_NOTIFICATION_TABLES,
+  name: 'zero-messaging', version: '11', tables: { ...MESSAGING_TABLES, ...MESSAGING_ATTACHMENT_TABLES, ...MESSAGING_JOB_TABLES, ...MESSAGING_REVIEW_TABLES, ...MESSAGING_NOTIFICATION_TABLES,
+    messaging_members: { ...MESSAGING_TABLES.messaging_members!, relationship_epoch: 'TEXT' },
     messaging_visitor_budgets: { id: 'TEXT PRIMARY KEY', scope_id: 'TEXT NOT NULL', entry_id: 'TEXT NOT NULL', visitor_count: 'INTEGER NOT NULL' },
     messaging_sessions: { ...MESSAGING_TABLES.messaging_sessions!, entry_id: 'TEXT', policy_hash: 'TEXT', write_window: 'INTEGER NOT NULL DEFAULT 0', write_count: 'INTEGER NOT NULL DEFAULT 0', message_count: 'INTEGER NOT NULL DEFAULT 0' },
     messaging_attachments: { ...MESSAGING_TABLES.messaging_attachments!, owner_kind: "TEXT NOT NULL DEFAULT 'user'" },
-    messaging_conversations: { ...MESSAGING_TABLES.messaging_conversations!, customer_turn_id: 'TEXT', context_revision: 'INTEGER NOT NULL DEFAULT 0', assistant_id: 'TEXT', managed_group_id: 'TEXT', group_policy_hash: 'TEXT', support_entry_id: 'TEXT', visitor_session_id: 'TEXT' },
+    messaging_conversations: { ...MESSAGING_TABLES.messaging_conversations!, customer_turn_id: 'TEXT', context_revision: 'INTEGER NOT NULL DEFAULT 0', assistant_id: 'TEXT', managed_group_id: 'TEXT', group_policy_hash: 'TEXT', support_entry_id: 'TEXT', visitor_session_id: 'TEXT', relationship_epoch: 'TEXT' },
     messaging_jobs: { ...MESSAGING_TABLES.messaging_jobs!, context_revision: 'INTEGER NOT NULL DEFAULT 0', policy_hash: 'TEXT', dispatch_generation: 'INTEGER NOT NULL DEFAULT 0', assistant_id: 'TEXT' } },
   migrations: [{ version: '001', description: 'Canonical scoped conversations, messages, contacts, private attachments and durable delivery', safety: 'safe', up(database) {
     for (const [table, columns] of Object.entries(MESSAGING_TABLES)) database.run('CREATE TABLE IF NOT EXISTS ' + quoteSqlIdentifier(table) + ' (' + Object.entries(columns).map(([name, definition]) => quoteSqlIdentifier(name) + ' ' + definition).join(',') + ')');
@@ -123,6 +124,9 @@ export const messagingRealm = defineDatabaseRealm({
   } }, { version: '010', description: 'Indexed authenticated inbox routing without changing retained messages, identities or receipts', safety: 'safe', up(database) {
     database.run("CREATE INDEX messaging_support_inbox_queue ON messaging_conversations(scope_id,support_entry_id,created_at,id) WHERE kind='support' AND archived=0 AND visitor_session_id IS NULL");
     database.run("CREATE INDEX messaging_support_inbox_owner_queue ON messaging_conversations(scope_id,support_entry_id,owner,created_at,id) WHERE kind='support' AND archived=0 AND visitor_session_id IS NULL");
+  } }, { version: '011', description: 'Per-admission history boundaries for application-managed memberships', safety: 'safe', up(database) {
+    database.run('ALTER TABLE messaging_members ADD COLUMN relationship_epoch TEXT');
+    database.run('ALTER TABLE messaging_conversations ADD COLUMN relationship_epoch TEXT');
   } }],
   commands: withMessagingCommitHints(withMessagingVisitorGuards({
     'messaging.visitor.create': createMessagingVisitor, 'messaging.visitor.revoke': revokeMessagingVisitor,

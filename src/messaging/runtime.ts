@@ -90,6 +90,14 @@ export class MessagingRuntime {
     let entries = this.listeners.get(ref); if (!entries) this.listeners.set(ref, entries = new Set()); entries.add(entry);
     return () => { entries!.delete(entry); if (!entries!.size) this.listeners.delete(ref); };
   }
+  /** The app authority changed. Live projections and typing recheck their own current admission. */
+  relationshipsChanged(): void {
+    if (this.state !== 'ready') return;
+    try { this.options.onMembershipChanged?.(); } catch { /* The next publish and delivery still reauthorize. */ }
+    for (const entries of this.listeners.values()) for (const entry of entries) {
+      try { entry.listener(); } catch { /* Advisory only. */ }
+    }
+  }
   diagnostics() { return { state: this.state, filesBound: this.bound.size, activeOperations: this.active.size, fabric: this.owner.diagnostics() }; }
   /** @internal Validated established catalog scopes for bounded retained-stage recovery, never HTTP-selected tenant IDs. */
   retainedScopes(): readonly ServiceDataScope[] {

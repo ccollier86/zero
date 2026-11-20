@@ -50,7 +50,7 @@ export interface MessagingCapabilities { readonly enabled: boolean; readonly dir
   /** Configuration/capability, not a provider-delivery or current network-health claim. */
   readonly assistant?: boolean; readonly notifications?: boolean; readonly support?: boolean; readonly supportAssistant?: boolean;
   /** Server-derived member restriction, not a client-selected role. Old servers may omit it. */
-  readonly portal?: boolean; readonly supportInboxes?: boolean }
+  readonly portal?: boolean; readonly supportInboxes?: boolean; readonly directOnly?: boolean }
 export interface MessagingDirectoryEntry { readonly id: string; readonly name: string; readonly avatarUrl: string | null }
 /** Current admitted conversation identities; names/avatars are presentation, never membership proof. */
 export interface MessagingPerson extends MessagingDirectoryEntry { readonly kind: ConversationParticipant['kind'] }

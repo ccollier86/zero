@@ -1,6 +1,6 @@
 /** End-to-end managed Guardian, native HTTP, SDK, private Fabric/logging actors and restart. Only disposable synthetic identities. */
 import { expect, test } from 'bun:test';
-import { mkdir, mkdtemp } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApp } from '../frontend/server/app-factory';
@@ -32,8 +32,8 @@ function peer(origin: string): TestClient {
   const authenticate = async (path: string, body: unknown) => { const result = await call<any>(path, { method: 'POST', body }); token = result.accessToken; user = result.user; return result; };
   return { messaging, logging, fetch: call, get user() { return user; }, register: input => authenticate('/auth/register', input), login: (username, password) => authenticate('/auth/login', { username, password }), disconnect() { messaging.clear(); logging.clear(); token = null; user = null; } };
 }
-async function fixture(compliance = false, history: 'all' | 'since-join' = 'all', providerBaseURL?: string, notifications = false, overrides: Pick<Partial<AppConfig>, 'messaging' | 'auth'> = {}, website = false) {
-  const root = await mkdtemp(join(tmpdir(), 'zero-messaging-managed-')); await mkdir(join(root, 'app'));
+async function fixture(compliance = false, history: 'all' | 'since-join' = 'all', providerBaseURL?: string, notifications = false, overrides: Pick<Partial<AppConfig>, 'messaging' | 'auth' | 'tables'> = {}, website = false, ownedRoot?: string) {
+  const root = ownedRoot ?? await mkdtemp(join(tmpdir(), 'zero-messaging-managed-')); await mkdir(join(root, 'app'));
   let zero!: ServerRouteServices;
   const diagnostics = new MemoryEventStore();
   const reservation = website ? Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response(null, { status: 503 }) }) : null, reservedPort = reservation?.port ?? 0;
@@ -51,7 +51,9 @@ async function fixture(compliance = false, history: 'all' | 'since-join' = 'all'
   };
   if (website) configuration.messaging = { ...configuration.messaging as object, support: { entries: { website: { origin: 'http://127.0.0.1:' + reservedPort } } } };
   let app = await createApp(configuration); await reservation?.stop(true);
-  const listen = () => { app.listen({ hostname: '127.0.0.1', port: reservedPort }); return 'http://127.0.0.1:' + app.server!.port; }; let origin = listen();
+  const listen = () => { app.listen({ hostname: '127.0.0.1', port: reservedPort }); return 'http://127.0.0.1:' + app.server!.port; };
+  let origin: string;
+  try { origin = listen(); } catch (error) { await app.stop(true); throw error; }
   const client = () => createClient({ url: origin, auth: true, autoConnect: false });
   return { root, diagnostics, configuration, client, peer: () => peer(origin), get zero() { return zero; }, get origin() { return origin; }, async restart() { await app.stop(true); app = await createApp(configuration); origin = listen(); }, async close() { await app.stop(true); } };
 }
@@ -59,6 +61,98 @@ async function enroll(client: TestClient, name: string) {
   await client.register({ username: name, email: name + '@example.test', password: PASSWORD });
   const policy = await client.logging.collectionPolicy(); if (policy.delivery) await client.logging.observe([], { policyVersion: policy.delivery.policyVersion });
 }
+
+test('application relationship policy enforces house moves, direct recipients, and fresh admission history across the native messaging workspace', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'zero-messaging-house-'));
+  const owner = { project: 'zero-platform', synthetic: true, runId: crypto.randomUUID(), pid: process.pid };
+  const marker = join(root, '.fixture-owner.json');
+  await writeFile(marker, JSON.stringify(owner));
+  let f: Awaited<ReturnType<typeof fixture>> | undefined;
+  const clients: TestClient[] = [];
+  const acceptedAudiences: string[][] = [];
+  let stop: (() => void) | undefined;
+  let residentId = '', firstStaffId = '', secondStaffId = '';
+  try {
+    f = await fixture(false, 'all', undefined, true, {
+      auth: { bootstrap: 'public', userProfile: { avatars: true } },
+      tables: { fixture_house: { id: 'TEXT PRIMARY KEY', placement: 'TEXT NOT NULL' } },
+      messaging: { notifications: { path: '/messages', onAccepted(notice, delivery) {
+        acceptedAudiences.push(notice.userIds.filter(delivery.isCurrentRecipient));
+      } }, relationships: ({ db }) => {
+        const placement = db.get('fixture_house', 'resident')?.placement;
+        if (!placement || !residentId || !firstStaffId || !secondStaffId) return { direct: [], groups: [] };
+        const atSecond = placement === 'second-admission';
+        const epoch = String(placement);
+        return { direct: [{ users: [residentId, atSecond ? secondStaffId : firstStaffId], epoch }],
+          groups: [
+            { id: 'house-one', name: 'First house', members: [{ id: firstStaffId, epoch: 'first-assignment' }, ...(atSecond ? [] : [{ id: residentId, epoch }])] },
+            { id: 'house-two', name: 'Second house', members: [{ id: secondStaffId, epoch: 'second-assignment' }, ...(atSecond ? [{ id: residentId, epoch }] : [])] },
+          ] };
+      } },
+    }, false, root);
+    const firstStaff = f.client(), resident = f.peer(), secondStaff = f.peer();
+    clients.push(firstStaff, resident, secondStaff);
+    await enroll(firstStaff, 'house-first-staff');
+    await enroll(resident, 'house-resident');
+    await enroll(secondStaff, 'house-second-staff');
+    firstStaffId = firstStaff.user!.userId;
+    residentId = resident.user!.userId;
+    secondStaffId = secondStaff.user!.userId;
+    f.zero.db.createStrict('fixture_house', { id: 'resident', placement: 'first-admission' });
+
+    const directory = (await resident.messaging.directory()).items;
+    expect(directory.map(item => item.id)).toEqual([firstStaffId]);
+    expect(directory[0]?.avatarUrl).toBeNull();
+    await expect(resident.messaging.conversations.create({ userIds: [secondStaffId] }, { requestId: 'outside-dm' })).rejects.toMatchObject({ status: 404 });
+    await expect(resident.messaging.conversations.create({ kind: 'group', userIds: [firstStaffId] }, { requestId: 'ordinary-group' })).rejects.toMatchObject({ status: 403 });
+    const firstHouse = (await resident.messaging.conversations.list()).items.find(item => item.title === 'First house')!;
+    expect(firstHouse.participants.map(member => member.id).sort()).toEqual([firstStaffId, residentId].sort());
+    const direct = await resident.messaging.conversations.create({ userIds: [firstStaffId] }, { requestId: 'first-direct' });
+    await resident.messaging.messages.send(direct.id, { text: 'Synthetic private conversation' }, { requestId: 'direct-message' });
+    expect((await firstStaff.messaging.messages.list(direct.id)).items).toHaveLength(1);
+    const noticeDeadline = Date.now() + 8000;
+    while (!acceptedAudiences.length && Date.now() < noticeDeadline) await Bun.sleep(25);
+    expect(acceptedAudiences).toEqual([[firstStaffId]]);
+
+    const bytes = new TextEncoder().encode('Synthetic house attachment');
+    const file = await firstStaff.messaging.attachments.allocate(firstHouse.id, {
+      fileName: 'house.txt', mimeType: 'text/plain', sizeBytes: bytes.byteLength, checksum: new Bun.CryptoHasher('sha256').update(bytes).digest('hex'),
+    }, { requestId: 'house-allocation' });
+    await firstStaff.messaging.attachments.upload(firstHouse.id, file.id, bytes, { requestId: 'house-upload' });
+    await firstStaff.messaging.messages.send(firstHouse.id, { text: 'First admission', attachmentIds: [file.id] }, { requestId: 'house-first' });
+    expect(await (await resident.messaging.attachments.download(firstHouse.id, file.id)).text()).toBe('Synthetic house attachment');
+
+    // The actor sees a new admission even when it never observed the member
+    // being absent. The old group record and download remain fenced.
+    f.zero.db.update('fixture_house', 'resident', { placement: 'return-admission' });
+    expect((await resident.messaging.messages.list(firstHouse.id)).items).toEqual([]);
+    await expect(resident.messaging.attachments.download(firstHouse.id, file.id)).rejects.toMatchObject({ status: 404 });
+    await expect(resident.messaging.messages.list(direct.id)).rejects.toMatchObject({ status: 404 });
+    expect((await resident.messaging.conversations.list()).items.some(item => item.id === direct.id)).toBe(false);
+    const replacement = await resident.messaging.conversations.create({ userIds: [firstStaffId] }, { requestId: 'return-direct' });
+    expect(replacement.id).not.toBe(direct.id);
+    expect((await resident.messaging.messages.list(replacement.id)).items).toEqual([]);
+
+    let invalidated = false;
+    const opened = Promise.withResolvers<void>();
+    stop = resident.messaging.watchMessages(firstHouse.id, () => opened.resolve(), { onError: () => { invalidated = true; } });
+    await Promise.race([opened.promise, Bun.sleep(5000).then(() => { throw new Error('The synthetic live house view did not open.'); })]);
+    f.zero.db.update('fixture_house', 'resident', { placement: 'second-admission' });
+    const deadline = Date.now() + 3000;
+    while (!invalidated && Date.now() < deadline) await Bun.sleep(25);
+    expect(invalidated).toBe(true);
+    expect((await resident.messaging.directory()).items.map(item => item.id)).toEqual([secondStaffId]);
+    expect((await resident.messaging.conversations.list()).items.map(item => item.title)).toEqual(['Second house']);
+    await expect(resident.messaging.messages.send(firstHouse.id, { text: 'Denied after transfer' }, { requestId: 'old-house-send' })).rejects.toMatchObject({ status: 404 });
+    await expect(firstStaff.messaging.messages.list(replacement.id)).rejects.toMatchObject({ status: 404 });
+  } finally {
+    stop?.();
+    for (const client of clients) client.disconnect();
+    await f?.close();
+    const proof = JSON.parse(await readFile(marker, 'utf8')) as typeof owner;
+    if (proof.runId === owner.runId && proof.project === owner.project && proof.synthetic) await rm(root, { recursive: true, force: true });
+  }
+}, 90000);
 
 test('public native support binds a private expiring cookie to one entry and conversation; files, live human replies and restart use the same native services', async () => {
   const f = await fixture(true, 'all', undefined, false, {}, true), admin = f.client();

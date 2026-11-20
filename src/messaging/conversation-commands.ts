@@ -13,11 +13,14 @@ export function createMessagingConversation(context: DatabaseWriteCommandContext
     if (actor.portal) messagingFail('MESSAGING_FORBIDDEN', 403);
     const maximum = messagingInteger(r.maxParticipants, 2, 100), users = [...new Set(messagingArray(r.userIds, maximum - 1).map(messagingId))];
     if (actor.kind !== 'user' || users.length < 1 || users.includes(actor.id) || kind === 'direct' && users.length !== 1 || typeof r.contactsOnly !== 'boolean') messagingFail('MESSAGING_INPUT_INVALID', 422);
+    const relationshipEpoch = actor.directEpochs?.[users[0]!];
+    if (actor.directEpochs !== undefined && (kind !== 'direct' || !relationshipEpoch)) messagingFail('MESSAGING_FORBIDDEN', 403);
     for (const other of users) assertMessagingContact(context, actor, other, r.contactsOnly);
-    return messagingIntent(context, actor, r.requestId, ['conversation.create', kind, title, users], () => {
+    return messagingIntent(context, actor, r.requestId, ['conversation.create', kind, title, users, ...(relationshipEpoch ? [relationshipEpoch] : [])], () => {
       const now = Date.now(), members = [actor.id, ...users];
       const row: ConversationRow = { id, scope_id: actor.scopeId, kind, title, revision: 1, created_at: now, updated_at: now, public_updated_at: now, archived: 0,
-        created_by: actor.id, owner: 'human', owner_id: null, owner_epoch: 1, internal_sequence: 0, public_sequence: 0, channel_id: null, members_json: JSON.stringify(members) };
+        created_by: actor.id, owner: 'human', owner_id: null, owner_epoch: 1, internal_sequence: 0, public_sequence: 0, channel_id: null, members_json: JSON.stringify(members),
+        ...(relationshipEpoch ? { relationship_epoch: relationshipEpoch } : {}) };
       context.db.createStrict('messaging_conversations', row);
       for (const user of members) context.db.createStrict('messaging_members', { id: memberKey(id, user), scope_id: actor.scopeId, conversation_id: id, participant_id: user, kind: 'user', role: user === actor.id ? 'owner' : 'member', active: 1, joined_at: now, history_from: 1, read_sequence: 0 });
       return { id, revision: 1 };

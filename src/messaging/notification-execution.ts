@@ -27,17 +27,41 @@ export async function executeMessagingNotification(deps: MessagingJobExecutionDe
   const source = await read();
   if (!source.audiencePresent || source.path === null) throw new Error('The accepted native notification audience is unavailable.');
   const members = new Set(source.currentRecipientIds), recipients = new Map(source.recipients.map(recipient => [recipient.id, recipient]));
+  const accepted = new Set<string>();
+  const allowed = (id: string, related?: ReadonlySet<string>) => {
+    const recipient = recipients.get(id);
+    return !!recipient && members.has(id) && (related ? related.has(id) : !source.relationshipEpoch)
+      && deps.directory.notificationRecipient(scope, id, recipient.staff, source.conversationKind)
+      && (!source.inboxId || (recipient.staff ? deps.directory.inboxStaffRecipient?.(scope, id, source.inboxId) === true : deps.directory.inboxRecipient?.(scope, id, source.inboxId) === true))
+      && (!source.supportEntryId || !recipient.staff || deps.directory.supportRecipient?.(scope, id, source.supportEntryId) === true)
+      && (!source.managedGroupId || related !== undefined || deps.directory.groupRecipient?.(scope, id, source.managedGroupId) === true)
+      && (!source.internalAssistantId || deps.directory.assistantRecipient?.(scope, id, source.internalAssistantId) === true);
+  };
   const receipt = await withReactiveDBCommitAdmission(deps.system, () => {
     check();
+    const related = deps.directory.relationshipRecipients?.(scope, source);
     return deps.notifications!.notifyUsersOnce('zero.messaging:' + jobId, source.recipients.map(recipient => recipient.id),
       { title: 'New message', actionUrl: source.path + '?conversation=' + encodeURIComponent(source.job.conversation_id),
         presentation: { kind: 'chat', conversationId: source.job.conversation_id, messageId: source.job.message_id } }, undefined, scope, check,
-      id => members.has(id) && deps.directory.notificationRecipient(scope, id, recipients.get(id)!.staff, source.conversationKind)
-        && (!source.inboxId || (recipients.get(id)!.staff ? deps.directory.inboxStaffRecipient?.(scope, id, source.inboxId) === true : deps.directory.inboxRecipient?.(scope, id, source.inboxId) === true))
-        && (!source.supportEntryId || !recipients.get(id)!.staff || deps.directory.supportRecipient?.(scope, id, source.supportEntryId) === true)
-        && (!source.managedGroupId || deps.directory.groupRecipient?.(scope, id, source.managedGroupId) === true)
-        && (!source.internalAssistantId || deps.directory.assistantRecipient?.(scope, id, source.internalAssistantId) === true));
+      id => {
+        if (!allowed(id, related)) return false;
+        accepted.add(id);
+        return true;
+      });
   }, { signal });
   const result = await deps.runtime.write<{ state: MessagingJobState }>(scope, 'messaging.notification.complete', { ...input, notificationId: receipt.notificationId }, key('complete'), check, signal);
+  if (receipt.notificationId && receipt.retained && !receipt.duplicate && accepted.size && deps.config.onNoticeAccepted && !signal.aborted) {
+    const delivery = AbortSignal.any([signal, AbortSignal.timeout(10000)]);
+    try {
+      await deps.config.onNoticeAccepted({ notificationId: receipt.notificationId, scope, userIds: [...accepted] }, {
+        signal: delivery,
+        isCurrentRecipient(id) {
+          if (!accepted.has(id) || delivery.aborted) return false;
+          try { check(); return allowed(id, deps.directory.relationshipRecipients?.(scope, source)); }
+          catch { return false; }
+        },
+      });
+    } catch { /* This delivery is best effort. The accepted native notice remains canonical. */ }
+  }
   return { jobId, state: result.state };
 }

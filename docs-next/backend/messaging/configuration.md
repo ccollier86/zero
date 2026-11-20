@@ -161,6 +161,46 @@ on first join and each rejoin. A revoked user cannot read while removed, and a
 past read cursor/receipt is not renewed permission. Joining never records human
 attention or advances the read cursor to the latest message.
 
+### Application relationship policy
+
+An installed server that exports `MESSAGING_RELATIONSHIPS_VERSION` supports a
+synchronous `messaging.relationships(context)` policy in single-tenant
+applications. The policy reads current app records through `context.db` and
+current Guardian permissions through `context.allows` and `context.users`.
+The policy returns unordered direct pairs and the groups managed by the app.
+
+```ts
+import type { MessagingRelationshipPolicy } from '@zero/framework/messaging/server';
+
+const relationships: MessagingRelationshipPolicy = ({ db, allows }) => {
+  const assignments = db.query('active_assignments')
+    .filter(row => row.staff_id && allows(String(row.staff_id), { permission: 'housing:read' }));
+  return {
+    direct: assignments.map(row => ({
+      users: [String(row.resident_id), String(row.staff_id)],
+      epoch: String(row.id),
+    })),
+    groups: [],
+  };
+};
+```
+
+Each group supplies a stable lowercase ID, a name and current members with
+opaque relationship epochs. The app changes the member epoch on a new
+admission or assignment. A changed group epoch starts since-join history even
+if the private worker never observed an intermediate removal. A changed
+direct-pair epoch closes access to the previous conversation and admits a fresh
+thread. Keep the epoch stable during an uninterrupted relationship. The native
+directory filters to current pairs, and native conversations, live snapshots,
+typing, files and notifications enforce the same policy. App commits wake
+current live views. Reads also evaluate current policy on demand.
+
+This policy owns the directory and group catalog. Use it with the everyone
+directory and without portal team routing, assistants or configured static
+groups. The snapshot supports at most 10,000 unique pairs and 32 groups.
+Each group obeys the configured participant limit. A relationship-controlled
+conversation is hidden if this policy is retired.
+
 ## Internal Assistants Without Support
 
 ```ts

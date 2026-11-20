@@ -77,8 +77,17 @@ export function listMessagingConversations({ database }: DatabaseReadQueryContex
   where.push(assistants.length ? `(c.kind!='assistant' OR c.assistant_id IN (${assistants.map(() => '?').join(',')}))` : "c.kind!='assistant'");
   values.push(...assistants);
   const groups = Object.entries(actor.groupPolicies ?? {});
-  where.push(groups.length ? `(c.managed_group_id IS NULL OR ${groups.map(() => '(c.managed_group_id=? AND c.group_policy_hash=?)').join(' OR ')})` : 'c.managed_group_id IS NULL');
-  for (const [id, hash] of groups) values.push(id, hash);
+  const groupFilter = actor.relationshipEpochs ? '(c.managed_group_id=? AND c.group_policy_hash=? AND m.relationship_epoch=?)'
+    : '(c.managed_group_id=? AND c.group_policy_hash=?)';
+  where.push(groups.length ? `(c.managed_group_id IS NULL OR ${groups.map(() => groupFilter).join(' OR ')})` : 'c.managed_group_id IS NULL');
+  for (const [id, hash] of groups) {
+    values.push(id, hash);
+    if (actor.relationshipEpochs) values.push(actor.relationshipEpochs[id] ?? '');
+  }
+  if (actor.directEpochs !== undefined) {
+    where.push("(c.managed_group_id IS NOT NULL OR (c.kind='direct' AND EXISTS(SELECT 1 FROM json_each(c.members_json) member JOIN json_each(?) eligible ON eligible.key=member.value WHERE member.value<>? AND eligible.value=c.relationship_epoch)))");
+    values.push(JSON.stringify(actor.directEpochs), actor.id);
+  } else where.push('c.relationship_epoch IS NULL');
   if (q.after !== undefined) {
     const cursor = messagingText(q.after, 512);
     let parsed: unknown; try { parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString()); } catch { messagingFail('MESSAGING_INPUT_INVALID', 422); }

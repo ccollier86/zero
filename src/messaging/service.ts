@@ -21,26 +21,28 @@ import { directMessagingDisplay } from './conversation-display';
 import { MessagingVisitors } from './visitor-service';
 import { selectMessagingConversationAssistant, type MessagingAssistantRoute } from './assistant-selection';
 import { cloneDatabaseSerializableValue } from '../databases/database-operations';
+import type { MessagingRelationshipNotice, MessagingRelationshipReader } from './relationship-policy';
 
 export interface MessagingAuthority { readonly access: RequestAuthorizationAccess; readonly scope: ServiceDataScope; assertCurrentAuthoritySync(): void }
 export interface MessagingDirectory {
   assertScope(scope: ServiceDataScope): void;
   /** Must be synchronous and return no authority supplied by the client. */
   assertRecipient(scope: ServiceDataScope, userId: string): void;
-  list(scope: ServiceDataScope, actorId: string, query: { after?: string; limit?: number; search?: string }, staffOnly?: boolean): MessagingPage<MessagingDirectoryEntry>;
+  list(scope: ServiceDataScope, actorId: string, query: { after?: string; limit?: number; search?: string }, staffOnly?: boolean, directPeers?: readonly string[]): MessagingPage<MessagingDirectoryEntry>;
   resolve?(scope: ServiceDataScope, userIds: readonly string[]): readonly MessagingDirectoryEntry[];
   /** Synchronous current SYSTEM eligibility, evaluated only when a new native notice is first committed. */
   notificationRecipient(scope: ServiceDataScope, userId: string, staff: boolean, conversationKind?: string | null): boolean;
   /** Current account, tenant and named-bot policy; absent adapters never admit internal assistant work. */
   assistantRecipient?(scope: ServiceDataScope, userId: string, assistantId: string): boolean;
   groupRecipient?(scope: ServiceDataScope, userId: string, groupId: string): boolean;
+  relationshipRecipients?(scope: ServiceDataScope, notice: MessagingRelationshipNotice): ReadonlySet<string>;
   groupCandidates?(scope: ServiceDataScope, after: string, limit: number): { readonly ids: readonly string[]; readonly hasMore: boolean };
   supportRecipient?(scope: ServiceDataScope, userId: string, entryId: string): boolean;
   /** Current staff admission to an authenticated inbox, never a same-name public entry. */
   inboxStaffRecipient?(scope: ServiceDataScope, userId: string, inboxId: string): boolean;
   inboxRecipient?(scope: ServiceDataScope, userId: string, inboxId: string): boolean;
 }
-export interface MessagingDependencies { readonly runtime: MessagingRuntime; readonly config: ResolvedMessagingConfig; readonly directory: MessagingDirectory; readonly attachments: MessagingAttachmentService; readonly logging?: LoggingRuntime; readonly jobs?: { wake(scope: ServiceDataScope): void }; readonly groups?: { ensure(scope: ServiceDataScope): Promise<void> }; readonly getEphemeral?: () => import('../sync/ephemeral-channel').EphemeralChannel | null }
+export interface MessagingDependencies { readonly runtime: MessagingRuntime; readonly config: ResolvedMessagingConfig; readonly directory: MessagingDirectory; readonly attachments: MessagingAttachmentService; readonly logging?: LoggingRuntime; readonly jobs?: { wake(scope: ServiceDataScope): void }; readonly groups?: { ensure(scope: ServiceDataScope): Promise<void> }; readonly getEphemeral?: () => import('../sync/ephemeral-channel').EphemeralChannel | null; readonly relationships?: MessagingRelationshipReader }
 export const ZERO_MESSAGING = createZeroRuntimeServiceKey<MessagingService>('Managed messaging service');
 /** Request-local closures retain no ambient mutable user, selected organization or native upload grants. */
 export class MessagingService {
@@ -49,7 +51,7 @@ export class MessagingService {
   get runtime(): MessagingRuntime { return this.deps.runtime; }
   /** @internal Reserved Sync typing uses current canonical membership, never a delayed RoomService shadow. */
   async typingMember(authority: MessagingAuthority, id: string, staffOnly: boolean, write: boolean): Promise<boolean> {
-    const resolve = createMessagingActorResolver(authority, this.deps.config), captured = resolve(write);
+    const resolve = createMessagingActorResolver(authority, this.deps.config, this.deps.relationships), captured = resolve(write);
     const check = () => { if (!sameMessagingAdmission(resolve(write), captured)) throw new AuthError('Messaging authority changed.', 'AUTH_STATE_CHANGED', 409); };
     try {
       const result = await this.runtime.read<{ active: boolean; staff: boolean }>(authority.scope, 'messaging.typing', { actor: captured, id: messagingId(id) }, check);
@@ -65,14 +67,17 @@ export class MessagingService {
   }
   private facade(authority: MessagingAuthority, recordReads: boolean): MessagingServerApi {
     const identity = authority.access.requireUser(), scope = authority.scope, scopeId = serviceDataScopeKey(scope);
-    const actor = createMessagingActorResolver(authority, this.deps.config);
+    const actor = createMessagingActorResolver(authority, this.deps.config, this.deps.relationships);
     const final = (captured: MessagingActor, write = false, recipients: readonly string[] = []) => () => {
       const current = actor(write);
       if (!sameMessagingAdmission(current, captured)) throw new AuthError('Messaging authority changed.', 'AUTH_STATE_CHANGED', 409);
       for (const id of recipients) this.deps.directory.assertRecipient(scope, id);
     };
     const peer = (recipients: readonly string[] = [], failure: 'MESSAGING_NOT_FOUND' | 'MESSAGING_PEER_RESTRICTED' = 'MESSAGING_NOT_FOUND') => {
-      if (actor().portal) messagingFail('MESSAGING_FORBIDDEN', 403);
+      const current = actor();
+      if (current.portal) messagingFail('MESSAGING_FORBIDDEN', 403);
+      const direct = current.directEpochs;
+      if (direct && recipients.some(id => !Object.hasOwn(direct, id))) messagingFail(failure, failure === 'MESSAGING_PEER_RESTRICTED' ? 403 : 404);
       if (this.deps.config.portal) for (const id of recipients) if (!this.deps.directory.notificationRecipient(scope, id, true)) messagingFail(failure, failure === 'MESSAGING_PEER_RESTRICTED' ? 403 : 404);
     };
     const mutation = (input: MessagingMutationOptions) => {
@@ -147,6 +152,7 @@ export class MessagingService {
         assistantId }, options), () => conversation(id, options.signal));
     };
     const contact = <T>(action: string, userId: string, options: MessagingMutationOptions, expectedRevision?: number): Promise<T> => {
+      if (this.deps.relationships) messagingFail('MESSAGING_FORBIDDEN', 403);
       peer([messagingId(userId)]);
       return write<T>('messaging.contact', { action, userId: messagingId(userId), ...(expectedRevision === undefined ? {} : { expectedRevision: messagingInteger(expectedRevision) }) }, options, action === 'request' || action === 'block' ? [userId] : [], () => peer([userId]));
     };
@@ -187,10 +193,12 @@ export class MessagingService {
         return { enabled: true, directory: this.deps.config.directory, canSupport: captured.staff, maxMessageLength: this.deps.config.maxMessageLength, maxParticipants: this.deps.config.maxParticipants, maxUploadBytes: this.deps.config.maxUploadBytes,
           assistant: !captured.portal && Object.keys(captured.assistantPolicies ?? {}).length > 0, notifications: this.deps.config.notifications, support: !!this.deps.config.support,
           supportAssistant: !!this.deps.config.support && !!this.deps.config.assistant && !!captured.assistantPolicies?.[this.deps.config.assistant.id],
-          portal: captured.portal === true, supportInboxes: Object.keys(this.deps.config.supportInboxes ?? {}).length > 0 };
+          portal: captured.portal === true, supportInboxes: Object.keys(this.deps.config.supportInboxes ?? {}).length > 0,
+          ...(captured.directEpochs !== undefined ? { directOnly: true } : {}) };
       },
       directory: (query = {}, options) => audit('directory', null, async () => { const captured = actor(), check = final(captured); check(); options?.signal?.throwIfAborted();
-        peer(); const page = this.deps.directory.list(scope, captured.id, query, this.deps.config.portal === true); check(); return page; }),
+        peer(); const page = this.deps.directory.list(scope, captured.id, query, this.deps.config.portal === true,
+          captured.directEpochs ? Object.keys(captured.directEpochs) : undefined); check(); return page; }),
       receipt: (requestId, options) => read('messaging.receipt', { requestId: messagingId(requestId) }, options?.signal),
       conversations: {
         list: (query = {}, options) => audit('conversations', null, async () => {
@@ -210,9 +218,11 @@ export class MessagingService {
         }),
         create: (input, options) => {
           const r = messagingRecord(input, ['kind', 'title', 'userIds']), opts = mutation(options), users = [...new Set(messagingArray(r.userIds, this.deps.config.maxParticipants - 1).map(messagingId))];
+          const kind = messagingChoice(r.kind ?? (users.length === 1 ? 'direct' : 'group'), ['direct', 'group']);
+          if (this.deps.relationships && kind !== 'direct') messagingFail('MESSAGING_FORBIDDEN', 403);
           peer(users);
           const id = 'conversation_' + messagingHash([scopeId, identity.userId, opts.requestId]).slice(0, 40);
-          return afterCommit(write('messaging.conversation.create', { id, kind: messagingChoice(r.kind ?? (users.length === 1 ? 'direct' : 'group'), ['direct', 'group']), title: messagingText(r.title ?? '', 200, true),
+          return afterCommit(write('messaging.conversation.create', { id, kind, title: messagingText(r.title ?? '', 200, true),
             userIds: users, contactsOnly: this.deps.config.directory === 'contacts', maxParticipants: this.deps.config.maxParticipants }, opts, users, () => peer(users)), () => conversation(id, opts.signal));
         },
         rename: (id, revision, title, opts) => changeConversation(id, revision, 'rename', messagingText(title, 200, true), opts),
@@ -250,7 +260,10 @@ export class MessagingService {
         react: (conversationId, id, emoji, selected, opts) => afterCommit(write('messaging.message.react', { conversationId: messagingId(conversationId), id: messagingId(id), emoji, selected }, opts), () => message(conversationId, id, opts.signal)),
       },
       contacts: { list: (query = {}, opts) => audit('contacts', null, async () => {
-        const captured = actor(), check = final(captured), page = await read<MessagingPage<MessagingContact>>('messaging.contacts', { query }, opts?.signal);
+        const captured = actor(), check = final(captured);
+        opts?.signal?.throwIfAborted(); check();
+        if (captured.directEpochs) return { items: [], hasMore: false, nextCursor: null };
+        const page = await read<MessagingPage<MessagingContact>>('messaging.contacts', { query }, opts?.signal);
         check(); const visible = this.deps.config.portal ? page.items.filter(row => this.deps.directory.notificationRecipient(scope, row.userId, true)) : page.items;
         const names = new Map(this.deps.directory.resolve?.(scope, visible.map(row => row.userId)).map(row => [row.id, row]) ?? []);
         // Keep the source cursor even when this bounded page masks every old

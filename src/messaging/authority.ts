@@ -6,7 +6,8 @@ import type { MessagingAuthority } from './service';
 import type { MessagingActor } from './realm-model';
 import { messagingFail, messagingHash, messagingId } from './validation';
 import { AuthError } from '../auth/types';
-export function createMessagingActorResolver(authority: MessagingAuthority, config: ResolvedMessagingConfig): (write?: boolean) => MessagingActor {
+import { relationshipGroupHash, type MessagingRelationshipReader } from './relationship-policy';
+export function createMessagingActorResolver(authority: MessagingAuthority, config: ResolvedMessagingConfig, relationships?: MessagingRelationshipReader): (write?: boolean) => MessagingActor {
   const original = authority.access.requireUser(), scopeId = serviceDataScopeKey(authority.scope);
   return (write = false) => {
     invokeSynchronousAuthCallback(authority.assertCurrentAuthoritySync, { component: 'messaging', invariant: 'live-authority', message: 'Messaging authority must be synchronous.' });
@@ -42,13 +43,34 @@ export function createMessagingActorResolver(authority: MessagingAuthority, conf
         catch (error) { if (!(error instanceof AuthError) || ![401, 403, 404].includes(error.status)) throw error; }
       }
     }
-    return { scopeId, id: messagingId(current.userId), kind: 'user', staff, portal: config.portal === true && !staff, assistantPolicies, groupPolicies, supportPolicies, inboxPolicies, inboxStaffPolicies };
+    const id = messagingId(current.userId);
+    if (config.relationships && !relationships) messagingFail('MESSAGING_NOT_READY', 503);
+    const graph = relationships?.(authority.scope);
+    const relationshipEpochs: Record<string, string> = Object.create(null);
+    const directEpochs: Record<string, string> = Object.create(null);
+    if (graph) {
+      for (const { users: [first, second], epoch } of graph.direct) {
+        if (first === id) directEpochs[second] = epoch;
+        else if (second === id) directEpochs[first] = epoch;
+      }
+      for (const group of graph.groups) {
+        const member = group.members.find(member => member.id === id);
+        if (member) {
+          groupPolicies[group.id] = relationshipGroupHash(group.id);
+          relationshipEpochs[group.id] = member.epoch;
+        }
+      }
+    }
+    return { scopeId, id, kind: 'user', staff, portal: config.portal === true && !staff, assistantPolicies, groupPolicies, supportPolicies, inboxPolicies, inboxStaffPolicies,
+      ...(graph ? { directEpochs, relationshipEpochs } : {}) };
   };
 }
 /** Every release/commit and typing recheck uses the same current server-owned admission projection. */
 export function sameMessagingAdmission(first: MessagingActor, second: MessagingActor): boolean {
   return first.id === second.id && first.scopeId === second.scopeId && first.kind === second.kind && first.staff === second.staff
     && Boolean(first.portal) === Boolean(second.portal)
-    && ['assistantPolicies', 'groupPolicies', 'supportPolicies', 'inboxPolicies', 'inboxStaffPolicies'].every(key =>
-      messagingHash(first[key as 'assistantPolicies'] ?? {}) === messagingHash(second[key as 'assistantPolicies'] ?? {}));
+    && (['assistantPolicies', 'groupPolicies', 'supportPolicies', 'inboxPolicies', 'inboxStaffPolicies'] as const).every(key =>
+      messagingHash(first[key] ?? {}) === messagingHash(second[key] ?? {}))
+    && messagingHash(first.directEpochs ?? null) === messagingHash(second.directEpochs ?? null)
+    && messagingHash(first.relationshipEpochs ?? null) === messagingHash(second.relationshipEpochs ?? null);
 }

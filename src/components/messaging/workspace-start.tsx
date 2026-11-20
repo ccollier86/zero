@@ -54,7 +54,11 @@ function WorkspacePeerStart({ controller, state, shape }: { controller: Messagin
       <ScrollArea className="zero-messaging-start-scroll" style={{ height: Math.min(240, Math.max(1, people.length) * 44) }}><div ref={setContainer} className="zero-messaging-start-choices">
         <MenuActiveHighlight container={container} activeSelector="[aria-pressed=true]" hoverSelector="[data-start-person]" preserveSelectionFill />
         {people.map(person => <div key={person.id} className="zero-messaging-start-person"><button data-start-person type="button" disabled={locked} aria-pressed={selected.includes(person.id)}
-          onClick={() => setSelected(value => value.includes(person.id) ? value.filter(id => id !== person.id) : value.length < (state.capabilities?.maxParticipants ?? 100) - 1 ? [...value, person.id] : value)}>
+          onClick={() => setSelected(value => {
+            if (value.includes(person.id)) return value.filter(id => id !== person.id);
+            if (state.capabilities?.directOnly) return [person.id];
+            return value.length < (state.capabilities?.maxParticipants ?? 100) - 1 ? [...value, person.id] : value;
+          })}>
           <MessagingAvatar participant={{ id: person.id, label: person.name, kind: 'user', avatarShape: shape }} /><span>{person.name}</span></button>
           {state.capabilities?.directory === 'contacts' && !accepted(person.id) && <Button size="xs" variant="ghost" disabled={locked || contacts.some(row => row.userId === person.id && row.state === 'pending')}
             onClick={() => { void controller.requestContact(person.id); }}>{contacts.some(row => row.userId === person.id && row.state === 'pending') ? 'Pending' : 'Request contact'}</Button>}
