@@ -34,6 +34,14 @@ This section is developer-agent guidance; application AI agents belong to
 [Zero AI](../backend/ai/agents.md) and durable execution belongs to
 [Torrent](../backend/torrent/index.md).
 
+For Calendar work, first check [availability in normal projects](../backend/calendar/configuration.md#availability-in-normal-projects)
+and the installed package's version, commit and archive provenance. Released
+experimental UI and shared Jobs/workers do not imply a released Calendar backend;
+neither normal project creation nor update selects its feature branch. Use the
+[completion ledger](../_work/calendar-integration-plan.md#finish-line-execution-ledger)
+to distinguish implemented one-off source contracts from remaining recurrence,
+public booking, reminders, management/clinical UI and release work.
+
 This is the primary coding-agent guidance entrance. It does not install AGENTS.md, Codex/
 Claude hooks, skills or an MCP server into applications. Preserve the user's
 actual repository instructions and app-owned work.

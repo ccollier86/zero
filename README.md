@@ -33,6 +33,15 @@ Zero's durable, versioned workflow and orchestration system is called
 `Workflow*` TypeScript contracts, `workflow_*` tables, `WORKFLOW_*` errors,
 and `workflows.*` observability codes remain unchanged.
 
+For scheduled background work, use released [Scheduler](./docs-next/backend/scheduler/index.md),
+optional durable [Jobs](./docs-next/backend/scheduler/durable-jobs.md) and
+[worker pools](./docs-next/backend/workers/index.md), with Torrent retaining
+workflow execution/recovery. These are distinct from the appointment Calendar
+system: its experimental UI is released, but its backend/full-product
+integration is still on a feature branch. Check
+[Calendar availability and adoption](./docs-next/backend/calendar/configuration.md#availability-in-normal-projects)
+before adding it to a new app; `zero-new` uses qualified main, not that branch.
+
 **ReactiveDB Fabric** is Zero's supported multi-database runtime. It extends
 the pinned shared application database with bounded actor-owned application
 databases while Zero/Guardian/Torrent authority stays in the always-separate

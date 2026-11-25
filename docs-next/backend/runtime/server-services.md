@@ -55,7 +55,7 @@ not an organization data capability.
 | `storage` | scoped drive/object/permission/upload facade; null when unavailable or no data scope |
 | `notifications`, `rooms` | current-actor/scope facades; null when unavailable or no scope |
 | `workflows` | scoped run operations; privileged registration/lifecycle methods are not here |
-| `workers` | feature-preview registered tasks with live Guardian fences; null when disabled/unadmitted; see [workers](../workers/index.md) |
+| `workers` | registered tasks with live Guardian fences, released in 2.11.0; null when disabled/unadmitted; see [workers](../workers/index.md) |
 | `pdf` | scoped renderer/storage bridge when configured |
 | `payments` | optional [Stripe foundation](../../plugins/payments/api.md): current billing subject and live authority; no merchant SDK or arbitrary customer selector |
 | `auth` | compiler/evaluator access; multi-tenant requests cannot use raw user/role/token stores |
@@ -114,7 +114,9 @@ for admitted ordinary browser-session requests. It is the same typed facade as
 Native/API-key, anonymous/uncommitted scopes and sealed background/workflow
 projections get null, not a fabricated session. Use resource grants and current
 Guardian policy; `unsafe` is not a calendar permission or reminder-service bridge.
-These members are not in the selected 2.11.0 archive yet.
+Calendar backend members are not in the released foundation/UI archive. Check
+[availability in normal projects](../calendar/configuration.md#availability-in-normal-projects)
+and the exact installed package before using this unreleased facade.
 
 Multi-tenant requests block unscoped `db`, `syncDB`, `databases`,
 `sql`, `sqlite`, `system`, `tokens`, `kv`, `counter`, `limiter`,

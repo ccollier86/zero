@@ -6,6 +6,13 @@ The organized `docs-next` tree is the primary feature reference; follow its
 indexes/backlinks and check each page's version/evidence against the installed
 package. Do not interpret a roadmap item as an implemented API.
 
+For scheduling tasks, begin with [Calendar availability](docs-next/backend/calendar/configuration.md#availability-in-normal-projects).
+Released [Scheduler](docs-next/backend/scheduler/index.md), durable
+[Jobs](docs-next/backend/scheduler/durable-jobs.md) and [Workers](docs-next/backend/workers/index.md)
+are not the unfinished Calendar backend. Normal creation/update consumes qualified
+main. Do not treat views, previews or private integration tests as released
+appointment recurrence, reminders or public self-booking.
+
 This long bundle remains a compatibility orientation. Some repeated sections
 are historical: use the owning feature guide and actual public exports when
 they differ from these summaries. For 2.4.1's array authorization, read

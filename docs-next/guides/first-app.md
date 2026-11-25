@@ -29,16 +29,25 @@ creation or app startup against a real project.
 
 ## 1. Pick A Fresh Target
 
+For the current source/local release channel, install the local tools once from
+the trusted Zero checkout, as described in
+[local installation](../cli/tooling/local-install.md). Then create from the
+selected committed-main archive:
+
 ```sh
-bunx --bun --package @zero/framework create-zero ./example-app --name example-app
+zero-release --status
+zero-new ./example-app --name example-app
 cd example-app
-bun install
 bun run typecheck
 ```
 
-Creation does not install by default. Review the generated manifest/scripts
-before installation executes dependency code. The [creation guide](../cli/tooling/create.md)
-explains templates, force safety and committed local alternatives.
+The saved `zero-new` wrapper installs dependencies and records exact package
+provenance in `zero-release.json`. It does not use an active feature checkout.
+Review the trusted starter/package scripts before allowing dependency execution.
+The lower-level `create-zero` path has a separate explicit `--install` option;
+do not conflate its behavior with the saved wrapper. The
+[creation guide](../cli/tooling/create.md) explains templates and force safety.
+Do not assume public npm availability from source/local qualification.
 
 ## 2. Inspect The Starter, Not Assumptions
 
@@ -91,4 +100,7 @@ distinction when returning to an existing application.
 
 - [Mode selection](./choose-modes.md) sets the independent architecture axes.
 - [Configuration](../backend/configuration/index.md) owns exact accepted settings.
+- [Scheduling and Calendar availability](../backend/calendar/configuration.md#availability-in-normal-projects)
+  separates released cron/Jobs/workers and UI from the unfinished appointment
+  backend; creating a new app does not import a feature branch or demo state.
 - [Agent onboarding](../agents/index.md) accelerates use-first implementation.

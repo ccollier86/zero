@@ -27,19 +27,20 @@ acceptance or permission to begin implementation without the user's plan review.
 The 2026-11-16 review expanded this handoff into the
 [end-to-end managed integration plan](./calendar-integration-plan.md). Use that
 plan for contracts, dependency order and acceptance; this document remains the
-preserved visual/requirement handoff. The plan explicitly identifies the still-new
-source/service Jobs bridge, synchronous eligibility boundary and retained-capacity
-design needed for production reminders. Its API/configuration names are proposals.
+preserved visual/requirement handoff. The plan records the source/service Jobs
+bridge, synchronous eligibility boundary and retained-capacity design needed for
+production reminders. Implemented contracts live in the linked feature guides;
+later-stage API/configuration names remain proposals until implemented and qualified.
 
 The user subsequently approved implementation. The active branch now connects
 the one-off core, managed lifecycle, scoped APIs, source audit and native workspace.
 Use the [managed core guide](../backend/calendar/index.md) for implemented source
-contracts and the [current checkpoint](./calendar-integration-plan.md#implementation-checkpoint)
+contracts and the [finish-line ledger](./calendar-integration-plan.md#finish-line-execution-ledger)
 for remaining work. This is not yet selected by normal update; the historical
 UI requirements below remain preserved, not all implemented by that core.
 
-The latest source stage adds optional generic lifecycle/reason policy and native
-managed transition review, with old cancel/reschedule bypasses closed. See
+The initial lifecycle source stage adds optional generic lifecycle/reason policy
+and native managed transition review, with old cancel/reschedule bypasses closed. See
 [Lifecycle and reasons](../backend/calendar/lifecycle.md) and the
 [qualification record](../backend/calendar/qualification.md). Clinical progress,
 lobby/attention, recurrence and Jobs/Torrent effect dispatch remain
@@ -68,10 +69,10 @@ or hosted-demo change accompanies that backend increment.
 The subsequent larger source stage implements the shared
 [native source-owned Jobs foundation](../backend/scheduler/source-owned-jobs.md):
 real source ownership, permanent policy epochs and receipts, source-only admission,
-shared runner/Torrent recovery and existing-only storage reconciliation. It does
-not yet wire calendar effect references to runnable work. Resume with bounded
-calendar dispatch/acknowledgment and authoritative effect admission, plus lifecycle
-composition and explicit durable retirement before disable. Automatic reminders,
+shared runner/Torrent recovery and existing-only storage reconciliation. It did
+not yet wire calendar effect references to runnable work at that checkpoint. The
+following stages added bounded dispatch/acknowledgment, authoritative observation
+admission and lifecycle composition. Automatic reminders,
 calendar recurrence, provider sends and archive selection remain off.
 
 The next private source stage now implements that bounded dispatch/acknowledgment
@@ -99,7 +100,8 @@ wake queries and indexed SYSTEM owner pages drive one absolute Scheduler wake,
 not a per-appointment timer or idle owner poll. The coordinator recovers pending
 original controls, handles live retirement, keeps historical execution available
 before startup/after intake drainage, and refuses stale config resurrection.
-Its current 64-owner envelope/shared retained Jobs limits remain explicit.
+That checkpoint's 64-owner envelope/shared retained Jobs limits are historical;
+the finish-line ledger below records subsequent bounded residency/capacity work.
 
 The following private managed factory now composes the core/logging source and
 coordinator with the exact dormant Jobs and unpublished Torrent owners. It adds
@@ -110,11 +112,22 @@ from immediately blocking cancellation/retirement; a private capacity projection
 reports retained accounting without history scans. No public automation selection
 is enabled and this finite headroom does not solve indefinite retained history.
 
-Resume with public managed configuration and operator
-retire/reactivate-before-disable controls, larger catalog hydration and sustainable
-retained-capacity management. See stage 14 of the [integration plan](./calendar-integration-plan.md#14-delivery-stages-and-acceptance-gates).
-Physical/package qualification still requires storage recovery. No main/updater,
-application, live state or hosted-demo change accompanies these source phases.
+Later source checkpoints add native cold-owner admission, finite retained/working
+capacity and bounded resident hydration, source-atomic operator requests, atomic
+rich editing, untyped all-day appointments, effective location policy and
+independently granted appointment-overlap review. See the
+[managed core](../backend/calendar/index.md), [connected workspace](../frontend/calendar/connected-workspace.md)
+and [qualification record](../backend/calendar/qualification.md) for actual source
+contracts and evidence; these are not a full product or release certificate.
+
+Continue from the authoritative [finish-line execution ledger](./calendar-integration-plan.md#finish-line-execution-ledger),
+not these historical stage summaries. Persisted series/coverage, authoritative
+public booking/invitations, real reminder adapters, public managed automation and
+complete management/clinical UI remain implementation work. Physical/browser/
+package qualification still requires the verified storage environment. Check
+[availability in normal projects](../backend/calendar/configuration.md#availability-in-normal-projects)
+before application adoption. No main/updater, application, live state or hosted-demo
+change is implied by these source phases.
 
 ## Checkpoints and places to resume
 
@@ -254,12 +267,14 @@ approved the backend plan and implementation; that review gate is no longer a
 request to pause. The managed core is in progress, with the current source and
 qualification boundary recorded in the [backend guide](../backend/calendar/index.md)
 and [review checkpoint](../backend/calendar/qualification.md). It is not a released
-calendar backend or completion of the later booking/reminder stages. Post-release worker,
-workflow-dispatch, jobs query-plan and direct-dependency fixes are implemented on
-`feature/core-foundation-polish`. Their source review, fresh frozen installs,
-TypeScript check and 19 selected canonical test files passed; they are not in the
-selected 2.11.0 archive. A new archive's release qualification/selection remains
-separate in the
+calendar backend or completion of the later booking/reminder stages. The historical
+post-release review recorded worker, workflow-dispatch, jobs query-plan and
+direct-dependency fixes on `feature/core-foundation-polish`. Their source review,
+fresh frozen installs, TypeScript check and 19 selected canonical test files
+passed. Those fixes are not in the qualified 2.11.0 archive. That record does
+not establish the contents of a later
+installed package. Release qualification/selection and exact provenance are
+separate; see the
 [review record](./durable-jobs-and-workers-plan.md#post-release-review-boundary).
 Keep the scheduling docs' released versus planned matrix accurate. A rendering
 calendar UI is not an authoritative calendar service or an application's

@@ -17,8 +17,9 @@ applies_to: ["proposal reviewed against 2.11.0 and b237bf4 foundation follow-up;
 [Working index](./index.md) · [Preserved UI and return handoff](./calendar-return-handoff.md) ·
 [Current frontend contract](../frontend/calendar/index.md)
 
-Originally reviewed 2026-11-16; completion ledger refreshed 2026-11-18 against
-`8bd8f25` and the working feature branch. The original review preceded backend
+Originally reviewed 2026-11-16; the November 18 ledger was reviewed again on
+November 25 against Calendar `25e9f06281ef850a2ee6aff995f1f04d6c4b7ab2`
+and released main `86c6141f125d73a3d5272310beb81e2139d648f9`. The original review preceded backend
 implementation. At that planning baseline, the selected 2.11.0 package provided
 experimental frontend components only. The branch now implements configuration,
 private persistence, connected one-off booking and the foundations described
@@ -32,7 +33,41 @@ Implementation has begun on `feature/calendar-backend-foundation`. The
 connected one-off implementation. It is not yet released or updater-selected;
 statements above about the selected 2.11.0 archive remain unchanged. Core API
 names in that guide are implemented on the branch; later-stage names below are
-still proposals.
+still proposals. The selected main package is now 2.11.1; that private-avatar
+patch did not include Calendar. Historical 2.11.0 source/release evidence below
+does not mean normal project creation now installs the Calendar backend.
+
+## November 25 completion audit and resumed implementation
+
+The user requires the **entire agreed system**, not a reduced one-off release.
+Independent source/documentation reviews confirmed real missing implementation
+in F5–F8, with F3/F9/F10 integration and release gates also open. These are not
+all test-only tasks or working features hidden behind an option. Any earlier
+conversation claim that full Calendar integration was finished is contradicted
+by the source and must not be used as release approval.
+
+Concrete admission evidence at this checkpoint:
+
+- `calendar/config.ts` admits recurrence, reminders and self-booking as false
+  only; attempted enablement returns `CALENDAR_NOT_READY`.
+- Normal managed startup mounts the one-off core. The private integrated owner
+  is not selected through public feature configuration and production composition.
+- The fixed integrated job performs observation only; it does not deliver a
+  reminder, produce booking offers or persist an appointment series.
+- The recurrence compiler/local booking preview is not durable occurrence
+  coverage or authoritative public booking.
+- Memory/source results remain distinct from file/actor/browser/Linux and exact
+  updater acceptance. A new app gets main, not this branch. See
+  [normal-project availability](../backend/calendar/configuration.md#availability-in-normal-projects).
+
+Implementation continues from F5 source/grants/immutable versions and bounded
+recurrence progress, through canonical publication/coverage, then real effect
+adapters/public activation, booking/invitation proof and connected management/
+clinical controls. The rows below remain authoritative. Do not enable a partial
+capability or merge it as complete to unblock a dependency update. Before
+publication, integrate current main's avatar/relationship repair without reverting
+it, qualify the final combined artifact and select it normally. No application
+migration or deployment is authorized by this work.
 
 ## Finish-line execution ledger
 

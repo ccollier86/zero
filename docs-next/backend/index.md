@@ -70,9 +70,10 @@ than importing implementation files or reconstructing authentication in routes.
 
 - [Calendar](./calendar/index.md): unreleased managed one-off core, private Fabric,
   Guardian grants, atomic bookings and connected UI; not yet selected for update.
-
-- [Workers](./workers/index.md): feature-preview shared pools, registered Bun
-  task processes and current-Guardian execution; not a durable queue.
+- [Workers](./workers/index.md): shared pools, registered Bun task processes and
+  current-Guardian execution released in 2.11.0; not a durable queue.
+- [Durable Jobs](./scheduler/durable-jobs.md): opt-in retained schedules, scoped
+  admission and pinned Torrent handoffs released in 2.11.0; not Calendar reminders.
 - [Scheduler](./scheduler/index.md): process-local cron and immediate jobs,
   overlap/cancellation ownership, safe errors and managed lifecycle.
 - [Torrent](./torrent/index.md): durable workflow definitions, activity

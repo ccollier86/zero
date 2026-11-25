@@ -45,6 +45,25 @@ them before enabling them.
 
 ## Changes That Need An App Plan
 
+### Scheduling foundation versus full Calendar
+
+The shared worker/Scheduler/durable Jobs foundation shipped in 2.11.0 and is
+retained in 2.11.1. Use the [Scheduler](../backend/scheduler/index.md),
+[durable Jobs](../backend/scheduler/durable-jobs.md) and
+[worker](../backend/workers/index.md) contracts for their separate deployment and
+configuration prerequisites. An update does not enable an optional service or
+change the app's tenancy, data layout, themes or routes.
+
+The full appointment Calendar backend is not included in those archives.
+Read [normal-project availability](../backend/calendar/configuration.md#availability-in-normal-projects)
+before enabling it. The feature branch has one-off persistence and connected
+controls, but full series/coverage, booking, delivery, management and release
+acceptance remain required. A local UI demo or source/MEMORY result does not
+authorize installing that branch into a real application. When a complete
+qualified release is selected, follow the same guide's
+[existing-project checklist](../backend/calendar/configuration.md#existing-project-checklist),
+with the exact archive identity and separately approved application rollout.
+
 ### Denied server-table reads in 2.10.1
 
 Use the qualified 2.10.1 archive for the native DataTable/DataTableView server

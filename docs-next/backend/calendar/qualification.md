@@ -18,6 +18,54 @@ This is feature-branch evidence, not a release certificate. No calendar backend
 archive has been selected by normal `zero-update`, and no application deployment
 or data migration is authorized by these checks.
 
+## November 25: full completion audit and private series implementation
+
+The release review compared Calendar `25e9f06281ef850a2ee6aff995f1f04d6c4b7ab2`
+with main `86c6141f125d73a3d5272310beb81e2139d648f9` (qualified 2.11.1). Main
+contains Scheduler, durable Jobs, workers and experimental local Calendar UI,
+but no Calendar backend/configuration/server export. Independent code review
+confirmed the remaining work in the [finish-line ledger](../../_work/calendar-integration-plan.md#finish-line-execution-ledger).
+It is not only an unrun-test backlog: persistent series/coverage, booking/proofs,
+actual reminders, public integration activation and management/clinical controls
+have missing implementation. They must not be described as completed or optional
+exclusions from the agreed full-product release.
+
+Implementation resumes at the private F5 source family:
+
+- `human-request-key.ts` defines the fixed eight-family human receipt namespace,
+  preserving existing ordinary/operator IDs and checks. Native series receipts
+  remain in their distinct owner/source/generation namespace. Ordinary/operator
+  writers use bounded primary-key probes, not a retained-history union. Family
+  conflict does not grant replay access or bypass current target authorization.
+- `recurrence-cursor.ts` adds immutable runtime-owned progress and explicit
+  trusted-checkpoint restoration. COUNT, skipped dates and DST gaps advance in
+  bounded batches instead of restarting indefinitely at the old 4,096-candidate
+  ceiling. Progress is not a native grant or UTC occupancy certificate. Its
+  expected digest must come from trusted retained source evidence, not caller
+  JSON. Engine/source/generation replacement fails closed.
+- `realm-series-migration.ts` defines the private candidate `020` source/grant/
+  acceptance/publication storage family. It is **not registered in the current
+  Calendar realm**, mounted, exposed through service commands or enabled by
+  configuration. Existing `001`–`019` definitions/checksums and current owner
+  identity remain unchanged. Schema acceptance/publication facts are not proof
+  that appointment children or occupancy were actually materialized.
+
+The next F5 families must supply canonical source writers/native grants, versioned
+children and staged occupancy publication, exception/split/edit semantics, sparse
+coverage and Jobs continuation, then facade/UI activation together. No partial
+table, cursor, local preview or passing source check completes that work.
+
+Documentation routing now distinguishes released scheduling services from the
+Calendar backend in README, agent entrances, first-app/upgrade guides and system
+indexes. The facade summaries match existing all-day, atomic participant edits
+and independently authorized overlap review. See
+[normal-project availability](./configuration.md#availability-in-normal-projects).
+
+This is source/MEMORY diagnostic work using the existing read-only dependency
+mapping, not independent frozen-package qualification. No application, physical
+calendar state, hosted preview, normal updater selection, global storage guard or
+maintenance policy is changed. Physical/browser/Linux/update gates remain open.
+
 ## November 18 finish-line review: cold admission and retained evidence
 
 ### November 19 canonical019: independently reviewed appointment overlaps

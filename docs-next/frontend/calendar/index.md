@@ -28,9 +28,11 @@ approved the calendar backend plan and implementation is now in progress on the
 feature branch; it has not been released with the experimental frontend archive.
 The [return handoff](../../_work/calendar-return-handoff.md) preserves the reviewed
 UI and explicit backend prerequisites.
-The [managed integration plan](../../_work/calendar-integration-plan.md) now
-expands those requirements into proposed configuration, domain/service, async UI
-and qualification contracts. It does not add backend APIs to the released UI.
+The [managed integration plan](../../_work/calendar-integration-plan.md#finish-line-execution-ledger)
+separates implemented branch contracts from remaining configuration, domain/service,
+UI and qualification work. It does not add backend APIs to the released UI. Check
+[availability in normal projects](../../backend/calendar/configuration.md#availability-in-normal-projects)
+against the exact installed package before adopting connected APIs.
 
 ## Unreleased connected core
 
@@ -41,15 +43,27 @@ statements above still apply to 2.11.0; source and memory checks are not install
 browser/Linux/package qualification.
 
 The connected workspace accepts an explicit `displayTimeZone`, uses current
-Guardian-scoped resources, and composes real core create/reschedule/cancel,
-receipt reconciliation and authorized live pages. It preserves existing native
+Guardian-scoped resources, and composes timed/all-day one-off create, atomic rich
+update, lifecycle/cancellation, receipt reconciliation and authorized live pages.
+Its default `CalendarAppointmentEditor` reuses the approved content through one
+native async save/receipt owner. It preserves existing native
 modal ownership, token anatomy and shared animations. It never loads demo users
 or silently saves unavailable recurrence/clinical/invitee fields. The original
 rich local `AppointmentEditor` stays synchronous; do not wire a Promise into it.
 See the [facade and exact UI limits](../../backend/calendar/facade.md#browser-composition).
 The [connected workspace guide](./connected-workspace.md) documents current type
-selection, participant controls, capability discovery, native modal ownership and
+selection, atomic participant edits, capability discovery, native modal ownership and
 exact-request recovery; these remain feature-branch source, not an updater release.
+
+[All-day appointments](../../backend/calendar/all-day.md) use explicit authored
+LocalDate intervals, `appointments.queryDates`/`watchDates` and
+`useCalendarAppointmentDates`. The connected view renders separate all-day lanes,
+month chips and agenda labels; it never converts them into viewer-midnight events.
+The capability covers untyped appointments, not holds, blocks or recurring series.
+The optional [appointment-overlap review](../../backend/calendar/overrides.md)
+supports manual create/rich update only when independently enabled and granted on
+every resulting resource. Review is readonly; explicit final confirmation/reason
+and all hard booking policies still apply. Neither feature is updater-selected.
 
 The new feature barrel exports browser-safe hooks/contracts/errors only; private
 actors and Fabric ownership remain in the server implementation. The focused
@@ -87,8 +101,9 @@ The next unreleased participant stage adds `useCalendarParticipantDirectory`,
 `useCalendarAppointmentParticipants`, `useCalendarHoldParticipants` and separately
 composable `CalendarParticipantFields`. Native account references use explicit
 Guardian eligibility, private manager-only projections and current names or
-unavailable tombstones. The connected workspace now uses native capability
-discovery for creation and a separate participant-replacement dialog in details;
+unavailable tombstones. The connected workspace uses native capability discovery
+for creation and can atomically include changed participants in its rich update.
+A separate participant-replacement dialog in details remains composable;
 the rich demo's patient/contact/manual guests are not native account adapters.
 See [native participant boundaries](../../backend/calendar/participants.md).
 
@@ -178,15 +193,19 @@ attributed local fallback retains only shapes absent from its registry.
 
 ## Qualification and remaining work
 
-The isolated Chromium preview exercises native manager opening/closing, nested
-Escape, draft preservation, invitees, exact typed times, reason-before-cancel,
+The isolated Chromium preview of the released local-state family exercises native
+manager opening/closing, nested Escape, draft preservation, invitees, exact typed
+times, reason-before-cancel,
 multi-provider list, empty selection, token-driven geometry, booking entry states,
 and reduced-motion mobile drawer/dialog behavior. Focused model/contract tests
-and TypeScript checks supplement—not replace—those browser checks.
+and TypeScript checks supplement—not replace—those browser checks. That historical
+preview does not qualify the newer connected workspace or its backend flows.
 
 Inclusion in the released framework does not qualify a calendar SSR contract,
 DST/recurrence engine, cross-worker slot holds, Fabric persistence, Guardian
 permissions, invitations, reminders, notifications, external calendar
 synchronization or telehealth backend. The resource timeline/Gantt view remains
-future UI work. Plan the calendar backend with the user; do not treat UI/package
-qualification as domain acceptance or authorization to deploy an application.
+future UI work. Backend implementation is approved and in progress; use the
+[completion ledger](../../_work/calendar-integration-plan.md#finish-line-execution-ledger)
+for remaining scope. Do not treat UI/package qualification as domain acceptance
+or authorization to deploy an application.

@@ -19,13 +19,20 @@ applies_to: ["feature/calendar-backend-foundation; source and memory checks only
 This branch implements one connected core: explicit configuration → Guardian
 admission → private Fabric → atomic multi-resource reservations → native scoped
 server/client APIs → authorized live snapshots → the existing tokenized calendar UI.
-It is **not yet a qualified release**. Zero 2.11.0's selected archive still provides
-only the experimental frontend components. Use the installed archive's docs when
+It is **not yet a qualified release**. The November 25 review confirmed main's
+qualified 2.11.1 archive includes the shared scheduling foundation and experimental
+frontend, but not this Calendar backend. Use the installed archive's docs when
 working on an application; do not assume this branch is available through update.
+Read [availability in normal projects](./configuration.md#availability-in-normal-projects)
+before adding Calendar settings to a newly created app. The full-product
+[finish-line ledger](../../_work/calendar-integration-plan.md#finish-line-execution-ledger)
+still requires persisted recurrence, self-booking, actual reminder delivery and
+connected management/clinical completion as well as release qualification.
 
 ## Start here
 
-- [Configuration and adoption](./configuration.md): enable/disable, placement,
+- [Configuration and adoption](./configuration.md): released-versus-branch
+  availability, new/existing-project adoption, enable/disable, placement,
   permissions, actor lifecycle and the existing-project boundary.
 - [Facade and booking semantics](./facade.md): resources, grants, appointments,
   authenticated holds, locations/resource facets, appointment types/policies,

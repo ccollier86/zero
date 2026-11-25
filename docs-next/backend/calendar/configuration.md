@@ -17,6 +17,52 @@ maturity: experimental
 This is unreleased branch-source documentation. It is not permission to migrate,
 enable or deploy calendar in an existing application.
 
+## Availability in normal projects
+
+The November 25, 2026 review checked qualified main at Zero **2.11.1**, commit
+`86c6141f125d73a3d5272310beb81e2139d648f9`, against Calendar source
+`25e9f06281ef850a2ee6aff995f1f04d6c4b7ab2`. These are different artifacts, not
+two configuration levels of the same installed package. Later releases require
+their own commit/archive provenance; this dated checkpoint is not a permanent
+latest-version selector.
+
+| Need | In qualified 2.11.1 main | Calendar feature-branch boundary |
+| --- | --- | --- |
+| App-local named cron/maintenance | [Scheduler](../scheduler/index.md), `zero.scheduler` in trusted server code | Not appointment recurrence or a restart-replay queue. |
+| Durable one-off/cron work and controls | Opt-in [Jobs](../scheduler/durable-jobs.md), private Fabric and pinned Torrent handoff | Calendar source continuation and provider adapters need their own integration. |
+| Bounded task execution | [Workers](../workers/index.md) and shared work pools | Not a replacement for durable workflow/appointment state. |
+| Calendar views and local editor pieces | Experimental [Calendar UI](../../frontend/calendar/index.md) | Controlled presentation/local previews are not authoritative persisted bookings. |
+| Calendar backend and connected workspace | **Not included** | One-off bookings, holds, policies, all-day and overlap review are source implemented; physical/browser/package qualification is open. |
+| Persisted recurring appointments, public booking and actual reminders | **Not included** | Full implementation remains unfinished, not merely awaiting packaging. |
+
+Normal [project creation](../../cli/tooling/zero-new.md) and
+[updates](../../cli/tooling/zero-update.md) consume the selected qualified package,
+not an active feature checkout:
+
+```sh
+zero-release --status
+zero-new ./my-zero-app
+# Existing application: inspect before applying an update.
+zero-update /path/to/existing-app --dry-run
+```
+
+Creating Stupify or any other new Zero app does not enable a service or copy its
+unfinished backend from this branch. Do not add `calendar` backend settings or
+`@zero/framework/calendar/server` imports to the 2.11.1 package. The declaration
+below describes the **branch source**, not an installable configuration for that
+archive. On this branch, `calendar: true` enables only the core. Recurrence,
+reminders and self-booking remain false-only; attempting to enable them returns
+`CALENDAR_NOT_READY` rather than starting a partially working feature.
+
+The [finish-line ledger](../../_work/calendar-integration-plan.md#finish-line-execution-ledger)
+owns full-product completion: persisted series and coverage, booking/invitations,
+actual delivery adapters, connected management/clinical controls, public
+activation/retirement and release acceptance. The [qualification record](./qualification.md)
+separates source/MEMORY results from real browser, file/actor, Linux, performance
+and updater checks. Documentation validation is not a substitute for these gates.
+
+## Branch-source declaration
+
 ```ts
 // zero.config.ts — alongside the application's existing configuration
 calendar: {

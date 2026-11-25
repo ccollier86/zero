@@ -2,8 +2,10 @@
 
 Feature-branch implementation, not a qualified release. `calendar` configuration,
 private Fabric lifecycle, current-Guardian service, native HTTP/client facades and
-connected UI are now composed. The selected 2.11.0 updater archive still has only
-the experimental frontend; do not tell an application to adopt unreleased APIs.
+connected UI are now composed. Qualified 2.11.1 main still has only the experimental
+frontend and released shared scheduling foundation, not this Calendar backend.
+Read [normal-project availability](../../docs-next/backend/calendar/configuration.md#availability-in-normal-projects)
+before telling an application to adopt branch-only APIs.
 
 The [integration plan](../../docs-next/_work/calendar-integration-plan.md) remains
 the contract for the remaining work.
@@ -11,8 +13,11 @@ the contract for the remaining work.
 The [backend guide](../../docs-next/backend/calendar/index.md) documents the
 implemented core and its explicit limitations. This is not the complete plan:
 
-- Time helpers accept explicit canonical UTC instants and a scheduling zone.
-  They do not convert wall time, expand recurrence or implement all-day records.
+- Timed bookings accept canonical UTC instants and a scheduling zone. Canonical
+  `017` also supports untyped all-day LocalDate intervals with explicit authored
+  boundaries and indexed date reads, not a timed-midnight shortcut. The private
+  recurrence compiler is not persisted series or coverage. See
+  [all-day appointments](../../docs-next/backend/calendar/all-day.md).
 - Availability is an explicit unrestricted policy or at most 100 positive UTC
   windows normalized by merging overlap/adjacency. Full buffered appointment
   occupancy must fit current policy on each resource; restrictive changes
@@ -79,8 +84,9 @@ implemented core and its explicit limitations. This is not the complete plan:
 - Scoped `capabilities.get/watch` projects current UI flags and configured limits
   without allocating owners/files/actors or enumerating accounts. It is not a
   resource grant. The connected one-off editor now composes native type defaults,
-  visit/location and optional account selection; existing participant changes
-  use a separate revision-controlled dialog, never a hidden reschedule write.
+  visit/location and optional account selection. The rich atomic edit also
+  supports participant replacement; its separate revision-controlled dialog
+  remains available. Neither hides a participant write in legacy rescheduling.
   See the [connected workspace guide](../../docs-next/frontend/calendar/connected-workspace.md).
 - Additive `002` preserves `001` migration/evidence identity. Block receipts and
   effect references have separate private tables with the same cross-family

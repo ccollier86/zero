@@ -87,6 +87,7 @@ identity are rejected, not normalized away.
 | `availability.replace(resourceId, policy, control)` | Replace bounded windows/unrestricted policy; current manage right |
 | `availability.watch(resourceId, listener, {signal?, onError?}?)` | Current authorized policy snapshots; returns unsubscribe |
 | `appointments.query(range, {signal?}?)` | Authorized confirmed-appointment page; all co-resources must allow details |
+| `appointments.queryDates(query, options?)` | Authorized all-day appointment page matched on authored dates, not viewer-zone midnight |
 | `appointments.get(id, {signal?}?)` | Current detail, including cancelled state; denied/missing concealed alike |
 | `appointments.create(input, options)` | Atomic capacity-one reservation on every selected resource |
 | `appointments.reschedule(id, input, control)` | Exact revision, instants, zone and both buffers required |
@@ -115,6 +116,7 @@ identity are rejected, not normalized away.
 | `busy.query(range, {signal?}?)` | Appointment-buffer, block and live-hold occupancy in one bounded order; no target IDs, titles or attendees |
 | `receipts.get(originalKey, {signal?}?)` | Original safe outcome or null; current target rights still required |
 | `appointments.watch(range, listener, {signal?, onError?}?)` | Initial/fresh authorized pages and commit invalidation flag; returns unsubscribe |
+| `appointments.watchDates(query, listener, options?)` | Live authorized authored-date pages with the same scope retirement and bounded query rules |
 
 [Appointment-specific override options](./overrides.md) preserve the normal receipt
 and single-write contract. They never bypass hard policies or make ordinary
@@ -139,6 +141,12 @@ selection stays empty. Queries never seed fictional calendars. `truncated: true`
 means incomplete; narrow/split the query and never interpret it as complete
 availability. Resources use stable keyset continuation; appointment ranges do not
 provide unbounded offset paging or global counts.
+
+Authored-date queries instead take `{resourceIds, startDate, endDate, limit?}`
+with an exclusive end and at most 31 nominal days, narrowed by `maxRangeDays`.
+They select all-day appointments only. Existing instant-range appointment and
+busy queries keep their UTC occupancy semantics. See [All-day appointments](./all-day.md)
+for canonical dates, frozen accepted boundaries and the separate date watch.
 
 Block ranges use the same bounds and return active records only. Guessed-ID reads
 conceal missing and denied objects alike, including cancelled history. A private
@@ -173,8 +181,15 @@ await calendar.appointments.update(appointment.id, {
 ```
 
 The nonempty closed patch can contain `title`, a nonempty `resourceIds` set,
-`appointmentType`, `visit` and `participants`. Supplying any time/zone/buffer field
-requires **all five** interval fields above; no partial interval is guessed.
+`appointmentType`, `visit` and `participants`, plus an explicit interval change.
+For the compatible flat timed form, supplying any time/zone/buffer field requires
+**all five** interval fields above; no partial interval is guessed. Alternatively,
+`interval` accepts the explicit `timed-v1` or `all-day-local-v1` form described in
+[All-day appointments](./all-day.md). Nested and flat interval fields cannot be
+mixed. Omitting both preserves the accepted kind, dates/instants and boundaries.
+Converting an all-day appointment back to timed requires explicit `timed-v1`;
+legacy flat reschedule does not reinterpret an all-day record. A timed-to-all-day
+conversion with a retained minute-based type must also explicitly clear that type.
 Omission preserves accepted fields and bindings. Only type and visit accept
 explicit `null`; participant `[]` deliberately clears references and still needs
 the configured scope-manager participant permission. New participant targets are
@@ -196,9 +211,11 @@ uncertainty stays unknown and requires reconciliation, never automatic replay.
 Terminal appointments reject new edits; history is not reopened by this API.
 
 The legacy `reschedule` and separate participant command remain supported with
-their existing identities. This rich edit does not enable recurrence,
-overbooking overrides, clinical progress, invitations or reminders. Those retain
-their explicit implementation/configuration gates.
+their existing identities. Manual create and rich update additionally support
+the optional independently authorized [appointment-overlap review](./overrides.md);
+this is not a generic force flag and cannot bypass blocks, live holds or other
+hard booking policies. Rich editing does not enable recurrence, clinical progress,
+invitations or reminders. Those retain their explicit implementation/configuration gates.
 
 ## Locations, regions and authorized resource filters
 
@@ -540,10 +557,11 @@ import { ConnectedCalendarWorkspace } from '@zero/framework/calendar';
 ```
 
 The connected workspace composes existing native fields, controls, overlays and
-day/week/month/list presentations without switching an app theme. Its core editor
-is explicitly limited to supported one-off fields; the original richer local
-`AppointmentEditor` remains unchanged and synchronous. It is not safe to pass an
-async persistence callback to that synchronous local editor.
+day/week/month/list presentations without switching an app theme. Its default
+`CalendarAppointmentEditor` reuses the approved rich content with one native async
+save/receipt owner, limited to implemented one-off fields. The original local
+`AppointmentEditor` remains unchanged and synchronous. Passing an async persistence
+callback to that local editor does not install canonical acceptance or recovery.
 
 Current scoped capabilities discover optional participant controls and configured
 range/resource/participant limits without allocating a calendar owner. These are
@@ -554,10 +572,15 @@ server limits cannot cover the requested view. It never silently presents a
 partial schedule as complete. `participants={false}` opts out of these controls;
 `true` cannot override native permission/configuration.
 
-`CalendarCoreEditor` composes current type, visit/location and optional account
-participant selection. Existing appointment participants use a separate native
-`CalendarAppointmentParticipantsDialog` and revision-controlled replace command;
-reschedule does not also write participants. The reusable pieces, privacy and
+The rich connected editor submits supported title, full-resource-set, timed/all-day
+interval, type/visit and changed account-participant fields through one atomic
+`appointments.update`, not sequential saves. All-day controls require the server's
+`allDayAppointments` capability and use authored-date lanes instead of midnight
+timed events. Optional overlap review requires separate capability, independent
+per-resource grants and explicit confirmation/reason; it shares that same save owner.
+`CalendarCoreEditor` remains separately composable. The native
+`CalendarAppointmentParticipantsDialog` also supports participant-only replacement;
+legacy reschedule does not also write participants. The reusable pieces, privacy and
 exact receipt-revision recovery rules are documented in the
 [connected workspace guide](../../frontend/calendar/connected-workspace.md).
 
@@ -592,7 +615,8 @@ assign rights deliberately; hidden UI actions never replace server checks.
 
 The connected workspace remains the supported one-off appointment UI. Availability,
 block and authenticated-hold management use the scoped facades above until a
-dedicated native management surface is implemented; this stage does not retrofit the richer local
-editor or self-booking preview, nor change the approved hosted demo. Private
+dedicated native management surface is implemented. Rich connected composition does
+not turn the standalone local editor or self-booking preview into a backend client,
+nor change the approved hosted demo. Private
 effect-reference intents remain handoff groundwork, not dispatch, reminder or
 notification work.

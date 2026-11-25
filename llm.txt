@@ -5,6 +5,13 @@ Start at [the new Zero documentation](./docs-next/start-here.md), then use its
 The [llms.txt](./llms.txt) bundle remains a compatibility orientation, not a
 replacement for the current feature/version reference.
 
+For scheduling, distinguish released [durable Jobs](./docs-next/backend/scheduler/durable-jobs.md),
+[local cron](./docs-next/backend/scheduler/index.md) and [workers](./docs-next/backend/workers/index.md)
+from the unreleased Calendar backend. Read
+[normal-project availability](./docs-next/backend/calendar/configuration.md#availability-in-normal-projects)
+before using Calendar settings/imports; creation/update selects qualified main,
+not a feature checkout or the interactive demo.
+
 For Markdown documentation, use the optional
 [docs plugin](./docs-next/plugins/docs/index.md) and its
 [search guide](./docs-next/plugins/docs/search.md). For app-owned code examples,

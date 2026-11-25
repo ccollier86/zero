@@ -82,7 +82,7 @@ families are listed in the [backend index](./backend/index.md).
 - **Coding agent:** read [agent guidance](./agents/index.md), then the relevant
   canonical feature/config page. Respect the app's actual instructions and scope.
 - **Background work:** Zero 2.11.0 includes the shared foundation. Use
-  [Jobs](./backend/scheduler/jobs.md) for durable admission, [Torrent](./backend/torrent/index.md)
+  [Jobs](./backend/scheduler/durable-jobs.md) for durable admission, [Torrent](./backend/torrent/index.md)
   for durable workflows, [Scheduler](./backend/scheduler/index.md) for local cron
   and the [worker facade](./backend/workers/index.md) for bounded execution pools.
   Check each guide's deployment/capability limits and the
@@ -91,7 +91,10 @@ families are listed in the [backend index](./backend/index.md).
 - **Calendar:** the [frontend family](./frontend/calendar/index.md) ships in
   2.11.0. The [managed one-off core](./backend/calendar/index.md) is implemented
   on its feature branch but still awaits installed/browser/Linux release
-  qualification; do not assume it is in the selected update archive.
+  qualification. Check [availability in normal projects](./backend/calendar/configuration.md#availability-in-normal-projects)
+  against the exact installed package; new-project creation and normal updates
+  do not select the Calendar feature branch. The [completion ledger](./_work/calendar-integration-plan.md#finish-line-execution-ledger)
+  distinguishes the one-off core from the unfinished full scheduling product.
 - **Markdown documentation:** install and declare the optional
   [docs plugin](./plugins/docs/index.md); its public reader includes
   [passage-aware search](./plugins/docs/search.md) and uses the shared
