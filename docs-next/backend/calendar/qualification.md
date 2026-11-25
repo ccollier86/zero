@@ -50,9 +50,37 @@ Implementation resumes at the private F5 source family:
   identity remain unchanged. Schema acceptance/publication facts are not proof
   that appointment children or occupancy were actually materialized.
 
-The next F5 families must supply canonical source writers/native grants, versioned
-children and staged occupancy publication, exception/split/edit semantics, sparse
-coverage and Jobs continuation, then facade/UI activation together. No partial
+The next private F5 source increment adds an initial acceptance writer and its
+read-to-compilation path:
+
+- `series-source-writer.ts` structurally normalizes an original human intent
+  before replay, compiles DTSTART outside SQL, then uses the tracked writer for
+  current all-resource/hard-policy admission and atomic source, generation,
+  segment, scoped native-grant, preparation, receipt, effect and audit facts.
+  A successful result is `series.plan.accepted`, not an appointment publication.
+  Real SYSTEM participant eligibility is rechecked by the supplied actual-COMMIT
+  callback. The isolated MEMORY test installs that callback through ReactiveDB;
+  production broker/actor `DatabaseCommitAuthority` wiring is still required.
+- `series-read-model.ts` keeps original acceptance separate from preparing,
+  blocked, expired, aborted, published and retired outcomes. Historical
+  publication does not disappear merely because its source later retires. Reads
+  reapply current authorization and verify scoped evidence; they do not replay
+  mutations, create grants or relabel expiry as rollback.
+- `series-native-source.ts` reads the exact current initial single-segment source
+  under fixed native owner/policy/lifetime guards. It returns a detached snapshot
+  without Temporal expansion inside the SQL session. It neither reconstructs the
+  initiating user's session nor treats snapshot validation as service authority.
+- `series-compilation.ts` consumes that snapshot after the read closes. Its
+  runtime-owned contributions bind the generation, preparation/manifest/expiry,
+  policy, engine, complete grant set, resource revision vector and exact cursor
+  progress. Nominal child identities are stable across effective-time changes;
+  bounded zero-output work still advances. Every ordered candidate participates
+  in the batch digest, including batches larger than one canonical-value limit.
+  Nominal completion remains distinct from UTC occupancy coverage.
+
+The next F5 families must supply the real native broker/commit composition,
+versioned children and staged occupancy publication, exception/split/edit
+semantics, sparse coverage and Jobs continuation, then facade/UI activation together. No partial
 table, cursor, local preview or passing source check completes that work.
 
 Documentation routing now distinguishes released scheduling services from the
@@ -65,6 +93,44 @@ This is source/MEMORY diagnostic work using the existing read-only dependency
 mapping, not independent frozen-package qualification. No application, physical
 calendar state, hosted preview, normal updater selection, global storage guard or
 maintenance policy is changed. Physical/browser/Linux/update gates remain open.
+
+Completed diagnostic checkpoints, not additive test totals:
+
+- After merging released main into the feature branch, the frozen thirteen-file
+  schema/recurrence/ordinary-command compatibility set passed **194 tests, zero
+  failures, 3,513 assertions in 98.17 seconds** on pinned Bun 1.4.4 with transpiler
+  caching disabled. The earlier combined attempt had one incorrect uncounted
+  forward-window statistic expectation; that failed run remains failed. Its
+  corrected four-file recurrence rerun passed **59 tests, 2,166 assertions**.
+- The initial read-model run passed four tests and failed one because its
+  deliberate owner-corruption fixture attempted a protected update without
+  first dropping the synthetic immutable trigger. The test now explicitly marks
+  that corruption step; native guards were not relaxed. The later nine-case
+  read/status/native-snapshot set passed **nine tests, zero failures, 55 assertions
+  in 24.37 seconds**. It covers source-to-compiler handoff after query closure,
+  temporal-free bounded reads, late native-policy retirement, expiry, historical
+  publication, privacy and corrupt timestamp/selector refusal.
+- Imported main private-avatar evidence pages initially failed the metadata
+  check. Their bodies/evidence were preserved and missing metadata/backlinks and
+  parent navigation repaired. The resulting documentation graph passed
+  **913 pages, 913 unique IDs, 913 reachable pages, zero problems**.
+- The final combined runtime-source checkpoint passed **231 tests across sixteen
+  files, zero failures, 4,026 assertions in 134.25 seconds**. It includes the
+  fourteen-case tracked initial writer, actual SYSTEM participant changes,
+  transaction-bound logging/backpressure, capacity and coherent accepted-source
+  → readonly snapshot → detached compilation path. The runtime implementation
+  stayed frozen for this run. Subsequent test-only typing corrections were
+  rechecked in the affected two files: **23 tests, zero failures, 411 assertions
+  in 27.93 seconds**. No historical API or migration was relaxed.
+- The broad no-emit source graph passed with zero diagnostics. The first combined
+  three-test-root type check found ten test-only diagnostics (nullable fixture
+  expectations, intentional readonly-fixture mutation and widened expected
+  literals). Corrections preserve production types and runtime behavior; the
+  final combined check passed **three test roots, 2,559 source files, zero
+  diagnostics**, without emitted output or a dependency installation.
+
+These checkpoints are not a Calendar
+release, real Chromium, Linux/amd64, physical actor or exact-package result.
 
 ## November 18 finish-line review: cold admission and retained evidence
 

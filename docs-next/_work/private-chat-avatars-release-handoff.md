@@ -1,4 +1,20 @@
+---
+id: zero.work.private-chat-avatars-release-handoff
+type: operations
+audience: [developer, agent, operator, maintainer]
+owner: guardian
+status: draft
+visibility: internal
+system: guardian
+feature: private-chat-avatar-release-handoff
+maturity: preview
+applies_to: ["2.11.1 standalone private chat avatar patch; frozen handoff, not a live publication-status record"]
+modes: [managed-applications, browser]
+---
+
 # Standalone private chat avatar update handoff
+
+[Working evidence](./index.md) · [Qualification record](./private-chat-avatars-qualification.md)
 
 ## Status and isolation
 

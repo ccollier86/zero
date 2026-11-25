@@ -65,8 +65,10 @@ recurrence progress, through canonical publication/coverage, then real effect
 adapters/public activation, booking/invitation proof and connected management/
 clinical controls. The rows below remain authoritative. Do not enable a partial
 capability or merge it as complete to unblock a dependency update. Before
-publication, integrate current main's avatar/relationship repair without reverting
-it, qualify the final combined artifact and select it normally. No application
+publication, retain current main's avatar/relationship repair without reverting
+it, qualify the final combined artifact and select it normally. Released 2.11.1
+has now been merged **into the Calendar feature branch**, not the reverse; this
+does not publish or activate Calendar. No application
 migration or deployment is authorized by this work.
 
 ## Finish-line execution ledger
@@ -104,7 +106,7 @@ demo change is implied by framework completion.
 | F2 | **Working versus durable-history capacity.** Completed history must not exhaust a live-work quota. Preserve original schedule/receipt/Torrent identities and factual historical counters. Bound active/unknown/review occupancy, expose pressure, keep retirement/reconciliation headroom and use an explicit configurable storage/history budget. More than 1,000 completed reminders on one unchanged source must remain readable and permit new work. Scale resident owner/capability hydration separately from retained files. | Additive Jobs003/004, finite policy/writer conservation, native read-only attachment, physical pins, SYSTEM wake coverage, bounded resident eviction and demand hydration are source/MEMORY checked. Source-control and schedule pools have independent finite capacity. Historical evidence/identities survive idle release. Actual file/actor/performance qualification remains open. |
 | F3 | **Managed activation, adoption and controls.** Wire the existing dormant Calendar/Jobs/Torrent owner into normal startup, typed opt-in config, authorized operator API/SDK and clear readiness. Add read-only adoption planning, explicit prepare/retire/reactivate/disable procedure and Doctor checks. Unknown/nonterminal work prevents a false safe-disable result. | Private owner/inspection/audited acceptance and fresh/populated staged-migration repair are source implemented. Calendar now admits the original 001–016 boundaries with unchanged hashes and a retained pre-manifest016 pin. Public feature configuration/mount, adoption/disable procedure and Doctor remain gated on the actual F5/F7 capabilities, not the private observation exemplar. |
 | F4 | **Complete canonical scheduling commands.** Support the rich editor's persisted fields through one atomic update contract, current resource/type/visit/participant policy, receipts and semantic evidence. Independent override permission/reason; retain history. Add local-date all-day handling and reviewed effective eligibility where supported. No sequential saves presented as atomic or raw CRUD bypass. | Atomic016 rich edits, canonical017 untyped all-day appointments, canonical018 effective resource/location policy and canonical019 independently granted manual appointment-overlap review/save are source implemented through final writers, bounded queries, HTTP/SDK/live hooks and connected rich editor behavior. Final checking is recorded in qualification. Physical/browser qualification remains required; holds/blocks are still timed-only and later day-type/series contracts remain separate. |
-| F5 | **Series and coverage.** Standards-tested daily/weekly/monthly/yearly engine, nominal occurrence identity, exceptions, one/future/all edits and split lineage. Bounded all-resource materialization commits conflicts consistently; expose durable coverage, not unbounded free-time promises. Existing Jobs/Torrent extends horizons without a second Calendar timer system. | Private bounded timed engine/conformance source checked. Reviewed implementation design below specifies immutable versions, staged atomic publication, explicit one/future/all semantics and sparse UTC coverage. No series persistence, automatic coverage or facade/UI activation yet. |
+| F5 | **Series and coverage.** Standards-tested daily/weekly/monthly/yearly engine, nominal occurrence identity, exceptions, one/future/all edits and split lineage. Bounded all-resource materialization commits conflicts consistently; expose durable coverage, not unbounded free-time promises. Existing Jobs/Torrent extends horizons without a second Calendar timer system. | Private timed engine/cursor, candidate020 schema, initial source/grant/acceptance writer, separate acceptance/status reads and detached bounded compilation are implemented for source/MEMORY review. Candidate020 remains unregistered; the production native broker/commit fence is not wired. Versioned children, staged occupancy/publication, exceptions/splits/one-future-all commands, sparse coverage, Jobs continuation and facade/UI activation remain required. |
 | F6 | **Authoritative self-booking and invitations.** Real bounded offers, member/invitation/approved-guest proof, notice/horizon/type/recipient policy, abuse limits, actual any-provider allocation, expiry and atomic confirmation. Explicit pending-review capacity semantics and approve/reject. Hash/revoke capabilities; no private busy/detail leak or staff-audit requirement for public artwork. | Authenticated subject-bound holds/confirm source checked. Offers/proofs/review/RSVP/public routes and native booking UI queued. |
 | F7 | **Actual effects and optional service adapters.** Versioned source-owned reminder/transition rules, immutable due/lateness, fresh recipient/domain checks after waits, native notification/email adapters and exact supersede/cancel/reconciliation. Partial acceptance and unknown SMTP remain distinct; manual review never invents provider evidence. Storage/presence/contact/AI adapters are optional and admitted explicitly. | Observation-only cutoff/recovery source checked. No actual reminder/channel, invitation or AI adapter is enabled. |
 | F8 | **Connected clinical and management experience.** Canonical optional progress/outcome/lobby/attention axes and current action/reason policy; online presence never implies arrival. Connect the reviewed rich editor, all card/agenda/context/status entry points, scoped geography, catalogs/hours/blocks/grants and public booking through the shared async controller. Day/week/month/list, fixed gutter, dense provider scrolling, empty/setup/denied/unknown states and native modal lifecycle work with real data. | Approved rich content composes one native async owner and is the connected workspace default, with whole-resource-set/type/visit/participant atomic writes. Lifecycle/receipt review and combined source checks passed. Management/clinical/booking completion remains required. |
@@ -930,10 +932,12 @@ their end dates or reinterpret missing coverage as unrestricted. A rolling sourc
 format would need its own explicit reviewed policy contract. Preserve these
 independent fences when qualifying a later series occupancy slab.
 
-The current bounded pure expander restarts from DTSTART and has a 4,096-candidate
-work ceiling. It is not, unchanged, a durable continuation protocol: sparse rules,
-invalid local dates or gaps can exhaust work without emitting a reservation.
-Before automatic materialization, persist source/engine/generation-bound progress
+The original pure expander's single-request 4,096-candidate ceiling is not a
+durable continuation protocol. The private indexed cursor now advances over
+examined slots, including invalid local dates and gaps, and carries qualified
+COUNT progress across forward windows without prefix replay. This source-only
+improvement does not yet persist its progress or prove reservations. Before
+automatic materialization, persist source/engine/generation-bound progress
 that advances over examined nominal candidates even when none are emitted. Keep
 RRULE valid-occurrence counting distinct from EXDATE/additional-date handling;
 do not refund COUNT for an excluded occurrence or consume it for an added one.
@@ -1035,6 +1039,28 @@ blocked, published, aborted or unknown, but never mutates the original receipt o
 settles an editor from plan acceptance alone. Public facade types remain absent
 while recurrence config is closed. Native keys use the fixed
 `calendar-series-native-v1` domain and never share the human principal namespace.
+
+**Bootstrap is not ongoing materialization.** Private candidate020 intentionally
+admits one preparation/publication per authored generation. Its immutable
+`manifest_digest` currently binds the accepted source plan, not a complete set of
+compiled reservations. The next additive family must separately retain the plan
+digest and complete candidate/cell root, and require their final seal before a
+020 publication marker becomes admissible. Do not overwrite the old digest or
+let an empty marker claim that reservations were applied.
+
+Later horizon windows require their own native preparation, batch receipts,
+durable progress and publication facts bound to the unchanged selected authored
+generation/grant/owner and current resource epochs. They must not manufacture a
+new human request, authored generation or retained initiating session per window.
+Stable logical segment identity must remain distinct from a generation's segment
+record ID, so time-only edits cannot rename nominal occurrences. A nominal batch
+also needs an independent projection-row budget: up to 100 occurrences × 16
+resources × 34 occupied UTC-day cells is not a short SQLite writer merely because
+the occurrence count is bounded. Save explicit staging subprogress and perform
+the same final participant/authority/expiry checks before every physical commit.
+Prefer indexed bounded working projections with independent retained history;
+do not introduce a source-wide history scan, another timer system or an
+unqualified persistent-map engine to hide those costs.
 
 Extend one fixed-family human-key resolver across ordinary, block, hold, location,
 type, lifecycle, operator and series receipts in **both** directions. This remains

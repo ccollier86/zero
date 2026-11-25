@@ -74,6 +74,12 @@ publication, search, and production agent bundles.
 - [Native messaging workspace review](./messaging-workspace-review.md): real
   provider/SDK workspace integration, exact intents, per-lane drafts, read policy,
   bounded live history, native file/browser checks and remaining release gates.
+- [Private chat avatar qualification](./private-chat-avatars-qualification.md):
+  frozen 2.11.1 source/native/browser evidence, explicit release-task storage
+  exception and the external receipt owning exact archive/publication results.
+- [Private chat avatar release handoff](./private-chat-avatars-release-handoff.md):
+  standalone patch boundaries, current relationship/private-byte policy and
+  separately approved application adoption after exact-archive qualification.
 - [Public support continuation](./messaging-public-channels.md): earlier visitor
   and human-destination planning. The [current native support manual](../backend/messaging/website-support.md)
   defines implemented sessions, routing and handoff; email/Facebook connectors

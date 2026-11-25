@@ -141,6 +141,18 @@ private snapshots and callbacks.
 and command capabilities remain private. `@zero/framework/calendar` remains the
 browser UI entry; `calendar/server` and `calendar/client` are separate entries.
 
+Private F5 work is deliberately not registered or enabled: candidate020 adds
+retained series source/grant/acceptance/publication facts; the initial source
+writer records accepted preparation, not booked children. Separate status reads
+preserve that distinction. The fixed native source reader captures an exact
+scoped generation without Temporal inside SQL; detached compilation produces
+bounded, runtime-branded candidates/progress and stable nominal child IDs.
+Actual broker/actor COMMIT wiring, durable cursor storage, versioned children,
+staged occupancy publication, exceptions/splits, sparse UTC coverage and Jobs
+continuation must land together before recurrence/facade/UI activation. No app
+should import these private files as an interim series API. See the
+[finish-line ledger](../../docs-next/_work/calendar-integration-plan.md#finish-line-execution-ledger).
+
 Still required before release: actual file/actor, managed compliance, real-browser,
 official JS bundle, Linux/amd64 installed archive and normal updater qualification.
 Compiled executables fail closed with the default source actor launch. Recurrence,

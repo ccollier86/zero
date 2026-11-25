@@ -1,4 +1,20 @@
+---
+id: zero.work.private-chat-avatars-qualification
+type: reference
+audience: [developer, agent, operator, maintainer]
+owner: guardian
+status: draft
+visibility: internal
+system: guardian
+feature: private-chat-avatar-release-qualification
+maturity: preview
+applies_to: ["2.11.1 private chat avatar release-freeze evidence; final publication results belong to the external qualification receipt"]
+modes: [managed-applications, browser]
+---
+
 # Private chat avatar qualification
+
+[Working evidence](./index.md) · [Release handoff](./private-chat-avatars-release-handoff.md)
 
 Zero 2.11.1 adds viewer-to-subject private avatar policy and native messaging
 presentation. This source document describes the contract and evidence known
