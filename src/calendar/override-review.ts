@@ -30,8 +30,13 @@ function assertUnspent(context: CalendarReadContext, scopeId: string, principal:
 }
 
 export function reviewCalendarAppointmentCreate(context: DatabaseReadQueryContext, input: unknown): CalendarOverrideReview {
+  return reviewCalendarAppointmentCreateWithStore(createCalendarReadContext(context), input);
+}
+/** Trusted native composition only. The store is a fixed read capability,
+ * never a strategy/callback/identifier accepted from authored command JSON. */
+export function reviewCalendarAppointmentCreateWithStore(store: CalendarReadContext, input: unknown): CalendarOverrideReview {
   const r = calendarRecord(input, ['actor', 'requestId', 'id', ...CALENDAR_APPOINTMENT_CREATE_FIELDS]), actor = calendarActor(r.actor);
-  const store = createCalendarReadContext(context), requestId = calendarKey(r.requestId), id = calendarKey(r.id);
+  const requestId = calendarKey(r.requestId), id = calendarKey(r.id);
   const authored = Object.fromEntries(Object.entries(r).filter(([key]) => !['actor', 'requestId', 'id'].includes(key)));
   // This stage normalizes only authored input and normal all-resource rights;
   // selected type/defaults/visits/LocalDate compilation happen below the fence.
@@ -42,8 +47,11 @@ export function reviewCalendarAppointmentCreate(context: DatabaseReadQueryContex
 }
 
 export function reviewCalendarAppointmentUpdate(context: DatabaseReadQueryContext, input: unknown): CalendarOverrideReview {
+  return reviewCalendarAppointmentUpdateWithStore(createCalendarReadContext(context), input);
+}
+export function reviewCalendarAppointmentUpdateWithStore(store: CalendarReadContext, input: unknown): CalendarOverrideReview {
   const r = calendarRecord(input, ['actor', 'requestId', 'id', 'expectedRevision', ...CALENDAR_APPOINTMENT_UPDATE_FIELDS]), actor = calendarActor(r.actor);
-  const store = createCalendarReadContext(context), requestId = calendarKey(r.requestId);
+  const requestId = calendarKey(r.requestId);
   assertCalendarOwner(store, actor.scopeId);
   const { row, resourceIds } = calendarAppointment(store, actor, r.id, 'manage');
   const patch = normalizeCalendarAppointmentUpdate(Object.fromEntries(Object.entries(r).filter(([key]) => !['actor', 'requestId', 'id', 'expectedRevision'].includes(key))));

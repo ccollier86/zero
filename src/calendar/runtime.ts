@@ -38,6 +38,7 @@ import type { DatabaseOpenAdmission } from '../databases/database-open-admission
 import { CalendarIntegrationWakeCatalog, installCalendarIntegrationWakeCatalog, type CalendarIntegrationWakeCoverage } from './integration-wake-catalog';
 import { normalizeCalendarResourceLocationPolicy } from './location-policy-model';
 import { normalizeCalendarAppointmentOverride, normalizeCalendarOverrideGrant } from './override-model';
+import { calendarSeriesNativeProfile, type CalendarSeriesNativeProfile } from './series-native-profile';
 
 export interface CalendarRuntimeSource {
   prepare(owner: CalendarOwnerRecord): void;
@@ -59,6 +60,7 @@ export interface CalendarRuntimeOptions {
   /** @internal Complete private series profile. Not an authored CalendarConfig
    * field, a generic realm override or a second coordinator for the same root. */
   readonly series?: {
+    readonly profile?: CalendarSeriesNativeProfile;
     readonly transport: CalendarSeriesNativeTransport;
     readonly participants?: Pick<CalendarParticipantDirectory, 'assertBindable'>;
     assertSeriesPolicyCurrent(scope: ServiceDataScope, policyGeneration: string): void;
@@ -104,12 +106,14 @@ export class CalendarRuntime implements CalendarServiceBroker {
     // Do not import an unfinished candidate realm on the ordinary019 path.
     // The fixed native profile must use its matching source actor and actual
     // durable SYSTEM revision fence; a callback-only fallback is not supported.
-    const realm = options.series ? (await import('./series-materialization-realm')).calendarSeriesMaterializationRealm : calendarRealm;
+    const profile = options.series ? calendarSeriesNativeProfile(options.series.profile) : null;
+    const realm = profile?.id === 'selected-children-v1' ? (await import('./series-children-realm')).calendarSeriesChildrenRealm
+      : profile ? (await import('./series-materialization-realm')).calendarSeriesMaterializationRealm : calendarRealm;
     if (options.series) {
       const binding = options.series.transport.writerPolicy;
       if (!options.authority.actorContext || binding.realmFingerprint !== realm.fingerprint
         || binding.rootHash !== calendarHash(canonicalDatabaseRootIdentity(options.config.rootDirectory))
-        || options.persistence.defaultActorEntrypoint !== null && !options.persistence.defaultActorEntrypoint.endsWith('/series-actor-entry.ts')) {
+        || options.persistence.defaultActorEntrypoint !== null && !options.persistence.defaultActorEntrypoint.endsWith('/' + profile!.actorEntrypoint)) {
         throw new CalendarError('CALENDAR_CONFIG_INVALID');
       }
     }
@@ -449,7 +453,7 @@ export class CalendarRuntime implements CalendarServiceBroker {
       return this.executePrivate<T>(selected, kind, name, input, guard, operation.requestId, false, signal,
         operation.finalCommitGuard ? this.guard(operation.finalCommitGuard, signal) : undefined);
     });
-    return createCalendarSeriesNativeOwner({ owner: selected, transport: setup.transport, signal: this.stop.signal,
+    return createCalendarSeriesNativeOwner({ owner: selected, transport: setup.transport, signal: this.stop.signal, profile: setup.profile,
       ...(setup.participants ? { participants: setup.participants } : {}),
       assertOwnerCurrent: value => { this.assertIntegrationOwner(value); },
       assertSeriesPolicyCurrent: (scope, generation) => setup.assertSeriesPolicyCurrent(scope, generation),

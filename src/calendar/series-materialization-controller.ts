@@ -15,6 +15,7 @@ import { advanceCalendarSeriesProjection, createCalendarSeriesProjection, inspec
 import type { CalendarSeriesPublishedContinuation } from './series-native-source';
 import type { CalendarSeriesNativeOwner } from './series-runtime-owner';
 import type { CalendarSeriesNativeTransport } from './series-native-transport';
+import { calendarSeriesNativeProfile } from './series-native-profile';
 
 export interface CalendarSeriesMaterializationWindow {
   readonly runId: string;
@@ -124,6 +125,9 @@ export function createCalendarSeriesMaterializationController(dependencies: {
   readonly continuation?: CalendarSeriesPublishedContinuation;
 }) {
   const { owner, transport, source } = dependencies, binding = inspectCalendarSeriesCompilationSource(source);
+  // Budget includes the selected-child head/resource derivation in the same
+  // native transaction. Never emit a256-row base step into the022writer.
+  const projectionRowLimit = calendarSeriesNativeProfile(owner.profile).projectionRowLimit;
   const supplied = calendarRecord(cloneDatabaseSerializableValue(dependencies.window),
     ['runId', 'sourcePublicationId', 'windowFromMs', 'windowUntilMs', 'nominalFrom', 'nominalUntil']);
   const runId = calendarKey(supplied.runId), sourcePublicationId = calendarKey(supplied.sourcePublicationId);
@@ -218,7 +222,7 @@ export function createCalendarSeriesMaterializationController(dependencies: {
           const checkpoint = parsed(head.projection_cursor_json) as unknown as CalendarSeriesProjectionCheckpoint;
           const cursor = head.projection_complete === 1 ? projection : restoreCalendarSeriesProjection(source, compiled.contribution,
             compiled.evidence.batchDigest, { runId }, checkpoint, calendarHash(['calendar-series-projection-progress-v1', checkpoint]));
-          const step = advanceCalendarSeriesProjection(cursor);
+          const step = advanceCalendarSeriesProjection(cursor, { rowLimit: projectionRowLimit });
           await owner.command(transport.sealProjection(source, step.cursor, step.stepDigest));
           commands++;
         }

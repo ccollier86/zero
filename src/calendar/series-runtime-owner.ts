@@ -17,9 +17,11 @@ import { verifyCalendarInitialSeriesNativeEnvelope, verifyCalendarSeriesNativeEn
   type CalendarSeriesNativePacket, type CalendarSeriesNativeTransport, type CalendarSeriesNativeOperation } from './series-native-transport';
 import { CalendarError } from './error';
 import { calendarHash, calendarInteger, calendarJson, calendarKey, calendarRecord, calendarScope, calendarValue } from './validation';
+import { calendarSeriesNativeProfile, type CalendarSeriesNativeProfile } from './series-native-profile';
 
 export type CalendarSeriesNativeRead = 'calendar.series.run' | 'calendar.series.run.receipt';
 export interface CalendarSeriesNativeOwnerDependencies {
+  readonly profile?: CalendarSeriesNativeProfile;
   readonly owner: CalendarOwnerRecord;
   readonly transport: CalendarSeriesNativeTransport;
   readonly signal: AbortSignal;
@@ -31,6 +33,8 @@ export interface CalendarSeriesNativeOwnerDependencies {
   }): Promise<T>;
 }
 export interface CalendarSeriesNativeOwner {
+  /** Closed package profile; omitted only by older internal test adapters. */
+  readonly profile?: CalendarSeriesNativeProfile;
   readonly owner: CalendarOwnerRecord;
   readonly scope: ServiceDataScope;
   readonly signal: AbortSignal;
@@ -60,6 +64,7 @@ function synchronous(run: () => unknown): void {
 }
 
 export function createCalendarSeriesNativeOwner(dependencies: CalendarSeriesNativeOwnerDependencies): CalendarSeriesNativeOwner {
+  const profile = calendarSeriesNativeProfile(dependencies.profile).id as CalendarSeriesNativeProfile;
   const r = calendarRecord(calendarValue(dependencies.owner), ['id', 'scope_id', 'owner_id', 'root_hash', 'realm_fingerprint', 'established']);
   const scopeId = calendarScope(r.scope_id), owner: CalendarOwnerRecord = Object.freeze({ id: calendarKey(r.id), scope_id: scopeId, owner_id: calendarKey(r.owner_id),
     root_hash: String(r.root_hash), realm_fingerprint: String(r.realm_fingerprint), established: 1 });
@@ -199,5 +204,5 @@ export function createCalendarSeriesNativeOwner(dependencies: CalendarSeriesNati
     return command<T>(transport.sealRetirement(retained, logicalKey, { runId, expectedRevision: revision, limit,
       ...(r.cleanupOnly === true ? { cleanupOnly: true } : {}) }));
   };
-  return Object.freeze({ owner, scope, signal, assertCurrent: current, read, command, acceptInitial, retire, close() { if (!stop.signal.aborted) stop.abort(); } });
+  return Object.freeze({ owner, scope, signal, profile, assertCurrent: current, read, command, acceptInitial, retire, close() { if (!stop.signal.aborted) stop.abort(); } });
 }

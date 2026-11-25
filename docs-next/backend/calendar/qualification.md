@@ -80,8 +80,8 @@ read-to-compilation path:
   in the batch digest, including batches larger than one canonical-value limit.
   Nominal completion remains distinct from UTC occupancy coverage.
 
-After the private native composition below, F5 still requires selected-child
-read composition, exception/split/one-future-all edit semantics, sparse coverage
+After the private native composition below, F5 still requires complete selected-child
+edit composition, exception/split/one-future-all semantics, sparse coverage
 and actual Jobs continuation, then facade/UI activation together. Physical
 native composition also remains unqualified. No partial table, cursor, local
 preview or passing source check completes that work.
@@ -112,6 +112,75 @@ receipt-last atomic selection and bounded proof-preserving cleanup. The
 records the budgets and outstanding integration work. This remains an
 unregistered private source family, not a released recurrence API or UTC
 availability guarantee.
+
+### Additive022 selected-child composition (source/MEMORY checked)
+
+The next private profile adds a selected-view pointer and immutable adoption
+publication, exact logical child heads and whole-resource working intervals.
+It preserves every001–021 migration function/ledger and does not register the
+candidate in normal configuration. Current point/range/busy reads compose
+ordinary appointments with selected recurring children without copying them
+into `calendar_appointments` or multiplying one child by its day-cell footprint.
+Pending native horizons remain hidden until their actual publication, even when
+their container view is already current. All-resource authorization and exact
+origin/view selection precede result limits. Participant presentation remains
+in the existing scoped SYSTEM broker.
+
+The fixed022 occupancy query and forward ordinary SQL guards use the same
+selection predicates. Qualified selected heads supersede stale021 cells;
+unpromoted sources keep their021 protection. Both pending-claim families and
+stale physical published claims remain reconciliation obligations. Readonly
+override review uses this same022 conflict model, not the older019/021 adapter.
+Legacy edit/cancel/reschedule/participant/lifecycle commands reject an authorized
+child with `CALENDAR_SERIES_ACTION_REQUIRED`, instead of silently choosing an
+edit scope; hidden targets remain hidden. This refusal does not implement the
+canonical recurrence edit actions.
+
+Actual SQLite query-plan review also corrected directory ordering to match its
+resource/view index and changed lazy pagination to compound tuple seeks, rather
+than repeatedly scanning an already visited range prefix. Published-claim
+reconciliation follows indexed version/current-view/child/resource point probes.
+The022 migration pins the exact generated shared-selection SQL inside its
+checksum-bearing body, before DDL; later helpers cannot silently change fresh
+installation semantics while retaining that migration checksum. These source
+and MEMORY plan checks do not establish cold-file latency or total VM work.
+
+Native021 projection facts and022 head/resource facts close inside the same
+transaction and original receipt. The022 worker/controller uses a153-row base
+projection budget so combined variable writes remain within256; no actor payload
+limit was increased. The old021 profile remains separately usable at its original
+256-row budget. Populated021 upgrades do not fabricate a promotion, rewrite the
+historical issuer binding or mark range reads ready while sources are omitted.
+An explicit qualified promotion/adoption path is still required.
+
+These are completed source/MEMORY checks, not a physical/browser release.
+Canonical one/future/all edits, exception overlays, split lineage, sparse UTC
+coverage, actual Jobs/Torrent continuation and public configuration/UI activation
+remain open. The existing storage-integrity hold still prevents physical actor,
+file/HOT/WAL, browser, Linux/bundle and archive/updater qualification.
+
+The combined source/MEMORY regression checkpoint passed **287 tests across 31
+files, zero failures, 7,154 assertions in 385.76 seconds** on pinned Bun 1.4.4,
+with transpiler caching disabled and the existing read-only dependency mapping.
+It covers the private native pipeline and selected composition plus ordinary
+commands, overrides, retained migration source admission and the registered-query
+bridge. It is not a full framework sweep. The final reader query-plan and 022
+SQL-replay-pin corrections were then checked in their affected suites separately;
+do not relabel that combined run as exact-archive or final physical acceptance.
+Initial new-test failures included a missing monthly pattern, an omitted explicit
+buffer/confirmation field and strict test type annotations; they remain failed
+diagnostics, not hidden successes. No permission, rollback or completeness check
+was relaxed to satisfy them.
+
+The final focused eight-file check, after those runtime/query-plan corrections,
+passed **41 tests, zero failures, 1,458 assertions in 133.89 seconds**. The frozen
+source plus nine affected test roots passed **3,897 files, zero TypeScript
+diagnostics**, with no emit/incremental/transpiler output. Earlier type passes
+with test annotations failing remain recorded diagnostics; the final correction
+uses typed canonical values rather than widening runtime admission. The static
+cumulative-metadata change also passed its new pure tests and the existing
+native source-admission set: **39 tests, 194 assertions, zero failures**. The
+documentation graph remains **913 pages/IDs/reachable pages, zero problems**.
 
 The terminal task entry now inspects durable native state before loading a
 source/compiler. Published and aborted work can drain disposable claims,

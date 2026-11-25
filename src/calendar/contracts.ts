@@ -235,6 +235,8 @@ export interface CalendarHoldView {
 }
 export interface CalendarHoldPage { readonly items: readonly CalendarHoldView[]; readonly truncated: boolean }
 export interface CalendarAppointmentView {
+  /** Selected accepted child facts, never a grant to call legacy appointment writers. */
+  readonly series?: CalendarSeriesChildMetadata;
   /** Authoritative LocalDate fact; ordinary timed JSON retains its original shape. */
   readonly interval?: CalendarAllDayAppointmentInterval;
   readonly visit?: CalendarVisitSnapshot;
@@ -251,6 +253,16 @@ export interface CalendarAppointmentView {
   readonly bufferAfterMinutes: number;
   readonly status: 'confirmed' | 'cancelled';
   readonly createdBy: string;
+}
+export interface CalendarSeriesChildMetadata {
+  readonly kind: 'series-child-v1';
+  readonly seriesId: string;
+  readonly logicalSegmentId: string;
+  readonly nominalKey: string;
+  /** Provenance of this selected version, not a newer pending source generation. */
+  readonly sourceGeneration: number;
+  readonly exceptionRevision: number;
+  readonly editPolicy: 'canonical-series-action';
 }
 /** Safe operation outcome only. Reconciliation must not replay an old private appointment snapshot. */
 export interface CalendarCommandReceipt {

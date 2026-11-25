@@ -11,12 +11,15 @@ The [integration plan](../../docs-next/_work/calendar-integration-plan.md) remai
 the contract for the remaining work.
 
 Private recurring materialization is now being integrated under the separate
-`series-*` modules and unregistered020/021 profile. It has real plan acceptance,
+`series-*` modules and unregistered020/021/022 profiles. It has real plan acceptance,
 native owner/signature/final-fence composition, bounded immutable child/resource
 projection and whole-interval pending claims. Publication, continuation and
 cleanup have passed their coherent native MEMORY review. These internals neither activate
 the default realm nor complete exceptions/splits, sparse UTC coverage, managed
-Jobs/reminders, booking or the connected management experience. See the
+Jobs/reminders, booking or the connected management experience. The additive022
+profile composes selected child/ordinary reads, whole-interval busy/conflict
+projections and matching native controller budgets; canonical recurrence edits
+are still unfinished. See the
 [native materialization review](../../docs-next/_work/calendar-integration-plan.md#private021-native-materialization-review--november-25).
 Do not import them as a supported application shortcut or call this backend
 end-to-end finished while those gates remain open.
@@ -27,7 +30,8 @@ implemented core and its explicit limitations. This is not the complete plan:
 - Timed bookings accept canonical UTC instants and a scheduling zone. Canonical
   `017` also supports untyped all-day LocalDate intervals with explicit authored
   boundaries and indexed date reads, not a timed-midnight shortcut. The private
-  recurrence compiler is not persisted series or coverage. See
+  recurrence implementation is not yet an enabled series API or a UTC
+  availability certificate. See
   [all-day appointments](../../docs-next/backend/calendar/all-day.md).
 - Availability is an explicit unrestricted policy or at most 100 positive UTC
   windows normalized by merging overlap/adjacency. Full buffered appointment
@@ -158,18 +162,19 @@ writer records accepted preparation, not booked children. Separate status reads
 preserve that distinction. The fixed native source reader captures an exact
 scoped generation without Temporal inside SQL; detached compilation produces
 bounded, runtime-branded candidates/progress and stable nominal child IDs.
-Actual broker/actor COMMIT wiring, durable cursor storage, versioned children,
-staged occupancy publication, exceptions/splits, sparse UTC coverage and Jobs
-continuation must land together before recurrence/facade/UI activation. No app
+Private broker/actor COMMIT wiring, durable cursors, versioned children, staged
+occupancy publication and selected-child read composition are source implemented.
+Exceptions/splits, complete one/future/all edits, sparse UTC coverage and Jobs
+continuation must still land before recurrence/facade/UI activation. No app
 should import these private files as an interim series API. See the
 [finish-line ledger](../../docs-next/_work/calendar-integration-plan.md#finish-line-execution-ledger).
 
 Still required before release: actual file/actor, managed compliance, real-browser,
 official JS bundle, Linux/amd64 installed archive and normal updater qualification.
-Compiled executables fail closed with the default source actor launch. Recurrence,
+Compiled executables fail closed with the default source actor launch. Complete public recurrence,
 automatic working-hours coverage extension, slot offers/public booking proofs, domain-contact/guest participants,
 clinical visit/lobby/attention states, invitations, reminders, AI and public self-booking are not
-implemented; unsupported enablement rejects. Authenticated holds do not enable
+available end to end; unsupported enablement rejects. Authenticated holds do not enable
 `selfBooking`; public booking remains off. Availability/block/hold management is
 scoped facade-only in this stage; the connected appointment workspace and hosted demo do
 not acquire a richer management editor. Source/memory checks do not qualify the

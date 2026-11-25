@@ -7,11 +7,12 @@ import { inspectCalendarSeriesCompilationContribution, type CalendarSeriesCompil
   type CalendarSeriesCompilationContribution, type CalendarSeriesCompilationEvidence, type CalendarSeriesCompilationSource,
   type CalendarSeriesCompiledOccurrence } from './series-compilation';
 import { calendarHash, calendarInteger, calendarKey, calendarRecord, calendarValue } from './validation';
+import { CALENDAR_SERIES_LEGACY_PROJECTION_ROW_LIMIT as CALENDAR_SERIES_MAX_PROJECTION_ROWS } from './series-projection-budgets';
 
 export const CALENDAR_SERIES_UTC_CELL_MS = 86_400_000;
 export const CALENDAR_SERIES_MAX_OCCURRENCE_CELLS = 544;
 export const CALENDAR_SERIES_MAX_PROJECTION_INSTRUCTIONS = 256;
-export const CALENDAR_SERIES_MAX_PROJECTION_ROWS = 256;
+export { CALENDAR_SERIES_MAX_PROJECTION_ROWS };
 /** Instruction subtree only. Keep headroom beneath the unchanged actor limits
  * for the independently bounded source binding, checkpoints and signed frame. */
 export const CALENDAR_SERIES_MAX_PROJECTION_PAYLOAD_NODES = 6_000;

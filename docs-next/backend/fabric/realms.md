@@ -142,6 +142,15 @@ new tables/natural-identity indexes inside the **same transaction** as the origi
 `up`, final schema validation and ledger append. Original migration functions,
 checksums and successful ledger rows are not rewritten.
 
+Cumulative stage history is static, code-owned configuration, not one database
+request. The branch admits each stage through the existing canonical payload
+and SQL/schema validators, then enforces a separate 16 MiB aggregate metadata
+budget. Dense data-only arrays, exact ordered versions and the final schema
+remain mandatory; getters, proxies, holes and extra fields are rejected. This
+does **not** increase client/actor operation node, byte or row limits. A growing
+valid migration history must not fail merely because its repeated cumulative
+table maps exceed the node budget of a single request.
+
 Read-only source inspection precedes writable constructors and proves native
 binding/ownership before preparation. Missing old tables, unexplained future
 tables, ledger holes, wrong checksums or unknown framework objects fail closed;

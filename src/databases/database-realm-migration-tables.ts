@@ -3,6 +3,7 @@
  * joins their existing native transaction. Omitted stages preserve old behavior.
  */
 import type { Database, Statement } from 'bun:sqlite';
+import { types as utilTypes } from 'node:util';
 import type { Migration, MigrationLedgerRecord } from '../migrations/types';
 import { hashMigration, hashSchemaSnapshot, snapshotDeclaredTables, stableStringify } from '../migrations/schema-snapshot';
 import { inspectDatabaseSchema } from '../migrations/schema-inspector';
@@ -12,6 +13,7 @@ import { isIsolatedDatabaseColumnDefinition, databaseColumnDefinitionDeclaresPri
 import { quoteSqlIdentifier } from '../sync/identity';
 import type { TableSchema } from '../sync/types';
 import { cloneDatabaseSerializableValue, isDatabaseTableName } from './database-operations';
+import { DATABASE_OPERATION_MAX_ARRAY_ITEMS } from './database-operation-contracts';
 import { databaseRealmColumnAdmissionIssue, databaseRealmRegistryAdmissionIssue, databaseRealmTableNameAdmissionIssue } from './database-realm-schema-admission';
 import { orderDatabaseRealmTables, readDatabaseRealmReferencedTables } from './database-realm-table-order';
 import { DatabaseError } from './database-error';
@@ -24,11 +26,34 @@ export interface DatabaseRealmMigrationTableStage {
   readonly prepare?: 'create-added-tables';
 }
 const admitted = new WeakSet<object>();
+/** Code-owned cumulative schema history, not one actor/client operation. Every
+ * individual stage still passes the existing canonical payload/SQL validators. */
+export const DATABASE_REALM_MIGRATION_HISTORY_MAX_BYTES = 16 * 1024 * 1024;
 function config(): never { throw new DatabaseError('DATABASE_CONFIG_INVALID', 'Database migration table stages are invalid.', { outcome: 'not-started' }); }
 function mismatch(): never { throw new DatabaseError('DATABASE_SCHEMA_MISMATCH', 'Database migration source is inconsistent.', { outcome: 'not-started' }); }
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return config();
   return value as Record<string, unknown>;
+}
+function detachStages(input: unknown, expected: number): readonly unknown[] {
+  if (!Array.isArray(input) || utilTypes.isProxy(input) || !input.length || input.length !== expected
+    || input.length > DATABASE_OPERATION_MAX_ARRAY_ITEMS) return config();
+  // Inspect dense own DATA elements before reading them. Do not invoke a
+  // config getter/proxy, accept custom array fields, or clone the complete
+  // cumulative history under a single request's node budget.
+  const descriptors = Object.getOwnPropertyDescriptors(input), keys = Reflect.ownKeys(input);
+  if (keys.length !== input.length + 1 || !keys.includes('length')) return config();
+  const result: unknown[] = []; let bytes = 2;
+  for (let index = 0; index < input.length; index++) {
+    const descriptor = descriptors[String(index)];
+    if (!descriptor || !descriptor.enumerable || !Object.hasOwn(descriptor, 'value')) return config();
+    let detached: unknown;
+    try { detached = cloneDatabaseSerializableValue(descriptor.value); } catch { return config(); }
+    bytes += Buffer.byteLength(stableStringify(detached)) + 1;
+    if (bytes > DATABASE_REALM_MIGRATION_HISTORY_MAX_BYTES) return config();
+    result.push(detached);
+  }
+  return result;
 }
 function tables(value: unknown): Readonly<Record<string, TableSchema>> {
   const source = record(value), result: Record<string, TableSchema> = Object.create(null), folded = new Set<string>();
@@ -60,9 +85,7 @@ function tables(value: unknown): Readonly<Record<string, TableSchema>> {
 }
 export function admitDatabaseRealmMigrationTableStages(input: unknown, migrations: readonly Readonly<Migration>[], latest?: Readonly<Record<string, TableSchema>>): readonly DatabaseRealmMigrationTableStage[] | undefined {
   if (input === undefined) return undefined;
-  let detached: unknown;
-  try { detached = cloneDatabaseSerializableValue(input); } catch { return config(); }
-  if (!Array.isArray(detached) || !detached.length || detached.length !== migrations.length) return config();
+  const detached = detachStages(input, migrations.length);
   let prior: Readonly<Record<string, TableSchema>> = {};
   const stages = detached.map((raw, index) => {
     const value = record(raw);

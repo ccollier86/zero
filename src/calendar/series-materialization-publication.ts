@@ -19,6 +19,7 @@ import { admitCalendarBookingHardCandidate, type CalendarBookingCandidate } from
 import { assertCalendarTypePolicyForScope } from './appointment-type-bindings';
 import { assertCalendarVisitPolicyForScope, assertCalendarBookingVisitForScope } from './visit-bindings';
 import { calendarTypeRevision } from './appointment-types-model';
+import { assertCalendarSeriesSelectedDerivationCurrent, deriveCalendarSeriesSelectedMaterialization } from './series-materialization-derivation';
 
 interface Cursor {
   kind: 'calendar-series-publication-cursor-v1'; phase: 'cell' | 'carry' | 'working' | 'ready'; afterCellSetId: string | null;
@@ -71,10 +72,17 @@ function catalogs(context: DatabaseWriteCommandContext, s: Parameters<typeof cur
 /** Each call performs <=256 owned preparation mutations. Durable cursor and
  * receipt commit together; no prepared selector becomes visible before publish. */
 export function sealCalendarSeriesMaterialization(context: DatabaseWriteCommandContext, input: unknown) {
+  return sealMaterialization(context, input, false);
+}
+export function sealCalendarSeriesSelectedMaterialization(context: DatabaseWriteCommandContext, input: unknown) {
+  return sealMaterialization(context, input, true);
+}
+function sealMaterialization(context: DatabaseWriteCommandContext, input: unknown, selected: boolean) {
   return calendarCommand(() => context.db.transaction(() => {
     const frame = verifyCalendarSeriesNativeEnvelope(context.writerPolicy, input, 'calendar.series.run.seal'), s = owner(context, frame);
     const p = calendarRecord(frame.payload, ['runId', 'expectedRevision', 'limit']), runId = calendarKey(p.runId), claim = prior(context, frame, runId, 'batch');
     if (claim.row) return outcome(frame, claim.row);
+    if (selected) assertCalendarSeriesSelectedDerivationCurrent(context, s);
     const { run, head } = ownedRun(context, s, runId), authoring = current(context, s, run); catalogs(context, s, run, authoring);
     if (n(head.revision) !== calendarInteger(p.expectedRevision, 1)) return fail('CALENDAR_REVISION_CONFLICT');
     const progress = head.progress_id === null ? null : context.db.get(t.progress, String(head.progress_id));
@@ -148,6 +156,7 @@ export function sealCalendarSeriesMaterialization(context: DatabaseWriteCommandC
       publication_cursor_json: calendarJson(state), cell_root: cellRoot, updated_ms: calendarNow() };
     for (const [counter, delta] of Object.entries(counters)) next[counter] = n(head[counter]) + deltas[delta];
     context.db.updateIfCurrent(t.runState, runId, next, head);
+    if (selected) writes += deriveCalendarSeriesSelectedMaterialization(context, { phase: 'seal', source: s, run, head: next, receiptId: claim.id, logicalKey: frame.logicalKey, semanticDigest: claim.semantic, budget: limit - writes });
     const receipt = receiptRow(frame, run, next, claim, 'batch', deltas, writes, String(progress.after_digest), String(progress.after_digest), checkpointDigest(head), checkpointDigest(head));
     context.db.createStrict(t.receipts, receipt); return outcome(frame, receipt);
   }));
@@ -156,10 +165,17 @@ export function sealCalendarSeriesMaterialization(context: DatabaseWriteCommandC
 /** The 2,048-selector cap is an explicit private final-transaction budget,
  * separate from256-row staging. Physical latency qualification remains gated. */
 export function publishCalendarSeriesMaterialization(context: DatabaseWriteCommandContext, input: unknown) {
+  return publishMaterialization(context, input, false);
+}
+export function publishCalendarSeriesSelectedMaterialization(context: DatabaseWriteCommandContext, input: unknown) {
+  return publishMaterialization(context, input, true);
+}
+function publishMaterialization(context: DatabaseWriteCommandContext, input: unknown, selected: boolean) {
   return calendarCommand(() => context.db.transaction(() => {
     const frame = verifyCalendarSeriesNativeEnvelope(context.writerPolicy, input, 'calendar.series.run.publish'), s = owner(context, frame);
     const p = calendarRecord(frame.payload, ['runId', 'expectedRevision']), runId = calendarKey(p.runId), claim = prior(context, frame, runId, 'publish');
     if (claim.row) return outcome(frame, claim.row);
+    if (selected) assertCalendarSeriesSelectedDerivationCurrent(context, s);
     const { run, head } = ownedRun(context, s, runId), authoring = current(context, s, run, 'commit'); catalogs(context, s, run, authoring);
     const prepared = cursor(head, runId), progress = head.progress_id === null ? null : context.db.get(t.progress, String(head.progress_id));
     if (n(head.revision) !== calendarInteger(p.expectedRevision, 1)) return fail('CALENDAR_REVISION_CONFLICT');
@@ -208,6 +224,7 @@ export function publishCalendarSeriesMaterialization(context: DatabaseWriteComma
     if (oldHead) { if (!context.db.updateIfCurrent(t.continuationHeads, headId, { ...selectedHead, revision: n(oldHead.revision) + 1 }, oldHead)) return fail('CALENDAR_REVISION_CONFLICT'); }
     else context.db.createStrict(t.continuationHeads, { id: headId, scope_id: s.scopeId, ...selectedHead, revision: 1 });
     const finalHead = context.db.get(t.runState, runId)!;
+    if (selected) deriveCalendarSeriesSelectedMaterialization(context, { phase: 'publish', source: s, run, head: finalHead, receiptId: claim.id, logicalKey: frame.logicalKey, semanticDigest: claim.semantic, budget: 0 });
     const receipt = receiptRow(frame, run, finalHead, claim, 'publish', zeros(), rows, String(progress.after_digest), String(progress.after_digest), checkpointDigest(head), checkpointDigest(head));
     context.db.createStrict(t.receipts, receipt);
     appendDatabaseCommandSourceAudit(context, { id: 'calendar:' + h(['calendar-series-native-publication-v1', publication.table, publication.rowId, publication.seq]), family: 'workflow',

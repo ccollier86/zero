@@ -20,6 +20,8 @@ import type { CalendarSeriesCompilationBinding } from './series-compilation';
 import type { CalendarSeriesProjectionCheckpoint, CalendarSeriesProjectionInstruction } from './series-projection';
 import type { CalendarRecurrenceCheckpoint } from './recurrence-cursor';
 import { compareCalendarRecurrenceDates } from './recurrence-engine';
+import { assertCalendarSeriesSelectedDerivationCurrent, deriveCalendarSeriesSelectedMaterialization,
+  calendarSeriesSelectedMaterializationCleanupPending, CALENDAR_SERIES_SELECTED_PROJECTION_ROW_LIMIT } from './series-materialization-derivation';
 
 export interface CalendarSeriesMaterializationReceipt {
   readonly kind: 'calendar-series-native-receipt-v1'; readonly operation: string; readonly runId: string;
@@ -115,10 +117,18 @@ function receiptRow(frame: CalendarSeriesNativeEnvelope, run: Row, head: Row, cl
     projection_before_digest: projectionBefore, projection_after_digest: projectionAfter, row_count: rows, ...deltas, accepted_ms: calendarNow() };
 }
 export function beginCalendarSeriesMaterialization(context: DatabaseWriteCommandContext, input: unknown) {
+  return beginMaterialization(context, input, false);
+}
+/** Fixed private022 entry. The strategy is code-owned, never command JSON. */
+export function beginCalendarSeriesSelectedMaterialization(context: DatabaseWriteCommandContext, input: unknown) {
+  return beginMaterialization(context, input, true);
+}
+function beginMaterialization(context: DatabaseWriteCommandContext, input: unknown, selected: boolean) {
   return calendarCommand(() => context.db.transaction(() => {
     const frame = verifyCalendarSeriesNativeEnvelope(context.writerPolicy, input, 'calendar.series.run.begin'), s = owner(context, frame);
     const r = record(frame.payload, ['runId', 'kind', 'sourcePublicationId', 'windowFromMs', 'windowUntilMs', 'nominalFrom', 'nominalUntil', 'initialProgressDigest', 'initialProjectionCheckpoint']);
     const runId = calendarKey(r.runId), claim = prior(context, frame, runId, 'batch'); if (claim.row) return outcome(frame, claim.row);
+    if (selected) assertCalendarSeriesSelectedDerivationCurrent(context, s);
     current(context, s);
     if (r.kind !== 'cutover' && r.kind !== 'horizon') return reject('CALENDAR_INPUT_INVALID');
     const series = required(context.db.get('calendar_series', s.seriesId), s.scopeId);
@@ -146,7 +156,8 @@ export function beginCalendarSeriesMaterialization(context: DatabaseWriteCommand
       receipt_base_json: calendarJson(Object.fromEntries(Object.keys(COUNTERS).map(name => [name, 0]))),
       candidate_root: root('calendar-series-candidates-empty-v1', runId), projection_root: root('calendar-series-projection-empty-v1', runId), cell_root: root('calendar-series-cells-empty-v1', runId), publication_id: null, updated_ms: now };
     context.db.createStrict(t.runs, run); context.db.createStrict(t.runState, head);
-    const receipt = receiptRow(frame, run, head, claim, 'batch', { ...EMPTY_DELTAS }, 0, String(run.initial_progress_digest), String(run.initial_progress_digest), projectionDigest(checkpoint), projectionDigest(checkpoint));
+    const extra = selected ? deriveCalendarSeriesSelectedMaterialization(context, { phase: 'begin', source: s, run, head, receiptId: claim.id, logicalKey: frame.logicalKey, semanticDigest: claim.semantic, budget: LIMIT }) : 0;
+    const receipt = receiptRow(frame, run, head, claim, 'batch', { ...EMPTY_DELTAS }, extra, String(run.initial_progress_digest), String(run.initial_progress_digest), projectionDigest(checkpoint), projectionDigest(checkpoint));
     context.db.createStrict(t.receipts, receipt); return outcome(frame, receipt);
   }));
 }
@@ -197,10 +208,18 @@ function qualifyCompilerProgress(context: DatabaseWriteCommandContext, s: Source
   } else if (initial.rruleCount !== null || initial.examinedCandidates !== 0 || initial.skipped.invalidDates !== 0 || initial.skipped.nonexistentTimes !== 0) return reject('CALENDAR_FORBIDDEN');
 }
 export function stageCalendarSeriesMaterialization(context: DatabaseWriteCommandContext, input: unknown) {
+  return stageMaterialization(context, input, false);
+}
+export function stageCalendarSeriesSelectedMaterialization(context: DatabaseWriteCommandContext, input: unknown) {
+  return stageMaterialization(context, input, true);
+}
+function stageMaterialization(context: DatabaseWriteCommandContext, input: unknown, selected: boolean) {
   return calendarCommand(() => context.db.transaction(() => {
     const frame = verifyCalendarSeriesNativeEnvelope(context.writerPolicy, input, 'calendar.series.run.stage'), s = owner(context, frame);
     const p = record(frame.payload, ['kind', 'runId', 'binding', 'instructions', 'rowCount', 'originalStepKey', 'stepDigest', 'progress', 'compilationProgress', 'compilationWork']);
     const runId = calendarKey(p.runId), claim = prior(context, frame, runId, 'batch'); if (claim.row) return outcome(frame, claim.row);
+    if (selected) assertCalendarSeriesSelectedDerivationCurrent(context, s);
+    if (selected && calendarInteger(p.rowCount, 0, LIMIT) > CALENDAR_SERIES_SELECTED_PROJECTION_ROW_LIMIT) throw new CalendarError('CALENDAR_CAPACITY');
     const { run, head } = ownedRun(context, s, runId), authoring = current(context, s, run);
     if (head.publication_cursor_json !== undefined && head.publication_cursor_json !== '{}') return reject('CALENDAR_NOT_READY');
     if (!['preparing', 'blocked'].includes(String(head.state)) || p.kind !== 'calendar-series-projection-step-v1' || p.originalStepKey !== frame.logicalKey) return reject('CALENDAR_NOT_READY');
@@ -314,12 +333,23 @@ export function stageCalendarSeriesMaterialization(context: DatabaseWriteCommand
       candidate_root: candidateRoot, projection_root: projectionRoot, cell_root: cellRoot, updated_ms: calendarNow() };
     for (const [counter, delta] of Object.entries(COUNTERS)) next[counter] = number(head[counter]) + deltas[delta];
     context.db.updateIfCurrent(t.runState, runId, next, head);
+    if (selected) {
+      const extra = deriveCalendarSeriesSelectedMaterialization(context, { phase: 'stage', source: s, run, head: next, receiptId: claim.id, logicalKey: frame.logicalKey, semanticDigest: claim.semantic, budget: LIMIT - Math.max(facts, writes) });
+      facts += extra; writes += extra;
+      if (Math.max(facts, writes) > LIMIT) throw new CalendarError('CALENDAR_CAPACITY');
+    }
     const receipt = receiptRow(frame, run, next, claim, 'batch', deltas, facts, before, after, progress.beforeDigest, progress.afterDigest);
     context.db.createStrict(t.receipts, receipt); return outcome(frame, receipt);
   }));
 }
 
 export function abortCalendarSeriesMaterialization(context: DatabaseWriteCommandContext, input: unknown) {
+  return abortMaterialization(context, input, false);
+}
+export function abortCalendarSeriesSelectedMaterialization(context: DatabaseWriteCommandContext, input: unknown) {
+  return abortMaterialization(context, input, true);
+}
+function abortMaterialization(context: DatabaseWriteCommandContext, input: unknown, selected: boolean) {
   return calendarCommand(() => context.db.transaction(() => {
     const frame = verifyCalendarSeriesNativeEnvelope(context.writerPolicy, input, 'calendar.series.run.abort'), s = owner(context, frame);
     const p = record(frame.payload, ['runId', 'expectedRevision', 'limit', 'cleanupOnly']), runId = calendarKey(p.runId), claim = prior(context, frame, runId, 'reconcile');
@@ -345,6 +375,7 @@ export function abortCalendarSeriesMaterialization(context: DatabaseWriteCommand
         if (row.cell_set_id !== item.cell_set_id) return reject(); context.db.delete(table, String(row.id)); deleted++;
       }
     }
+    if (selected) deleted += deriveCalendarSeriesSelectedMaterialization(context, { phase: 'reconcile', source: s, run, head: next, receiptId: claim.id, logicalKey: frame.logicalKey, semanticDigest: claim.semantic, budget: LIMIT - deleted });
     const compiled = previous ? String(previous.after_digest) : String(run.initial_progress_digest), projected = projectionDigest(JSON.parse(String(head.projection_cursor_json)));
     const receipt = receiptRow(frame, run, next, claim, 'reconcile', { ...EMPTY_DELTAS }, deleted, compiled, compiled, projected, projected);
     context.db.createStrict(t.receipts, receipt); return outcome(frame, receipt);
@@ -361,6 +392,12 @@ function readOwner(context: DatabaseReadQueryContext, value: unknown) {
 /** Native-only point inspection. A missing/unknown receipt never proves a prior
  * physical operation did not commit; the broker must reconcile original keys. */
 export function readCalendarSeriesMaterialization(context: DatabaseReadQueryContext, input: unknown) {
+  return readMaterialization(context, input, false);
+}
+export function readCalendarSeriesSelectedMaterialization(context: DatabaseReadQueryContext, input: unknown) {
+  return readMaterialization(context, input, true);
+}
+function readMaterialization(context: DatabaseReadQueryContext, input: unknown, selected: boolean) {
   const r = readOwner(context, input), run = context.database.query<Row>(`SELECT * FROM ${t.runs} WHERE id=? AND scope_id=? AND series_id=? LIMIT 1`).get(r.runId, r.scopeId, r.seriesId);
   if (!run) return { status: 'unknown' as const };
   const state = context.database.query<Row>(`SELECT * FROM ${t.runState} WHERE id=? AND scope_id=? LIMIT 1`).get(r.runId, r.scopeId);
@@ -372,7 +409,7 @@ export function readCalendarSeriesMaterialization(context: DatabaseReadQueryCont
       WHERE z.run_id=? AND m.scope_id=? AND NOT EXISTS(SELECT 1 FROM ${t.selectors} x WHERE x.id=m.selector_id AND x.cell_set_id=m.cell_set_id) LIMIT 1`).get(r.runId, r.scopeId) !== null
     || state.state === 'aborted' && (context.database.query(`SELECT 1 AS present FROM ${t.cellSets} c JOIN ${t.workingMembers} m ON m.cell_set_id=c.id WHERE c.run_id=? AND m.scope_id=? LIMIT 1`).get(r.runId, r.scopeId) !== null
       || context.database.query(`SELECT 1 AS present FROM ${t.cellSets} c JOIN ${t.selectors} x ON x.cell_set_id=c.id WHERE c.run_id=? AND x.scope_id=? LIMIT 1`).get(r.runId, r.scopeId) !== null);
-  return { status: 'known' as const, run, state, progress, cleanupPending };
+  return { status: 'known' as const, run, state, progress, cleanupPending: cleanupPending || selected && calendarSeriesSelectedMaterializationCleanupPending(context, r.scopeId, r.runId) };
 }
 export function reconcileCalendarSeriesMaterializationReceipt(context: DatabaseReadQueryContext, input: unknown) {
   const r = readOwner(context, input), run = context.database.query<Row>(`SELECT * FROM ${t.runs} WHERE id=? AND scope_id=? AND series_id=? LIMIT 1`).get(r.runId, r.scopeId, r.seriesId);

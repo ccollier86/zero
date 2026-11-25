@@ -29,7 +29,9 @@ export interface CalendarSeriesOccupancyResult {
 }
 function invalid(): never { throw new CalendarError('CALENDAR_INPUT_INVALID'); }
 function notReady(): never { throw new CalendarError('CALENDAR_NOT_READY'); }
-function input(value: unknown): CalendarSeriesOccupancyInput {
+/** Closed shape shared by the forward selected-child profile. This does not
+ * authorize exclusions; each canonical writer proves that set independently. */
+export function admitCalendarSeriesOccupancyInput(value: unknown): CalendarSeriesOccupancyInput {
   // The native 1,000-version exclusion bound can exceed Calendar's unrelated
   // 32KiB per-value cap. Use the existing bounded actor payload validator, then
   // explicit field/list bounds; never serialize getters/proxies for validation.
@@ -55,7 +57,7 @@ function input(value: unknown): CalendarSeriesOccupancyInput {
  * consume a page or turn absence in a filtered prefix into "free". The native
  * source writer separately validates the exact exclusion set at COMMIT. */
 export function readCalendarSeriesOccupancy(context: DatabaseReadQueryContext, requested: unknown): CalendarSeriesOccupancyResult {
-  const r = input(requested), resources = r.resourceIds.map(() => '?').join(','), excluded = r.excludeVersionIds!;
+  const r = admitCalendarSeriesOccupancyInput(requested), resources = r.resourceIds.map(() => '?').join(','), excluded = r.excludeVersionIds!;
   const exclusion = (alias: string) => excluded.length ? ` AND ${alias}.version_id NOT IN (${excluded.map(() => '?').join(',')})` : '';
   const firstCell = Math.floor(r.occupiedStartMs / DAY_MS) * DAY_MS, lastCell = Math.floor((r.occupiedEndMs - 1) / DAY_MS) * DAY_MS;
   const current = context.database.query(`SELECT 1 AS present FROM ${t.selectors} s
