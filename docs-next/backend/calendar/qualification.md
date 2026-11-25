@@ -60,7 +60,9 @@ read-to-compilation path:
   A successful result is `series.plan.accepted`, not an appointment publication.
   Real SYSTEM participant eligibility is rechecked by the supplied actual-COMMIT
   callback. The isolated MEMORY test installs that callback through ReactiveDB;
-  production broker/actor `DatabaseCommitAuthority` wiring is still required.
+  the later private profile composes the callback through the runtime's real
+  `DatabaseCommitAuthority` path. Physical broker/actor qualification and public
+  managed activation remain required.
 - `series-read-model.ts` keeps original acceptance separate from preparing,
   blocked, expired, aborted, published and retired outcomes. Historical
   publication does not disappear merely because its source later retires. Reads
@@ -78,10 +80,11 @@ read-to-compilation path:
   in the batch digest, including batches larger than one canonical-value limit.
   Nominal completion remains distinct from UTC occupancy coverage.
 
-The next F5 families must supply the real native broker/commit composition,
-versioned children and staged occupancy publication, exception/split/edit
-semantics, sparse coverage and Jobs continuation, then facade/UI activation together. No partial
-table, cursor, local preview or passing source check completes that work.
+After the private native composition below, F5 still requires selected-child
+read composition, exception/split/one-future-all edit semantics, sparse coverage
+and actual Jobs continuation, then facade/UI activation together. Physical
+native composition also remains unqualified. No partial table, cursor, local
+preview or passing source check completes that work.
 
 ### Subsequent private native materialization work
 

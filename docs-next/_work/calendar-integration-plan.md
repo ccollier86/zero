@@ -1154,6 +1154,107 @@ native reminder effects, public booking and management/clinical integration.
 A nominal cursor, day-cell publication or source-complete result alone must never
 be advertised as a general free-time certificate.
 
+#### Next F5 family: selected children and canonical replacement edits
+
+Private021 checkpoint `27266e1` is source/MEMORY checked (191 affected tests,
+zero failures), not complete F5. The next additive family must make the accepted
+children usable through the real facade and safely editable **before** issuing
+resource-complete sparse availability certificates. It must preserve every
+001–021 migration function/checksum and the ordinary016–019 representation.
+
+The reviewed implementation direction is:
+
+- Add explicit selected child facts, logical child/exception revisions and a
+  bounded per-effective-child/resource working index. Do not paginate day-cell
+  duplicates, sort all retained generations or fabricate ordinary appointment
+  rows to get access to old binding readers.
+- Resolve an internal `ordinary | series-child` target. Ordinary DTO JSON stays
+  exact. Only child DTOs add stable series/segment/nominal/source/exception
+  metadata and a canonical-series-action policy. Native version/view/CAS hashes
+  stay private; a caller revision is not authority.
+  `sourceGeneration` describes the accepted child's version, not a newer pending
+  source. Promotion, unchanged copies, unrelated horizon append and source
+  retirement must not increment that child's logical revision.
+- Point reads can show an authorized cancelled tombstone. Range/detail selection
+  and every co-resource right are filtered before `LIMIT`; effective occupied
+  time, not nominal date, indexes moved children. Busy adds one redacted interval
+  per selected child/resource to the existing bounded partition merge. Participant
+  references remain a separate manager-only exact-version/SYSTEM projection.
+- Derive ordinary native-horizon child/index facts from actual admitted021
+  versions **before** the original native receipt closes. Use fixed package-owned
+  derivation, not input callbacks or a later best-effort command. Reserve the
+  extra row cost before projection, keeping combined physical mutations bounded.
+  New022 SQL seals must verify complete derived facts; callback assertions alone
+  cannot make late or missing projections admissible.
+- Promotion from a populated private021 source is explicit and fail-closed.
+  Before complete022 promotion, old accepted occupancy remains authoritative;
+  missing child projections must not produce a partial list or free interval.
+  Ordinary profiles must not start issuing new private queries.
+- Keep021's horizon subset/CAS guard intact. Same-view move/cancel requires a
+  separately sealed exact replacement route. The022 migration must deliberately
+  replace the ordinary overlap bridge/query with promotion-aware selection:
+  legacy021 fallback for unpromoted sources and the qualified022 selected resource
+  projection for promoted sources. Merely adding tables cannot release an old
+  interval while the existing overlap guards still select it.
+- Variant edits need exact per-effective-version resource authority (at most 16),
+  type/visit/participant bindings and effect seals. Do not widen the base source
+  grant to admit an exception. Moves preserve nominal identity; cancellation is
+  an exact withdrawal/tombstone, not an invented zero-output booking run.
+- Fresh acceptance uses real current all-old-manage/all-resulting-book and final
+  SYSTEM eligibility where relevant. Later bounded work uses the accepted scoped,
+  revocable plan delegation, not a serialized or reconstructed human session.
+  Cancellation does not require a retired catalog, removed participant or engine
+  to become eligible for a new booking.
+- Extend receipt-first, current-target reconciliation through the shared bounded
+  human-key namespace. Legacy update/reschedule/cancel/transition/participant and
+  review entry points first admit the actual current object, then return a static
+  canonical-series-action refusal. Append any new numeric rejection code; never
+  reorder existing domain error codes or automatically resend an unknown write.
+- Future/all changes need bounded multi-run preparation and one authored-view
+  cutover, including explicit zero-result/tombstone proof. Do not reuse initial
+  creation's mandatory nonempty seal or make021's temporary 2,048-selector cap a
+  permanent product/edit horizon. Time/template changes retain nominal anchors;
+  repeat-pattern changes record splits; all means unstarted plus future source,
+  preserving past/terminal facts and explicit preserve-versus-rebase policy.
+
+The exact022 table/phase contract is being cross-reviewed before DDL. Acceptance
+must cover selected-before-pagination privacy, exact old-version exclusions,
+whole replacement rollback, move identity, cancellation after policy/engine
+retirement, no-op/partial/unknown replay, large view cutover and final revocation.
+These are required implementation gates, not optional scope reductions.
+
+The draft grains distinguish a per-series selected view pointer from per-child
+head/selection revisions; retain one working whole-interval resource row per
+selected child/resource; and keep immutable021 version payloads as their actual
+origin rather than copying a second booking envelope. Separate022 variants,
+exact old-member manifests, narrow plan grants, whole pending claims and original
+human/native receipts cover replacements and tombstones. View metadata must not
+require one021 run or a final update of every child. The remaining schema freeze
+must settle multi-run bundle seals and the qualified current-owner adoption
+encoding before those routes are implemented.
+
+Historical issuer/root/realm facts remain historical. A qualified framework realm
+upgrade must not rewrite accepted source grants or pretend their old issuer was
+the new realm. Preserve an explicit current-owner/adoption proof and exact policy,
+resource and operation authority; do not turn the realm fingerprint alone into
+permanent organizational-source revocation. Engine/rule-semantic changes remain
+a separate explicit requalification boundary.
+
+The selected-view directory and range indexes must be reviewed as actual query
+plans. A join to the selected pointer before `LIMIT` is not sufficient if the time
+index still traverses retained historical views. Enumerate selected working view
+partitions first, use bounded interval seeks/merging, keep pending/retiring working
+quotas separate, and do not introduce an unqualified persistent-map engine to hide
+an unbounded cutover or read.
+
+Detached compilation currently means **outside SQL/authority leases**, not proof
+of nonblocking main-request CPU placement. Before automatic Jobs activation,
+qualify its placement in the existing native worker/Torrent system. Any worker
+handoff must retain fixed native origin, engine/process lifetime and actual-COMMIT
+proof; it must not accept serialized opaque brands or arbitrary compiled JSON.
+Measure cold file-mode contention and per-database concurrency, not only memory
+tests or the absence of a network hop.
+
 - Keep one private conflict domain per admitted application/tenant scope, not one
   file per provider and not a change to the app's own data topology.
 - Preserve durable proof/history in the existing Fabric-backed services. Separate
