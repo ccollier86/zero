@@ -10,19 +10,22 @@ import type { MessagingRuntime } from './runtime';
 import { messagingHash } from './validation';
 import { readAuthAuthorityRevision } from '../auth/auth-authority-revision';
 import { DatabaseError } from '../databases/database-error';
+import { relationshipGroupHash, type MessagingRelationshipReader } from './relationship-policy';
 
 export class ManagedMessagingGroups {
   private stopped = false;
-  private readonly complete = new Map<string, number>();
+  private readonly complete = new Map<string, string>();
   private readonly tasks = new Map<string, Promise<void>>();
   private readonly applied = new Map<string, string>();
   private remove: (() => void) | null = null;
   private timer: ReturnType<typeof setTimeout> | undefined;
-  private lastBackgroundRevision: number | null = null;
+  private lastBackgroundRevision: string | null = null;
+  private appRevision = 0;
   private backgroundRunning = false;
   private backgroundDirty = false;
-  constructor(private readonly deps: { system: ReactiveDB; runtime: MessagingRuntime; directory: MessagingDirectory; config: ResolvedMessagingConfig; logging?: LoggingRuntime; failed(): void }) {
-    if (!Object.keys(deps.config.groups).length) return;
+  constructor(private readonly deps: { system: ReactiveDB; runtime: MessagingRuntime; directory: MessagingDirectory; config: ResolvedMessagingConfig;
+    relationships?: MessagingRelationshipReader; logging?: LoggingRuntime; failed(): void }) {
+    if (!Object.keys(deps.config.groups).length && !deps.relationships) return;
     if (!deps.directory.groupCandidates || !deps.directory.groupRecipient) throw new Error('[messaging] Configured groups require Guardian directory policy.');
     // Guardian's composite-key/property/role writes deliberately bypass raw
     // row broadcasts. Its durable revision clock, not onChange payloads, is
@@ -30,11 +33,15 @@ export class ManagedMessagingGroups {
     this.remove = deps.system.onCommit(() => this.arm());
     this.arm();
   }
+  relationshipChanged(): void {
+    this.appRevision++;
+    this.arm();
+  }
   async ensure(scope: ServiceDataScope): Promise<void> {
-    if (!Object.keys(this.deps.config.groups).length) return;
+    if (!Object.keys(this.deps.config.groups).length && !this.deps.relationships) return;
     const key = serviceDataScopeKey(scope);
     for (let attempt = 0; attempt < 3; attempt++) {
-      this.assertOpen(); const generation = this.revision(); if (this.complete.get(key) === generation) return;
+      this.assertOpen(); const generation = this.revision(scope); if (this.complete.get(key) === generation) return;
       let task = this.tasks.get(key);
       if (!task) {
         task = this.reconcile(scope, generation).then(() => { this.complete.set(key, generation); });
@@ -44,28 +51,28 @@ export class ManagedMessagingGroups {
       try { await task; }
       catch (error) {
         const changed = error instanceof AuthError && error.code === 'MESSAGING_GROUP_POLICY_CHANGED'
-          || error instanceof DatabaseError && error.outcome === 'unknown' && this.revision() !== generation;
+          || error instanceof DatabaseError && error.outcome === 'unknown' && this.revision(scope) !== generation;
         // This trusted reconciliation is convergent and has no external
         // effects. A fresh snapshot may safely settle an uncertain prior write.
         if (!changed || attempt === 2) throw error;
       }
     }
-    if (this.complete.get(key) !== this.revision()) throw new AuthError('Group membership changed during synchronization.', 'MESSAGING_GROUP_POLICY_CHANGED', 409);
+    if (this.complete.get(key) !== this.revision(scope)) throw new AuthError('Group membership changed during synchronization.', 'MESSAGING_GROUP_POLICY_CHANGED', 409);
   }
   async close(): Promise<void> {
     this.stopped = true; clearTimeout(this.timer); this.remove?.(); this.remove = null;
     await Promise.allSettled([...this.tasks.values()]); this.complete.clear(); this.applied.clear();
   }
-  private async reconcile(scope: ServiceDataScope, generation: number): Promise<void> {
-    const check = () => { this.assertOpen(); this.deps.directory.assertScope(scope); if (this.revision() !== generation) throw new AuthError('Group membership changed during synchronization.', 'MESSAGING_GROUP_POLICY_CHANGED', 409); };
+  private async reconcile(scope: ServiceDataScope, generation: string): Promise<void> {
+    const check = () => { this.assertOpen(); this.deps.directory.assertScope(scope); if (this.revision(scope) !== generation) throw new AuthError('Group membership changed during synchronization.', 'MESSAGING_GROUP_POLICY_CHANGED', 409); };
     check();
-    const groups = Object.values(this.deps.config.groups), members = new Map(groups.map(group => [group.id, [] as string[]]));
+    const configured = Object.values(this.deps.config.groups), members = new Map(configured.map(group => [group.id, [] as string[]]));
     let after = '', scanned = 0;
-    for (;;) {
+    while (configured.length) {
       check(); const page = this.deps.directory.groupCandidates!(scope, after, 50);
       scanned += page.ids.length;
       if (scanned > 10000) throw new AuthError('The configured group directory exceeds its bounded reconciliation budget.', 'MESSAGING_CAPACITY', 429);
-      for (const id of page.ids) for (const group of groups) if (this.deps.directory.groupRecipient!(scope, id, group.id)) {
+      for (const id of page.ids) for (const group of configured) if (this.deps.directory.groupRecipient!(scope, id, group.id)) {
         const values = members.get(group.id)!; values.push(id);
         if (values.length > this.deps.config.maxParticipants) throw new AuthError('A configured group exceeds the configured participant limit.', 'MESSAGING_CAPACITY', 429);
       }
@@ -74,17 +81,26 @@ export class ManagedMessagingGroups {
       after = page.ids.at(-1)!;
       await new Promise<void>(resolve => setImmediate(resolve)); // Yield between bounded pages, outside SQL/auth leases.
     }
+    const groups = [
+      ...configured.map(group => ({ ...group, users: members.get(group.id)!, epochs: undefined })),
+      ...(this.deps.relationships?.(scope).groups ?? []).map(group => {
+        const admitted = group.members.filter(member => this.deps.directory.notificationRecipient(scope, member.id, false));
+        return { id: group.id, name: group.name, policyHash: relationshipGroupHash(group.id), history: 'since-join' as const,
+          users: admitted.map(member => member.id), epochs: Object.fromEntries(admitted.map(member => [member.id, member.epoch])) };
+      }),
+    ];
     const scopeId = serviceDataScopeKey(scope);
     const run = async () => {
       for (const group of groups) {
-        check(); const id = 'group_' + messagingHash([scopeId, group.id]).slice(0, 40), users = members.get(group.id)!;
-        const key = scopeId + ':' + group.id, fingerprint = messagingHash([group.name, group.policyHash, users]);
+        check(); const id = 'group_' + messagingHash([scopeId, group.id]).slice(0, 40);
+        const key = scopeId + ':' + group.id, fingerprint = messagingHash([group.name, group.policyHash, group.users, group.epochs ?? null]);
         // Login/session revisions also advance Guardian's shared clock. If
         // membership/config did not change, do not create a private commit,
         // durable receipt, audit transaction or live invalidation for it.
         if (this.applied.get(key) === fingerprint) continue;
         await this.deps.runtime.write(scope, 'messaging.group.reconcile', { scopeId, id, groupId: group.id, name: group.name,
-          policyHash: group.policyHash, history: group.history, members: users, maxParticipants: this.deps.config.maxParticipants },
+          policyHash: group.policyHash, history: group.history, members: group.users, ...(group.epochs ? { epochs: group.epochs } : {}),
+          maxParticipants: this.deps.config.maxParticipants },
         // A -> B -> A is a new reconciliation, not replay of the first A's
         // transport receipt. The command itself is convergent and content-free.
         'group-sync:' + crypto.randomUUID(), check);
@@ -122,9 +138,9 @@ export class ManagedMessagingGroups {
     finally { this.backgroundRunning = false; if (failed || this.backgroundDirty) this.arm(failed ? 5000 : 50); }
   }
   private assertOpen(): void { if (this.stopped) throw new AuthError('Managed messaging groups are unavailable.', 'MESSAGING_NOT_READY', 503); }
-  private revision(): number {
+  private revision(scope?: ServiceDataScope): string {
     const revision = readAuthAuthorityRevision(this.deps.system);
     if (revision === null) throw new AuthError('Guardian group authority is unavailable.', 'MESSAGING_NOT_READY', 503);
-    return revision;
+    return revision + ':' + (scope && this.deps.relationships ? messagingHash(this.deps.relationships(scope).groups) : this.appRevision);
   }
 }

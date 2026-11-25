@@ -11,7 +11,9 @@ import { initialMessagingWorkspaceState, messagingErrorStatus, type MessagingWor
 export class MessagingWorkspaceController {
   private state = initialMessagingWorkspaceState(); private readonly listeners = new Set<() => void>();
   private readonly abort = new AbortController(); private selectedAbort: AbortController | null = null;
-  private stopList: (() => void) | undefined; private stopHead: (() => void) | undefined;
+  private stopList: (() => void) | undefined; private stopHead: (() => void) | undefined; private stopPeople: (() => void) | undefined;
+  private peopleGeneration = 0;
+  private readonly deniedSelections = new Set<string>();
   private transcript: MessagingWorkspaceTranscript | null = null; private selection = 0; private started = false; private following = true;
   private listEpoch = 0; private readonly cursors: Array<string | undefined> = [undefined];
   private readonly sends: MessagingWorkspaceSends; private readonly uploads: MessagingWorkspaceUploads;
@@ -50,7 +52,7 @@ export class MessagingWorkspaceController {
   latestConversations(archived = this.state.showArchived): void { if (this.current()) { this.cursors.splice(1); this.set({ showArchived: archived }); this.watchList(0); } }
   async select(id: string | null): Promise<void> {
     if (!this.current() || id === this.state.selectedId && !this.selectedAbort?.signal.aborted) return;
-    const epoch = ++this.selection; this.selectedAbort?.abort(); this.stopHead?.(); this.transcript?.close(); this.transcript = null; this.reading = null;
+    const epoch = ++this.selection; ++this.peopleGeneration; this.selectedAbort?.abort(); this.stopHead?.(); this.stopPeople?.(); this.transcript?.close(); this.transcript = null; this.reading = null;
     const abort = this.selectedAbort = new AbortController(), signal = AbortSignal.any([this.abort.signal, abort.signal]);
     const current = () => this.current() && epoch === this.selection && !signal.aborted;
     this.following = true;
@@ -60,8 +62,16 @@ export class MessagingWorkspaceController {
     try {
       const [conversation, people, page] = await Promise.all([this.source.conversations.get(id, { signal }), this.source.conversations.people(id, { signal }), this.source.messages.list(id, { limit: 50 }, { signal })]);
       if (!current()) return;
-      this.set({ conversation, people: Object.fromEntries(people.items.map(row => [row.id, row])) });
+      this.deniedSelections.delete(id);
+      this.set({ conversation }); this.receivePeople(people.items);
       const onError = (error: unknown) => { if (!current()) return; if (error instanceof MessagingLiveError && !error.retryable) this.denySelection(); else this.set({ live: 'unavailable' }); };
+      this.stopPeople = this.source.watchPeople?.(id, page => {
+        if (!current()) return; ++this.peopleGeneration;
+        // An authoritative full snapshot replaces old optional photo fields,
+        // even when conversation and membership revisions are unchanged.
+        this.receivePeople(page.items);
+      }, { signal, onError });
+      if (!current()) { this.stopPeople?.(); return; }
       this.transcript = new MessagingWorkspaceTranscript(this.source, id, current, { signal, onError }, () => this.state.messages,
         (messages, hasOlder, hasNewer) => { if (current()) this.set({ messages, ...(hasOlder === undefined ? {} : { hasOlder }), ...(hasNewer === undefined ? {} : { hasNewer }) }); }, () => this.following, this.maximum);
       this.transcript.receive(page);
@@ -189,20 +199,36 @@ export class MessagingWorkspaceController {
         return detail.resolution;
       }, () => { if (selection === this.selection) void this.refreshSelected(selection); });
   }
-  dispose(): void { this.abort.abort(); this.selectedAbort?.abort(); this.stopList?.(); this.stopHead?.(); this.transcript?.close(); this.uploads.clear(); this.sends.clear(); this.commands.clear(); this.listeners.clear(); this.state = initialEmpty; }
+  dispose(): void { this.abort.abort(); this.selectedAbort?.abort(); this.stopList?.(); this.stopHead?.(); this.stopPeople?.(); this.transcript?.close(); this.uploads.clear(); this.sends.clear(); this.commands.clear(); this.listeners.clear(); this.state = initialEmpty; }
   private canEdit(): boolean { return this.current() && !!this.state.conversation && !['sending', 'unknown'].includes(this.state.draft.phase); }
+  private receivePeople(rows: readonly MessagingPerson[]): void {
+    const people: Record<string, MessagingPerson> = Object.fromEntries(rows.map(row => [row.id, row])), id = this.state.selectedId;
+    for (const member of this.state.conversation?.participants ?? []) if (!people[member.id]) people[member.id] = {
+      id: member.id, kind: member.kind, name: member.name ?? 'Member', avatarUrl: null, privateAvatar: null,
+    };
+    const project = (conversation: ConversationRecord) => conversation.id !== id ? conversation : { ...conversation,
+      participants: conversation.participants.map(member => ({ ...member,
+        // A missing row cannot revive its old inline private photo. Explicit
+        // undefined also retires an earlier descriptor from a legacy source.
+        privateAvatar: people[member.id] ? people[member.id]!.privateAvatar : null })) };
+    this.set({ people, conversation: this.state.conversation ? project(this.state.conversation) : null,
+      conversations: this.state.conversations.map(project) });
+  }
   private draftChanged(): void { const id = this.state.selectedId; if (id) this.set({ draft: this.sends.draft(id, this.state.visibility), uploads: this.uploads.snapshot(id, this.state.visibility) }); }
   private denySelection(): void {
-    this.selectedAbort?.abort(); this.stopHead?.(); this.transcript?.close();
-    this.set({ conversation: null, people: {}, messages: [], loading: false, live: 'unavailable', error: 'This conversation is unavailable. Recheck your access before retrying.', draft: initialEmpty.draft, uploads: [] });
+    ++this.peopleGeneration; this.selectedAbort?.abort(); this.stopHead?.(); this.stopPeople?.(); this.transcript?.close();
+    const id = this.state.selectedId;
+    if (id) { if (this.deniedSelections.size >= 256) this.deniedSelections.delete(this.deniedSelections.values().next().value!); this.deniedSelections.add(id); }
+    this.set({ conversation: null, people: {}, messages: [], conversations: this.state.conversations.filter(row => row.id !== id), loading: false, live: 'unavailable', error: 'This conversation is unavailable. Recheck your access before retrying.', draft: initialEmpty.draft, uploads: [] });
   }
   private listFailure(error: unknown): void { if (!this.current()) return; if (error instanceof MessagingLiveError && !error.retryable) { this.denySelection(); this.set({ conversations: [], status: 'error' }); } }
   private watchList(page: number): void {
     const epoch = ++this.listEpoch; this.stopList?.(); this.set({ loadingConversations: true, conversationPage: page });
     this.stopList = this.source.watchConversations(value => {
       if (!this.current() || epoch !== this.listEpoch) return;
-      this.set({ conversations: value.items, conversationsCursor: value.nextCursor, loadingConversations: false, listError: null });
-      const selected = value.items.find(row => row.id === this.state.selectedId); if (selected) {
+      const items = value.items.filter(row => !this.deniedSelections.has(row.id));
+      this.set({ conversations: items, conversationsCursor: value.nextCursor, loadingConversations: false, listError: null });
+      const selected = items.find(row => row.id === this.state.selectedId); if (selected) {
         const before = this.state.conversation;
         if (before && !this.selectedAbort?.signal.aborted && selected.revision >= before.revision) this.set({ conversation: selected });
         if (before && (before.participants.length !== selected.participants.length || before.participants.some((row, index) => row.id !== selected.participants[index]?.id || row.role !== selected.participants[index]?.role))) void this.refreshSelected(this.selection);
@@ -217,9 +243,13 @@ export class MessagingWorkspaceController {
     if (this.refreshing?.epoch === epoch) { this.refreshing.again = true; return this.refreshing.task; }
     const owner = { epoch, again: false, task: Promise.resolve() };
     owner.task = Promise.resolve().then(async () => {
+      const peopleGeneration = this.peopleGeneration;
       try { const [conversation, people] = await Promise.all([this.source.conversations.get(id, { signal: this.selectedAbort?.signal }), this.source.conversations.people(id, { signal: this.selectedAbort?.signal })]);
-        if (this.current() && epoch === this.selection && conversation.revision >= (this.state.conversation?.revision ?? 0)) this.set({ conversation, people: Object.fromEntries(people.items.map(row => [row.id, row])) });
-      } catch { if (this.current() && epoch === this.selection) this.denySelection(); }
+        if (this.current() && epoch === this.selection && !this.selectedAbort?.signal.aborted) {
+          if (conversation.revision >= (this.state.conversation?.revision ?? 0)) this.set({ conversation });
+          if (peopleGeneration === this.peopleGeneration) this.receivePeople(people.items);
+        }
+      } catch { if (this.current() && epoch === this.selection && !this.selectedAbort?.signal.aborted) this.denySelection(); }
       finally { if (this.refreshing === owner) this.refreshing = null; if (owner.again && this.current() && epoch === this.selection && !this.selectedAbort?.signal.aborted) void this.refreshSelected(epoch); }
     }); this.refreshing = owner; return owner.task;
   }

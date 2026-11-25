@@ -12,10 +12,17 @@ import { resolveMessagingAssistants, type MessagingAssistantConfig, type Resolve
 import { resolveMessagingGroups, type MessagingGroupConfig, type ResolvedMessagingGroup } from './group-config';
 import { resolveMessagingSupportEntries, type MessagingSupportEntryConfig, type ResolvedMessagingSupportEntry } from './support-entry-config';
 import { resolveMessagingSupportInboxes, type MessagingSupportInboxConfig, type ResolvedMessagingSupportInbox } from './support-inbox-config';
+import type { MessagingRelationshipPolicy } from './relationship-policy';
+import type { ServiceDataScope } from '../auth/service-data-scope';
 export type { MessagingSupportEntryConfig } from './support-entry-config';
 export type { MessagingSupportInboxConfig } from './support-inbox-config';
 export type { MessagingAssistantConfig } from './assistant-config';
 export type { MessagingGroupConfig } from './group-config';
+
+export type MessagingNoticeAccepted = (
+  notice: { readonly notificationId: string; readonly scope: ServiceDataScope; readonly userIds: readonly string[] },
+  delivery: { readonly signal: AbortSignal; isCurrentRecipient(userId: string): boolean },
+) => void | Promise<void>;
 
 export interface MessagingConfig {
   /** Ordinary members use private routed support only; authorized support staff retain their existing backend workspace. */
@@ -35,7 +42,9 @@ export interface MessagingConfig {
   assistant?: false | MessagingAssistantConfig;
   assistants?: Readonly<Record<string, MessagingAssistantConfig>>;
   groups?: Readonly<Record<string, MessagingGroupConfig>>;
-  notifications?: boolean | { path?: string };
+  /** Trusted application admission for private direct chats and managed groups. */
+  relationships?: MessagingRelationshipPolicy;
+  notifications?: boolean | { path?: string; onAccepted?: MessagingNoticeAccepted };
   /** Maximum parallel I/O activities by default, not one global serialized AI queue. */
   jobs?: { concurrency?: number | 'max' };
 }
@@ -51,13 +60,15 @@ export interface ResolvedMessagingConfig {
   readonly assistant: ResolvedMessagingAssistant | false;
   readonly assistants: Readonly<Record<string, ResolvedMessagingAssistant>>;
   readonly groups: Readonly<Record<string, ResolvedMessagingGroup>>;
+  readonly relationships?: MessagingRelationshipPolicy;
   readonly notifications: boolean; readonly notificationPath: string; readonly jobConcurrency: number;
+  readonly onNoticeAccepted?: MessagingNoticeAccepted;
 }
 /** Explicit auth:false never becomes an unauthenticated messaging service. */
 export function resolveMessagingConfig(input: boolean | MessagingConfig | undefined, projectRoot: string, auth: NormalizedAuthBehaviorConfig | null): ResolvedMessagingConfig | false {
   if (input === false || input === undefined) return false;
   if (!auth) throw new Error('[messaging] Guardian must be enabled.');
-  const r = input === true ? {} : messagingRecord(input, ['portal', 'directory', 'history', 'rootDirectory', 'actors', 'maxMessageLength', 'maxParticipants', 'maxActiveDatabases', 'maxDatabaseFiles', 'maxUploadBytes', 'support', 'assistant', 'assistants', 'groups', 'notifications', 'jobs']);
+  const r = input === true ? {} : messagingRecord(input, ['portal', 'directory', 'history', 'rootDirectory', 'actors', 'maxMessageLength', 'maxParticipants', 'maxActiveDatabases', 'maxDatabaseFiles', 'maxUploadBytes', 'support', 'assistant', 'assistants', 'groups', 'relationships', 'notifications', 'jobs']);
   if (r.portal !== undefined && typeof r.portal !== 'boolean') throw new Error('[messaging] portal must be boolean.');
   if (r.portal === true && r.support === false) throw new Error('[messaging] Portal messaging requires support admission.');
   if (r.rootDirectory !== undefined && (typeof r.rootDirectory !== 'string' || !r.rootDirectory.trim() || r.rootDirectory.includes('\0'))) throw new Error('[messaging] Invalid private messaging root.');
@@ -74,13 +85,20 @@ export function resolveMessagingConfig(input: boolean | MessagingConfig | undefi
   // catalog bounded; core Logging still enforces its aggregate source budget.
   const maxActiveDatabases = messagingInteger(r.maxActiveDatabases ?? 4, 1, 64), maxDatabaseFiles = messagingInteger(r.maxDatabaseFiles ?? 1000, maxActiveDatabases, 10000);
   const assistantConfiguration = resolveMessagingAssistants(r, auth);
+  const groups = resolveMessagingGroups(r.groups, auth);
+  if (r.relationships !== undefined && (typeof r.relationships !== 'function' || auth.tenancy.mode !== 'single' ||
+    r.portal === true || r.directory === 'contacts' || support !== false || Object.keys(assistantConfiguration.assistants).length || Object.keys(groups).length)) {
+    throw new Error('[messaging] Relationships require single tenancy with an application-owned direct directory and group catalog.');
+  }
   const supportEntries = resolveMessagingSupportEntries(support === false ? undefined : support.entries, auth, assistantConfiguration.assistants, assistantConfiguration.assistant ? assistantConfiguration.assistant.id : null);
   const supportInboxes = resolveMessagingSupportInboxes(support === false ? undefined : support.inboxes, auth, assistantConfiguration.assistants, assistantConfiguration.assistant ? assistantConfiguration.assistant.id : null);
   const inboxIds = Object.keys(supportInboxes);
   if (Object.keys(supportEntries).length + inboxIds.length > 32 || inboxIds.some(id => Object.hasOwn(supportEntries, id))) throw new Error('[messaging] Support entries and inboxes require unique names and at most 32 combined destinations.');
   const defaultSupportInbox = support === false || support.defaultInbox === undefined ? inboxIds.length === 1 ? inboxIds[0]! : null : messagingText(support.defaultInbox, 64);
   if (defaultSupportInbox !== null && !Object.hasOwn(supportInboxes, defaultSupportInbox)) throw new Error('[messaging] The default support inbox is not configured.');
-  const notice = r.notifications === undefined || r.notifications === false ? false : r.notifications === true ? {} : messagingRecord(r.notifications, ['path']);
+  const notice = r.notifications === undefined || r.notifications === false ? false : r.notifications === true ? {} : messagingRecord(r.notifications, ['path', 'onAccepted']);
+  const onNoticeAccepted = notice === false ? undefined : notice.onAccepted;
+  if (onNoticeAccepted !== undefined && typeof onNoticeAccepted !== 'function') throw new Error('[messaging] Notification acceptance hooks must be functions.');
   const notificationPath = messagingNotificationPath(notice === false ? '/messages' : notice.path ?? '/messages');
   const jobs = r.jobs === undefined ? {} : messagingRecord(r.jobs, ['concurrency']);
   const jobConcurrency = jobs.concurrency === undefined || jobs.concurrency === 'max' ? 100 : messagingInteger(jobs.concurrency, 1, 100);
@@ -89,7 +107,10 @@ export function resolveMessagingConfig(input: boolean | MessagingConfig | undefi
     createExecutor: createSubprocessDatabaseExecutorFactory({ ...actors, actorFlag: MESSAGING_ACTOR_FLAG } as unknown as SubprocessDatabaseExecutorFactoryOptions), defaultActorEntrypoint: entry,
     maxMessageLength: messagingInteger(r.maxMessageLength ?? 20000, 1, 20000), maxParticipants: messagingInteger(r.maxParticipants ?? 100, 2, 100), maxActiveDatabases, maxDatabaseFiles,
     maxUploadBytes: messagingInteger(r.maxUploadBytes ?? 16 * 1024 * 1024, 1024, 256 * 1024 * 1024), support: staff === null ? false : Object.freeze({ staff: deepFreeze(staff) }),
-    ...assistantConfiguration, supportEntries, supportInboxes, defaultSupportInbox, groups: resolveMessagingGroups(r.groups, auth), notifications: notice !== false, notificationPath, jobConcurrency });
+    ...assistantConfiguration, supportEntries, supportInboxes, defaultSupportInbox, groups,
+    ...(typeof r.relationships === 'function' ? { relationships: r.relationships as MessagingRelationshipPolicy } : {}),
+    notifications: notice !== false, notificationPath, jobConcurrency,
+    ...(typeof onNoticeAccepted === 'function' ? { onNoticeAccepted: onNoticeAccepted as MessagingNoticeAccepted } : {}) });
 }
 function packagedMessagingActor(projectRoot: string): string {
   const adjacent = fileURLToPath(new URL('./actor-entry.ts', import.meta.url)); if (existsSync(adjacent)) return adjacent;

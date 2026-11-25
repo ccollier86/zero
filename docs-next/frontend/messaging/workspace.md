@@ -8,7 +8,7 @@ visibility: internal
 system: messaging
 feature: managed-workspace
 maturity: experimental
-applies_to: ["2.7.0 native messaging workspace; identify installed support by release commit/archive hash"]
+applies_to: ["2.11.1 source/local contract; verify committed archive and external release qualification receipt"]
 ---
 
 # Native Messaging Workspace
@@ -71,6 +71,48 @@ This is the participation workspace, not a messaging configuration editor.
 The proposed [single AppShell management view](../../_work/messaging-administration-experience.md)
 is separate planned work; rendering the current workspace does not provide
 administrative group policies or grant transcript access to administrators.
+
+### Private Avatar Lifecycle
+
+Zero 2.11.1 lets this same
+workspace display private Guardian photos without a `participantFor` override
+or a second auth client. Configure the server-side
+[viewer-to-subject read policy](../../backend/guardian/avatars.md#viewer-to-subject-private-read-policy)
+for an application whose photo audience is narrower than Guardian's legacy
+active-account/organization directory. Photo admission and DM initiation remain
+separate: a current housemate can have a group photo without becoming a direct
+recipient. The UI is not the authorization boundary.
+
+Admitted `privateAvatar: { revision, asset }` metadata is rendered through
+authenticated `client.userAvatar.deliver()` and locally owned blob URLs, never
+an image-element request to an arbitrary private/provider path. Contact picker,
+participant roster, headers, conversation previews and message identities all
+use the native Avatar fallback. Null/removed/denied private metadata masks any
+retained inline/public photo; unavailable bytes show initials.
+
+The native directory/people watches replace full admitted metadata, including
+replacement/removal from another session with no conversation revision change.
+The preview is keyed to the current authorization scope, subject, revision and
+asset; it is not a user-ID cache. Projection retirement, account or tenant
+switch, sign-out and unmount cancel reads and revoke object URLs. A late body
+or stale list/people reply cannot restore the old account's photo. A held asset
+URL still has to pass live server policy if requested again.
+
+For custom components, `useUserAvatarPresentation(subjectId, presentation)` is
+available from `@zero/framework` and `/react`. It consumes an already authorized
+projection in the existing provider; it does not grant directory access.
+External/custom facades may omit `privateAvatar`, `watchDirectory` and
+`watchPeople`; the previous public-photo/one-shot behavior remains available.
+Anonymous support identities do not borrow a surrounding Guardian session.
+
+This is the 2.11.1 native contract. Check the
+[release qualification record](../../_work/private-chat-avatars-qualification.md)
+and its external receipt before adopting a particular archive. Real native
+browser delivery, cross-session replacement/removal and account-switch checks
+are separate evidence from no-file React ownership tests; a version string or
+API reference does not prove the exact archive's Linux/updater qualification.
+
+### Existing Workspace Behavior
 
 - Conversations are live, authorized keyset pages of 25. Previous/Next replace
   the page rather than accumulate stale list snapshots. Archived conversations

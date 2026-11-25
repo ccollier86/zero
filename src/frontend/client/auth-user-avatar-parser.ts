@@ -1,5 +1,8 @@
 /** Bounded Guardian avatar metadata admission; delivery is an exact private path, never an arbitrary URL. */
-import type { UserAvatarAsset, UserAvatarCapabilities, UserAvatarSnapshot, UserAvatarStage, UserPublicAvatarAsset } from '../../auth/auth-user-avatar-types';
+import type { UserAvatarAsset, UserAvatarCapabilities, UserAvatarDirectoryEntry, UserAvatarPresentation, UserAvatarSnapshot, UserAvatarStage, UserPublicAvatarAsset } from '../../auth/auth-user-avatar-types';
+
+/** New servers include revision; absence remains compatible with older Guardian servers. */
+export type AuthUserAvatarDirectoryEntry = Omit<UserAvatarDirectoryEntry, 'revision'> & { revision?: number };
 
 const record = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 const integer = (value: unknown, min: number, max: number): value is number => Number.isSafeInteger(value) && Number(value) >= min && Number(value) <= max;
@@ -55,7 +58,13 @@ export function isUserAvatarStage(value: unknown): value is UserAvatarStage {
     && upload.contentTypes.length <= 3 && new Set(upload.contentTypes).size === upload.contentTypes.length
     && upload.contentTypes.every(type => ['image/jpeg', 'image/png', 'image/webp'].includes(type));
 }
-export function isUserAvatarDirectoryEntry(value: unknown): value is { userId: string; displayName: string; asset: UserAvatarAsset | null } {
+export function isUserAvatarDirectoryEntry(value: unknown): value is AuthUserAvatarDirectoryEntry {
   return record(value) && boundedString(value.userId, 512) && boundedString(value.displayName, 512)
+    && (value.revision === undefined || integer(value.revision, 1, Number.MAX_SAFE_INTEGER - 1))
     && (value.asset === null || isUserAvatarAsset(value.asset));
+}
+/** Minimal admitted private presentation; no capabilities, external URL or write receipt crosses this boundary. */
+export function isUserAvatarPresentation(value: unknown): value is UserAvatarPresentation {
+  return record(value) && Object.keys(value).length === 2 && Object.keys(value).every(key => key === 'revision' || key === 'asset')
+    && integer(value.revision, 1, Number.MAX_SAFE_INTEGER - 1) && (value.asset === null || isUserAvatarAsset(value.asset));
 }

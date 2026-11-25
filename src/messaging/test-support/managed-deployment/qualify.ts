@@ -1,7 +1,7 @@
 /** Execute after normal installed `zero build` inside an isolated Linux/amd64 container with retained source/dependencies. */
 import { expect } from 'bun:test';
 import { unlink } from 'node:fs/promises';
-import { request, acknowledge, keepAuditDelivery, until } from './transport';
+import { request, acknowledge, keepAuditDelivery, until, replaceAvatar, privateAvatarBytes } from './transport';
 let child: ReturnType<typeof Bun.spawn> | null = null;
 const output: Promise<string>[] = [], held = new Map<number, () => void>(); let providerCalls = 0;
 // Normal Torrent ownership is a 30-second durable lease. A hard-killed main
@@ -37,11 +37,28 @@ async function stop(signal: 'SIGTERM' | 'SIGKILL') {
   try { await child!.exited; } finally { clearTimeout(timer); child = null; }
   const owned = await probes(); await until(() => owned.every(probe => !alive(probe.pid)), 'Owned child retirement', 30000);
 }
+async function avatarDenied(origin: string, path: string, token?: string, status = 404) {
+  const response = await fetch(origin + path, { headers: token ? { Authorization: 'Bearer ' + token } : {}, signal: AbortSignal.timeout(15000) });
+  expect(response.status).toBe(status); expect(response.headers.get('content-type')).not.toBe('image/webp');
+  const failure = await response.json() as { code: string };
+  if (status === 404) expect(failure.code).toBe('AUTH_AVATAR_IMAGE_UNAVAILABLE');
+}
 try {
   expect(process.platform).toBe('linux'); expect(process.arch).toBe('x64');
   await Bun.write('./.env', 'ZERO_SYNTHETIC_DOTENV_SECRET=must-not-load\n');
   const seed = await Bun.file('./seed.json').json(), admin = seed.admin.accessToken, peer = seed.peer.accessToken;
   stage('bundled-start-and-admission'); let origin = await launch(); await collect(origin, [admin, peer]);
+  // The unrelated caller must pass real audit admission before photo policy can deny it.
+  await acknowledge(origin, seed.outsider.accessToken);
+  stage('source-avatar-retained-by-official-bundle');
+  const avatarDirectory = '/auth/profile/avatar/users/' + seed.peer.user.userId;
+  expect(await request(origin, avatarDirectory, admin)).toMatchObject({ revision: 2, asset: seed.avatar.asset });
+  await privateAvatarBytes(origin, admin, seed.avatar.asset);
+  await avatarDenied(origin, avatarDirectory, seed.outsider.accessToken);
+  await avatarDenied(origin, seed.avatar.asset.deliveryPath, seed.outsider.accessToken);
+  await avatarDenied(origin, seed.avatar.asset.deliveryPath, undefined, 401);
+  const directory = await request(origin, '/api/messaging/directory', admin);
+  expect(directory.items.find((row: any) => row.id === seed.peer.user.userId).privateAvatar).toEqual({ revision: 2, asset: seed.avatar.asset });
   stage('retained-history');
   expect((await request(origin, '/api/messaging/conversations/' + seed.conversation.id + '/messages', peer)).items[0].id).toBe(seed.message.id);
   // Terminate only this fixture's proven live private writer. A known crash may
@@ -73,6 +90,8 @@ try {
   console.log('Waiting for the normal workflow ownership lease after main SIGKILL.');
   await Bun.sleep(crashLeaseGraceMs);
   stage('restart-and-readmit'); origin = await launch(); await collect(origin, [admin, peer]);
+  expect(await request(origin, avatarDirectory, admin)).toMatchObject({ revision: 2, asset: seed.avatar.asset });
+  await privateAvatarBytes(origin, admin, seed.avatar.asset);
   await until(async () => (await request(origin, '/api/messaging/conversations/' + interrupted.id, peer)).owner === 'triage', 'Unknown invocation recovery');
   expect(providerCalls).toBe(3); // Recovery must never repeat a dispatched external call automatically.
   stage('retained-unknown-review'); const waiting = await request(origin, '/api/messaging/conversations/' + interrupted.id, peer);
@@ -84,13 +103,36 @@ try {
   const history = await request(origin, '/api/messaging/conversations/' + seed.conversation.id + '/messages', peer); expect(history.items.filter((row: any) => row.id === seed.message.id)).toHaveLength(1);
   const download = await fetch(origin + '/api/messaging/conversations/' + seed.conversation.id + '/attachments/' + seed.file.id + '/content', { headers: { Authorization: 'Bearer ' + peer } }); expect(download.status).toBe(200);
   expect(new Bun.CryptoHasher('sha256').update(new Uint8Array(await download.arrayBuffer())).digest('hex')).toBe(seed.file.checksum);
+  stage('bundled-native-avatar-replacement-and-removal');
+  const replaced = await replaceAvatar(origin, peer, 2, 1);
+  expect(replaced.asset!.id).not.toBe(seed.avatar.asset.id);
+  await avatarDenied(origin, seed.avatar.asset.deliveryPath, admin);
+  expect(await request(origin, avatarDirectory, admin)).toMatchObject({ revision: 3, asset: replaced.asset });
+  await privateAvatarBytes(origin, admin, replaced.asset!);
+  expect(await request(origin, '/auth/profile/avatar', peer, { expectedRevision: 3 }, undefined, 'DELETE')).toMatchObject({ revision: 4, asset: null });
+  expect(await request(origin, avatarDirectory, admin)).toMatchObject({ revision: 4, asset: null });
+  await avatarDenied(origin, replaced.asset!.deliveryPath, admin);
+  const current = await replaceAvatar(origin, peer, 4);
+  stage('private-avatar-audience-retirement');
+  await request(origin, '/proof/avatar-members/peer/retire', admin, {});
+  await avatarDenied(origin, avatarDirectory, admin); await avatarDenied(origin, current.asset!.deliveryPath, admin);
+  await privateAvatarBytes(origin, peer, current.asset!); // Own delivery is independent of the peer audience.
+  // Photo visibility is narrower than conversation admission, not a second chat gate.
+  expect((await request(origin, '/api/messaging/conversations/' + seed.conversation.id, admin)).id).toBe(seed.conversation.id);
+  expect((await request(origin, '/api/messaging/directory', admin)).items.find((row: any) => row.id === seed.peer.user.userId).privateAvatar).toBeNull();
+  stage('graceful-restart-preserves-private-avatar-denial');
+  await retireCollection(); await stop('SIGTERM'); origin = await launch(); await collect(origin, [admin, peer]);
+  await avatarDenied(origin, avatarDirectory, admin); await avatarDenied(origin, current.asset!.deliveryPath, admin);
+  await privateAvatarBytes(origin, peer, current.asset!);
   stage('strict-health-and-shutdown'); const health = await request(origin, '/api/_zero/logging/health', admin); expect(health.coverage.complianceReady).toBe(true);
   await retireCollection(); await stop('SIGTERM');
   const boots = (await Bun.file('./main-boots.ndjson').text()).trim().split('\n'), actors = await probes();
-  expect(boots).toHaveLength(2); expect(actors.every(probe => !probe.providerSecret && !probe.dotenvSecret)).toBe(true);
+  expect(boots).toHaveLength(3); expect(actors.every(probe => !probe.providerSecret && !probe.dotenvSecret)).toBe(true);
   const report = { platform: process.platform, arch: process.arch, bun: Bun.version, mainBoots: boots.length, workerLaunches: actors.length,
     officialBuild: true, sourcePreparedState: true, sourceActor: true, emptyChildEnvironment: true, noActorAppBoot: true, writerSigkillRecovery: true,
     recoveryAttempts, crashLeaseGraceMs, concurrentProviderCalls: 2, foregroundWriteMs, uncertainInvocationNotRepeated: true, retainedReview: true, privateFileAfterRestart: true,
+    privateAvatarSourcePrepared: true, bundledAvatarNativeDecode: true, privateAvatarReplacementRemoval: true,
+    privateAvatarAudienceRevokedAcrossRestart: true, privateAvatarSelfDeliveryPreserved: true,
     exactReplayCount: 1, complianceReady: true };
   await Bun.write('./qualification-report.json', JSON.stringify(report, null, 2)); console.log(JSON.stringify(report));
 } finally {

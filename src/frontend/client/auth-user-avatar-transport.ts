@@ -1,5 +1,6 @@
 /** Guardian avatar HTTP/storage protocol. One captured identity fences all stage, upload, commit and private-delivery awaits. */
 import type { UserAvatarAsset, UserAvatarSnapshot, UserAvatarStage } from '../../auth/auth-user-avatar-types';
+import type { AuthUserAvatarDirectoryEntry } from './auth-user-avatar-parser';
 import { AuthClientError, createAuthClientError } from './auth-errors';
 import { AuthSessionRecoveryRequest } from './auth-session-recovery-request';
 import { isUserAvatarAsset, isUserAvatarDirectoryEntry, isUserAvatarSnapshot, isUserAvatarStage } from './auth-user-avatar-parser';
@@ -29,7 +30,7 @@ export class AuthUserAvatarTransport {
   withdraw(expectedRevision: number, signal?: AbortSignal) {
     return this.mutation(scope => this.snapshot('/publication', this.body('DELETE', { expectedRevision }, scope.signal), scope), signal);
   }
-  directory(userId: string, signal?: AbortSignal) {
+  directory(userId: string, signal?: AbortSignal): Promise<AuthUserAvatarDirectoryEntry> {
     return this.options.runScoped(async scope => {
       if (!userId || userId.length > 256) throw invalidAvatar();
       const body = await this.json(`/users/${encodeURIComponent(userId)}`, { signal: scope.signal }, scope);

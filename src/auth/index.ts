@@ -534,4 +534,5 @@ export type * from './auth-user-profile-types';
 export type * from './auth-presence-types';
 export type * from './auth-user-contact-types';
 export type * from './auth-user-avatar-types';
+export type { AuthUserAvatarReadPolicy, AuthUserAvatarReadContext } from './auth-user-avatar-read-policy';
 export type * from './auth-user-profile-completion-types';

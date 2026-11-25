@@ -5,15 +5,16 @@ import type { ConversationKind, ConversationOwner, ConversationRole, DurableMess
 import { messagingArray, messagingChoice, messagingFail, messagingHash, messagingId, messagingInteger, messagingRecord, messagingRegistry, messagingText } from './validation';
 import { canHandleMessagingSupport } from './support-admission';
 export interface MessagingActor { scopeId: string; id: string; kind: 'user' | 'external' | 'assistant'; staff: boolean; portal?: boolean; assistantPolicies?: Readonly<Record<string, string>>; groupPolicies?: Readonly<Record<string, string>>; supportPolicies?: Readonly<Record<string, string>>; inboxPolicies?: Readonly<Record<string, string>>; inboxStaffPolicies?: Readonly<Record<string, string>>;
+  directEpochs?: Readonly<Record<string, string>>; relationshipEpochs?: Readonly<Record<string, string>>;
   visitor?: { readonly sessionId: string; readonly tokenHash: string; readonly entryId: string; readonly policyHash: string; readonly conversationId: string } }
 export type ConversationRow = Row & { id: string; scope_id: string; kind: ConversationKind; title: string; revision: number; created_at: number; updated_at: number; public_updated_at: number; archived: number;
-  created_by: string; owner: ConversationOwner; owner_id: string | null; owner_epoch: number; internal_sequence: number; public_sequence: number; channel_id: string | null; support_entry_id?: string | null; visitor_session_id?: string | null; members_json: string; assistant_id?: string | null; managed_group_id?: string | null; group_policy_hash?: string | null; context_revision?: number; customer_turn_id?: string | null };
-export type MemberRow = Row & { id: string; scope_id: string; conversation_id: string; participant_id: string; kind: 'user' | 'external' | 'assistant'; role: ConversationRole; active: number; joined_at: number; history_from: number; read_sequence: number };
+  created_by: string; owner: ConversationOwner; owner_id: string | null; owner_epoch: number; internal_sequence: number; public_sequence: number; channel_id: string | null; support_entry_id?: string | null; visitor_session_id?: string | null; members_json: string; assistant_id?: string | null; managed_group_id?: string | null; group_policy_hash?: string | null; relationship_epoch?: string | null; context_revision?: number; customer_turn_id?: string | null };
+export type MemberRow = Row & { id: string; scope_id: string; conversation_id: string; participant_id: string; kind: 'user' | 'external' | 'assistant'; role: ConversationRole; active: number; joined_at: number; history_from: number; read_sequence: number; relationship_epoch?: string | null };
 export type MessageRow = Row & { id: string; scope_id: string; conversation_id: string; sequence: number; public_sequence: number | null; revision: number; author_id: string; author_kind: MessagingActor['kind']; visibility: 'conversation' | 'staff'; text: string; created_at: number; edited_at: number | null; deleted: number; attachment_ids: string };
 
 /** Minted by the service, not forwarded from an HTTP body. Actor validation repeats inside the worker. */
 export function captureMessagingActor(input: unknown): MessagingActor {
-  const r = messagingRecord(input, ['scopeId', 'id', 'kind', 'staff', 'portal', 'assistantPolicies', 'groupPolicies', 'supportPolicies', 'inboxPolicies', 'inboxStaffPolicies', 'visitor']);
+  const r = messagingRecord(input, ['scopeId', 'id', 'kind', 'staff', 'portal', 'assistantPolicies', 'groupPolicies', 'supportPolicies', 'inboxPolicies', 'inboxStaffPolicies', 'directEpochs', 'relationshipEpochs', 'visitor']);
   const scopeId = messagingText(r.scopeId, 263), tenantId = scopeId.startsWith('tenant:') ? scopeId.slice(7) : '';
   if (scopeId !== 'application' && (!tenantId || tenantId.length > 256 || tenantId.trim() !== tenantId || /\p{Cc}/u.test(tenantId)) || typeof r.staff !== 'boolean') messagingFail('MESSAGING_FORBIDDEN', 403);
   if (r.portal !== undefined && (typeof r.portal !== 'boolean' || r.portal && (r.kind !== 'user' || r.staff))) messagingFail('MESSAGING_FORBIDDEN', 403);
@@ -25,6 +26,9 @@ export function captureMessagingActor(input: unknown): MessagingActor {
     }
     return result;
   };
+  const epochs = (input: unknown, limit: number) => Object.assign(Object.create(null),
+    Object.fromEntries(Object.entries(messagingRegistry(input, limit)).map(([key, value]) => [messagingId(key), messagingId(value)]))) as Record<string, string>;
+  if ((r.directEpochs === undefined) !== (r.relationshipEpochs === undefined) || r.directEpochs !== undefined && r.kind !== 'user') messagingFail('MESSAGING_FORBIDDEN', 403);
   const visitor = r.visitor === undefined ? undefined : messagingRecord(r.visitor, ['sessionId', 'tokenHash', 'entryId', 'policyHash', 'conversationId']);
   if (visitor && (r.kind !== 'external' || r.staff || !/^[a-f0-9]{64}$/.test(String(visitor.tokenHash)) || !/^[a-f0-9]{64}$/.test(String(visitor.policyHash)))) messagingFail('MESSAGING_FORBIDDEN', 403);
   return { scopeId, id: messagingId(r.id), kind: messagingChoice(r.kind, ['user', 'external', 'assistant']), staff: r.staff,
@@ -33,6 +37,7 @@ export function captureMessagingActor(input: unknown): MessagingActor {
     ...(r.supportPolicies === undefined ? {} : { supportPolicies: policies(r.supportPolicies) }),
     ...(r.inboxPolicies === undefined ? {} : { inboxPolicies: policies(r.inboxPolicies) }),
     ...(r.inboxStaffPolicies === undefined ? {} : { inboxStaffPolicies: policies(r.inboxStaffPolicies) }),
+    ...(r.directEpochs === undefined ? {} : { directEpochs: epochs(r.directEpochs, 10000), relationshipEpochs: epochs(r.relationshipEpochs, 32) }),
     ...(visitor ? { visitor: { sessionId: messagingId(visitor.sessionId), tokenHash: String(visitor.tokenHash), entryId: messagingId(visitor.entryId), policyHash: String(visitor.policyHash), conversationId: messagingId(visitor.conversationId) } } : {}) };
 }
 export function memberKey(conversationId: string, participantId: string): string { return messagingHash([conversationId, participantId]); }
@@ -50,6 +55,14 @@ export function assertMessagingMember(actor: MessagingActor, conversation: Conve
   if (actor.portal && conversation.kind !== 'support') messagingFail('MESSAGING_NOT_FOUND', 404);
   if (conversation.kind === 'assistant' && (!conversation.assistant_id || !actor.assistantPolicies?.[conversation.assistant_id])) messagingFail('MESSAGING_NOT_FOUND', 404);
   if (conversation.managed_group_id && actor.groupPolicies?.[conversation.managed_group_id] !== conversation.group_policy_hash) messagingFail('MESSAGING_NOT_FOUND', 404);
+  if (conversation.relationship_epoch && !actor.directEpochs) messagingFail('MESSAGING_NOT_FOUND', 404);
+  if (actor.directEpochs !== undefined) {
+    if (conversation.kind === 'direct') {
+      const other = conversationMembers(conversation).find(id => id !== actor.id);
+      if (!other || !conversation.relationship_epoch || actor.directEpochs[other] !== conversation.relationship_epoch) messagingFail('MESSAGING_NOT_FOUND', 404);
+    } else if (!conversation.managed_group_id || !member.relationship_epoch ||
+      actor.relationshipEpochs?.[conversation.managed_group_id] !== member.relationship_epoch) messagingFail('MESSAGING_NOT_FOUND', 404);
+  }
   if (member.role === 'staff' && !canHandleMessagingSupport(actor, conversation)) messagingFail('MESSAGING_NOT_FOUND', 404);
   if (member.role === 'customer' && member.kind === 'user' && conversation.support_entry_id && !conversation.visitor_session_id && !actor.inboxPolicies?.[conversation.support_entry_id]) messagingFail('MESSAGING_NOT_FOUND', 404);
   if (actor.visitor && (conversation.id !== actor.visitor.conversationId || conversation.support_entry_id !== actor.visitor.entryId || conversation.kind !== 'support' || member.role !== 'customer')) messagingFail('MESSAGING_NOT_FOUND', 404);

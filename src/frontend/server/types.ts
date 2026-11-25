@@ -32,6 +32,7 @@ import { resolveManagedLoggingConfig, type ManagedLoggingConfig, type ResolvedMa
 import { assertLoggingDirectoryIsolation } from '../../logging/logging-directory-isolation';
 import { assertManagedLoggingDurability } from './app-logging-durability';
 import { resolveAuthBehaviorConfig } from '../../auth/auth-config';
+import { snapshotAuthUserAvatarReadPolicy } from '../../auth/auth-user-avatar-read-policy';
 import type {
   AuthBehaviorConfig,
   NormalizedAuthBehaviorConfig,
@@ -366,6 +367,7 @@ export interface AppConfig {
     accessTokenTTL?: string;
     refreshTokenTTL?: string;
     phoneVerificationAdapter?: import('../../auth/auth-user-contact-types').PhoneVerificationAdapter;
+    userAvatarReadPolicy?: import('../../auth/auth-user-avatar-read-policy').AuthUserAvatarReadPolicy;
   });
 
   /**
@@ -636,7 +638,8 @@ export interface ResolvedConfig {
   /** Server-only logical validators used by websocket mutation handling. */
   mutationValidators: Record<string, SyncTableMutationValidator>;
   auth: false | (AuthBehaviorConfig & { accessTokenTTL?: string; refreshTokenTTL?: string;
-    phoneVerificationAdapter?: import('../../auth/auth-user-contact-types').PhoneVerificationAdapter });
+    phoneVerificationAdapter?: import('../../auth/auth-user-contact-types').PhoneVerificationAdapter;
+    userAvatarReadPolicy?: import('../../auth/auth-user-avatar-read-policy').AuthUserAvatarReadPolicy });
   workflows: false | AppWorkflowsConfig;
   email: false | EmailConfig;
   ai: false | ResolvedAIConfig;
@@ -701,7 +704,12 @@ export function resolveConfig(
     : inputAuth === false || inputAuth === undefined
       ? false
       : inputAuth;
-  const auth = originalAuth === false ? false : withBlogProfileDefaults(originalAuth, config.blog);
+  const authoredAuth: ResolvedConfig['auth'] = originalAuth === false ? false : withBlogProfileDefaults(originalAuth, config.blog);
+  const auth = authoredAuth === false ? false : { ...authoredAuth,
+    ...(authoredAuth.userAvatarReadPolicy === undefined ? {} : {
+      userAvatarReadPolicy: snapshotAuthUserAvatarReadPolicy(authoredAuth.userAvatarReadPolicy),
+    }),
+  };
   const authBehavior = auth === false ? null : validateAppAuthConfig(auth);
   const blog = resolveBlogConfig(config.blog, authBehavior);
   const blogContent = blog.enabled ? resolveBlogContentConfig(blog.content, projectRoot) : false;
@@ -977,6 +985,7 @@ function validateAppAuthConfig(
     accessTokenTTL?: string;
     refreshTokenTTL?: string;
     phoneVerificationAdapter?: import('../../auth/auth-user-contact-types').PhoneVerificationAdapter;
+    userAvatarReadPolicy?: import('../../auth/auth-user-avatar-read-policy').AuthUserAvatarReadPolicy;
   },
 ): NormalizedAuthBehaviorConfig {
   if (
@@ -991,9 +1000,11 @@ function validateAppAuthConfig(
     accessTokenTTL,
     refreshTokenTTL,
     phoneVerificationAdapter,
+    userAvatarReadPolicy,
     ...behavior
   } = config;
   const normalized = resolveAuthBehaviorConfig(behavior);
+  snapshotAuthUserAvatarReadPolicy(userAvatarReadPolicy);
   if (phoneVerificationAdapter !== undefined && (!phoneVerificationAdapter || typeof phoneVerificationAdapter !== 'object'
     || typeof phoneVerificationAdapter.id !== 'string' || !/^[a-zA-Z0-9._-]{1,80}$/.test(phoneVerificationAdapter.id)
     || typeof phoneVerificationAdapter.isReady !== 'function' || typeof phoneVerificationAdapter.start !== 'function'

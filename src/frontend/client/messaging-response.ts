@@ -1,6 +1,7 @@
 /** Bounded JSON response assertions shared by normal requests and SSE. This is display validation, never authorization. */
 import type { ConversationRecord, DurableMessage, MessagingPage } from '../../messaging/contracts';
 import type { MessagingCapabilities, MessagingContact, MessagingDirectoryEntry, MessagingReceipt, MessagingAssistant, MessagingSupportInbox } from '../../messaging/contracts';
+import { isUserAvatarPresentation } from './auth-user-avatar-parser';
 const bad = () => { throw new Error('Invalid messaging response.'); };
 const record = (value: unknown): Record<string, any> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : bad();
 const text = (value: unknown, maximum = 200) => { if (typeof value !== 'string' || value.length > maximum) bad(); };
@@ -24,7 +25,7 @@ export function assertMessagingConversation(value: unknown): asserts value is Co
   if (r.assistantActivity !== undefined && r.assistantActivity !== null) { const activity = record(r.assistantActivity); text(activity.runId); if (!['queued', 'thinking', 'responding'].includes(activity.state)) bad(); }
   if (r.ownerId !== null) text(r.ownerId);
   r.participants.forEach((item: unknown) => { const member = record(item); text(member.id); integer(member.joinedAt); if (!['user', 'external', 'assistant'].includes(member.kind) || !['owner', 'member', 'staff', 'customer'].includes(member.role)) bad();
-    if (member.name !== undefined || member.avatarUrl !== undefined) assertMessagingDirectoryEntry({ id: member.id, name: member.name === undefined ? 'Member' : member.name, avatarUrl: member.avatarUrl ?? null });
+    if (member.name !== undefined || member.avatarUrl !== undefined || member.privateAvatar !== undefined) assertMessagingDirectoryEntry({ id: member.id, name: member.name === undefined ? 'Member' : member.name, avatarUrl: member.avatarUrl ?? null, privateAvatar: member.privateAvatar });
   });
   if (r.lastMessage !== null) { const preview = r.lastMessage as Record<string, unknown>; assertMessagingMessage(preview); if (typeof (preview as DurableMessage & { truncated?: unknown }).truncated !== 'boolean') bad(); }
 }
@@ -46,6 +47,7 @@ export function assertMessagingCapabilities(value: unknown): asserts value is Me
 export function assertMessagingDirectoryEntry(value: unknown): asserts value is MessagingDirectoryEntry {
   const r = record(value); text(r.id); text(r.name, 241);
   if (r.avatarUrl !== null) { text(r.avatarUrl, 2000); if (!/^(?:\/(?!\/)|https?:\/\/)/.test(r.avatarUrl)) bad(); }
+  if (r.privateAvatar !== undefined && r.privateAvatar !== null && !isUserAvatarPresentation(r.privateAvatar)) bad();
 }
 export function assertMessagingPerson(value: unknown): void {
   assertMessagingDirectoryEntry(value);
@@ -62,7 +64,7 @@ export function assertMessagingSupportInbox(value: unknown): asserts value is Me
 export function assertMessagingContact(value: unknown): asserts value is MessagingContact {
   const r = record(value); text(r.id); text(r.userId); integer(r.revision); integer(r.updatedAt);
   if (!['incoming', 'outgoing'].includes(r.direction) || !['pending', 'accepted', 'declined', 'blocked'].includes(r.state)) bad();
-  if (r.name !== undefined || r.avatarUrl !== undefined) assertMessagingDirectoryEntry({ id: r.userId, name: r.name === undefined ? 'Member' : r.name, avatarUrl: r.avatarUrl ?? null });
+  if (r.name !== undefined || r.avatarUrl !== undefined || r.privateAvatar !== undefined) assertMessagingDirectoryEntry({ id: r.userId, name: r.name === undefined ? 'Member' : r.name, avatarUrl: r.avatarUrl ?? null, privateAvatar: r.privateAvatar });
 }
 export function assertMessagingReceipt(value: unknown): asserts value is MessagingReceipt | null {
   if (value === null) return; const r = record(value);

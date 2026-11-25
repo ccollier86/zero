@@ -8,7 +8,7 @@ visibility: internal
 system: messaging
 feature: configurable-messaging
 maturity: experimental
-applies_to: ["2.6.0 native messaging; identify installed support by release commit/archive hash"]
+applies_to: ["2.11.1 source/local contract; verify committed archive and external release qualification receipt"]
 ---
 
 # Configurable Messaging
@@ -59,6 +59,39 @@ Native `messages.list`/live pages include the current authorized
 snapshots; changing the lower bound or staff/public timeline invalidates the
 workspace's old cached view even if a remove/rejoin was coalesced. This is
 metadata over existing canonical membership, not a new migration or grant.
+
+### Private Profile Photos
+
+Zero 2.11.1 adds an optional
+`privateAvatar` to directory entries, admitted people, contacts and conversation
+participants. It is `{ revision, asset }` or null; `asset: null` records a photo
+removal, while null withdraws unavailable/denied private presentation. The
+descriptor is not a delivery capability or a new membership grant.
+
+Enable private Guardian avatars as usual. Applications with restricted photo
+audiences must also supply the runtime-only
+[`auth.userAvatarReadPolicy`](../guardian/avatars.md#viewer-to-subject-private-read-policy)
+to narrow both Guardian directory and byte reads. Messaging admission is checked
+before projecting a person's photo, but it is not a replacement for that policy:
+without it, Guardian retains its legacy peer-read rules. A permitted group
+housemate need not be a permitted DM target, and a staff roster must have its
+own explicit photo audience.
+
+The native client supplies `watchDirectory(listener, { query, signal,
+onError, onConnection })` and `watchPeople(conversationId, listener, options)`.
+Their full admitted snapshots carry current photo revisions independently of
+conversation revision. The managed workspace uses these to replace/remove
+mounted photos after live avatar or relationship changes. A native projection
+does not expose private SYSTEM tables or let the browser supply authority.
+Owned subscriptions must stop on departure and authorization retirement;
+custom/anonymous facades may omit these additive watchers.
+
+These additions are available in 2.11.1, not a 2.11.0 archive. Update client and
+server from the same qualified committed archive. Verify its exact identity and
+actual installed-package, Linux and updater results in the external release
+receipt referenced by the
+[private-photo qualification record](../../_work/private-chat-avatars-qualification.md)
+before application cutover; do not infer those results from this API reference.
 
 The browser facade adds `watchContacts(listener, options)` alongside conversation
 and message watches. It uses the same native, current-scope no-store projection,
@@ -160,6 +193,46 @@ login/session advanced the shared Guardian authority clock.
 on first join and each rejoin. A revoked user cannot read while removed, and a
 past read cursor/receipt is not renewed permission. Joining never records human
 attention or advances the read cursor to the latest message.
+
+### Application relationship policy
+
+An installed server that exports `MESSAGING_RELATIONSHIPS_VERSION` supports a
+synchronous `messaging.relationships(context)` policy in single-tenant
+applications. The policy reads current app records through `context.db` and
+current Guardian permissions through `context.allows` and `context.users`.
+The policy returns unordered direct pairs and the groups managed by the app.
+
+```ts
+import type { MessagingRelationshipPolicy } from '@zero/framework/messaging/server';
+
+const relationships: MessagingRelationshipPolicy = ({ db, allows }) => {
+  const assignments = db.query('active_assignments')
+    .filter(row => row.staff_id && allows(String(row.staff_id), { permission: 'housing:read' }));
+  return {
+    direct: assignments.map(row => ({
+      users: [String(row.resident_id), String(row.staff_id)],
+      epoch: String(row.id),
+    })),
+    groups: [],
+  };
+};
+```
+
+Each group supplies a stable lowercase ID, a name and current members with
+opaque relationship epochs. The app changes the member epoch on a new
+admission or assignment. A changed group epoch starts since-join history even
+if the private worker never observed an intermediate removal. A changed
+direct-pair epoch closes access to the previous conversation and admits a fresh
+thread. Keep the epoch stable during an uninterrupted relationship. The native
+directory filters to current pairs, and native conversations, live snapshots,
+typing, files and notifications enforce the same policy. App commits wake
+current live views. Reads also evaluate current policy on demand.
+
+This policy owns the directory and group catalog. Use it with the everyone
+directory and without portal team routing, assistants or configured static
+groups. The snapshot supports at most 10,000 unique pairs and 32 groups.
+Each group obeys the configured participant limit. A relationship-controlled
+conversation is hidden if this policy is retired.
 
 ## Internal Assistants Without Support
 
@@ -293,7 +366,7 @@ Available/Idle/Away/Offline, manual Busy, optional On call/custom statuses and
 tokenized avatar rings/dots/badges. One SDK tracker owns activity; each avatar
 must not start another lease. Unknown/stale status must not look online.
 
-The branch's conversation lists/headers now observe this existing feed by default
+The native conversation lists/headers observe this existing feed by default
 under the normal SDK provider. Rings follow circular/rounded/square avatar shape;
 explicit dots/badges remain optional. Only Guardian user participants are mapped,
 never assistant/visitor/group display IDs. Use `useMessagingPresence()` for custom
@@ -302,7 +375,7 @@ assemblies, or `livePresence={false}` for controlled-only presentation. See the
 This does not add a second presence tracker or make same-scope directory presence
 proof of contact/conversation access. Stale/retired feeds are omitted.
 
-The branch's [managed workspace/controller](../../frontend/messaging/workspace.md)
+The [managed workspace/controller](../../frontend/messaging/workspace.md)
 wires canonical typing, private uploads/downloads, per-visibility drafts,
 read-visibility policy and retained live/backfilled history. See its
 [evidence and limits](../../_work/messaging-workspace-review.md). Source browser
@@ -322,5 +395,7 @@ to bypass fingerprint or owner checks.
 Native source integration covers distinct assistants without support, concurrent
 real loopback calls and property revocation; automatic groups without contacts,
 remove/rejoin history, and manual owner transfer. These join existing actual
-Guardian/Fabric/Storage/Logging/Torrent/Sync tests. They do not replace the pending
-multi-profile, browser, installed Linux/archive and full release qualification.
+Guardian/Fabric/Storage/Logging/Torrent/Sync tests. For 2.11.1,
+they do not replace its exact final multi-profile, browser, installed
+Linux/archive and full release qualification; record those results in the
+[patch qualification](../../_work/private-chat-avatars-qualification.md).

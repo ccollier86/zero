@@ -72,12 +72,17 @@ export async function createSupportChatClient(entry: string, options: SupportCha
   if (!m || typeof m !== 'object' || !['sessionId', 'userId', 'conversationId'].every(key => typeof m[key] === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/.test(m[key] as string))
     || typeof m.csrf !== 'string' || !/^[a-f0-9]{64}$/.test(m.csrf) || !Number.isSafeInteger(m.expiresAt) || (m.expiresAt as number) <= Date.now()) throw new Error('The support session response is invalid.');
   csrf = m.csrf; sessionId = m.sessionId as string;
-  const source = createMessagingClient(<T>(path: string, init: import('../frontend/client/sdk').FetchInit = {}): Promise<T> => {
+  const native = createMessagingClient(<T>(path: string, init: import('../frontend/client/sdk').FetchInit = {}): Promise<T> => {
     const { json: expectsJson, body, ...rest } = init;
     const headers = new Headers(rest.headers as HeadersInit); if (body !== undefined) headers.set('Content-Type', 'application/json');
     const request = { ...rest, headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }) } as RequestInit;
     return expectsJson === false ? raw(path, request) as Promise<T> : json<T>(path, request);
   }, raw);
+  // Anonymous support has no private Guardian directory/people subscription.
+  // Preserve its existing four-stream budget and selected people GET rather
+  // than exposing authenticated-only routes through the generic native client.
+  const { watchPeople: _privatePeople, watchDirectory: _privateDirectory, ...visitorSource } = native;
+  const source = Object.freeze(visitorSource);
   const channel = typeof BroadcastChannel !== 'undefined' && typeof window !== 'undefined' ? new BroadcastChannel('zero.support.' + entry) : null;
   const listeners = new Set<() => void>();
   const clear = () => {

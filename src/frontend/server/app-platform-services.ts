@@ -138,6 +138,7 @@ export async function mountPlatformServices({
         profileCompletionSchemaInstallAllowed: config.migrate || runtime.require(ZERO_DATABASE_MANAGER).systemRuntime.sqlite.mode === 'ephemeral',
         presenceSchemaInstallAllowed: config.migrate || runtime.require(ZERO_DATABASE_MANAGER).systemRuntime.sqlite.mode === 'ephemeral',
         phoneVerificationAdapter: config.auth.phoneVerificationAdapter,
+        userAvatarReadPolicy: config.auth.userAvatarReadPolicy,
         identityProjection: identityProjectionRuntime?.lifecycle,
         dataRealmReadiness: identityProjectionRuntime
           ?? NOT_REQUIRED_DATA_REALM_READINESS,
@@ -254,7 +255,8 @@ export async function mountPlatformServices({
       authorization,
     }));
     const avatars = composeManagedUserAvatars(runtime, systemDB, resourceAuthConfig.userProfile,
-      config.migrate || runtime.require(ZERO_DATABASE_MANAGER).systemRuntime.sqlite.mode === 'ephemeral');
+      config.migrate || runtime.require(ZERO_DATABASE_MANAGER).systemRuntime.sqlite.mode === 'ephemeral',
+      config.auth.userAvatarReadPolicy);
     if (resourceAuthConfig.userProfile.enabled && resourceAuthConfig.userProfile.avatars.enabled) {
       managedInitializers.push(() => managedStartup.auth!.start());
     }

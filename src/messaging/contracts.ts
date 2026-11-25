@@ -1,6 +1,7 @@
 /** Browser-safe durable messaging contracts. Identifiers and display data never confer access. */
 export const MESSAGING_API = '/api/messaging';
 import type { MessagingAttachmentsApi } from './attachment-contracts';
+import type { UserAvatarPresentation } from '../auth/auth-user-avatar-types';
 export interface MessagingMutationOptions { readonly requestId: string; readonly signal?: AbortSignal }
 export interface MessagingReadOptions { readonly signal?: AbortSignal }
 export type ConversationKind = 'direct' | 'group' | 'support' | 'assistant';
@@ -9,7 +10,9 @@ export type ConversationOwner = 'triage' | 'human' | 'assistant';
 export const MESSAGING_REACTIONS = ['👍', '❤️', '😂', '🎉', '😮', '😢', '🙏', '✅'] as const;
 export interface ConversationParticipant { readonly id: string; readonly kind: 'user' | 'external' | 'assistant'; readonly role: ConversationRole; readonly joinedAt: number;
   /** Optional admitted direct-conversation display; never a role/profile override. */
-  readonly name?: string; readonly avatarUrl?: string | null }
+  readonly name?: string; readonly avatarUrl?: string | null;
+  /** Current viewer-admitted private photo metadata; possession never authorizes delivery. */
+  readonly privateAvatar?: UserAvatarPresentation | null }
 export interface MessagingAssistant { readonly id: string; readonly name: string; readonly description: string }
 /** A named destination and current-user capabilities, never its Guardian policy or a staff directory. */
 export interface MessagingSupportInbox { readonly id: string; readonly title: string; readonly canOpen: boolean; readonly canHandle: boolean; readonly assistant: boolean; readonly default: boolean }
@@ -50,14 +53,16 @@ export interface MessagingCapabilities { readonly enabled: boolean; readonly dir
   /** Configuration/capability, not a provider-delivery or current network-health claim. */
   readonly assistant?: boolean; readonly notifications?: boolean; readonly support?: boolean; readonly supportAssistant?: boolean;
   /** Server-derived member restriction, not a client-selected role. Old servers may omit it. */
-  readonly portal?: boolean; readonly supportInboxes?: boolean }
-export interface MessagingDirectoryEntry { readonly id: string; readonly name: string; readonly avatarUrl: string | null }
+  readonly portal?: boolean; readonly supportInboxes?: boolean; readonly directOnly?: boolean }
+export interface MessagingDirectoryEntry { readonly id: string; readonly name: string; readonly avatarUrl: string | null;
+  /** Null withdraws a formerly admitted photo; asset:null records an admitted removal revision. */
+  readonly privateAvatar?: UserAvatarPresentation | null }
 /** Current admitted conversation identities; names/avatars are presentation, never membership proof. */
 export interface MessagingPerson extends MessagingDirectoryEntry { readonly kind: ConversationParticipant['kind'] }
 /** Reconciles an uncertain command without returning a message body after membership removal. */
 export interface MessagingReceipt { readonly requestId: string; readonly operation: string; readonly resourceId: string | null; readonly acceptedAt: number }
 export interface MessagingContact { readonly id: string; readonly userId: string; readonly direction: 'incoming' | 'outgoing'; readonly state: 'pending' | 'accepted' | 'declined' | 'blocked'; readonly revision: number; readonly updatedAt: number;
-  readonly name?: string; readonly avatarUrl?: string | null }
+  readonly name?: string; readonly avatarUrl?: string | null; readonly privateAvatar?: UserAvatarPresentation | null }
 export interface MessagingApi {
   readonly assistants: {
     list(options?: MessagingReadOptions): Promise<MessagingPage<MessagingAssistant>>;

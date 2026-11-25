@@ -26,6 +26,13 @@ export function createMessagingPlugin(config: MessagingPluginConfig) {
     .onError(({ error, code, set }) => { if (code === 'NOT_FOUND') return; const failure = projectMessagingHttpError(error, code); set.status = failure.status; set.headers['Cache-Control'] = 'private, no-store'; return failure.body; })
     .get('/config', ({ access, request }) => { noQuery(request); return read(access.requireUser(), request).capabilities(); })
     .get('/directory', ({ access, request }) => read(access.requireUser(), request).directory(readMessagingQuery(request, ['after', 'limit', 'search']) as never, { signal: request.signal }))
+    .get('/directory/live', async ({ access, request }) => {
+      const captured = context(access.requireUser(), request), query = readMessagingQuery(request, ['after', 'limit', 'search']);
+      await captured.facade.directory({ ...query, limit: 1 } as never, { signal: request.signal });
+      const projection = captured.service.projectionForAuthority(captured.authority);
+      return new Response(messagingProjectionStream(captured.service.runtime, captured.authority.scope, () => projection.directory(query as never, { signal: request.signal }), request.signal,
+        { actorId: captured.authority.access.requireUser().userId }), { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'private, no-store', 'X-Accel-Buffering': 'no' } });
+    })
     .get('/assistants', ({ access, request }) => { noQuery(request); return read(access.requireUser(), request).assistants.list({ signal: request.signal }); })
     .post('/assistants/:id/conversations', async ({ access, params, request }) => { const user = access.requireUser(), options = mutation(request); noQuery(request); return read(user, request).assistants.open(params.id, await readMessagingBody(request) as never, options); }, { parse: 'none' })
     .get('/receipts/:id', ({ access, params, request }) => { noQuery(request); return read(access.requireUser(), request).receipt(params.id, { signal: request.signal }); })
@@ -38,6 +45,13 @@ export function createMessagingPlugin(config: MessagingPluginConfig) {
     })
     .get('/conversations/:conversationId', ({ access, params, request }) => { noQuery(request); return read(access.requireUser(), request).conversations.get(params.conversationId, { signal: request.signal }); })
     .get('/conversations/:conversationId/people', ({ access, params, request }) => { noQuery(request); return read(access.requireUser(), request).conversations.people(params.conversationId, { signal: request.signal }); })
+    .get('/conversations/:conversationId/people/live', async ({ access, params, request }) => {
+      noQuery(request); const captured = context(access.requireUser(), request), id = messagingId(params.conversationId);
+      await captured.facade.conversations.people(id, { signal: request.signal });
+      const projection = captured.service.projectionForAuthority(captured.authority);
+      return new Response(messagingProjectionStream(captured.service.runtime, captured.authority.scope, () => projection.conversations.people(id, { signal: request.signal }), request.signal,
+        { actorId: captured.authority.access.requireUser().userId, conversationId: id }), { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'private, no-store', 'X-Accel-Buffering': 'no' } });
+    })
     .post('/conversations', async ({ access, request }) => { const user = access.requireUser(), options = mutation(request); noQuery(request); return read(user, request).conversations.create(await readMessagingBody(request) as never, options); }, { parse: 'none' })
     .post('/conversations/:conversationId/:action', async ({ access, params, request }) => {
       const user = access.requireUser(), options = mutation(request); noQuery(request); const action = messagingChoice(params.action, ['rename', 'archive', 'add', 'remove', 'transfer', 'read', 'takeover', 'hand-back']);

@@ -4,7 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 're
 import { MessageCircle } from '../animate-ui/icons/message-circle';
 import { MessageSquare } from '../animate-ui/icons/message-square';
 import { RotateCw } from '../animate-ui/icons/rotate-cw';
-import { Avatar, AvatarFallback, AvatarImage } from '../ui/avatar';
+import { MessagingPrivateAvatar } from './messaging-private-avatar';
 import { Button } from '../ui/button';
 import { Checkbox } from '../ui/checkbox';
 import { cn } from '../../lib/utils';
@@ -66,7 +66,8 @@ function ReadyWorkspace({ controller, state, avatarShape, participantFor, readPo
     const custom = participantFor?.(id); if (custom) return custom;
     const profile = state.people[id] ?? (display?.name ? { ...display, name: display.name, avatarUrl: display.avatarUrl ?? null } : undefined), kind = profile?.kind ?? (id.startsWith('assistant:') ? 'assistant' : 'user');
     const label = profile?.name ?? (id === controller.userId ? 'You' : kind === 'assistant' ? state.conversation?.assistantName ?? 'Assistant' : 'Member');
-    return { id, kind, label, avatarShape, ...(profile?.avatarUrl ? { avatar: <Avatar><AvatarImage src={profile.avatarUrl} alt="" /><AvatarFallback>{label.slice(0, 1)}</AvatarFallback></Avatar> } : {}) };
+    return { id, kind, label, avatarShape, ...(profile && (profile.privateAvatar !== undefined || profile.avatarUrl)
+      ? { avatar: <MessagingPrivateAvatar userId={id} label={label} privateAvatar={profile.privateAvatar} avatarUrl={profile.avatarUrl} /> } : {}) };
   };
   const title = (conversation: NonNullable<MessagingWorkspaceState['conversation']>): MessagingParticipant => {
     const peer = conversation.participants.find(row => row.id !== controller.userId);

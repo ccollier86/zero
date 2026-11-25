@@ -3,15 +3,19 @@ import type { DatabaseWriteCommandContext } from '../databases/database-realm';
 import { messagingCommand } from './realm-errors';
 import { conversationMembers, memberKey, type ConversationRow, type MemberRow } from './realm-model';
 import { jobScope } from './job-model';
-import { messagingArray, messagingChoice, messagingFail, messagingId, messagingInteger, messagingRecord, messagingText } from './validation';
+import { messagingArray, messagingChoice, messagingFail, messagingId, messagingInteger, messagingRecord, messagingRegistry, messagingText } from './validation';
 
 export function reconcileMessagingGroup(context: DatabaseWriteCommandContext, input: unknown): unknown {
   return messagingCommand(context, () => {
-    const r = messagingRecord(input, ['scopeId', 'id', 'groupId', 'name', 'policyHash', 'history', 'members', 'maxParticipants']);
+    const r = messagingRecord(input, ['scopeId', 'id', 'groupId', 'name', 'policyHash', 'history', 'members', 'epochs', 'maxParticipants']);
     const scope = jobScope(r.scopeId), id = messagingId(r.id), group = messagingText(r.groupId, 64), name = messagingText(r.name, 120);
     const policy = messagingText(r.policyHash, 64), history = messagingChoice(r.history, ['all', 'since-join']);
     if (!/^[a-z][a-z0-9_-]{0,63}$/.test(group) || !/^[a-f0-9]{64}$/.test(policy)) messagingFail('MESSAGING_INPUT_INVALID', 422);
     const members = [...new Set(messagingArray(r.members, messagingInteger(r.maxParticipants, 2, 100)).map(messagingId))].sort();
+    const epochs = r.epochs === undefined ? null : messagingRegistry(r.epochs, members.length);
+    if (epochs && (history !== 'since-join' || members.some(user => typeof epochs[user] !== 'string') || Object.keys(epochs).length !== members.length)) {
+      messagingFail('MESSAGING_INPUT_INVALID', 422);
+    }
     let row = context.db.get('messaging_conversations', id) as ConversationRow | null;
     if (row && (row.scope_id !== scope || row.kind !== 'group' || row.managed_group_id !== group)) messagingFail('MESSAGING_OWNER_INVALID');
     const now = Date.now();
@@ -21,13 +25,16 @@ export function reconcileMessagingGroup(context: DatabaseWriteCommandContext, in
         internal_sequence: 0, public_sequence: 0, channel_id: null, assistant_id: null, managed_group_id: group, group_policy_hash: policy, members_json: '[]' });
       row = context.db.get('messaging_conversations', id) as ConversationRow;
     }
-    const priorMembers = conversationMembers(row), changed = row.title !== name || row.group_policy_hash !== policy || JSON.stringify([...priorMembers].sort()) !== JSON.stringify(members);
+    const priorMembers = conversationMembers(row);
+    let changed = row.title !== name || row.group_policy_hash !== policy || JSON.stringify([...priorMembers].sort()) !== JSON.stringify(members);
     for (const prior of priorMembers) if (!members.includes(prior)) context.db.update('messaging_members', memberKey(id, prior), { active: 0 });
     for (const user of members) {
       const key = memberKey(id, user), prior = context.db.get('messaging_members', key) as MemberRow | null;
-      if (prior?.active) continue;
+      const epoch = epochs ? messagingId(epochs[user]) : null;
+      if (prior?.active && (prior.relationship_epoch ?? null) === epoch) continue;
+      changed = true;
       const values = { id: key, scope_id: scope, conversation_id: id, participant_id: user, kind: 'user', role: 'member', active: 1, joined_at: now,
-        history_from: history === 'since-join' ? row.public_sequence + 1 : 1, read_sequence: prior?.read_sequence ?? 0 };
+        history_from: history === 'since-join' ? row.public_sequence + 1 : 1, read_sequence: prior?.read_sequence ?? 0, relationship_epoch: epoch };
       if (prior) context.db.update('messaging_members', key, values); else context.db.createStrict('messaging_members', values);
     }
     if (changed) {

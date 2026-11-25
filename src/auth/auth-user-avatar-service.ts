@@ -19,7 +19,8 @@ import { isUserProfilePolicyReady } from './auth-user-profile-policy';
 import { AuthUserAvatarPublications, inspectPublicAvatarSchema, reconcilePublicAvatarSchema, type PublishedAvatarRow } from './auth-user-avatar-publications';
 import type { UserPublicAvatarAsset } from './auth-user-avatar-types';
 import { authAuditActorFromContext, type AuthAuditService } from './auth-audit-service';
-import type { ResolvedAuthUserAvatarConfig, UserAvatarCapabilities, UserAvatarSnapshot, UserAvatarStage } from './auth-user-avatar-types';
+import type { ResolvedAuthUserAvatarConfig, UserAvatarCapabilities, UserAvatarSnapshot, UserAvatarStage, UserAvatarDirectoryEntry, UserAvatarPresentation } from './auth-user-avatar-types';
+import { authorizeAuthUserAvatarRead, snapshotAuthUserAvatarReadPolicy, type AuthUserAvatarReadPolicy, type AuthUserAvatarReadContextFactory } from './auth-user-avatar-read-policy';
 
 const STAGE_TTL = 5 * 60_000;
 const GLOBAL_MEDIA_SCOPE = trustedSystemServiceDataScope({ scopeKind: 'application' });
@@ -29,6 +30,8 @@ export interface AuthUserAvatarDependencies {
   audit?: AuthAuditService;
   db: ReactiveDB; users: UserStore; tokens: TokenService; storage: StorageService;
   tenancy?: TenancyService | null; policy: ResolvedAuthUserAvatarConfig; installAllowed: boolean;
+  readPolicy?: AuthUserAvatarReadPolicy;
+  readPolicyContext?: AuthUserAvatarReadContextFactory;
   emitCode?: AuthPlatformCodeEmitter; now?: () => number;
 }
 export class AuthUserAvatarService {
@@ -36,6 +39,8 @@ export class AuthUserAvatarService {
   private readonly publications: AuthUserAvatarPublications;
   private readonly now: () => number;
   private readonly emit: AuthPlatformCodeEmitter;
+  private readonly readPolicy: AuthUserAvatarReadPolicy | undefined;
+  private readonly readPolicyContext: AuthUserAvatarReadContextFactory | undefined;
   private stopping = false;
   private timer: ReturnType<typeof setInterval> | null = null;
   private cleaning: Promise<void> | null = null;
@@ -44,6 +49,8 @@ export class AuthUserAvatarService {
   constructor(private readonly deps: AuthUserAvatarDependencies) {
     if (deps.db.getTransactionDomain() !== deps.storage.getTransactionDomain()) throw new AuthError('Avatar storage must share the SYSTEM transaction domain', 'AUTH_STATE_INVARIANT_FAILED', 500);
     this.now = deps.now ?? Date.now; this.emit = deps.emitCode ?? emitPlatformCode;
+    this.readPolicy = snapshotAuthUserAvatarReadPolicy(deps.readPolicy);
+    this.readPolicyContext = deps.readPolicyContext;
     this.store = new AuthUserAvatarStore(deps.db, deps.users, this.now);
     this.publications = new AuthUserAvatarPublications(deps.db, deps.users, this.now);
   }
@@ -110,11 +117,17 @@ export class AuthUserAvatarService {
     });
   }
   /** Minimal same-organization directory entry, never global private profile/contact fields. */
-  directory(auth: AuthContext, userId: string): { userId: string; displayName: string; asset: UserAvatarSnapshot['asset'] } {
-    const admit = this.capture(auth, false); admit(); this.assertReady(); this.assertDirectorySubject(auth, userId);
+  directory(auth: AuthContext, userId: string): UserAvatarDirectoryEntry {
+    const admit = this.capture(auth, false); admit(); this.assertReady(); this.assertDirectorySubject(auth, userId, admit);
     const displayName = this.store.directoryDisplayName(userId);
+    const revision = this.store.revision(userId);
     const asset = this.assetProjection(this.store.current(userId));
-    admit(); this.assertDirectorySubject(auth, userId); return { userId, displayName, asset };
+    admit(); this.assertReady(); this.assertDirectorySubject(auth, userId, admit); return { userId, displayName, revision, asset };
+  }
+  /** Trusted native composition still crosses the same viewer-to-subject read boundary. */
+  viewerAuthorizedDescriptor(auth: AuthContext, subjectId: string): UserAvatarPresentation {
+    const { revision, asset } = this.directory(auth, subjectId);
+    return { revision, asset };
   }
   stage(auth: AuthContext, expectedRevision: number): Promise<UserAvatarStage> {
     return this.track(async () => {
@@ -210,7 +223,7 @@ export class AuthUserAvatarService {
     const admit = this.capture(auth, false); admit(); this.assertReady();
     const asset = this.store.asset(assetId);
     if (!asset || asset.state !== 'current') throw imageUnavailable();
-    const fence = () => { admit(); this.assertDirectorySubject(auth, asset.user_id);
+    const fence = () => { admit(); this.assertReady(); this.assertDirectorySubject(auth, asset.user_id, admit);
       if (this.store.current(asset.user_id)?.asset_id !== assetId) throw imageUnavailable(); };
     fence();
     const delivered = await this.deps.storage.objects.download(this.namespace(), asset.path, fence); fence();
@@ -280,13 +293,20 @@ export class AuthUserAvatarService {
     if (!caller || !reference || caller.sessionId !== reference.sessionId || caller.sessionScopeKind !== reference.sessionScopeKind
       || caller.sessionScopeId !== reference.sessionScopeId || !this.deps.tokens.resolveAuthContextAuthority(reference)) throw retiredStage();
   }
-  private assertDirectorySubject(auth: AuthContext, userId: string): void {
-    const user = this.deps.users.getUserById(userId);
-    if (!user || user.status !== 'active') throw imageUnavailable();
-    if (userId === auth.userId) return;
-    if (auth.sessionKind === 'native') throw imageUnavailable();
-    if (this.deps.tenancy) {
-      if (!auth.tenantId || !this.deps.tenancy.listActiveTenantMembershipsForUser(userId).some(item => item.tenant.tenantId === auth.tenantId)) throw imageUnavailable();
+  private assertDirectorySubject(auth: AuthContext, userId: string, guard: () => void): void {
+    const ceiling = () => {
+      guard(); this.assertReady();
+      const user = this.deps.users.getUserById(userId);
+      if (!user || user.status !== 'active') throw imageUnavailable();
+      if (userId === auth.userId) return;
+      if (auth.sessionKind === 'native') throw imageUnavailable();
+      if (this.deps.tenancy) {
+        if (!auth.tenantId || !this.deps.tenancy.listActiveTenantMembershipsForUser(userId).some(item => item.tenant.tenantId === auth.tenantId)) throw imageUnavailable();
+      }
+    };
+    ceiling();
+    if (userId !== auth.userId && this.readPolicy) {
+      authorizeAuthUserAvatarRead(this.readPolicy, this.readPolicyContext, auth, userId, ceiling);
     }
   }
   private snapshot(userId: string, auth: AuthContext): UserAvatarSnapshot {

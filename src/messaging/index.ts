@@ -3,7 +3,10 @@ export { runMessagingActorIfRequested, MESSAGING_ACTOR_FLAG } from './actor-boot
 export { MessagingService } from './service';
 export type { MessagingAuthority } from './service';
 export type { MessagingConfig, MessagingAssistantConfig, MessagingGroupConfig, MessagingSupportEntryConfig, MessagingSupportInboxConfig } from './config';
+export type { MessagingNoticeAccepted } from './config';
 export type * from './contracts';
 export type * from './attachment-contracts';
 export type * from './review-contracts';
 export type { MessagingServerApi } from './server-contracts';
+export type { MessagingRelationshipContext, MessagingRelationshipPolicy, MessagingRelationshipSnapshot } from './relationship-policy';
+export const MESSAGING_RELATIONSHIPS_VERSION = 1;

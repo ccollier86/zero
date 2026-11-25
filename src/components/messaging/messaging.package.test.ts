@@ -41,6 +41,7 @@ test('messaging installs from an archive, SSR-renders its real hook and browser-
     for (const file of [
       'src/components/messaging/index.ts', 'src/components/messaging/messaging.css', 'src/components/messaging/use-conversation-typing.ts',
       'src/components/messaging/use-messaging-presence.ts', 'src/components/messaging/messaging-avatar.tsx',
+      'src/components/messaging/messaging-private-avatar.tsx', 'src/frontend/client/user-avatar-presentation.ts',
       'src/components/messaging/messaging-workspace.tsx', 'src/components/messaging/messaging-workspace-controller.ts',
       'src/components/messaging/use-messaging-workspace.ts', 'src/components/messaging/workspace-send.ts', 'src/components/messaging/workspace-message-actions.tsx',
       'src/frontend/client/messaging-watch.ts', 'src/messaging/client-contracts.ts', 'src/messaging/live-error.ts',
@@ -299,6 +300,10 @@ import type { UseConversationTypingReturn, MessageBubbleProps, MessageDeliveryIn
   MessagingComposerProps, MessagingAttachment, MessagingMessage, MessagingWorkspaceProps, MessagingWorkspaceState } from '@zero/framework/messaging';
 import type { MessagingClient, MessagingSupportInbox } from '@zero/framework/messaging/client';
 import type { MessagingConfig, MessagingSupportInboxConfig } from '@zero/framework/messaging/server';
+import type { AuthUserAvatarReadPolicy, UserAvatarPresentation } from '@zero/framework/auth';
+const photoPolicy: AuthUserAvatarReadPolicy = { id: 'installed-photo-policy', version: '1', authorize: context => context.viewerId === context.subjectId };
+const removedPhoto: UserAvatarPresentation = { revision: 2, asset: null };
+const photoHook: typeof Root.useUserAvatarPresentation = Frontend.useUserAvatarPresentation;
 const inbox: MessagingSupportInboxConfig = { title: 'Our team', assistant: false };
 const portal: MessagingConfig = { portal: true, support: { inboxes: { team: inbox }, defaultInbox: 'team' } };
 const names = ['MessagingLayout', 'ConversationList', 'ConversationListHeading', 'ConversationHeader', 'ConversationSeparator',
