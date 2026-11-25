@@ -85,6 +85,33 @@ Commands receive tracked ReactiveDB operations, not raw SQL/schema/lifecycle
 access. Both are synchronous and return canonical serializable values.
 Async handlers and arbitrary returned prototypes fail admission/execution.
 
+### Registered reads inside a command
+
+The Calendar integration branch adds `context.query(name, input)` to native
+command contexts. This is **not yet part of the selected 2.11.1 archive**. A
+canonical writer can invoke an existing named read against its exact current
+transaction, including its own uncommitted tracked changes, without obtaining
+raw SQL or another connection. For example:
+
+```ts
+'notes.rename': ({ db, query }, input: { id: string; title: string }) => {
+  db.update('notes', input.id, { title: input.title });
+  return query('notes.count', {});
+},
+```
+
+Only that realm's registered query names are admitted. The read-only query
+session and its statements close before the writer resumes, on success or
+failure. Unknown names, asynchronous handlers, attempted query-side mutation
+and invalid results reject the command transaction. Dispatch expires with the
+command capability; it cannot escape into a later timer or post-commit task.
+Direct internal test sessions without an installed realm dispatcher report
+`DATABASE_OPERATION_UNSUPPORTED`, not an arbitrary-query fallback.
+
+Keep external I/O, AI/provider calls and expensive expansion outside the writer.
+Named-query dispatch does not extend the writer's authority or bypass Guardian,
+writer admission, current resource policy or final commit checks.
+
 ## Fingerprints And Versioning
 
 The fingerprint includes realm identity/version, schema, migration checksums and

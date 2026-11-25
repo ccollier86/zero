@@ -25,8 +25,9 @@ import { memoryCalendarServiceFixture } from './test-support/memory-service-fixt
 import { calendarHash, calendarJson } from './validation';
 import { createCalendarSeriesNativeSourceReader } from './series-native-source';
 import { captureCalendarSeriesCompilationSource, createCalendarSeriesCompilationCursor, compileCalendarSeriesBatch } from './series-compilation';
-import { prepareCalendarInitialSeriesRequest, compileCalendarInitialSeriesRequest, createCalendarInitialSeriesCommand,
+import { prepareCalendarInitialSeriesRequest, compileCalendarInitialSeriesRequest, createCalendarInitialSeriesCommand, inspectCalendarInitialSeriesCompilation,
   type CalendarInitialSeriesCommand, type CalendarInitialSeriesCompilation, type CalendarInitialSeriesManagedDependencies } from './series-source-writer';
+import { createCalendarInitialSeriesSourceAdmission, normalizeCalendarInitialSeriesRequestFacts } from './series-source-admission';
 
 async function fixture(maxEvents = 1000) {
   const base = memoryCalendarServiceFixture({ tenancy: 'single', config: { participants: { userEligibility: 'user' } } });
@@ -122,6 +123,50 @@ test('proof handles are exact native identity, detached from mutable input, and 
     const accepted = f.execute(createCalendarInitialSeriesCommand(f.dependencies, f.authority, request, proof));
     expect(f.db.get('_calendar_series_generations', calendarHash(['calendar.series.generation.v1', f.authority.actor.scopeId, accepted.seriesId, 1]))!.authoring_json).not.toContain('MUTATED');
     rejects(() => compileCalendarInitialSeriesRequest({} as never), 'CALENDAR_FORBIDDEN');
+  } finally { await f.close(); }
+});
+
+test('native initial frame export retains only detached facts and requires exact request/proof identity plus the current engine', async () => {
+  const f = await fixture(); const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'Temporal');
+  try {
+    const request = f.prepare('frame'), compiled = compileCalendarInitialSeriesRequest(request), frame = inspectCalendarInitialSeriesCompilation(request, compiled);
+    expect(Object.keys(frame).sort()).toEqual(['engineGeneration', 'interval', 'request']);
+    expect(Object.isFrozen(frame)).toBe(true); expect(Object.isFrozen(frame.request)).toBe(true); expect(Object.isFrozen(frame.request.authoring.template)).toBe(true);
+    expect(frame.request).toMatchObject({ scopeId: f.authority.actor.scopeId, principal: f.authority.actor.principal, userId: f.authority.actor.userId, requestId: 'frame' });
+    expect<unknown>(cloneDatabaseSerializableValue(frame)).toEqual(frame); expect(frame).not.toHaveProperty('guard'); expect(frame).not.toHaveProperty('actor');
+    expect(normalizeCalendarInitialSeriesRequestFacts(frame.request)).toEqual(frame.request);
+    for (const forged of [{}, { ...compiled }, JSON.parse(JSON.stringify(compiled))]) rejects(() => inspectCalendarInitialSeriesCompilation(request, forged as CalendarInitialSeriesCompilation), 'CALENDAR_FORBIDDEN');
+    rejects(() => inspectCalendarInitialSeriesCompilation(f.prepare('other-frame'), compiled), 'CALENDAR_FORBIDDEN');
+    Object.defineProperty(globalThis, 'Temporal', { configurable: true, get() { throw new Error('replaced native engine'); } });
+    rejects(() => inspectCalendarInitialSeriesCompilation(request, compiled), 'CALENDAR_TIME_RULES_UNAVAILABLE');
+  } finally { if (descriptor) Object.defineProperty(globalThis, 'Temporal', descriptor); else Reflect.deleteProperty(globalThis, 'Temporal'); await f.close(); }
+});
+
+test('canonical fact core shares acceptance/replay while real parent guards remain separately required at actual COMMIT', async () => {
+  const f = await fixture();
+  try {
+    const request = f.prepare('core-frame'), frame = inspectCalendarInitialSeriesCompilation(request, compileCalendarInitialSeriesRequest(request));
+    // This checks the canonical core, NOT signed actor transport. The caller is
+    // code-owned and retains the fixture's REAL admitted human/SYSTEM guards;
+    // serialized frame facts alone are never treated as a request authority.
+    const detached = cloneDatabaseSerializableValue(frame) as unknown as typeof frame;
+    const dependencies = { owner: f.owner, policyGeneration: f.dependencies.policyGeneration, preparationTtlMs: f.dependencies.preparationTtlMs,
+      maximumResources: f.dependencies.config.maxResources, maximumParticipants: f.dependencies.config.maxParticipants,
+      guard(fresh: boolean) {
+        f.authority.signal.throwIfAborted(); f.authority.guard(); f.dependencies.assertOwnerCurrent(f.owner);
+        if (fresh) { f.dependencies.assertSeriesAuthorityCurrent(f.dependencies.policyGeneration); f.directory.assertBindable(f.browser.scope, detached.request.authoring.template.participants); }
+        f.authority.guard();
+      }, compilation: () => detached };
+    const accepted = f.execute(createCalendarInitialSeriesSourceAdmission(dependencies, detached.request));
+    expect(accepted.operation).toBe('series.plan.accepted'); expect(f.db.get('calendar_series', accepted.seriesId)?.created_by).toBe(f.authority.actor.userId);
+    const generationId = calendarHash(['calendar.series.generation.v1', detached.request.scopeId, accepted.seriesId, 1]);
+    expect(f.db.get('_calendar_series_generations', generationId)?.authoring_json).toBe(calendarJson(detached.request.authoring));
+    expect(f.db.get('_calendar_series_generations', generationId)?.engine_generation).toBe(detached.engineGeneration);
+    f.policy(false); f.users.setProperty('participant', 'staff', 'no'); const before = f.snapshot(); let compiled = false;
+    expect(f.execute(createCalendarInitialSeriesSourceAdmission({ ...dependencies, compilation() { compiled = true; throw new Error('replay must not compile'); } }, detached.request))).toEqual(accepted);
+    expect(compiled).toBe(false); expect(f.snapshot()).toEqual(before); expect(f.logging.control({}).rows).toHaveLength(1);
+    for (const patch of [{ digest: calendarHash('different-intent') }, { seriesId: calendarHash('different-series') }, { requestId: 'retargeted-request' }, { extraAuthority: true }])
+      rejects(() => createCalendarInitialSeriesSourceAdmission(dependencies, { ...detached.request, ...patch }), 'CALENDAR_INPUT_INVALID');
   } finally { await f.close(); }
 });
 

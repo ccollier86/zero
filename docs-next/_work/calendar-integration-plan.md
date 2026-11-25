@@ -106,7 +106,7 @@ demo change is implied by framework completion.
 | F2 | **Working versus durable-history capacity.** Completed history must not exhaust a live-work quota. Preserve original schedule/receipt/Torrent identities and factual historical counters. Bound active/unknown/review occupancy, expose pressure, keep retirement/reconciliation headroom and use an explicit configurable storage/history budget. More than 1,000 completed reminders on one unchanged source must remain readable and permit new work. Scale resident owner/capability hydration separately from retained files. | Additive Jobs003/004, finite policy/writer conservation, native read-only attachment, physical pins, SYSTEM wake coverage, bounded resident eviction and demand hydration are source/MEMORY checked. Source-control and schedule pools have independent finite capacity. Historical evidence/identities survive idle release. Actual file/actor/performance qualification remains open. |
 | F3 | **Managed activation, adoption and controls.** Wire the existing dormant Calendar/Jobs/Torrent owner into normal startup, typed opt-in config, authorized operator API/SDK and clear readiness. Add read-only adoption planning, explicit prepare/retire/reactivate/disable procedure and Doctor checks. Unknown/nonterminal work prevents a false safe-disable result. | Private owner/inspection/audited acceptance and fresh/populated staged-migration repair are source implemented. Calendar now admits the original 001–016 boundaries with unchanged hashes and a retained pre-manifest016 pin. Public feature configuration/mount, adoption/disable procedure and Doctor remain gated on the actual F5/F7 capabilities, not the private observation exemplar. |
 | F4 | **Complete canonical scheduling commands.** Support the rich editor's persisted fields through one atomic update contract, current resource/type/visit/participant policy, receipts and semantic evidence. Independent override permission/reason; retain history. Add local-date all-day handling and reviewed effective eligibility where supported. No sequential saves presented as atomic or raw CRUD bypass. | Atomic016 rich edits, canonical017 untyped all-day appointments, canonical018 effective resource/location policy and canonical019 independently granted manual appointment-overlap review/save are source implemented through final writers, bounded queries, HTTP/SDK/live hooks and connected rich editor behavior. Final checking is recorded in qualification. Physical/browser qualification remains required; holds/blocks are still timed-only and later day-type/series contracts remain separate. |
-| F5 | **Series and coverage.** Standards-tested daily/weekly/monthly/yearly engine, nominal occurrence identity, exceptions, one/future/all edits and split lineage. Bounded all-resource materialization commits conflicts consistently; expose durable coverage, not unbounded free-time promises. Existing Jobs/Torrent extends horizons without a second Calendar timer system. | Private timed engine/cursor, candidate020 schema, initial source/grant/acceptance writer, separate acceptance/status reads and detached bounded compilation are implemented for source/MEMORY review. Candidate020 remains unregistered; the production native broker/commit fence is not wired. Versioned children, staged occupancy/publication, exceptions/splits/one-future-all commands, sparse coverage, Jobs continuation and facade/UI activation remain required. |
+| F5 | **Series and coverage.** Standards-tested daily/weekly/monthly/yearly engine, nominal occurrence identity, exceptions, one/future/all edits and split lineage. Bounded all-resource materialization commits conflicts consistently; expose durable coverage, not unbounded free-time promises. Existing Jobs/Torrent extends horizons without a second Calendar timer system. | Private timed engine/cursor, initial source/grant/acceptance, detached compilation, native signed owner transport, immutable child versions, whole-resource pending claims, bounded day-cell staging, atomic publication and engine-free terminal cleanup are source/MEMORY checked together. Private021 and the matching actor profile remain unregistered in the default realm. Selected-child read composition, exceptions/splits/one-future-all commands, sparse coverage, durable Jobs continuation, public facade/UI activation and physical qualification remain required. |
 | F6 | **Authoritative self-booking and invitations.** Real bounded offers, member/invitation/approved-guest proof, notice/horizon/type/recipient policy, abuse limits, actual any-provider allocation, expiry and atomic confirmation. Explicit pending-review capacity semantics and approve/reject. Hash/revoke capabilities; no private busy/detail leak or staff-audit requirement for public artwork. | Authenticated subject-bound holds/confirm source checked. Offers/proofs/review/RSVP/public routes and native booking UI queued. |
 | F7 | **Actual effects and optional service adapters.** Versioned source-owned reminder/transition rules, immutable due/lateness, fresh recipient/domain checks after waits, native notification/email adapters and exact supersede/cancel/reconciliation. Partial acceptance and unknown SMTP remain distinct; manual review never invents provider evidence. Storage/presence/contact/AI adapters are optional and admitted explicitly. | Observation-only cutoff/recovery source checked. No actual reminder/channel, invitation or AI adapter is enabled. |
 | F8 | **Connected clinical and management experience.** Canonical optional progress/outcome/lobby/attention axes and current action/reason policy; online presence never implies arrival. Connect the reviewed rich editor, all card/agenda/context/status entry points, scoped geography, catalogs/hours/blocks/grants and public booking through the shared async controller. Day/week/month/list, fixed gutter, dense provider scrolling, empty/setup/denied/unknown states and native modal lifecycle work with real data. | Approved rich content composes one native async owner and is the connected workspace default, with whole-resource-set/type/visit/participant atomic writes. Lifecycle/receipt review and combined source checks passed. Management/clinical/booking completion remains required. |
@@ -1078,6 +1078,81 @@ populated `016` native MEMORY upgrader. Admission factoring is a prerequisite,
 not permission to activate partial series creation or bypass sparse coverage.
 
 ### Recorded implementation decisions and boundaries
+
+#### Private021 native materialization review — November 25
+
+This is implementation/review work, **not activation or a release certificate**.
+The default `calendarRealm` remains019. Source020 and materialization021 compose
+only in the private matching parent/actor profile. Ordinary Calendar configuration
+still rejects recurrence/reminders/self-booking enablement until the complete
+families work. None of these private APIs is an application adoption instruction.
+
+The native path now separates these responsibilities:
+
+1. A real human accepts an immutable authored plan. Its existing Guardian scope,
+   all-resource permission and final SYSTEM participant checks remain real human
+   admission. `series.plan.accepted` still does not mean booked.
+2. A fixed native owner captures retained source facts, closes its read, and
+   compiles/project-budgets outside SQL and authority leases. The signer retains
+   exact local source/projection identities and synchronously rechecks their
+   engine provenance at the actual final callback, including after target checks.
+3. Each short actor command checks live owner/source/grant/policy/resource facts.
+   A version and **all** its resource memberships/whole-interval claims enter one
+   transaction before partially projecting its day cells. Ordinary booking and
+   overlap-override paths must respect those claims.
+4. Cell carry-over, immutable seals and hidden working membership prepare in
+   bounded steps. Publication must preserve existing selected membership, fence
+   its captured selector revisions, select the complete new projection and
+   advance the exact source continuation head atomically. The final original
+   native receipt is inserted last. Initial publication additionally selects the
+   authored020 publication in that same transaction; later horizons do not invent
+   a human request, new authored generation or retained user session.
+5. Bounded owner-only cleanup removes redundant pending claims/builders after
+   publication, without aborting bookings or deleting selected membership. Abort
+   of unpublished work is separate. Expired or aborted **physical** claims remain
+   unavailable/checking until actually reconciled and withdrawn.
+
+`series-materialization-controller.ts` composes the private owner, retained
+window, compiler, projection and canonical publication stages without another
+timer. It is a worker-turn driver, not yet the managed Jobs/Torrent installation.
+Its one-batch compiler cache stays outside SQL. Original run/window/expiry facts
+survive retries; it must not substitute a new operation after uncertain settlement.
+The task entry reconciles terminal native state **before** loading a source or
+timezone engine. Published/aborted cleanup must still finish after preparation
+expiry or policy/engine retirement; recovery never turns that into fresh booking
+authority. Aborted hidden working members and empty selector headers, and later
+horizons' superseded unselected memberships, drain under the same finite budget.
+Immutable versions/members/seals and current selected occupancy remain retained.
+
+The published-source reader now returns both the new source snapshot and the
+qualified current continuation-head checkpoint/digest from one native read.
+It uses the original durable native-window deadline, not an expired initial human
+preparation and not `Date.now()+TTL` on each retry. A forward compiler window
+retains explicit branded old-checkpoint/new-window transition evidence; its new
+range digest is not equal to the old completed-range digest. Native admission
+must verify that transition against the exact current head before carrying COUNT.
+A fresh seek with plausible counters cannot substitute for that transition.
+
+Budgets remain explicit and independent: 256 projected fact rows per staging
+command; at most 16 resources and 544 UTC-day/resource cells per occurrence;
+at most 2,048 selected cells per publication. Final manifest reads are paged at 64
+cells, not one actor response containing 2,048 full triples. The final bounded
+selector transaction is a separate publication budget, not falsely described as
+one 256-row staging step. File-mode latency/pressure qualification is still open.
+Projection additionally bounds its instruction payload at 6,000 nodes and a
+conservative 512 KiB, leaving room for the fixed source/cursor/envelope metadata.
+Cached measurements of trusted immutable template subtrees avoid repeated
+whole-packet cloning. Large participant lists may shorten a physical step without
+reducing the cheap-cell throughput or raising the actor's serialization limits.
+Working counters are enforced through the private canonical writer/receipt/CAS
+protocol. They are not independent protection from a host rewriting SQLite files.
+
+Still required after this private family: public current-child read composition,
+one/future/all and exception/split semantics, all-resource sparse UTC occupancy
+certificates, on-demand work partitioning, actual Jobs continuation/retirement,
+native reminder effects, public booking and management/clinical integration.
+A nominal cursor, day-cell publication or source-complete result alone must never
+be advertised as a general free-time certificate.
 
 - Keep one private conflict domain per admitted application/tenant scope, not one
   file per provider and not a change to the app's own data topology.

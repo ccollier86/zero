@@ -20,6 +20,10 @@ import { CalendarError, readCalendarRejection } from './error';
 import { installCalendarOwnerSchema, type CalendarOwnerRecord } from './owner-schema';
 import type { ResolvedCalendarPersistenceConfig } from './persistence-config';
 import { calendarRealm } from './realm';
+import type { DatabaseRealm } from '../databases/database-realm';
+import type { CalendarSeriesNativeTransport } from './series-native-transport';
+import { createCalendarSeriesNativeOwner, type CalendarSeriesNativeOwner, type CalendarSeriesNativeOwnerDependencies } from './series-runtime-owner';
+import type { CalendarParticipantDirectory } from './participants-directory';
 import { calendarActor, calendarSelection, CALENDAR_LIMITS } from './realm-model';
 import { CALENDAR_DEFAULT_LIFECYCLE_POLICY, calendarLifecyclePolicyFields, requireCalendarLifecycleManager } from './lifecycle-model';
 import type { CalendarServiceBroker } from './service';
@@ -52,6 +56,13 @@ export interface CalendarRuntimeOptions {
   readonly source?: (coordinator: DatabaseCoordinator) => CalendarRuntimeSource | Promise<CalendarRuntimeSource>;
   /** @internal Native integrated composition only; ordinary/logging-only core stays unchanged. */
   readonly integrationWake?: true;
+  /** @internal Complete private series profile. Not an authored CalendarConfig
+   * field, a generic realm override or a second coordinator for the same root. */
+  readonly series?: {
+    readonly transport: CalendarSeriesNativeTransport;
+    readonly participants?: Pick<CalendarParticipantDirectory, 'assertBindable'>;
+    assertSeriesPolicyCurrent(scope: ServiceDataScope, policyGeneration: string): void;
+  };
 }
 const QUERIES = new Set(['calendar.resources', 'calendar.busy', 'calendar.appointments', 'calendar.appointmentsByDate', 'calendar.appointment',
   'calendar.overrideGrant', 'calendar.appointmentReviewCreate', 'calendar.appointmentReviewUpdate',
@@ -83,18 +94,32 @@ export class CalendarRuntime implements CalendarServiceBroker {
   private readonly rootHash: string;
   private readonly wakeCatalog: CalendarIntegrationWakeCatalog | null;
   private readonly wakeWrites = new Map<string, number>();
-  private constructor(private readonly options: CalendarRuntimeOptions, private readonly owner: DatabaseCoordinator) {
+  private constructor(private readonly options: CalendarRuntimeOptions, private readonly owner: DatabaseCoordinator,
+    private readonly realm: DatabaseRealm) {
     this.rootHash = calendarHash(canonicalDatabaseRootIdentity(options.config.rootDirectory));
     this.wakeCatalog = options.integrationWake ? new CalendarIntegrationWakeCatalog(options.system, this.rootHash) : null;
   }
 
   static async open(options: CalendarRuntimeOptions): Promise<CalendarRuntime> {
+    // Do not import an unfinished candidate realm on the ordinary019 path.
+    // The fixed native profile must use its matching source actor and actual
+    // durable SYSTEM revision fence; a callback-only fallback is not supported.
+    const realm = options.series ? (await import('./series-materialization-realm')).calendarSeriesMaterializationRealm : calendarRealm;
+    if (options.series) {
+      const binding = options.series.transport.writerPolicy;
+      if (!options.authority.actorContext || binding.realmFingerprint !== realm.fingerprint
+        || binding.rootHash !== calendarHash(canonicalDatabaseRootIdentity(options.config.rootDirectory))
+        || options.persistence.defaultActorEntrypoint !== null && !options.persistence.defaultActorEntrypoint.endsWith('/series-actor-entry.ts')) {
+        throw new CalendarError('CALENDAR_CONFIG_INVALID');
+      }
+    }
     if (options.persistence.defaultActorEntrypoint && !existsSync(options.persistence.defaultActorEntrypoint)) throw new CalendarError('CALENDAR_NOT_READY');
     if (!installCalendarOwnerSchema(options.system, options.installAllowed)) throw new CalendarError('CALENDAR_NOT_READY');
     if (options.integrationWake && !await installCalendarIntegrationWakeCatalog(options.system, options.installAllowed)) throw new CalendarError('CALENDAR_NOT_READY');
     let prepared: CalendarRuntime | undefined;
     const owner = new DatabaseCoordinator({
-      rootDirectory: options.config.rootDirectory, realm: calendarRealm, createExecutor: options.persistence.createExecutor,
+      rootDirectory: options.config.rootDirectory, realm, createExecutor: options.persistence.createExecutor,
+      ...(options.series ? { writerPolicy: options.series.transport.writerPolicy as unknown as DatabaseSerializableValue } : {}),
       placement: { default: 'file', hot: null }, sqlite: { synchronous: 'FULL' }, readers: true,
       maxDatabases: options.config.maxActiveDatabases, maxDatabaseFiles: options.config.maxDatabaseFiles,
       maxQueuedPerDatabase: 64, maxQueuedTotal: 256, queueTimeoutMs: 5000, operationTimeoutMs: 15000, sweepIntervalMs: false,
@@ -106,7 +131,7 @@ export class CalendarRuntime implements CalendarServiceBroker {
       ...(options.authority.actorContext ? { actorAuthorityContext: options.authority.actorContext } : {}),
       ...(options.observability ? { observability: createDatabaseObservability(options.observability) } : {}),
     });
-    const runtime = new CalendarRuntime(options, owner);
+    const runtime = new CalendarRuntime(options, owner, realm);
     prepared = runtime;
     try {
       const records = runtime.startupOwners();
@@ -145,7 +170,7 @@ export class CalendarRuntime implements CalendarServiceBroker {
         const result = emptyCalendarRead(name, body); guard(); return result as T;
       }
       this.assertRetained(record);
-      if (record.established !== 1 || record.realm_fingerprint !== calendarRealm.fingerprint) throw new CalendarError('CALENDAR_NOT_READY');
+      if (record.established !== 1 || record.realm_fingerprint !== this.realm.fingerprint) throw new CalendarError('CALENDAR_NOT_READY');
       const result = await this.execute<T>(record, 'query', name, body, guard, undefined, false, operationSignal);
       guard(); return result;
     });
@@ -180,7 +205,7 @@ export class CalendarRuntime implements CalendarServiceBroker {
       // An assignment's live visibility proof may change during reconciliation.
       // It selects a native transport attempt, not a new logical domain intent;
       // calendarIntent still compares the original scope/principal/key digest.
-      const transportKey = 'calendar-command:' + calendarHash([calendarRealm.fingerprint, actor, key, name,
+      const transportKey = 'calendar-command:' + calendarHash([this.realm.fingerprint, actor, key, name,
         ...(name === 'calendar.resource.locations' || name === 'calendar.resource.location-policy' ? [body.locationWitnesses ?? null] : [])]);
       const result = await this.execute<CalendarCommandReceipt>(record, 'command', name, body, guard, transportKey, false, operationSignal,
         finalCommitGuard ? this.guard(finalCommitGuard, operationSignal) : undefined);
@@ -322,7 +347,7 @@ export class CalendarRuntime implements CalendarServiceBroker {
       if (prior === null && Object.hasOwn(r, 'desired')) body.desired = calendarIntegrationInput(owner, scope, 'command',
         'calendar.integration.policy.install', { policy: r.desired, expectedEpoch: 0 }, 'operator-owner-proof').policy;
       const result = await this.execute<CalendarIntegrationOperatorRequestReceipt>(owner, 'command', 'calendar.integration.operator.request', body, ownerGuard,
-        'calendar-operator-command:' + calendarHash([calendarRealm.fingerprint, body]), false, operationSignal,
+        'calendar-operator-command:' + calendarHash([this.realm.fingerprint, body]), false, operationSignal,
         prior === null && finalCommitGuard ? this.guard(finalCommitGuard, operationSignal) : undefined);
       try {
         ownerGuard();
@@ -357,7 +382,7 @@ export class CalendarRuntime implements CalendarServiceBroker {
     const rows = this.options.system.prepare(`SELECT * FROM _calendar_owners INDEXED BY calendar_owners_established
       WHERE established=1 ${after === null ? '' : 'AND id>?'} ORDER BY id LIMIT ?`).all(...(after === null ? [] : [after]), limit + 1) as CalendarOwnerRecord[];
     const owners = rows.slice(0, limit).map(record => {
-      assertCalendarOwnerRecord(record, this.rootHash, calendarRealm.fingerprint, false);
+      assertCalendarOwnerRecord(record, this.rootHash, this.realm.fingerprint, false);
       return Object.freeze({ ...record });
     });
     return Object.freeze({ owners: Object.freeze(owners), nextCursor: rows.length > limit ? owners.at(-1)!.id : null });
@@ -369,7 +394,7 @@ export class CalendarRuntime implements CalendarServiceBroker {
   integrationOwnerForScope(scope: ServiceDataScope): CalendarOwnerRecord | null {
     this.assertReady(); const scopeId = serviceDataScopeKey(scope), record = this.record(calendarDatabaseId(scopeId));
     if (!record || record.established !== 1) return null;
-    assertCalendarOwnerRecord(record, this.rootHash, calendarRealm.fingerprint, false);
+    assertCalendarOwnerRecord(record, this.rootHash, this.realm.fingerprint, false);
     if (record.scope_id !== scopeId) throw new CalendarError('CALENDAR_STATE_INVALID');
     return Object.freeze({ ...record });
   }
@@ -393,7 +418,7 @@ export class CalendarRuntime implements CalendarServiceBroker {
       // operation fence; a cold-generation check is never request authority.
       // Actual file/actor ordering still needs physical qualification.
       if (kind !== 'verify') return await this.execute<T>(owner, kind, name, body, guard,
-        kind === 'command' ? 'calendar-integration:' + calendarHash([calendarRealm.fingerprint, owner.id, owner.owner_id, name, opts.key!]) : undefined,
+        kind === 'command' ? 'calendar-integration:' + calendarHash([this.realm.fingerprint, owner.id, owner.owner_id, name, opts.key!]) : undefined,
         false, signal);
       const authority = createDatabaseCommitAuthority(this.options.authority.coordinator, owner.id, () => { guard(); return undefined; });
       const lease = await this.owner.acquireExisting(owner.id, { commitAuthority: authority });
@@ -409,9 +434,33 @@ export class CalendarRuntime implements CalendarServiceBroker {
     } satisfies CalendarIntegrationOwner);
   }
 
+  /** @internal Native series only. The facade is never returned by the request
+   * Calendar service. Reuses this provider's exact physical coordinator/root. */
+  forSeriesOwner(owner: CalendarOwnerRecord): CalendarSeriesNativeOwner {
+    const setup = this.options.series;
+    if (!setup || !this.options.authority.actorContext) throw new CalendarError('CALENDAR_NOT_READY');
+    this.assertIntegrationOwner(owner);
+    const selected = Object.freeze({ ...owner });
+    const execute = <T>(...args: Parameters<CalendarSeriesNativeOwnerDependencies['execute']>): Promise<T> => this.track(async () => {
+      const [kind, name, input, operation] = args;
+      const signal = AbortSignal.any([this.stop.signal, operation.signal]);
+      const guard = this.guard(() => { this.assertIntegrationOwner(selected); operation.guard(); }, signal);
+      guard();
+      return this.executePrivate<T>(selected, kind, name, input, guard, operation.requestId, false, signal,
+        operation.finalCommitGuard ? this.guard(operation.finalCommitGuard, signal) : undefined);
+    });
+    return createCalendarSeriesNativeOwner({ owner: selected, transport: setup.transport, signal: this.stop.signal,
+      ...(setup.participants ? { participants: setup.participants } : {}),
+      assertOwnerCurrent: value => { this.assertIntegrationOwner(value); },
+      assertSeriesPolicyCurrent: (scope, generation) => setup.assertSeriesPolicyCurrent(scope, generation),
+      execute,
+    });
+  }
+
   close(): Promise<void> {
     if (this.closeTask) return this.closeTask;
     this.state = 'closing'; this.listeners.clear(); this.pendingHints.clear();
+    this.options.series?.transport.close();
     const task = (async () => {
       // Cancellation removes queued admission, not an already-dispatched actor
       // effect. Keep its lease/occupancy until the bounded native operation has
@@ -445,7 +494,7 @@ export class CalendarRuntime implements CalendarServiceBroker {
   private startupOwners(): CalendarOwnerRecord[] {
     const records = this.records();
     for (const record of records) {
-      if (this.wakeCatalog) assertCalendarOwnerRecord(record, this.rootHash, calendarRealm.fingerprint, this.options.installAllowed);
+      if (this.wakeCatalog) assertCalendarOwnerRecord(record, this.rootHash, this.realm.fingerprint, this.options.installAllowed);
       else this.assertRetained(record);
     }
     return records;
@@ -455,13 +504,13 @@ export class CalendarRuntime implements CalendarServiceBroker {
   }
   private filePresent(id: string): boolean { return calendarFileIsPresent(this.options.config.rootDirectory, id); }
   private assertRetained(record: CalendarOwnerRecord): void {
-    assertCalendarOwnerRecord(record, this.rootHash, calendarRealm.fingerprint, this.options.installAllowed);
+    assertCalendarOwnerRecord(record, this.rootHash, this.realm.fingerprint, this.options.installAllowed);
     if (record.established === 1 && !this.filePresent(record.id)) throw new CalendarError('CALENDAR_STATE_INVALID');
   }
   private assertIntegrationOwner(owner: CalendarOwnerRecord): void {
     this.assertReady();
     if (calendarHash(canonicalDatabaseRootIdentity(this.options.config.rootDirectory)) !== this.rootHash) throw new CalendarError('CALENDAR_STATE_INVALID');
-    assertCalendarOwnerRecord(owner, this.rootHash, calendarRealm.fingerprint, false);
+    assertCalendarOwnerRecord(owner, this.rootHash, this.realm.fingerprint, false);
     if (owner.established !== 1) throw new CalendarError('CALENDAR_NOT_READY');
     const current = this.record(owner.id);
     if (!current || current.id !== owner.id || current.scope_id !== owner.scope_id || current.owner_id !== owner.owner_id
@@ -477,7 +526,7 @@ export class CalendarRuntime implements CalendarServiceBroker {
     const record = this.record(id);
     if (!record) throw new CalendarError('CALENDAR_STATE_INVALID');
     this.assertRetained(record);
-    return Object.freeze({ schema: record.established === 1 && record.realm_fingerprint === calendarRealm.fingerprint ? 'current' : 'prepare',
+    return Object.freeze({ schema: record.established === 1 && record.realm_fingerprint === this.realm.fingerprint ? 'current' : 'prepare',
       row: Object.freeze({ table: '_calendar_owner', id: 'application',
         equals: Object.freeze({ owner_id: record.owner_id, scope_id: record.scope_id }),
         ...(record.established === 1 ? {} : { allowMissing: true as const }) }) });
@@ -582,7 +631,7 @@ export class CalendarRuntime implements CalendarServiceBroker {
   }
   private async ensure(id: string, scopeId: string, guard: () => void, signal?: AbortSignal): Promise<CalendarOwnerRecord> {
     const retained = this.record(id);
-    if (retained?.established === 1 && retained.realm_fingerprint === calendarRealm.fingerprint) {
+    if (retained?.established === 1 && retained.realm_fingerprint === this.realm.fingerprint) {
       this.assertRetained(retained);
       if (retained.scope_id !== scopeId) throw new CalendarError('CALENDAR_STATE_INVALID');
       return retained;
@@ -602,20 +651,20 @@ export class CalendarRuntime implements CalendarServiceBroker {
       if (prior) { this.assertRetained(prior); if (prior.scope_id !== scopeId) throw new CalendarError('CALENDAR_STATE_INVALID'); record = prior; return; }
       if (this.filePresent(id)) throw new CalendarError('CALENDAR_STATE_INVALID');
       if (this.records().length >= this.options.config.maxDatabaseFiles) throw new CalendarError('CALENDAR_CAPACITY');
-      record = { id, scope_id: scopeId, owner_id: 'cal_' + crypto.randomUUID(), root_hash: this.rootHash, realm_fingerprint: calendarRealm.fingerprint, established: 0 };
+      record = { id, scope_id: scopeId, owner_id: 'cal_' + crypto.randomUUID(), root_hash: this.rootHash, realm_fingerprint: this.realm.fingerprint, established: 0 };
       this.options.system.prepare('INSERT INTO _calendar_owners(id,scope_id,owner_id,root_hash,realm_fingerprint,established) VALUES(?,?,?,?,?,0)')
-        .run(id, scopeId, record.owner_id, this.rootHash, calendarRealm.fingerprint);
+        .run(id, scopeId, record.owner_id, this.rootHash, this.realm.fingerprint);
     }), signal ? { signal } : {});
     guard(); this.source?.prepare(record);
     await this.execute(record, 'command', 'calendar.owner.bind', { ownerId: record.owner_id, scopeId }, guard,
-      'calendar-owner:' + record.owner_id + ':' + calendarRealm.fingerprint, record.established === 0, signal);
+      'calendar-owner:' + record.owner_id + ':' + this.realm.fingerprint, record.established === 0, signal);
     await withReactiveDBCommitAdmission(this.options.system, () => this.options.system.transaction(() => {
       guard(); const current = this.record(id);
       if (!current || current.owner_id !== record.owner_id || current.scope_id !== scopeId || current.root_hash !== this.rootHash) throw new CalendarError('CALENDAR_STATE_INVALID');
-      this.options.system.prepare('UPDATE _calendar_owners SET established=1,realm_fingerprint=? WHERE id=? AND owner_id=?').run(calendarRealm.fingerprint, id, record.owner_id);
-      this.wakeCatalog?.seedEstablishedInTransaction({ ...record, established: 1, realm_fingerprint: calendarRealm.fingerprint }, Date.now());
+      this.options.system.prepare('UPDATE _calendar_owners SET established=1,realm_fingerprint=? WHERE id=? AND owner_id=?').run(this.realm.fingerprint, id, record.owner_id);
+      this.wakeCatalog?.seedEstablishedInTransaction({ ...record, established: 1, realm_fingerprint: this.realm.fingerprint }, Date.now());
     }), signal ? { signal } : {});
-    guard(); const established = { ...record, established: 1, realm_fingerprint: calendarRealm.fingerprint };
+    guard(); const established = { ...record, established: 1, realm_fingerprint: this.realm.fingerprint };
     this.source?.prepare(established); return established;
   }
 

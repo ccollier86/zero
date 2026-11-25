@@ -2,23 +2,32 @@
  * This is not a writer facade: only the three read operations can escape.
  */
 import type { DatabaseReadQueryContext } from '../databases/database-read-query-capability';
-import type { DatabaseWriteCommandCapability } from '../databases/database-write-command-capability';
+import type { DatabaseWriteCommandCapability, DatabaseWriteCommandQuery } from '../databases/database-write-command-capability';
 import type { DatabaseOperationCatalog, DatabaseFindInput, DatabaseFindRows, DatabaseOperationRow, DatabaseSerializableValue } from '../databases/database-operations';
 import { cloneDatabaseSerializableValue, databaseOperationRecord } from '../databases/database-operation-payload';
 import { validateDatabaseFindOperation } from '../databases/database-find-validation';
 import { compileDatabaseFindFilter } from '../databases/database-find';
 import { DatabaseError } from '../databases/database-error';
 import { quoteSqlIdentifier } from '../sync/identity';
-import type { Row } from '../sync/types';
+import type { Row, TableSchema } from '../sync/types';
 import { calendarOverrideTables } from './realm-overrides-migration';
+import { CALENDAR_SERIES_MATERIALIZATION_ADDITIONS, CALENDAR_SERIES_MATERIALIZATION_TABLES } from './realm-series-materialization-migration';
+import { readCalendarSeriesOccupancy, type CalendarSeriesOccupancyInput, type CalendarSeriesOccupancyResult } from './series-occupancy';
 
 export interface CalendarReadContext {
   readonly db: Pick<DatabaseWriteCommandCapability, 'get' | 'find' | 'hasTable'>;
+  /** Actual registered command query bridge, never raw SQL or input callbacks. */
+  readonly query?: DatabaseWriteCommandQuery;
+  /** Read-only review adapter's fixed native query; not a generic SQL grant. */
+  readonly seriesOccupancy?: (input: CalendarSeriesOccupancyInput) => CalendarSeriesOccupancyResult;
 }
 
 // Native declarations, not sqlite_schema or caller JSON, are the authority for
 // readable identifiers. No import of the realm/command registry (and no cycle).
-const declarations = calendarOverrideTables();
+const profileState = CALENDAR_SERIES_MATERIALIZATION_TABLES.state;
+// Admit only this known profile marker to structured reads. Series occupancy
+// itself uses its fixed read-only query, not arbitrary access to 021 tables.
+const declarations: Readonly<Record<string, TableSchema>> = { ...calendarOverrideTables(), [profileState]: CALENDAR_SERIES_MATERIALIZATION_ADDITIONS[profileState]! };
 const tables = Object.freeze(Object.keys(declarations));
 const columns = Object.freeze(Object.fromEntries(tables.map(table => [table, Object.freeze(Object.keys(declarations[table]!).filter(name => name !== '_identity'))])));
 const catalog: DatabaseOperationCatalog = Object.freeze({ tables,
@@ -73,5 +82,5 @@ export function createCalendarReadContext(context: DatabaseReadQueryContext): Ca
         .all(...filters.flatMap(filter => filter.params), operation.limit, operation.offset ?? 0).map(serializableRow));
     } },
   });
-  return Object.freeze({ db: Object.freeze(db) });
+  return Object.freeze({ db: Object.freeze(db), seriesOccupancy: (input: CalendarSeriesOccupancyInput) => readCalendarSeriesOccupancy(context, input) });
 }

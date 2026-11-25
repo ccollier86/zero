@@ -22,9 +22,14 @@ export interface CalendarSeriesCompilationSnapshot {
   readonly kind: 'calendar-series-source-snapshot-v1';
   readonly scopeId: string;
   readonly ownerId: string;
+  readonly rootHash: string;
+  readonly realmFingerprint: string;
   readonly sourceId: string;
   readonly seriesId: string;
+  /** Stable logical identity across authored generations/time-only edits. */
   readonly segmentId: string;
+  /** The immutable generation's physical segment row, not nominal identity. */
+  readonly segmentRecordId: string;
   readonly generationId: string;
   readonly sourceGeneration: number;
   readonly controlRevision: number;
@@ -72,7 +77,10 @@ export interface CalendarSeriesCompilationEvidence {
   readonly kind: 'calendar-series-compilation-v1';
   readonly binding: CalendarSeriesCompilationBinding;
   readonly engine: CalendarRecurrenceCheckpoint['engine'];
-  readonly progress: { readonly beforeDigest: string; readonly afterDigest: string; readonly checkpoint: CalendarRecurrenceCheckpoint };
+  readonly progress: { readonly beforeDigest: string; readonly afterDigest: string; readonly checkpoint: CalendarRecurrenceCheckpoint;
+    /** Present only on the first batch from the actual branded forward-window
+     * transition, never on a fresh seek that merely has similar counters. */
+    readonly continuation?: CalendarSeriesCompilationContinuation };
   readonly work: { readonly candidateLimit: number; readonly occurrenceLimit: number; readonly evaluatedCandidates: number;
     readonly skipped: CalendarRecurrenceCursorBatch['skipped']; readonly stop: CalendarRecurrenceCursorBatch['stop'];
     readonly completion: 'incomplete' | 'nominal-range-complete' | 'nominal-source-complete' };
@@ -80,6 +88,13 @@ export interface CalendarSeriesCompilationEvidence {
   /** Domain-separated digest of metadata and EVERY ordered candidate digest.
    * Incremental hashing bounds the digest input without a hidden 32KB batch cap. */
   readonly batchDigest: string;
+}
+export interface CalendarSeriesCompilationContinuation {
+  readonly kind: 'calendar-series-window-transition-v1';
+  readonly previousDigest: string;
+  readonly previousCheckpoint: CalendarRecurrenceCheckpoint;
+  readonly initialDigest: string;
+  readonly initialCheckpoint: CalendarRecurrenceCheckpoint;
 }
 export interface CalendarSeriesCompilationBatch {
   readonly contribution: CalendarSeriesCompilationContribution;
@@ -94,7 +109,8 @@ interface SourceState {
 const sources = new WeakMap<object, SourceState>();
 const contributions = new WeakMap<object, { readonly snapshotDigest: string; readonly cursor: CalendarRecurrenceCursor;
   readonly evidence: CalendarSeriesCompilationEvidence }>();
-const SNAPSHOT_FIELDS = ['kind', 'scopeId', 'ownerId', 'sourceId', 'seriesId', 'segmentId', 'generationId', 'sourceGeneration',
+const continuations = new WeakMap<object, { readonly snapshotDigest: string; readonly evidence: CalendarSeriesCompilationContinuation }>();
+const SNAPSHOT_FIELDS = ['kind', 'scopeId', 'ownerId', 'rootHash', 'realmFingerprint', 'sourceId', 'seriesId', 'segmentId', 'segmentRecordId', 'generationId', 'sourceGeneration',
   'controlRevision', 'exceptionRevision', 'preparationId', 'basePublicationId', 'planManifestDigest', 'preparationExpiresAtMs',
   'intentDigest', 'authoringDigest', 'engineGeneration', 'policyGeneration', 'authoring', 'grant', 'resourceRevisions'] as const;
 function invalid(): never { throw new CalendarError('CALENDAR_INPUT_INVALID'); }
@@ -140,7 +156,8 @@ export function captureCalendarSeriesCompilationSource(input: CalendarSeriesComp
   }).sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
   if (resourceRevisions.some((entry, index) => entry.id !== authoring.template.resourceIds[index])) return invalid();
   const snapshot: CalendarSeriesCompilationSnapshot = freeze({ kind: r.kind, scopeId: calendarScope(r.scopeId), ownerId: calendarKey(r.ownerId),
-    sourceId: calendarKey(r.sourceId), seriesId: calendarKey(r.seriesId), segmentId: calendarKey(r.segmentId), generationId: calendarKey(r.generationId),
+    rootHash: digest(r.rootHash), realmFingerprint: 'sha256:' + digest(typeof r.realmFingerprint === 'string' && r.realmFingerprint.startsWith('sha256:') ? r.realmFingerprint.slice(7) : undefined),
+    sourceId: calendarKey(r.sourceId), seriesId: calendarKey(r.seriesId), segmentId: calendarKey(r.segmentId), segmentRecordId: calendarKey(r.segmentRecordId), generationId: calendarKey(r.generationId),
     sourceGeneration: calendarInteger(r.sourceGeneration, 1), controlRevision: calendarInteger(r.controlRevision, 1), exceptionRevision: calendarInteger(r.exceptionRevision),
     preparationId: calendarKey(r.preparationId), basePublicationId: r.basePublicationId === null ? null : calendarKey(r.basePublicationId),
     planManifestDigest: digest(r.planManifestDigest), preparationExpiresAtMs: calendarInteger(r.preparationExpiresAtMs, 1),
@@ -170,7 +187,12 @@ export function restoreCalendarSeriesCompilationCursor(source: CalendarSeriesCom
 }
 export function continueCalendarSeriesCompilationWindow(source: CalendarSeriesCompilationSource, cursor: CalendarRecurrenceCursor,
   range: CalendarRecurrenceDateRange): CalendarRecurrenceCursor {
-  const state = sourceState(source); inspectBoundCursor(state, cursor); return continueCalendarRecurrenceNominalWindow(cursor, range);
+  const state = sourceState(source), previous = inspectBoundCursor(state, cursor), next = continueCalendarRecurrenceNominalWindow(cursor, range);
+  const initial = inspectBoundCursor(state, next);
+  continuations.set(next, { snapshotDigest: state.binding.snapshotDigest, evidence: freeze({ kind: 'calendar-series-window-transition-v1',
+    previousDigest: previous.digest, previousCheckpoint: calendarValue(previous.checkpoint) as unknown as CalendarRecurrenceCheckpoint,
+    initialDigest: initial.digest, initialCheckpoint: calendarValue(initial.checkpoint) as unknown as CalendarRecurrenceCheckpoint }) });
+  return next;
 }
 /** Identity does not hash effective time or generation. A move must retain the
  * accepted nominal key supplied by the later canonical exception family. */
@@ -210,8 +232,11 @@ export function compileCalendarSeriesBatch(source: CalendarSeriesCompilationSour
     : batch.checkpoint.status === 'range-complete' ? 'nominal-range-complete' : 'nominal-source-complete';
   const work: CalendarSeriesCompilationEvidence['work'] = Object.freeze({ candidateLimit, occurrenceLimit,
     evaluatedCandidates: batch.evaluatedCandidates, skipped: batch.skipped, stop: batch.stop, completion });
+  const transition = continuations.get(cursor);
+  if (transition && transition.snapshotDigest !== state.binding.snapshotDigest) return stale();
   const metadata = freeze({ kind: 'calendar-series-compilation-v1' as const, binding: state.binding, engine: { ...batch.checkpoint.engine },
-    progress: { beforeDigest: before.digest, afterDigest: batch.digest, checkpoint: batch.checkpoint },
+    progress: { beforeDigest: before.digest, afterDigest: batch.digest, checkpoint: batch.checkpoint,
+      ...(transition ? { continuation: transition.evidence } : {}) },
     work, candidateCount: candidates.length });
   const hash = createHash('sha256').update('calendar-series-batch-v1\0').update(calendarHash(metadata));
   for (const value of candidates) hash.update('\0candidate:').update(calendarHash(value));

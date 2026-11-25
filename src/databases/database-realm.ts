@@ -57,7 +57,11 @@ import {
 } from './database-realm-schema-admission';
 import { orderDatabaseRealmTables } from './database-realm-table-order';
 import { admitDatabaseRealmMigrationTableStages, databaseRealmMigrationTableStagesFingerprint, type DatabaseRealmMigrationTableStage } from './database-realm-migration-tables';
-import type { DatabaseReadQueryContext } from './database-read-query-capability';
+import {
+  createDatabaseReadQuerySession,
+  withDatabaseReadQuerySession,
+  type DatabaseReadQueryContext,
+} from './database-read-query-capability';
 import { admitDatabaseWriterAdmission, type DatabaseWriterAdmissionDefinition } from './database-writer-admission';
 import {
   createDatabaseWriteCommandSession,
@@ -389,6 +393,28 @@ export function runDatabaseRealmCommand(
     [...guardianAnchorTableNames(realm.guardianAnchorRequirements), PRESENCE_TABLE, PRESENCE_OWNER_TABLE,
       '_guardian_presence_projection_binding', 'guardian_presence_current'],
     writerPolicy,
+    (queryName, queryInput) => {
+      // Reuse the exact writer handle/transaction, including its uncommitted
+      // writes. No pathname reopen or deserialized copy can prove this state.
+      const native = database.getRawDatabase();
+      const guard = native.prepare('PRAGMA query_only');
+      let previous: unknown;
+      try { previous = Object.values(guard.get() as Record<string, unknown>)[0]; }
+      finally { guard.finalize(); }
+      if (previous !== 0 && previous !== 1) {
+        throw new DatabaseError('DATABASE_EXECUTOR_FAILED', 'Database command read-query guard is unavailable.');
+      }
+      try {
+        native.run('PRAGMA query_only = ON');
+        return withDatabaseReadQuerySession(createDatabaseReadQuerySession(native), context =>
+          runDatabaseRealmQuery(realm, context, queryName, queryInput));
+      } finally {
+        // Every query session closes before write authority is restored, even
+        // when handler/result validation fails. Command lifetime revocation
+        // separately prevents dispatch from escaping into post-commit work.
+        native.run(previous === 0 ? 'PRAGMA query_only = OFF' : 'PRAGMA query_only = ON');
+      }
+    },
   );
   try {
     return database.transaction(() => {

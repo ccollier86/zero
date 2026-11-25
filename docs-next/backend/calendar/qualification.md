@@ -83,6 +83,74 @@ versioned children and staged occupancy publication, exception/split/edit
 semantics, sparse coverage and Jobs continuation, then facade/UI activation together. No partial
 table, cursor, local preview or passing source check completes that work.
 
+### Subsequent private native materialization work
+
+The feature branch now implements a private matching021 parent/actor profile,
+fixed owner facade, locally retained HMAC/projection proof, initial acceptance
+transport, whole-resource pending reservations and bounded child/day-cell staging.
+The default019 realm and migration001–019 hashes are unchanged. The private
+profile reuses Calendar's coordinator and actual final-commit callback path; it
+does not allocate another coordinator for the same physical root, invent a
+background user, boot the main app as an actor or pass provider/dotenv secrets.
+Actual subprocess/file admission remains a qualification gate, not a result of
+the controlled-executor MEMORY tests.
+
+The matching read/compile/stage path includes original receipt reconciliation
+before fresh engine/policy/target admission. Fresh work still checks exact local
+packet identity and current engine at the final callback. Copied accepted intent
+may reconcile proven history; a copied or self-rehashed intent cannot authorize
+a new write. Native-window expiry does not erase published reservations or prove
+that physically retained unfinished claims are gone.
+
+Canonical publication and its native worker-turn controller are source/MEMORY
+checked together, including same-cell horizon union, exact continuation-head/CAS,
+receipt-last atomic selection and bounded proof-preserving cleanup. The
+[implementation ledger](../../_work/calendar-integration-plan.md#private021-native-materialization-review--november-25)
+records the budgets and outstanding integration work. This remains an
+unregistered private source family, not a released recurrence API or UTC
+availability guarantee.
+
+The terminal task entry now inspects durable native state before loading a
+source/compiler. Published and aborted work can drain disposable claims,
+builders and unselected working projections after deadline or policy/engine
+retirement, retaining immutable proof and selected reservations. The projection
+also independently budgets portable payload nodes/bytes: a reproduced legal
+100-participant batch exceeded the actor node limit despite satisfying its SQL
+row budget. Cached trusted-subtree measurements now shorten that step without
+widening actor limits or globally throttling ordinary cell-only work.
+
+New completed diagnostics are separate checkpoints, not additive final totals:
+
+- The final coherent affected source set passed **191 tests across 20 files,
+  zero failures, 5,466 assertions in 259.04 seconds** on pinned Bun 1.4.4 with
+  transpiler caching disabled. It includes the native publication/controller,
+  expired and aborted recovery, superseded working-row cleanup, maximum
+  participant payloads, populated016 migration, ordinary/override compatibility
+  and the actual in-transaction registered-query bridge. Runtime source stayed
+  frozen for this pass. The source graph plus 17 affected test roots passed with
+  **2,589 source files, zero TypeScript diagnostics**. The earlier test-root type
+  run failed on 24 mock/expectation annotations; those annotations were corrected,
+  not runtime authorization or assertions weakened. The documentation graph
+  passed **913 pages, 913 unique IDs, 913 reachable pages, zero problems**.
+
+- The tracked initial writer plus real-human signed initial native command set
+  passed **18 tests, zero failures, 150 assertions in 24.58 seconds**. It uses
+  actual Guardian and the native private realm in synthetic MEMORY. It proves
+  receipt/effect uniqueness and detached source reading, not physical transport
+  or Linux compliance deployment.
+- The pure compiler/projection/transport, fixed owner and named-query bridge set
+  passed **48 tests, zero failures, 3,452 assertions in 10.77 seconds**. Earlier
+  runs remain failed: adding forward-window transition evidence initially shared
+  object references prohibited by the portable-value contract; separate detached
+  checkpoints corrected that defect. A later maximum-shape stress test exceeded
+  Bun's default five-second test timeout. Its finite 20-second test timeout is now
+  explicit; this is correctness/staging-budget evidence, not a latency benchmark.
+
+No dependency installation, generated build tree, physical database, Docker
+container, browser deployment or release archive was created by these checks.
+All synthetic MEMORY fixtures close their handles in `finally`. The existing
+filesystem integrity hold remains active; no storage guard has been bypassed.
+
 Documentation routing now distinguishes released scheduling services from the
 Calendar backend in README, agent entrances, first-app/upgrade guides and system
 indexes. The facade summaries match existing all-day, atomic participant edits

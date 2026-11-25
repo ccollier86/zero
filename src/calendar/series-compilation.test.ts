@@ -24,8 +24,9 @@ function authoring(recurrence: Partial<CalendarTimedRecurrenceSource> = {}): Cal
 }
 function snapshot(input = authoring(), patch: Partial<CalendarSeriesCompilationSnapshot> = {}): CalendarSeriesCompilationSnapshot {
   const normalized = normalizeCalendarTimedSeriesAuthoring(input, limits), resources = normalized.template.resourceIds.map(id => ({ id, revision: id === 'a' ? 7 : 9 }));
-  return { kind: 'calendar-series-source-snapshot-v1', scopeId: 'tenant:compilation', ownerId: 'calendar-owner', sourceId: 'source-1', seriesId: 'series-1',
-    segmentId: 'segment-1', generationId: 'generation-1', sourceGeneration: 1, controlRevision: 1, exceptionRevision: 0,
+  return { kind: 'calendar-series-source-snapshot-v1', scopeId: 'tenant:compilation', ownerId: 'calendar-owner', rootHash: calendarHash('actual-root'),
+    realmFingerprint: 'sha256:' + calendarHash('actual-realm'), sourceId: 'source-1', seriesId: 'series-1',
+    segmentId: 'segment-1', segmentRecordId: 'segment-row-1', generationId: 'generation-1', sourceGeneration: 1, controlRevision: 1, exceptionRevision: 0,
     preparationId: 'preparation-1', basePublicationId: null, planManifestDigest: calendarHash('accepted-plan'), preparationExpiresAtMs: 1_800_000_000_000,
     intentDigest: calendarHash('accepted-human-intent'), authoringDigest: calendarHash(normalized),
     engineGeneration: calendarHash(calendarRecurrenceTraversal(normalized.recurrence).engine), policyGeneration: calendarHash('current-series-policy'), authoring: input,
@@ -50,7 +51,8 @@ test('trusted snapshot capture produces exact detached booking candidates and bi
   const stored = snapshot(), source = capture(stored), cursor = createCalendarSeriesCompilationCursor(source, range), before = inspectCalendarRecurrenceCursor(cursor);
   const batch = compileCalendarSeriesBatch(source, cursor, { candidateLimit: 2, occurrenceLimit: 1 }), evidence = batch.evidence;
   expect(evidence.binding).toMatchObject({ scopeId: stored.scopeId, ownerId: stored.ownerId, sourceId: stored.sourceId, seriesId: stored.seriesId,
-    segmentId: stored.segmentId, generationId: stored.generationId, sourceGeneration: 1, controlRevision: 1, exceptionRevision: 0,
+    rootHash: stored.rootHash, realmFingerprint: stored.realmFingerprint, segmentId: stored.segmentId, segmentRecordId: stored.segmentRecordId,
+    generationId: stored.generationId, sourceGeneration: 1, controlRevision: 1, exceptionRevision: 0,
     preparationId: stored.preparationId, basePublicationId: null, planManifestDigest: stored.planManifestDigest, preparationExpiresAtMs: stored.preparationExpiresAtMs,
     intentDigest: stored.intentDigest, authoringDigest: stored.authoringDigest, policyGeneration: stored.policyGeneration, engineGeneration: stored.engineGeneration,
     resourceRevisions: stored.resourceRevisions, grant: stored.grant });
@@ -90,6 +92,26 @@ test('input mutation cannot alter captured source, authored selections, candidat
   expect(inspectCalendarRecurrenceCursor(cursor).checkpoint.examinedCandidates).toBe(0);
 });
 
+test('a native forward window carries the exact retained checkpoint transition rather than a fresh COUNT seek', () => {
+  const source = capture(snapshot(authoring({ localStart: '2026-01-01T09:00:00.000',
+    rule: { frequency: 'daily', interval: 1, end: { kind: 'after', count: 20 } } })));
+  const firstRange = { from: '2026-01-01', until: '2026-01-03' }, secondRange = { from: '2026-01-03', until: '2026-01-05' };
+  const first = compileCalendarSeriesBatch(source, createCalendarSeriesCompilationCursor(source, firstRange));
+  expect(first.evidence.work.completion).toBe('nominal-range-complete');
+  const continuedCursor = continueCalendarSeriesCompilationWindow(source, first.cursor, secondRange);
+  const continued = compileCalendarSeriesBatch(source, continuedCursor, { occurrenceLimit: 1 });
+  expect(continued.evidence.progress.continuation).toEqual({ kind: 'calendar-series-window-transition-v1',
+    previousDigest: first.evidence.progress.afterDigest, previousCheckpoint: first.evidence.progress.checkpoint,
+    initialDigest: inspectCalendarRecurrenceCursor(continuedCursor).digest, initialCheckpoint: inspectCalendarRecurrenceCursor(continuedCursor).checkpoint });
+  expect(continued.evidence.progress.beforeDigest).not.toBe(first.evidence.progress.afterDigest);
+  expect(continued.evidence.progress.continuation!.initialCheckpoint.rruleCount).toBe(first.evidence.progress.checkpoint.rruleCount);
+  expect(compileCalendarSeriesBatch(source, createCalendarSeriesCompilationCursor(source, secondRange)).evidence.progress.continuation).toBeUndefined();
+  expect(compileCalendarSeriesBatch(source, continued.cursor).evidence.progress.continuation).toBeUndefined();
+  expect(continued.evidence.batchDigest).toBe(batchHash(continued.evidence));
+  expect(compileCalendarSeriesBatch(source, continuedCursor, { occurrenceLimit: 1 }).evidence).toEqual(continued.evidence);
+  deepFrozen(continued.evidence.progress.continuation);
+});
+
 test('JSON, spreads, proxies and self-rehashed copied cells cannot reconstruct source/contribution capabilities', () => {
   const source = capture(), cursor = createCalendarSeriesCompilationCursor(source, range), batch = compileCalendarSeriesBatch(source, cursor);
   for (const forged of [{}, { ...source }, JSON.parse(JSON.stringify(source)), inspectCalendarSeriesCompilationSource(source)]) {
@@ -110,7 +132,8 @@ test('JSON, spreads, proxies and self-rehashed copied cells cannot reconstruct s
 test('fresh snapshot verification rejects every changed owner/source/generation/grant/exception/policy/resource/selection binding', () => {
   const source = capture(), batch = compileCalendarSeriesBatch(source, createCalendarSeriesCompilationCursor(source, range));
   for (const patch of [{ ownerId: 'other-owner' }, { scopeId: 'application' }, { sourceId: 'other-source' }, { seriesId: 'other-series' },
-    { segmentId: 'other-segment' }, { generationId: 'generation-2' }, { sourceGeneration: 2 }, { controlRevision: 2 }, { exceptionRevision: 1 },
+    { rootHash: calendarHash('other-root') }, { realmFingerprint: 'sha256:' + calendarHash('other-realm') },
+    { segmentId: 'other-segment' }, { segmentRecordId: 'other-segment-row' }, { generationId: 'generation-2' }, { sourceGeneration: 2 }, { controlRevision: 2 }, { exceptionRevision: 1 },
     { preparationId: 'preparation-2' }, { basePublicationId: 'prior-publication' }, { planManifestDigest: calendarHash('other-plan') }, { preparationExpiresAtMs: 1_800_000_000_001 },
     { policyGeneration: calendarHash('replacement-policy') }, { intentDigest: calendarHash('other-intent') }]) {
     rejects(() => inspectCalendarSeriesCompilationContribution(capture(snapshot(authoring(), patch)), batch.contribution, batch.evidence.batchDigest), 'CALENDAR_REVISION_CONFLICT');
@@ -137,6 +160,7 @@ test('source capture is closed and requires exact complete resource revisions, c
   rejects(() => capture({ ...stored, engineGeneration: '0'.repeat(64) }), 'CALENDAR_TIME_RULES_UNAVAILABLE');
   for (const patch of [{ sourceGeneration: 0 }, { exceptionRevision: -1 }, { policyGeneration: 'not-a-digest' }, { ownerId: 'bad owner' },
     { preparationExpiresAtMs: 0 }, { preparationId: 'bad id' }, { basePublicationId: undefined }, { planManifestDigest: 'bad-digest' },
+    { rootHash: 'bad-root' }, { realmFingerprint: calendarHash('missing-prefix') }, { segmentRecordId: 'bad row' },
     { compiledCells: [] }, { authoring: { ...stored.authoring, recurrence: { ...stored.authoring.recurrence, limit: 1 } } }]) rejects(() => capture({ ...stored, ...patch } as CalendarSeriesCompilationSnapshot));
   const missing = { ...stored } as Record<string, unknown>; delete missing.exceptionRevision;
   rejects(() => capture(missing as unknown as CalendarSeriesCompilationSnapshot));
@@ -214,7 +238,8 @@ test('nominal ID is independent of effective UTC, generation, policy and output 
   const candidate = first.evidence.candidates[0]!, moved = { ...candidate, nominalRank: 999, booking: { ...candidate.booking,
     interval: normalizeCalendarTimedInterval({ startAt: '2027-01-01T12:00:00.000Z', endAt: '2027-01-01T13:00:00.000Z', timeZone: 'UTC' }) } };
   expect(calendarSeriesNominalOccurrenceId(source, moved.nominalKey)).toBe(candidate.id);
-  const later = capture(snapshot(authoring({ timeZone: 'America/New_York' }), { sourceGeneration: 2, generationId: 'generation-2', policyGeneration: calendarHash('new-policy') }));
+  const later = capture(snapshot(authoring({ timeZone: 'America/New_York' }), { sourceGeneration: 2, generationId: 'generation-2',
+    segmentRecordId: 'different-generation-segment-record', policyGeneration: calendarHash('new-policy') }));
   const laterCandidate = compileCalendarSeriesBatch(later, createCalendarSeriesCompilationCursor(later, range)).evidence.candidates[0]!;
   expect(laterCandidate.occurrence.startAt).not.toBe(candidate.occurrence.startAt); expect(laterCandidate.id).toBe(candidate.id);
   for (const patch of [{ scopeId: 'application' }, { seriesId: 'other-lineage' }, { segmentId: 'other-segment' }]) {

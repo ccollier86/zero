@@ -10,6 +10,17 @@ before telling an application to adopt branch-only APIs.
 The [integration plan](../../docs-next/_work/calendar-integration-plan.md) remains
 the contract for the remaining work.
 
+Private recurring materialization is now being integrated under the separate
+`series-*` modules and unregistered020/021 profile. It has real plan acceptance,
+native owner/signature/final-fence composition, bounded immutable child/resource
+projection and whole-interval pending claims. Publication, continuation and
+cleanup have passed their coherent native MEMORY review. These internals neither activate
+the default realm nor complete exceptions/splits, sparse UTC coverage, managed
+Jobs/reminders, booking or the connected management experience. See the
+[native materialization review](../../docs-next/_work/calendar-integration-plan.md#private021-native-materialization-review--november-25).
+Do not import them as a supported application shortcut or call this backend
+end-to-end finished while those gates remain open.
+
 The [backend guide](../../docs-next/backend/calendar/index.md) documents the
 implemented core and its explicit limitations. This is not the complete plan:
 

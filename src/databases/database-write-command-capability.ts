@@ -94,9 +94,18 @@ export interface DatabaseWriteCommandCapability {
 /** Context supplied only to a registered writer command. */
 export interface DatabaseWriteCommandContext {
   readonly db: DatabaseWriteCommandCapability;
+  /** Invoke one registered read query against this command's current transaction.
+   * No SQL, handle or query-session lifetime is exposed to the command. */
+  readonly query: DatabaseWriteCommandQuery;
   /** @internal Detached frozen native bind policy. Never sourced from command JSON. */
   readonly writerPolicy?: DatabaseSerializableValue;
 }
+
+/** Runtime-owned named-query dispatch, never a command-input callback. */
+export type DatabaseWriteCommandQuery = (
+  name: string,
+  input: DatabaseSerializableValue,
+) => DatabaseSerializableValue;
 
 /** Internal revocable lifetime for one registered-command invocation. */
 export interface DatabaseWriteCommandSession {
@@ -113,6 +122,7 @@ export function createDatabaseWriteCommandSession(
   database: ReactiveDB,
   readOnlyTables: readonly string[] = [],
   writerPolicy?: DatabaseSerializableValue,
+  registeredQuery?: DatabaseWriteCommandQuery,
 ): DatabaseWriteCommandSession {
   let active = true;
   let capability!: DatabaseWriteCommandCapability;
@@ -282,7 +292,11 @@ export function createDatabaseWriteCommandSession(
   ));
 
   capability = Object.freeze(methods) as unknown as DatabaseWriteCommandCapability;
-  const context = Object.create(null) as { db: DatabaseWriteCommandCapability; writerPolicy?: DatabaseSerializableValue };
+  const context = Object.create(null) as { db: DatabaseWriteCommandCapability; query: DatabaseWriteCommandQuery; writerPolicy?: DatabaseSerializableValue };
+  Object.defineProperty(context, 'query', { value: Object.freeze(activeMethod((name: string, input: DatabaseSerializableValue) => {
+    if (!registeredQuery) throw new DatabaseError('DATABASE_OPERATION_UNSUPPORTED', 'Database command registered-query dispatch is unavailable.');
+    return registeredQuery(name, input);
+  })), enumerable: true });
   if (writerPolicy !== undefined) Object.defineProperty(context, 'writerPolicy', { value: writerPolicy, enumerable: true });
   Object.defineProperty(context, 'db', {
     value: capability,

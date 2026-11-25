@@ -9,6 +9,7 @@ import type { CalendarReadContext } from './calendar-read-store';
 import { calendarHash, calendarInteger, calendarKey } from './validation';
 import { CALENDAR_APPOINTMENT_RESOURCE_CURRENT, calendarCurrentResourceMembership } from './appointment-resource-bindings';
 import { CALENDAR_OVERRIDE_ADMISSIONS } from './override-model';
+import { assertCalendarSeriesResourcesAvailable } from './series-occupancy';
 
 export interface CalendarAppointmentOverlapWitness {
   readonly resourceId: string; readonly reservationId: string; readonly appointmentId: string; readonly parentRevision: number;
@@ -66,6 +67,7 @@ function collectWitnessFacts(context: CalendarReadContext, scopeId: string, reso
 
 /** Review/final exception still executes blocks and currently live holds. */
 export function assertCalendarHardResourcesAvailable(context: CalendarReadContext, scopeId: string, resourceIds: readonly string[], interval: CalendarTimedInterval, now = calendarNow()): void {
+  assertCalendarSeriesResourcesAvailable(context, scopeId, resourceIds, interval, now);
   for (const resourceId of resourceIds) for (const [table, hold] of [['_calendar_block_reservations', false], ['_calendar_hold_reservations', true]] as const) {
     if (context.db.find(table, { select: ['id'], filters: [eq('scope_id', scopeId), eq('resource_id', resourceId), eq('active', 1),
       { type: 'field', field: 'occupied_start_ms', operator: 'gte', value: calendarOverlapSearchStart(interval.occupiedStartMs) },
@@ -84,6 +86,7 @@ export function assertCalendarResourcesAvailable(context: CalendarReadContext, s
     allowances.delete(allowance);
     assertCalendarHardResourcesAvailable(context, scopeId, resourceIds, interval, now); return;
   }
+  assertCalendarSeriesResourcesAvailable(context, scopeId, resourceIds, interval, now);
   for (const resourceId of resourceIds) for (const [table, kind, parent] of [
     ['_calendar_reservations', 'appointment', 'appointment_id'],
     ['_calendar_block_reservations', 'block', 'block_id'],

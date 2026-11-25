@@ -127,8 +127,8 @@ export function memoryCalendarServiceFixture(options: { tenancy?: 'single' | 'mu
     };
     const runtimeOptions: CalendarRuntimeOptions = { config, persistence: resolveCalendarPersistenceConfig(config, project), system,
       installAllowed: true, authority: { coordinator: authorityCoordinator, actorContext: null } };
-    const Constructor = CalendarRuntime as unknown as new (config: CalendarRuntimeOptions, owner: DatabaseCoordinator) => CalendarRuntime;
-    runtime = new Constructor(runtimeOptions, owner as unknown as DatabaseCoordinator);
+    const Constructor = CalendarRuntime as unknown as new (config: CalendarRuntimeOptions, owner: DatabaseCoordinator, realm: typeof calendarRealm) => CalendarRuntime;
+    runtime = new Constructor(runtimeOptions, owner as unknown as DatabaseCoordinator, calendarRealm);
     const internal = runtime as unknown as { filePresent(id: string): boolean; queueHint(ref: string): void; listeners: Map<string, Set<() => void>> };
     internal.filePresent = id => planes.has(id);
     removeCommit = observeDatabaseCoordinatorCommits(owner, ref => internal.queueHint(ref));
