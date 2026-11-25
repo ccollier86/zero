@@ -16,6 +16,7 @@ import { assertCalendarResourceLocationPolicyCurrent } from './location-policies
 import type { CalendarReadContext } from './calendar-read-store';
 import { normalizeCalendarOverrideAuthority } from './override-model';
 import { assertCalendarOverrideReceiptEvidence, assertCalendarOverrideResourceReceiptEvidence } from './overrides';
+import { readCalendarHumanKeyClaim } from './human-request-key';
 
 export const CALENDAR_LIMITS = Object.freeze({ resources: 10_000, appointments: 100_000, blocks: 100_000, holds: 100_000, locations: 10_000,
   locationHistory: 100_000, resourceLocationHistory: 100_000, types: 10_000, typeHistory: 100_000, resourceTypeHistory: 100_000,
@@ -138,18 +139,9 @@ export function parseCalendarReceipt(row: CalendarReceiptRow): CalendarCommandRe
 export function calendarIntent(context: DatabaseWriteCommandContext, actor: CalendarActor, requestInput: unknown, intent: unknown,
   targetKind: CalendarReceiptRow['target_kind'], requiredRight: CalendarReceiptRow['required_right'], run: (requestId: string) => CalendarCommandReceipt): CalendarCommandReceipt {
   const requestId = calendarKey(requestInput), id = calendarHash([actor.scopeId, actor.principal, requestId]), digest = calendarHash(intent);
-  // Historical pre-015 realms have no operator family. Current realms retain
-  // one human key namespace across ordinary and private operator commands.
-  if (context.db.hasTable('_calendar_integration_operator_requests') && context.db.get('_calendar_integration_operator_requests',
-    calendarHash(['calendar-operator-v1', actor.scopeId, actor.principal, requestId]))) throw new CalendarError('CALENDAR_INTENT_CONFLICT');
-  const legacy = context.db.get('_calendar_receipts', id) as CalendarReceiptRow | null;
-  const block = context.db.get('_calendar_block_receipts', id) as CalendarReceiptRow | null;
-  const hold = context.db.get('_calendar_hold_receipts', id) as CalendarReceiptRow | null;
-  const location = context.db.get('_calendar_location_receipts', id) as CalendarReceiptRow | null;
-  const type = context.db.get('_calendar_type_receipts', id) as CalendarReceiptRow | null;
-  const lifecycle = context.db.get('_calendar_lifecycle_receipts', id) as CalendarReceiptRow | null;
-  if ([legacy, block, hold, location, type, lifecycle].filter(Boolean).length > 1) throw new CalendarError('CALENDAR_STATE_INVALID');
-  const prior = legacy ?? block ?? hold ?? location ?? type ?? lifecycle;
+  const claim = readCalendarHumanKeyClaim(context.db, actor.scopeId, actor.principal, requestId);
+  if (claim?.family === 'operator' || claim?.family === 'series') throw new CalendarError('CALENDAR_INTENT_CONFLICT');
+  const prior = claim?.row as CalendarReceiptRow | undefined;
   if (prior) {
     if (prior.scope_id !== actor.scopeId || prior.principal !== actor.principal || prior.digest !== digest) throw new CalendarError('CALENDAR_INTENT_CONFLICT');
     authorizeCalendarReceipt(context, actor, prior);

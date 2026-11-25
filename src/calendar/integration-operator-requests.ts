@@ -5,7 +5,8 @@ import { CalendarError, calendarCommand } from './error';
 import { calendarNow } from './hold-time';
 import { installCalendarIntegrationPolicy, retireCalendarIntegrationPolicy } from './integration-commands';
 import { CALENDAR_INTEGRATION_LIMITS, integrationBudget, integrationPolicy, integrationTime, type CalendarIntegrationPolicyView, type IntegrationCurrentRow, type IntegrationPolicyRow } from './integration-model';
-import { calendarActor, calendarBudget, type CalendarReceiptRow } from './realm-model';
+import { calendarActor, calendarBudget } from './realm-model';
+import { readCalendarHumanKeyClaim } from './human-request-key';
 import { calendarHash, calendarKey, calendarRecord } from './validation';
 import { calendarIntegrationOperatorRequestIntent, calendarIntegrationOperatorRequestView, calendarOperatorRequestId, type IntegrationOperatorRequestRow } from './integration-operator-request-model';
 
@@ -16,15 +17,14 @@ export function requestCalendarIntegrationOperator(context: DatabaseWriteCommand
     const expectedOwnerId = calendarKey(row.expectedOwnerId), requestId = calendarKey(row.requestId), owner = context.db.get('_calendar_owner', 'application');
     if (!owner || owner.scope_id !== actor.scopeId || owner.owner_id !== expectedOwnerId) throw new CalendarError('CALENDAR_STATE_INVALID');
     const intent = calendarIntegrationOperatorRequestIntent({ action: row.action, ruleId: row.ruleId, expected: row.expected });
-    const id = calendarOperatorRequestId(actor.scopeId, actor.principal, requestId), prior = context.db.get('_calendar_integration_operator_requests', id) as IntegrationOperatorRequestRow | null;
+    const id = calendarOperatorRequestId(actor.scopeId, actor.principal, requestId);
+    const claim = readCalendarHumanKeyClaim(context.db, actor.scopeId, actor.principal, requestId);
+    if (claim && claim.family !== 'operator') throw new CalendarError('CALENDAR_INTENT_CONFLICT');
+    const prior = claim?.row as IntegrationOperatorRequestRow | undefined;
     if (prior) {
       if (prior.scope_id !== actor.scopeId || prior.owner_id !== expectedOwnerId || prior.principal !== actor.principal || prior.user_id !== actor.userId || prior.digest !== intent.digest) throw new CalendarError('CALENDAR_INTENT_CONFLICT');
       // Deliberately before current selection/desired-policy parsing: this is an accepted human request, not fresh native CAS.
       return calendarIntegrationOperatorRequestView(prior);
-    }
-    const ordinaryId = calendarHash([actor.scopeId, actor.principal, requestId]);
-    for (const table of ['_calendar_receipts', '_calendar_block_receipts', '_calendar_hold_receipts', '_calendar_location_receipts', '_calendar_type_receipts', '_calendar_lifecycle_receipts']) {
-      if (context.db.get(table, ordinaryId) as CalendarReceiptRow | null) throw new CalendarError('CALENDAR_INTENT_CONFLICT');
     }
     const selected = context.db.get('_calendar_integration_policy_current', intent.ruleId) as IntegrationCurrentRow | null;
     const history = selected && context.db.get('_calendar_integration_policy_history', selected.policy_id) as IntegrationPolicyRow | null;

@@ -17,7 +17,12 @@ export type CalendarRecurrenceRule = { readonly interval: number; readonly end: 
   | { readonly frequency: 'weekly'; readonly weekdays: readonly number[] }
   | { readonly frequency: 'monthly'; readonly pattern: { readonly kind: 'day'; readonly day: number }
     | { readonly kind: 'weekday'; readonly ordinal: number; readonly weekday: number } });
-export interface CalendarRecurrenceDateRange { readonly from: string; readonly until: string }
+export interface CalendarRecurrenceDateRange {
+  readonly from: string;
+  /** Exclusive query end: four-digit civil date, or ONLY '+010000-01-01'
+   * to include the final supported nominal date. Never a source/rule-end date. */
+  readonly until: string;
+}
 /** Authored recurrence only: query ranges and work/output budgets are never source facts. */
 export interface CalendarTimedRecurrenceSource {
   readonly kind: 'timed-local-v1';
@@ -69,6 +74,9 @@ export interface CalendarRecurrenceExpansion {
 export const CALENDAR_RECURRENCE_MAX_RANGE_DAYS = 366;
 export const CALENDAR_RECURRENCE_MAX_OCCURRENCES = 1000;
 export const CALENDAR_RECURRENCE_MAX_CANDIDATES = 4096;
+/** Bump whenever compiler semantics can change persisted nominal/COUNT progress. */
+const COMPILER_SEMANTICS = 'timed-local-recurrence-v2' as const;
+const EXCLUSIVE_DATE_CEILING = '+010000-01-01';
 const DAY_MS = 86_400_000;
 const SOURCE_FIELDS = ['kind', 'localStart', 'timeZone', 'fold', 'durationMilliseconds', 'rule'] as const;
 interface CivilDate { readonly year: number; readonly month: number; readonly day: number }
@@ -101,6 +109,15 @@ function civilDate(value: unknown): string {
 }
 /** UTC is used only as a Gregorian date ordinal/serialization, never a host-zone wall-time converter. */
 function ordinal(date: string): number { return Date.parse(date + 'T00:00:00.000Z') / DAY_MS; }
+/** Internal comparison of already validated civil dates/query-end sentinel.
+ * Lexical order is not chronological across the signed boundary sentinel. */
+export function compareCalendarRecurrenceDates(left: string, right: string): number { return ordinal(left) - ordinal(right); }
+function recurrenceRange(input: unknown): CalendarRecurrenceDateRange {
+  const r = calendarRecord(input, ['from', 'until']), from = civilDate(r.from);
+  const until = r.until === EXCLUSIVE_DATE_CEILING ? EXCLUSIVE_DATE_CEILING : civilDate(r.until);
+  calendarInteger(compareCalendarRecurrenceDates(until, from), 1, CALENDAR_RECURRENCE_MAX_RANGE_DAYS);
+  return Object.freeze({ from, until });
+}
 function key(year: number, month: number, day: number): string {
   return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
@@ -157,10 +174,9 @@ export function normalizeCalendarTimedRecurrenceSource(input: unknown): Readonly
 export function normalizeCalendarTimedRecurrence(input: unknown): Readonly<Normalized> {
   const r = calendarRecord(calendarValue(input), [...SOURCE_FIELDS, 'range', 'limit']);
   const start = sourceStart(r);
-  const range = calendarRecord(r.range, ['from', 'until']), from = civilDate(range.from), until = civilDate(range.until);
-  calendarInteger(ordinal(until) - ordinal(from), 1, CALENDAR_RECURRENCE_MAX_RANGE_DAYS);
+  const range = recurrenceRange(r.range);
   return Object.freeze({ ...sourceFields(r, start),
-    range: Object.freeze({ from, until }), limit: r.limit === undefined ? 100 : calendarInteger(r.limit, 1, CALENDAR_RECURRENCE_MAX_OCCURRENCES) });
+    range, limit: r.limit === undefined ? 100 : calendarInteger(r.limit, 1, CALENDAR_RECURRENCE_MAX_OCCURRENCES) });
 }
 function temporal(): NativeTemporal {
   try {
@@ -218,42 +234,93 @@ export function admitCalendarTimedRecurrenceSource(input: unknown): CalendarTime
     throw new CalendarError('CALENDAR_TIME_RULES_UNAVAILABLE');
   }
 }
-/** Direct seeking for uncounted rules never walks elapsed history. COUNT must
- * qualify valid earlier instances, so its scan starts at DTSTART but hard-stops.
- * The period/candidate budget is independent of source age and requested range.
- */
-function* candidates(t: NativeTemporal, start: PlainDate, source: Normalized): Generator<Candidate> {
-  const rule = source.rule, target = t.PlainDate.from(source.range.from), counted = rule.end.kind === 'after';
+/** A candidate index counts nominal periods/weekday slots, INCLUDING invalid dates.
+ * Shared by the legacy query expander and source-owned continuation; never replay
+ * a generator prefix merely to restore progress. */
+function candidateAt(t: NativeTemporal, start: PlainDate, rule: CalendarRecurrenceRule, index: number): Candidate | null {
   if (rule.frequency === 'daily') {
-    const first = counted ? 0 : Math.max(0, Math.floor((ordinal(target.toString()) - ordinal(start.toString())) / rule.interval));
-    for (let i = first; ; i++) { const date = start.add({ days: i * rule.interval }); if (date.year > 9999) return; yield { date, boundary: date }; }
+    if (ordinal(start.toString()) + index * rule.interval > ordinal('9999-12-31')) return null;
+    const date = start.add({ days: index * rule.interval }); return { date, boundary: date };
   } else if (rule.frequency === 'weekly') {
     const monday = start.add({ days: -(start.dayOfWeek - 1) });
-    const first = counted ? 0 : Math.max(0, Math.floor((ordinal(target.toString()) - ordinal(monday.toString())) / (7 * rule.interval)));
-    for (let i = first; ; i++) {
-      const week = monday.add({ days: i * rule.interval * 7 });
-      for (const weekday of rule.weekdays) { const date = week.add({ days: (weekday + 6) % 7 }); if (date.year > 9999) return; yield { date, boundary: date }; }
-    }
+    const days = Math.floor(index / rule.weekdays.length) * rule.interval * 7 + (rule.weekdays[index % rule.weekdays.length]! + 6) % 7;
+    if (ordinal(monday.toString()) + days > ordinal('9999-12-31')) return null;
+    const date = monday.add({ days }); return { date, boundary: date };
   } else if (rule.frequency === 'monthly') {
-    const base = start.year * 12 + start.month - 1;
-    const first = counted ? 0 : Math.max(0, Math.floor((target.year * 12 + target.month - 1 - base) / rule.interval));
-    for (let i = first; ; i++) {
-      const month = base + i * rule.interval, year = Math.floor(month / 12);
-      if (year > 9999) return;
-      yield monthCandidate(t, year, month % 12 + 1, rule);
-    }
+    const month = start.year * 12 + start.month - 1 + index * rule.interval, year = Math.floor(month / 12);
+    return year > 9999 ? null : monthCandidate(t, year, month % 12 + 1, rule);
   } else {
-    const first = counted ? 0 : Math.max(0, Math.floor((target.year - start.year) / rule.interval));
-    for (let i = first; ; i++) {
-      const year = start.year + i * rule.interval; if (year > 9999) return;
-      const boundary = t.PlainDate.from(key(year, start.month, 1));
-      yield { boundary, date: start.day <= daysInMonth(year, start.month) ? t.PlainDate.from(key(year, start.month, start.day)) : null };
-    }
+    const year = start.year + index * rule.interval; if (year > 9999) return null;
+    const boundary = t.PlainDate.from(key(year, start.month, 1));
+    return { boundary, date: start.day <= daysInMonth(year, start.month) ? t.PlainDate.from(key(year, start.month, start.day)) : null };
   }
+}
+function seekCandidate(t: NativeTemporal, start: PlainDate, rule: CalendarRecurrenceRule, from: string): number {
+  const target = t.PlainDate.from(from);
+  if (rule.frequency === 'daily') return Math.max(0, Math.floor((ordinal(from) - ordinal(start.toString())) / rule.interval));
+  if (rule.frequency === 'weekly') {
+    const monday = start.add({ days: -(start.dayOfWeek - 1) });
+    return Math.max(0, Math.floor((ordinal(from) - ordinal(monday.toString())) / (7 * rule.interval))) * rule.weekdays.length;
+  }
+  if (rule.frequency === 'monthly') return Math.max(0, Math.floor((target.year * 12 + target.month - start.year * 12 - start.month) / rule.interval));
+  return Math.max(0, Math.floor((target.year - start.year) / rule.interval));
+}
+/** Direct seeking for uncounted rules never walks elapsed history. COUNT must
+ * qualify valid earlier instances, so its scan starts at DTSTART but hard-stops. */
+function* candidates(t: NativeTemporal, start: PlainDate, source: Normalized): Generator<Candidate> {
+  const first = source.rule.end.kind === 'after' ? 0 : seekCandidate(t, start, source.rule, source.range.from);
+  for (let index = first; ; index++) { const candidate = candidateAt(t, start, source.rule, index); if (!candidate) return; yield candidate; }
 }
 function provenance(): CalendarRecurrenceExpansion['engine'] {
   const versions = (globalThis as typeof globalThis & { process?: { versions?: { bun?: string; node?: string; icu?: string } } }).process?.versions;
   return Object.freeze({ name: 'temporal-recurrence-v1', runtime: versions?.bun ? `bun:${versions.bun}` : versions?.node ? `node:${versions.node}` : 'unknown', icu: versions?.icu ?? 'unknown' });
+}
+/** A durable continuation is stricter than a diagnostic expansion: bind the
+ * actual runtime implementation revision and platform, not just a release label.
+ * This still records bundled rules provenance, not a pinned external IANA DB. */
+function continuationProvenance() {
+  const globals = globalThis as typeof globalThis & { Bun?: { revision?: string }; process?: {
+    platform?: string; arch?: string; versions?: { bun?: string; v8?: string; webkit?: string; unicode?: string } } };
+  const engine = provenance(), process = globals.process, versions = process?.versions;
+  const known = (value: unknown): value is string => typeof value === 'string' && value !== 'unknown' && value.length > 0
+    && value.length <= 256 && !/[\u0000-\u0020\u007f]/.test(value);
+  const implementation = versions?.bun ? `bun:${globals.Bun?.revision ?? ''};webkit:${versions.webkit ?? ''}` : `v8:${versions?.v8 ?? ''}`;
+  if (!process || !versions || !known(engine.runtime) || !known(engine.icu) || !known(process.platform) || !known(process.arch) || !known(versions.unicode)
+    || (versions.bun ? !known(versions.bun) || !known(globals.Bun?.revision) || !known(versions.webkit) : !known(versions.v8))) throw new CalendarError('CALENDAR_TIME_RULES_UNAVAILABLE');
+  return Object.freeze({ ...engine, compilerSemantics: COMPILER_SEMANTICS, implementation, unicode: versions.unicode,
+    platform: process.platform, architecture: process.arch });
+}
+
+/** Private compiler primitive. This is not a source grant, persisted cursor or
+ * occupancy proof. Resolution uses precisely the same rules as the expander. */
+export function calendarRecurrenceTraversal(input: unknown) {
+  const source = normalizeCalendarTimedRecurrenceSource(input), t = temporal();
+  try {
+    const { start, instant } = admittedStart(t, source), engine = continuationProvenance(), plainFrom = t.PlainDate.from, zonedFrom = t.ZonedDateTime.from;
+    return Object.freeze({ source, engine, original: occurrence(source, source.localStart, instant),
+      assertCurrent(): void {
+        try {
+          const current = temporal(), currentEngine = continuationProvenance();
+          if (current !== t || current.PlainDate.from !== plainFrom || current.ZonedDateTime.from !== zonedFrom
+            || Object.keys(engine).some(field => currentEngine[field as keyof typeof engine] !== engine[field as keyof typeof engine])) throw new CalendarError('CALENDAR_TIME_RULES_UNAVAILABLE');
+        } catch { throw new CalendarError('CALENDAR_TIME_RULES_UNAVAILABLE'); }
+      },
+      seek(from: string): number { return seekCandidate(t, start, source.rule, civilDate(from)); },
+      candidate(index: number) {
+        calendarInteger(index, 0, 4_000_000);
+        try {
+          const value = candidateAt(t, start, source.rule, index); if (!value) return null;
+          return Object.freeze({ boundary: value.boundary.toString(), date: value.date?.toString() ?? null,
+            resolve(): CalendarRecurrenceOccurrence | null {
+              try {
+                if (!value.date || value.date.toString() < source.localStart.slice(0, 10)) return null;
+                const resolved = resolveWallTime(t, value.date, source);
+                return resolved ? occurrence(source, value.date.toString() + source.localStart.slice(10), resolved) : null;
+              } catch (error) { if (error instanceof CalendarError) throw error; throw new CalendarError('CALENDAR_TIME_RULES_UNAVAILABLE'); }
+            } });
+        } catch (error) { if (error instanceof CalendarError) throw error; throw new CalendarError('CALENDAR_TIME_RULES_UNAVAILABLE'); }
+      } });
+  } catch (error) { if (error instanceof CalendarError) throw error; throw new CalendarError('CALENDAR_TIME_RULES_UNAVAILABLE'); }
 }
 
 /** Pure bounded expansion only. No files, clocks, timers, providers, actors, leases, callbacks or domain writes. */
@@ -266,11 +333,11 @@ export function materializeCalendarRecurrence(input: CalendarTimedRecurrenceInpu
     let until = source.range.until, truncationReason: CalendarRecurrenceExpansion['truncationReason'] = null;
     for (const candidate of candidates(t, start, source)) {
       const boundary = candidate.boundary.toString(), date = candidate.date?.toString();
-      if (boundary >= source.range.until || source.rule.end.kind === 'after' && counted >= source.rule.end.count) break;
+      if (compareCalendarRecurrenceDates(boundary, source.range.until) >= 0 || source.rule.end.kind === 'after' && counted >= source.rule.end.count) break;
       if (source.rule.end.kind === 'on' && boundary > source.rule.end.date) break;
       // A known next nominal date outside the range/end proves this query is
       // complete even at the work ceiling; it requires no further time/count admission.
-      if (date && (date >= source.range.until || source.rule.end.kind === 'on' && date > source.rule.end.date)) break;
+      if (date && (compareCalendarRecurrenceDates(date, source.range.until) >= 0 || source.rule.end.kind === 'on' && date > source.rule.end.date)) break;
       if (evaluatedCandidates >= CALENDAR_RECURRENCE_MAX_CANDIDATES) {
         const unqualifiedFrom = date ?? boundary;
         truncationReason = 'candidate-limit'; until = unqualifiedFrom < source.range.from ? source.range.from : unqualifiedFrom; break;

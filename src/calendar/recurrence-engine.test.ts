@@ -224,7 +224,29 @@ test('UTC boundary years use the existing signed-six-digit Calendar vocabulary w
     expect(canonical.startAt).toBe(occurrence.startAt); expect(canonical.endAt).toBe(occurrence.endAt);
   }
   rejects(source({ localStart: '+010000-01-01T09:00:00.000' }));
-  rejects(source({ range: { from: '9999-12-31', until: '+010000-01-01' } }));
+  rejects(source({ range: { from: '9999-12-31', until: '+010000-01-02' } }));
+});
+
+test('the sole exclusive query ceiling includes the final admitted nominal date without widening source/end dates', () => {
+  const range = { from: '9999-12-31', until: '+010000-01-01' };
+  for (const frequency of ['daily', 'weekly', 'monthly', 'yearly'] as const) for (const end of [
+    { kind: 'never' as const }, { kind: 'after' as const, count: 1 }, { kind: 'on' as const, date: '9999-12-31' },
+  ]) {
+    const rule: CalendarRecurrenceRule = frequency === 'weekly' ? { frequency, interval: 1, weekdays: [5], end }
+      : frequency === 'monthly' ? { frequency, interval: 1, pattern: { kind: 'day', day: 31 }, end } : { frequency, interval: 1, end };
+    const result = materializeCalendarRecurrence(source({ localStart: '9999-12-31T23:30:00.000', durationMilliseconds: 2 * 86_400_000, rule, range, limit: 1 }));
+    expect(result.occurrences.map(value => value.localStart)).toEqual(['9999-12-31T23:30:00.000']);
+    expect(result.occurrences[0]!.endAt).toBe('+010000-01-02T23:30:00.000Z');
+    expect(result.coverage).toEqual(range); expect(result.truncated).toBe(false); expect(result.evaluatedCandidates).toBe(1);
+  }
+  expect(normalizeCalendarTimedRecurrence(source({ range: { from: '9998-12-31', until: range.until } })).range).toEqual({ from: '9998-12-31', until: range.until });
+  for (const malformed of [
+    { range: { from: '9998-12-30', until: range.until } }, { range: { from: range.until, until: range.until } },
+    { range: { from: '+009999-12-31', until: range.until } }, { range: { from: range.from, until: '10000-01-01' } },
+    { range: { from: range.from, until: '+010000-01-02' } }, { range: { from: range.from, until: '+009999-12-31' } },
+    { range: { from: range.from, until: '+010000-01-01T00:00:00.000' } }, { localStart: '+010000-01-01T09:00:00.000', range },
+    { rule: { frequency: 'daily', interval: 1, end: { kind: 'on', date: range.until } }, range },
+  ]) rejects({ ...source(), ...malformed });
 });
 
 test('exhausted COUNT proves later empty coverage, but a capped unqualified prefix never masquerades as exhaustion', () => {
