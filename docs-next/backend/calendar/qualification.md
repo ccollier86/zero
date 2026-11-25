@@ -115,6 +115,10 @@ availability guarantee.
 
 ### Additive022 selected-child composition (source/MEMORY checked)
 
+Source checkpoint: `2853b1bb279bd07114533f1893c2052420b98d3f` on
+`feature/calendar-backend-foundation`. This identifies the checked source, not a
+released archive. Main and the normal updater have not selected Calendar.
+
 The next private profile adds a selected-view pointer and immutable adoption
 publication, exact logical child heads and whole-resource working intervals.
 It preserves every001–021 migration function/ledger and does not register the
